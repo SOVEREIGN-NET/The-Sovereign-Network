@@ -4,17 +4,18 @@
 //! during network join. The UnifiedServer can access these peers to initiate
 //! outgoing connections for blockchain sync.
 
-use std::collections::HashMap;
-use tokio::sync::RwLock;
 use anyhow::Result;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
 
 /// Global bootstrap peers storage
 static BOOTSTRAP_PEERS: Lazy<RwLock<Option<Vec<String>>>> = Lazy::new(|| RwLock::new(None));
 
 /// Global bootstrap peer SPKI pins storage (hex-encoded SHA-256)
 /// Key = "host:port", Value = hex-encoded 64-char SHA-256 hash
-static BOOTSTRAP_PEER_PINS: Lazy<RwLock<Option<HashMap<String, String>>>> = Lazy::new(|| RwLock::new(None));
+static BOOTSTRAP_PEER_PINS: Lazy<RwLock<Option<HashMap<String, String>>>> =
+    Lazy::new(|| RwLock::new(None));
 
 /// Set the global bootstrap peers (called after discovery)
 pub async fn set_bootstrap_peers(peers: Vec<String>) -> Result<()> {

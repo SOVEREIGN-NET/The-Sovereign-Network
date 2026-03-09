@@ -1,7 +1,7 @@
 //! Mesh Networking Module
-//! 
+//!
 //! Core mesh protocol handling - extracted from unified_server.rs
-//! 
+//!
 //! ✅ PHASE 4 COMPLETE - All Components Extracted:
 //! - core.rs: ✅ Connection management, MeshRouter struct (250 lines)
 //! - monitoring.rs: ✅ Performance metrics, alerts, reputation tracking (400 lines)
@@ -18,14 +18,14 @@
 //!
 //! Total: 3,930 lines (net: -247 lines from original 4,177)
 
+pub mod blockchain_sync;
 pub mod core;
 pub mod helpers;
 pub mod monitoring;
-pub mod blockchain_sync;
 // udp_handler removed - using QUIC only
-pub mod identity_api;
 pub mod authentication_wrapper;
-pub mod routing_integration;
-pub mod rate_limiting;
+pub mod identity_api;
 pub mod identity_verification;
+pub mod rate_limiting;
 pub mod routing_errors;
+pub mod routing_integration;

@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::integration::crypto_integration::PublicKey;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Group chat structure
@@ -236,20 +236,20 @@ impl GroupContract {
             is_private,
             whisper_token_cost,
         );
-        
+
         group.validate()?;
-        
+
         let group_id = group.group_id;
-        
+
         // Add creator to user groups
         self.user_groups
             .entry(creator)
             .or_insert_with(Vec::new)
             .push(group_id);
-        
+
         // Store the group
         self.groups.insert(group_id, group);
-        
+
         Ok(group_id)
     }
 
@@ -272,26 +272,21 @@ impl GroupContract {
     }
 
     /// Join a public group
-    pub fn join_group(
-        &mut self,
-        group_id: &[u8; 32],
-        user: PublicKey,
-    ) -> Result<(), String> {
-        let group = self.groups.get_mut(group_id)
-            .ok_or("Group not found")?;
-        
+    pub fn join_group(&mut self, group_id: &[u8; 32], user: PublicKey) -> Result<(), String> {
+        let group = self.groups.get_mut(group_id).ok_or("Group not found")?;
+
         if group.is_private {
             return Err("Cannot join private group without invitation".to_string());
         }
-        
+
         group.add_member(user.clone())?;
-        
+
         // Add to user groups
         self.user_groups
             .entry(user)
             .or_insert_with(Vec::new)
             .push(*group_id);
-        
+
         Ok(())
     }
 
@@ -302,24 +297,23 @@ impl GroupContract {
         user: PublicKey,
         message: String,
     ) -> Result<(), String> {
-        let group = self.groups.get(group_id)
-            .ok_or("Group not found")?;
-        
+        let group = self.groups.get(group_id).ok_or("Group not found")?;
+
         if !group.is_private {
             return Err("Use join_group for public groups".to_string());
         }
-        
+
         if group.is_member(&user) {
             return Err("User is already a member".to_string());
         }
-        
+
         // Check if request already exists
         if let Some(requests) = self.join_requests.get(group_id) {
             if requests.iter().any(|r| r.user == user) {
                 return Err("Join request already pending".to_string());
             }
         }
-        
+
         let request = JoinRequest {
             user,
             message,
@@ -328,12 +322,12 @@ impl GroupContract {
                 .unwrap()
                 .as_secs(),
         };
-        
+
         self.join_requests
             .entry(*group_id)
             .or_insert_with(Vec::new)
             .push(request);
-        
+
         Ok(())
     }
 
@@ -344,13 +338,12 @@ impl GroupContract {
         requesting_user: &PublicKey,
         approver: &PublicKey,
     ) -> Result<(), String> {
-        let group = self.groups.get(group_id)
-            .ok_or("Group not found")?;
-        
+        let group = self.groups.get(group_id).ok_or("Group not found")?;
+
         if !group.is_admin(approver) {
             return Err("Only admins can approve join requests".to_string());
         }
-        
+
         // Remove the join request
         if let Some(requests) = self.join_requests.get_mut(group_id) {
             requests.retain(|r| r.user != *requesting_user);
@@ -358,17 +351,17 @@ impl GroupContract {
                 self.join_requests.remove(group_id);
             }
         }
-        
+
         // Add user to group
         let group = self.groups.get_mut(group_id).unwrap();
         group.add_member(requesting_user.clone())?;
-        
+
         // Add to user groups
         self.user_groups
             .entry(requesting_user.clone())
             .or_insert_with(Vec::new)
             .push(*group_id);
-        
+
         Ok(())
     }
 
@@ -380,24 +373,23 @@ impl GroupContract {
         invitee: PublicKey,
         message: String,
     ) -> Result<(), String> {
-        let group = self.groups.get(group_id)
-            .ok_or("Group not found")?;
-        
+        let group = self.groups.get(group_id).ok_or("Group not found")?;
+
         if !group.is_admin(inviter) {
             return Err("Only admins can invite users".to_string());
         }
-        
+
         if group.is_member(&invitee) {
             return Err("User is already a member".to_string());
         }
-        
+
         // Check if invitation already exists
         if let Some(invites) = self.pending_invites.get(group_id) {
             if invites.iter().any(|i| i.invitee == invitee) {
                 return Err("User already has a pending invitation".to_string());
             }
         }
-        
+
         let invite = GroupInvite {
             group_id: *group_id,
             inviter: inviter.clone(),
@@ -408,12 +400,12 @@ impl GroupContract {
                 .unwrap()
                 .as_secs(),
         };
-        
+
         self.pending_invites
             .entry(*group_id)
             .or_insert_with(Vec::new)
             .push(invite);
-        
+
         Ok(())
     }
 
@@ -436,32 +428,26 @@ impl GroupContract {
         } else {
             return Err("No pending invitation found".to_string());
         }
-        
+
         // Add user to group
-        let group = self.groups.get_mut(group_id)
-            .ok_or("Group not found")?;
+        let group = self.groups.get_mut(group_id).ok_or("Group not found")?;
         group.add_member(user.clone())?;
-        
+
         // Add to user groups
         self.user_groups
             .entry(user.clone())
             .or_insert_with(Vec::new)
             .push(*group_id);
-        
+
         Ok(())
     }
 
     /// Leave a group
-    pub fn leave_group(
-        &mut self,
-        group_id: &[u8; 32],
-        user: &PublicKey,
-    ) -> Result<(), String> {
-        let group = self.groups.get_mut(group_id)
-            .ok_or("Group not found")?;
-        
+    pub fn leave_group(&mut self, group_id: &[u8; 32], user: &PublicKey) -> Result<(), String> {
+        let group = self.groups.get_mut(group_id).ok_or("Group not found")?;
+
         group.remove_member(user)?;
-        
+
         // Remove from user groups
         if let Some(user_groups) = self.user_groups.get_mut(user) {
             user_groups.retain(|id| id != group_id);
@@ -469,7 +455,7 @@ impl GroupContract {
                 self.user_groups.remove(user);
             }
         }
-        
+
         Ok(())
     }
 
@@ -480,13 +466,12 @@ impl GroupContract {
         promoter: &PublicKey,
         user_to_promote: PublicKey,
     ) -> Result<(), String> {
-        let group = self.groups.get_mut(group_id)
-            .ok_or("Group not found")?;
-        
+        let group = self.groups.get_mut(group_id).ok_or("Group not found")?;
+
         if !group.is_admin(promoter) {
             return Err("Only admins can promote users".to_string());
         }
-        
+
         group.add_admin(user_to_promote)
     }
 
@@ -497,13 +482,12 @@ impl GroupContract {
         remover: &PublicKey,
         admin_to_remove: &PublicKey,
     ) -> Result<(), String> {
-        let group = self.groups.get_mut(group_id)
-            .ok_or("Group not found")?;
-        
+        let group = self.groups.get_mut(group_id).ok_or("Group not found")?;
+
         if group.creator != *remover {
             return Err("Only group creator can remove admin privileges".to_string());
         }
-        
+
         group.remove_admin(admin_to_remove)
     }
 
@@ -522,14 +506,14 @@ impl GroupContract {
         group_id: &[u8; 32],
         requester: &PublicKey,
     ) -> Result<Vec<&JoinRequest>, String> {
-        let group = self.groups.get(group_id)
-            .ok_or("Group not found")?;
-        
+        let group = self.groups.get(group_id).ok_or("Group not found")?;
+
         if !group.is_admin(requester) {
             return Err("Only admins can view join requests".to_string());
         }
-        
-        Ok(self.join_requests
+
+        Ok(self
+            .join_requests
             .get(group_id)
             .map(|requests| requests.iter().collect())
             .unwrap_or_default())
@@ -540,8 +524,11 @@ impl GroupContract {
         self.groups
             .values()
             .filter(|group| {
-                !group.is_private && 
-                group.name.to_lowercase().contains(&search_term.to_lowercase())
+                !group.is_private
+                    && group
+                        .name
+                        .to_lowercase()
+                        .contains(&search_term.to_lowercase())
             })
             .collect()
     }
@@ -570,7 +557,7 @@ impl GroupContract {
         let private_groups = total_groups - public_groups;
         let total_members: usize = self.groups.values().map(|g| g.member_count()).sum();
         let total_admins: usize = self.groups.values().map(|g| g.admins.len()).sum();
-        
+
         GroupSystemStats {
             total_groups,
             public_groups,
@@ -644,16 +631,18 @@ mod tests {
     fn test_group_creation() {
         let creator = create_test_public_key(1);
         let mut contract = GroupContract::new();
-        
-        let group_id = contract.create_group(
-            "Test Group".to_string(),
-            "A test group".to_string(),
-            creator.clone(),
-            100,
-            false,
-            1000,
-        ).unwrap();
-        
+
+        let group_id = contract
+            .create_group(
+                "Test Group".to_string(),
+                "A test group".to_string(),
+                creator.clone(),
+                100,
+                false,
+                1000,
+            )
+            .unwrap();
+
         let group = contract.get_group(&group_id).unwrap();
         assert_eq!(group.name, "Test Group");
         assert_eq!(group.creator, creator);
@@ -666,22 +655,24 @@ mod tests {
         let creator = create_test_public_key(1);
         let user = create_test_public_key(2);
         let mut contract = GroupContract::new();
-        
-        let group_id = contract.create_group(
-            "Public Group".to_string(),
-            "A public group".to_string(),
-            creator.clone(),
-            100,
-            false, // public
-            1000,
-        ).unwrap();
-        
+
+        let group_id = contract
+            .create_group(
+                "Public Group".to_string(),
+                "A public group".to_string(),
+                creator.clone(),
+                100,
+                false, // public
+                1000,
+            )
+            .unwrap();
+
         // User joins public group
         contract.join_group(&group_id, user.clone()).unwrap();
-        
+
         let group = contract.get_group(&group_id).unwrap();
         assert!(group.is_member(&user));
-        
+
         let user_groups = contract.get_user_groups(&user);
         assert_eq!(user_groups.len(), 1);
     }
@@ -691,30 +682,29 @@ mod tests {
         let creator = create_test_public_key(1);
         let user = create_test_public_key(2);
         let mut contract = GroupContract::new();
-        
-        let group_id = contract.create_group(
-            "Private Group".to_string(),
-            "A private group".to_string(),
-            creator.clone(),
-            100,
-            true, // private
-            1000,
-        ).unwrap();
-        
+
+        let group_id = contract
+            .create_group(
+                "Private Group".to_string(),
+                "A private group".to_string(),
+                creator.clone(),
+                100,
+                true, // private
+                1000,
+            )
+            .unwrap();
+
         // Cannot join private group directly
         assert!(contract.join_group(&group_id, user.clone()).is_err());
-        
+
         // Creator invites user
-        contract.invite_user(
-            &group_id,
-            &creator,
-            user.clone(),
-            "Welcome!".to_string(),
-        ).unwrap();
-        
+        contract
+            .invite_user(&group_id, &creator, user.clone(), "Welcome!".to_string())
+            .unwrap();
+
         // User accepts invitation
         contract.accept_invitation(&group_id, &user).unwrap();
-        
+
         let group = contract.get_group(&group_id).unwrap();
         assert!(group.is_member(&user));
     }
@@ -724,26 +714,28 @@ mod tests {
         let creator = create_test_public_key(1);
         let user = create_test_public_key(2);
         let mut contract = GroupContract::new();
-        
-        let group_id = contract.create_group(
-            "Private Group".to_string(),
-            "A private group".to_string(),
-            creator.clone(),
-            100,
-            true, // private
-            1000,
-        ).unwrap();
-        
+
+        let group_id = contract
+            .create_group(
+                "Private Group".to_string(),
+                "A private group".to_string(),
+                creator.clone(),
+                100,
+                true, // private
+                1000,
+            )
+            .unwrap();
+
         // User requests to join
-        contract.request_to_join(
-            &group_id,
-            user.clone(),
-            "Please let me join!".to_string(),
-        ).unwrap();
-        
+        contract
+            .request_to_join(&group_id, user.clone(), "Please let me join!".to_string())
+            .unwrap();
+
         // Creator approves request
-        contract.approve_join_request(&group_id, &user, &creator).unwrap();
-        
+        contract
+            .approve_join_request(&group_id, &user, &creator)
+            .unwrap();
+
         let group = contract.get_group(&group_id).unwrap();
         assert!(group.is_member(&user));
     }
@@ -753,28 +745,32 @@ mod tests {
         let creator = create_test_public_key(1);
         let user = create_test_public_key(2);
         let mut contract = GroupContract::new();
-        
-        let group_id = contract.create_group(
-            "Test Group".to_string(),
-            "A test group".to_string(),
-            creator.clone(),
-            100,
-            false,
-            1000,
-        ).unwrap();
-        
+
+        let group_id = contract
+            .create_group(
+                "Test Group".to_string(),
+                "A test group".to_string(),
+                creator.clone(),
+                100,
+                false,
+                1000,
+            )
+            .unwrap();
+
         // Add user to group
         contract.join_group(&group_id, user.clone()).unwrap();
-        
+
         // Promote user to admin
-        contract.promote_to_admin(&group_id, &creator, user.clone()).unwrap();
-        
+        contract
+            .promote_to_admin(&group_id, &creator, user.clone())
+            .unwrap();
+
         let group = contract.get_group(&group_id).unwrap();
         assert!(group.is_admin(&user));
-        
+
         // Remove admin privileges
         contract.remove_admin(&group_id, &creator, &user).unwrap();
-        
+
         let group = contract.get_group(&group_id).unwrap();
         assert!(!group.is_admin(&user));
     }
@@ -783,42 +779,48 @@ mod tests {
     fn test_group_search() {
         let creator = create_test_public_key(1);
         let mut contract = GroupContract::new();
-        
-        contract.create_group(
-            "Rust Programming".to_string(),
-            "Learn Rust".to_string(),
-            creator.clone(),
-            100,
-            false, // public
-            1000,
-        ).unwrap();
-        
-        contract.create_group(
-            "JavaScript Developers".to_string(),
-            "JS development".to_string(),
-            creator.clone(),
-            100,
-            false, // public
-            1000,
-        ).unwrap();
-        
-        contract.create_group(
-            "Private Club".to_string(),
-            "Secret group".to_string(),
-            creator.clone(),
-            50,
-            true, // private
-            2000,
-        ).unwrap();
-        
+
+        contract
+            .create_group(
+                "Rust Programming".to_string(),
+                "Learn Rust".to_string(),
+                creator.clone(),
+                100,
+                false, // public
+                1000,
+            )
+            .unwrap();
+
+        contract
+            .create_group(
+                "JavaScript Developers".to_string(),
+                "JS development".to_string(),
+                creator.clone(),
+                100,
+                false, // public
+                1000,
+            )
+            .unwrap();
+
+        contract
+            .create_group(
+                "Private Club".to_string(),
+                "Secret group".to_string(),
+                creator.clone(),
+                50,
+                true, // private
+                2000,
+            )
+            .unwrap();
+
         let results = contract.search_public_groups("programming");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Rust Programming");
-        
+
         let results = contract.search_public_groups("developers");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "JavaScript Developers");
-        
+
         // Private groups should not appear in search
         let results = contract.search_public_groups("club");
         assert_eq!(results.len(), 0);

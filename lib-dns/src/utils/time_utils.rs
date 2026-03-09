@@ -1,12 +1,10 @@
 pub trait TimeUtils {
-
     fn to_time_format(&self) -> String;
 
     fn from_time_format(s: &str) -> u32;
 }
 
 impl TimeUtils for u32 {
-
     fn to_time_format(&self) -> String {
         let mut seconds = *self;
         let sec = seconds % 60;
@@ -18,7 +16,10 @@ impl TimeUtils for u32 {
 
         let (year, month, day) = date_from_days_since_epoch(days);
 
-        format!("{:04}{:02}{:02}{:02}{:02}{:02}", year, month, day, hour, min, sec)
+        format!(
+            "{:04}{:02}{:02}{:02}{:02}{:02}",
+            year, month, day, hour, min, sec
+        )
     }
 
     fn from_time_format(s: &str) -> Self {

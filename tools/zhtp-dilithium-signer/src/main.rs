@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose, Engine as _};
-use lib_crypto::post_quantum::dilithium_verify;
 use lib_crypto::post_quantum::dilithium_sign;
+use lib_crypto::post_quantum::dilithium_verify;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 

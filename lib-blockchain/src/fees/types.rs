@@ -98,14 +98,12 @@ pub struct FeeParamsV2 {
     // =========================================================================
     // Base Costs
     // =========================================================================
-
     /// Base fee for any transaction (fixed overhead)
     pub base_tx_fee: u64,
 
     // =========================================================================
     // Unit Prices
     // =========================================================================
-
     /// Price per execution unit
     pub price_exec_unit: u64,
     /// Price per state read operation
@@ -126,7 +124,6 @@ pub struct FeeParamsV2 {
     // =========================================================================
     // Per-TxKind Parameters
     // =========================================================================
-
     /// Execution units per transaction kind
     pub exec_units: HashMap<TxKind, u32>,
     /// Witness cap (charged) bytes per transaction kind
@@ -139,14 +136,12 @@ pub struct FeeParamsV2 {
     // =========================================================================
     // Per-SigScheme Parameters
     // =========================================================================
-
     /// Verification units per signature for each scheme
     pub verify_units_per_sig: HashMap<SigScheme, u32>,
 
     // =========================================================================
     // Block Limits
     // =========================================================================
-
     /// Maximum payload bytes per block
     pub block_max_payload_bytes: u32,
     /// Maximum witness bytes per block
@@ -182,11 +177,14 @@ impl FeeParamsV2 {
 
     /// Get verification units per signature for a scheme
     pub fn get_verify_units_per_sig(&self, scheme: SigScheme) -> u32 {
-        self.verify_units_per_sig.get(&scheme).copied().unwrap_or(match scheme {
-            SigScheme::Ed25519 => 1,
-            SigScheme::Dilithium5 => 4,
-            SigScheme::Hybrid => 5,
-        })
+        self.verify_units_per_sig
+            .get(&scheme)
+            .copied()
+            .unwrap_or(match scheme {
+                SigScheme::Ed25519 => 1,
+                SigScheme::Dilithium5 => 4,
+                SigScheme::Hybrid => 5,
+            })
     }
 }
 
@@ -258,10 +256,10 @@ impl Default for FeeParamsV2 {
             verify_units_per_sig,
 
             // Block limits
-            block_max_payload_bytes: 1_000_000,      // 1 MB
-            block_max_witness_bytes: 2_000_000,      // 2 MB
-            block_max_verify_units: 10_000,          // ~2000 Ed25519 or ~500 Dilithium5
-            block_max_state_write_bytes: 500_000,    // 500 KB
+            block_max_payload_bytes: 1_000_000,   // 1 MB
+            block_max_witness_bytes: 2_000_000,   // 2 MB
+            block_max_verify_units: 10_000,       // ~2000 Ed25519 or ~500 Dilithium5
+            block_max_state_write_bytes: 500_000, // 500 KB
             block_max_txs: 5_000,
         }
     }
@@ -306,13 +304,13 @@ mod tests {
         let input = FeeInput::new(
             TxKind::NativeTransfer,
             SigScheme::Ed25519,
-            1,    // sig_count
-            50,   // envelope_bytes
-            200,  // payload_bytes
-            64,   // witness_bytes
-            2,    // state_reads
-            4,    // state_writes
-            256,  // state_write_bytes
+            1,   // sig_count
+            50,  // envelope_bytes
+            200, // payload_bytes
+            64,  // witness_bytes
+            2,   // state_reads
+            4,   // state_writes
+            256, // state_write_bytes
         );
 
         assert_eq!(input.tx_kind, TxKind::NativeTransfer);

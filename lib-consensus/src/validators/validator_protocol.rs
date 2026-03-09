@@ -948,7 +948,10 @@ impl ValidatorProtocol {
                 self.discovery
                     .populate_trusted(signer.clone(), signature.public_key.clone(), vec![], 0)
                     .await;
-                info!("🔑 Bootstrap TOFU: registered key from new validator {}", signer);
+                info!(
+                    "🔑 Bootstrap TOFU: registered key from new validator {}",
+                    signer
+                );
                 return Ok(());
             }
             None => {

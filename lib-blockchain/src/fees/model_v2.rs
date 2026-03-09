@@ -78,8 +78,8 @@ pub fn compute_fee_v2(input: &FeeInput, params: &FeeParamsV2) -> u64 {
     }
 
     // Verification cost
-    let verify_units = input.sig_count as u128
-        * params.get_verify_units_per_sig(input.sig_scheme) as u128;
+    let verify_units =
+        input.sig_count as u128 * params.get_verify_units_per_sig(input.sig_scheme) as u128;
     fee += verify_units * params.price_verify_unit as u128;
 
     // Clamp to u64::MAX if overflow (should never happen with reasonable params)
@@ -122,13 +122,13 @@ mod tests {
         let input = FeeInput::new(
             TxKind::NativeTransfer,
             SigScheme::Ed25519,
-            0,   // no sigs (for minimal fee test)
-            0,   // envelope
-            0,   // payload
-            0,   // witness
-            0,   // reads
-            0,   // writes
-            0,   // write_bytes
+            0, // no sigs (for minimal fee test)
+            0, // envelope
+            0, // payload
+            0, // witness
+            0, // reads
+            0, // writes
+            0, // write_bytes
         );
 
         let fee = compute_fee_v2(&input, &params);
@@ -144,13 +144,13 @@ mod tests {
         let input = FeeInput::new(
             TxKind::NativeTransfer,
             SigScheme::Ed25519,
-            1,     // 1 signature
-            50,    // envelope
-            200,   // payload
-            64,    // witness (Ed25519 sig)
-            2,     // 2 input UTXOs read
-            4,     // 2 inputs deleted + 2 outputs created
-            256,   // ~64 bytes per UTXO * 4
+            1,   // 1 signature
+            50,  // envelope
+            200, // payload
+            64,  // witness (Ed25519 sig)
+            2,   // 2 input UTXOs read
+            4,   // 2 inputs deleted + 2 outputs created
+            256, // ~64 bytes per UTXO * 4
         );
 
         let fee = compute_fee_v2(&input, &params);
@@ -175,13 +175,13 @@ mod tests {
         let input = FeeInput::new(
             TxKind::NativeTransfer,
             SigScheme::Dilithium5,
-            1,      // 1 signature
-            50,     // envelope
-            200,    // payload
-            4627,   // Dilithium5 signature size
-            2,      // reads
-            4,      // writes
-            256,    // write_bytes
+            1,    // 1 signature
+            50,   // envelope
+            200,  // payload
+            4627, // Dilithium5 signature size
+            2,    // reads
+            4,    // writes
+            256,  // write_bytes
         );
 
         let fee = compute_fee_v2(&input, &params);
@@ -201,13 +201,13 @@ mod tests {
         let input = FeeInput::new(
             TxKind::TokenTransfer,
             SigScheme::Ed25519,
-            1,     // 1 signature
-            30,    // smaller envelope
-            80,    // payload (token_id, from, to, amount)
-            64,    // witness
-            2,     // read sender + receiver balance
-            2,     // write sender + receiver balance
-            64,    // ~32 bytes per balance entry
+            1,  // 1 signature
+            30, // smaller envelope
+            80, // payload (token_id, from, to, amount)
+            64, // witness
+            2,  // read sender + receiver balance
+            2,  // write sender + receiver balance
+            64, // ~32 bytes per balance entry
         );
 
         let fee = compute_fee_v2(&input, &params);
@@ -231,7 +231,7 @@ mod tests {
             1,
             50,
             200,
-            5000,  // Way over the 1536 cap
+            5000, // Way over the 1536 cap
             2,
             4,
             256,
@@ -246,7 +246,7 @@ mod tests {
             1,
             50,
             200,
-            1536,  // Exactly at cap
+            1536, // Exactly at cap
             2,
             4,
             256,
@@ -266,10 +266,10 @@ mod tests {
         let input = FeeInput::new(
             TxKind::NativeTransfer,
             SigScheme::Ed25519,
-            0,   // no sig for simplicity
+            0, // no sig for simplicity
             0,
             0,
-            1,   // 1 witness byte
+            1, // 1 witness byte
             0,
             0,
             0,
@@ -354,7 +354,7 @@ mod tests {
         let invalid_sigs = FeeInput::new(
             TxKind::NativeTransfer,
             SigScheme::Ed25519,
-            5,  // Over max_sigs=2 for NativeTransfer
+            5, // Over max_sigs=2 for NativeTransfer
             50,
             200,
             1000,
@@ -371,17 +371,8 @@ mod tests {
         let params = FeeParamsV2::default();
 
         // Same transaction with different sig schemes
-        let base_input = |scheme| FeeInput::new(
-            TxKind::NativeTransfer,
-            scheme,
-            1,
-            50,
-            200,
-            64,
-            2,
-            4,
-            256,
-        );
+        let base_input =
+            |scheme| FeeInput::new(TxKind::NativeTransfer, scheme, 1, 50, 200, 64, 2, 4, 256);
 
         let fee_ed25519 = compute_fee_v2(&base_input(SigScheme::Ed25519), &params);
         let fee_dilithium = compute_fee_v2(&base_input(SigScheme::Dilithium5), &params);
@@ -394,7 +385,7 @@ mod tests {
         assert!(fee_ed25519 < fee_dilithium);
         assert!(fee_dilithium < fee_hybrid);
         assert_eq!(fee_dilithium - fee_ed25519, 150); // 200 - 50
-        assert_eq!(fee_hybrid - fee_dilithium, 50);   // 250 - 200
+        assert_eq!(fee_hybrid - fee_dilithium, 50); // 250 - 200
     }
 
     // =========================================================================
@@ -423,13 +414,13 @@ mod tests {
         let input = FeeInput::new(
             TxKind::NativeTransfer,
             SigScheme::Dilithium5,
-            1,       // 1 signature
-            14,      // envelope: version(4) + chain_id(1) + type(1) + fee(8)
-            164,     // payload: 1 input (68) + 1 output (96)
-            4627,    // witness: Dilithium5 signature (capped at 1536)
-            1,       // state_reads: 1 input UTXO
-            2,       // state_writes: 1 input deleted + 1 output created
-            256,     // state_write_bytes: ~128 per UTXO entry
+            1,    // 1 signature
+            14,   // envelope: version(4) + chain_id(1) + type(1) + fee(8)
+            164,  // payload: 1 input (68) + 1 output (96)
+            4627, // witness: Dilithium5 signature (capped at 1536)
+            1,    // state_reads: 1 input UTXO
+            2,    // state_writes: 1 input deleted + 1 output created
+            256,  // state_write_bytes: ~128 per UTXO entry
         );
 
         let fee = compute_fee_v2(&input, &params);
@@ -456,13 +447,13 @@ mod tests {
         let input = FeeInput::new(
             TxKind::TokenTransfer,
             SigScheme::Dilithium5,
-            1,      // 1 signature
-            14,     // envelope
-            120,    // payload: TokenTransferData
-            4627,   // witness: Dilithium5 (capped at 1536)
-            2,      // state_reads: sender + receiver balance
-            2,      // state_writes: sender + receiver balance
-            128,    // state_write_bytes: 64 per balance entry
+            1,    // 1 signature
+            14,   // envelope
+            120,  // payload: TokenTransferData
+            4627, // witness: Dilithium5 (capped at 1536)
+            2,    // state_reads: sender + receiver balance
+            2,    // state_writes: sender + receiver balance
+            128,  // state_write_bytes: 64 per balance entry
         );
 
         let fee = compute_fee_v2(&input, &params);
@@ -492,28 +483,55 @@ mod tests {
         let input1 = FeeInput::new(
             TxKind::NativeTransfer,
             SigScheme::Ed25519,
-            0, 0, 0, 1, 0, 0, 0,  // Only 1 witness byte
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0, // Only 1 witness byte
         );
 
         // Test: 2 witness bytes should cost 1 (ceil(2/2) = 1)
         let input2 = FeeInput::new(
             TxKind::NativeTransfer,
             SigScheme::Ed25519,
-            0, 0, 0, 2, 0, 0, 0,
+            0,
+            0,
+            0,
+            2,
+            0,
+            0,
+            0,
         );
 
         // Test: 3 witness bytes should cost 2 (ceil(3/2) = 2)
         let input3 = FeeInput::new(
             TxKind::NativeTransfer,
             SigScheme::Ed25519,
-            0, 0, 0, 3, 0, 0, 0,
+            0,
+            0,
+            0,
+            3,
+            0,
+            0,
+            0,
         );
 
-        let base_fee = compute_fee_v2(&FeeInput::new(
-            TxKind::NativeTransfer,
-            SigScheme::Ed25519,
-            0, 0, 0, 0, 0, 0, 0,
-        ), &params);
+        let base_fee = compute_fee_v2(
+            &FeeInput::new(
+                TxKind::NativeTransfer,
+                SigScheme::Ed25519,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ),
+            &params,
+        );
 
         let fee1 = compute_fee_v2(&input1, &params);
         let fee2 = compute_fee_v2(&input2, &params);
@@ -533,14 +551,14 @@ mod tests {
         // 3 inputs, 2 outputs
         let input = FeeInput::new(
             TxKind::NativeTransfer,
-            SigScheme::Hybrid,  // Ed25519 + Dilithium5
-            1,        // 1 signature
-            14,       // envelope
-            396,      // payload: 3 inputs (68*3) + 2 outputs (96*2)
-            1000,     // witness: less than cap
-            3,        // state_reads: 3 input UTXOs
-            5,        // state_writes: 3 deleted + 2 created
-            640,      // state_write_bytes: 128 * 5
+            SigScheme::Hybrid, // Ed25519 + Dilithium5
+            1,                 // 1 signature
+            14,                // envelope
+            396,               // payload: 3 inputs (68*3) + 2 outputs (96*2)
+            1000,              // witness: less than cap
+            3,                 // state_reads: 3 input UTXOs
+            5,                 // state_writes: 3 deleted + 2 created
+            640,               // state_write_bytes: 128 * 5
         );
 
         let fee = compute_fee_v2(&input, &params);
@@ -555,6 +573,9 @@ mod tests {
         // verify = 1 * 5 * 50 = 250 (Hybrid = 5 units)
         // TOTAL = 100 + 50 + 15 + 100 + 640 + 396 + 500 + 250 = 2051
 
-        assert_eq!(fee, 2051, "Golden vector: Multi-input transfer with Hybrid sig");
+        assert_eq!(
+            fee, 2051,
+            "Golden vector: Multi-input transfer with Hybrid sig"
+        );
     }
 }

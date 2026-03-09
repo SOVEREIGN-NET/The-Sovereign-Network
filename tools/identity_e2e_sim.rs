@@ -1,17 +1,16 @@
 //! Identity E2E simulation: DID fan-out + store-and-forward + receipts
 
+use lib_crypto::keypair::generation::KeyPair;
 use lib_identity::{
-    ZhtpIdentity, IdentityType,
-    create_device_add_update, apply_did_update, store_did_document, set_did_store_memory,
+    apply_did_update, create_device_add_update, set_did_store_memory, store_did_document,
+    IdentityType, ZhtpIdentity,
 };
+use lib_network::identity_store_forward::IdentityStoreForward;
 use lib_protocols::identity_messaging::{
     build_delivery_receipt_envelope, build_identity_envelope_with_payload,
-    create_delivery_receipt, create_pouw_stamp,
-    build_identity_envelope_with_pouw,
+    build_identity_envelope_with_pouw, create_delivery_receipt, create_pouw_stamp,
 };
 use lib_protocols::types::{IdentityPayload, MessageTtl};
-use lib_network::identity_store_forward::IdentityStoreForward;
-use lib_crypto::keypair::generation::KeyPair;
 
 fn main() -> Result<(), String> {
     set_did_store_memory()?;
@@ -22,7 +21,8 @@ fn main() -> Result<(), String> {
         Some("US".to_string()),
         "sender-device",
         None,
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     let sender_doc = lib_identity::DidDocument::from_identity(&sender, None)?;
     let sender_add = create_device_add_update(
@@ -41,7 +41,8 @@ fn main() -> Result<(), String> {
         Some("US".to_string()),
         "laptop",
         None,
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     let doc = lib_identity::DidDocument::from_identity(&recipient, None)?;
     let add_update = create_device_add_update(
@@ -80,16 +81,18 @@ fn main() -> Result<(), String> {
 
     let recipient_kp = KeyPair {
         public_key: recipient.public_key.clone(),
-        private_key: recipient.private_key.clone().ok_or("missing recipient key")?,
+        private_key: recipient
+            .private_key
+            .clone()
+            .ok_or("missing recipient key")?,
     };
     let receipt = create_delivery_receipt(envelope.message_id, "phone-1", &recipient_kp)?;
-    let receipt_envelope = build_delivery_receipt_envelope(
-        &doc.id,
-        &sender_doc.id,
-        &receipt,
-        MessageTtl::Days7,
-    )?;
-    println!("receipt envelope payloads: {}", receipt_envelope.payloads.len());
+    let receipt_envelope =
+        build_delivery_receipt_envelope(&doc.id, &sender_doc.id, &receipt, MessageTtl::Days7)?;
+    println!(
+        "receipt envelope payloads: {}",
+        receipt_envelope.payloads.len()
+    );
 
     let removed = queue.acknowledge_delivery(&doc.id, envelope.message_id)?;
     println!("delivery ack removed: {}", removed);

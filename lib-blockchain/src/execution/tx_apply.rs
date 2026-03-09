@@ -227,7 +227,10 @@ impl<'a> StateMutator<'a> {
     }
 
     /// Persist a token contract in canonical state storage.
-    pub fn put_token_contract(&self, contract: &crate::contracts::TokenContract) -> TxApplyResult<()> {
+    pub fn put_token_contract(
+        &self,
+        contract: &crate::contracts::TokenContract,
+    ) -> TxApplyResult<()> {
         self.store.put_token_contract(contract)?;
         Ok(())
     }
@@ -517,7 +520,9 @@ impl<'a> StateMutator<'a> {
 
     /// Read the token balance for an address without mutating state.
     pub fn get_token_balance(&self, token: &TokenId, addr: &Address) -> TxApplyResult<u64> {
-        let balance = self.store.get_token_balance(token, addr)
+        let balance = self
+            .store
+            .get_token_balance(token, addr)
             .map_err(|e| TxApplyError::Storage(e.to_string()))?;
         let balance_u64 = u64::try_from(balance)
             .map_err(|_| TxApplyError::Storage("token balance exceeds u64::MAX".to_string()))?;
@@ -665,7 +670,9 @@ pub fn apply_bonding_curve_deploy(
     symbol: &str,
 ) -> TxApplyResult<()> {
     // Reject duplicate symbols deterministically before any state mutation.
-    if mutator.store.get_bonding_curve_by_symbol(symbol)
+    if mutator
+        .store
+        .get_bonding_curve_by_symbol(symbol)
         .map_err(|e| TxApplyError::Internal(e.to_string()))?
         .is_some()
     {
@@ -678,7 +685,9 @@ pub fn apply_bonding_curve_deploy(
     // Store the bonding curve token
     mutator.put_bonding_curve_token(token_id, token)?;
     // Create symbol index
-    mutator.store.put_bonding_curve_symbol_index(symbol, token_id)?;
+    mutator
+        .store
+        .put_bonding_curve_symbol_index(symbol, token_id)?;
     Ok(())
 }
 
@@ -695,7 +704,8 @@ pub fn apply_bonding_curve_buy(
     // balance. Enabling this without the debit would allow free token minting.
     // Re-enable once the reserve asset ledger is integrated.
     Err(TxApplyError::InvalidType(
-        "BondingCurveBuy is not yet enabled: reserve asset debit is not modeled in consensus state".to_string(),
+        "BondingCurveBuy is not yet enabled: reserve asset debit is not modeled in consensus state"
+            .to_string(),
     ))
 }
 
@@ -731,9 +741,9 @@ pub fn apply_bonding_curve_graduate(
     block_timestamp: u64,
 ) -> TxApplyResult<()> {
     // Get current token state
-    let mut token = mutator
-        .get_bonding_curve_token(token_id)?
-        .ok_or_else(|| TxApplyError::Internal(format!("Bonding curve token not found: {:?}", token_id)))?;
+    let mut token = mutator.get_bonding_curve_token(token_id)?.ok_or_else(|| {
+        TxApplyError::Internal(format!("Bonding curve token not found: {:?}", token_id))
+    })?;
 
     // Delegate to BondingCurveToken::graduate(), which checks:
     //   1. Token is in Phase::Curve (not already graduated)
@@ -952,11 +962,8 @@ where
 
     // Process the attestation through oracle state
     // This handles: validation, aggregation, threshold detection, finalization
-    let result = oracle_state.process_attestation(
-        &attestation,
-        current_epoch,
-        resolve_signing_pubkey,
-    );
+    let result =
+        oracle_state.process_attestation(&attestation, current_epoch, resolve_signing_pubkey);
 
     match result {
         Ok(admission) => {
@@ -975,7 +982,7 @@ where
         Err(crate::oracle::OracleAttestationAdmissionError::ConflictingSigner { .. }) => {
             // Double-sign detected - this should trigger slashing
             Err(TxApplyError::InvalidType(
-                "Conflicting attestation detected - validator double-signed".to_string()
+                "Conflicting attestation detected - validator double-signed".to_string(),
             ))
         }
         Err(e) => Err(TxApplyError::InvalidType(format!(

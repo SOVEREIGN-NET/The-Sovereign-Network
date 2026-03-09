@@ -21,8 +21,8 @@ pub use storage::{set_did_store_dir, set_did_store_memory};
 /// assert_eq!(id.as_bytes().len(), 32);
 /// ```
 pub fn parse_did_to_identity_id(did: &str) -> anyhow::Result<lib_crypto::Hash> {
-    let id_hex = did.strip_prefix("did:zhtp:")
+    let id_hex = did
+        .strip_prefix("did:zhtp:")
         .ok_or_else(|| anyhow::anyhow!("Invalid DID format: must start with 'did:zhtp:'"))?;
-    lib_crypto::Hash::from_hex(id_hex)
-        .map_err(|e| anyhow::anyhow!("Invalid DID hex: {}", e))
+    lib_crypto::Hash::from_hex(id_hex).map_err(|e| anyhow::anyhow!("Invalid DID hex: {}", e))
 }

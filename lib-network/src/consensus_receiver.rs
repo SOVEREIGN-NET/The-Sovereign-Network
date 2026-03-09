@@ -95,7 +95,12 @@ impl DedupCache {
     ///     // Duplicate - drop silently
     /// }
     /// ```
-    fn try_insert_if_new(&mut self, validator_id: &IdentityId, message_id: &Hash, now: u64) -> bool {
+    fn try_insert_if_new(
+        &mut self,
+        validator_id: &IdentityId,
+        message_id: &Hash,
+        now: u64,
+    ) -> bool {
         // Clean up old entries first
         self.cleanup_expired(now);
 
@@ -360,11 +365,8 @@ mod tests {
             .unwrap();
 
         // No message should reach the channel
-        let timeout_result = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            channel.recv(),
-        )
-        .await;
+        let timeout_result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), channel.recv()).await;
         assert!(
             timeout_result.is_err(),
             "Unknown validator message should be rejected"
@@ -386,7 +388,12 @@ mod tests {
 
         // Send from registered validator - should be accepted
         receiver
-            .receive_message(validator_id.clone(), now, message_id.clone(), payload.clone())
+            .receive_message(
+                validator_id.clone(),
+                now,
+                message_id.clone(),
+                payload.clone(),
+            )
             .await
             .unwrap();
 
@@ -415,13 +422,23 @@ mod tests {
 
         // First message - should be accepted
         receiver
-            .receive_message(validator_id.clone(), now, message_id.clone(), payload.clone())
+            .receive_message(
+                validator_id.clone(),
+                now,
+                message_id.clone(),
+                payload.clone(),
+            )
             .await
             .unwrap();
 
         // Second message with same (validator, message_id) - should be silently dropped
         receiver
-            .receive_message(validator_id.clone(), now, message_id.clone(), payload.clone())
+            .receive_message(
+                validator_id.clone(),
+                now,
+                message_id.clone(),
+                payload.clone(),
+            )
             .await
             .unwrap();
 
@@ -434,12 +451,12 @@ mod tests {
         assert_eq!(msg1.payload, payload);
 
         // No second message (duplicate dropped)
-        let timeout_result = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            channel.recv(),
-        )
-        .await;
-        assert!(timeout_result.is_err(), "Should timeout - no duplicate message");
+        let timeout_result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), channel.recv()).await;
+        assert!(
+            timeout_result.is_err(),
+            "Should timeout - no duplicate message"
+        );
     }
 
     /// Test CR-3: Different validators, same message_id → both accepted
@@ -464,13 +481,23 @@ mod tests {
 
         // Validator A sends message_id=99
         receiver
-            .receive_message(validator_a.clone(), now, message_id.clone(), payload_a.clone())
+            .receive_message(
+                validator_a.clone(),
+                now,
+                message_id.clone(),
+                payload_a.clone(),
+            )
             .await
             .unwrap();
 
         // Validator B sends same message_id=99 → should be accepted (different validator)
         receiver
-            .receive_message(validator_b.clone(), now, message_id.clone(), payload_b.clone())
+            .receive_message(
+                validator_b.clone(),
+                now,
+                message_id.clone(),
+                payload_b.clone(),
+            )
             .await
             .unwrap();
 
@@ -536,11 +563,8 @@ mod tests {
         assert_eq!(msg1.from_validator_id, validator_id);
 
         // No second message should be available
-        let timeout_result = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            channel.recv(),
-        )
-        .await;
+        let timeout_result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), channel.recv()).await;
         assert!(
             timeout_result.is_err(),
             "Should timeout - only 1 message should reach channel, but another is waiting"
@@ -588,11 +612,7 @@ mod tests {
         // All messages should be delivered (channel capacity >= senders)
         let mut received_count = 0;
         loop {
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(100),
-                channel.recv(),
-            )
-            .await
+            match tokio::time::timeout(std::time::Duration::from_millis(100), channel.recv()).await
             {
                 Ok(Some(_)) => received_count += 1,
                 Ok(None) => break,
@@ -634,12 +654,12 @@ mod tests {
         assert!(result.is_ok()); // No error, but message was dropped
 
         // Verify message was NOT delivered to channel
-        let timeout_result = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            channel.recv(),
-        )
-        .await;
-        assert!(timeout_result.is_err(), "Stale message should be dropped, not delivered");
+        let timeout_result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), channel.recv()).await;
+        assert!(
+            timeout_result.is_err(),
+            "Stale message should be dropped, not delivered"
+        );
     }
 
     /// Test CR-4: Time sanity - reject future messages
@@ -670,12 +690,12 @@ mod tests {
         assert!(result.is_ok()); // No error, but message was dropped
 
         // Verify message was NOT delivered to channel
-        let timeout_result = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            channel.recv(),
-        )
-        .await;
-        assert!(timeout_result.is_err(), "Future message should be dropped, not delivered");
+        let timeout_result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), channel.recv()).await;
+        assert!(
+            timeout_result.is_err(),
+            "Future message should be dropped, not delivered"
+        );
     }
 
     /// Test CR-7: Channel isolation - consensus receives exactly what was enqueued
@@ -704,13 +724,10 @@ mod tests {
             .unwrap();
 
         // Receive from channel (with timeout)
-        let received = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            channel.recv(),
-        )
-        .await
-        .expect("timeout")
-        .expect("channel closed");
+        let received = tokio::time::timeout(std::time::Duration::from_secs(1), channel.recv())
+            .await
+            .expect("timeout")
+            .expect("channel closed");
 
         // Verify exact contents
         assert_eq!(received.from_validator_id, validator_id);
@@ -775,12 +792,7 @@ mod tests {
 
         // Now try to send our target message - channel is full, should drop
         receiver
-            .receive_message(
-                validator_id.clone(),
-                now,
-                message_id.clone(),
-                vec![99],
-            )
+            .receive_message(validator_id.clone(), now, message_id.clone(), vec![99])
             .await
             .unwrap();
 
@@ -790,12 +802,7 @@ mod tests {
 
         // Now retry the same message → should succeed because it's not in cache
         receiver
-            .receive_message(
-                validator_id.clone(),
-                now,
-                message_id.clone(),
-                vec![99],
-            )
+            .receive_message(validator_id.clone(), now, message_id.clone(), vec![99])
             .await
             .unwrap();
 
@@ -904,22 +911,12 @@ mod tests {
         let payload = vec![0x01];
 
         receiver
-            .receive_message(
-                validator_id.clone(),
-                now,
-                msg1_id.clone(),
-                payload.clone(),
-            )
+            .receive_message(validator_id.clone(), now, msg1_id.clone(), payload.clone())
             .await
             .unwrap();
 
         receiver
-            .receive_message(
-                validator_id.clone(),
-                now,
-                msg2_id.clone(),
-                payload.clone(),
-            )
+            .receive_message(validator_id.clone(), now, msg2_id.clone(), payload.clone())
             .await
             .unwrap();
 

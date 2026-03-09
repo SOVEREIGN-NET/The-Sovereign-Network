@@ -1,9 +1,9 @@
 //! Identity proof integration with ZK system
 
-use anyhow::{Result, anyhow};
-use lib_proofs::{ZkProofSystem, ZkProof, plonky2::Plonky2Proof};
+use anyhow::{anyhow, Result};
 use lib_crypto::hash_blake3;
-use serde::{Serialize, Deserialize};
+use lib_proofs::{plonky2::Plonky2Proof, ZkProof, ZkProofSystem};
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 /// Identity proof parameters for mesh network participation
@@ -22,7 +22,7 @@ impl Default for IdentityProofParams {
         Self {
             min_age: 18,
             required_jurisdiction: 0, // No jurisdiction requirement by default
-            verification_level: 1,   // Basic verification
+            verification_level: 1,    // Basic verification
         }
     }
 }
@@ -50,7 +50,7 @@ impl IdentityCircuit {
             credential_hash,
         }
     }
-    
+
     #[allow(dead_code)]
     fn generate_constraints(&self) -> Result<Vec<u8>> {
         // Generate constraints for identity verification
@@ -61,7 +61,7 @@ impl IdentityCircuit {
         );
         Ok(circuit_description.into_bytes())
     }
-    
+
     #[allow(dead_code)]
     fn get_public_inputs(&self) -> IdentityPublicInputs {
         IdentityPublicInputs {
@@ -74,15 +74,12 @@ impl IdentityCircuit {
                 .as_secs(),
         }
     }
-    
+
     /// Generate identity proof using lib-proofs
-    pub async fn generate_proof(
-        &self, 
-        params: &IdentityProofParams,
-    ) -> Result<ZkProof> {
+    pub async fn generate_proof(&self, params: &IdentityProofParams) -> Result<ZkProof> {
         // Use lib-proofs to generate the actual proof
         let zk_system = ZkProofSystem::new()?;
-        
+
         // Generate proof using the ZK system
         let proof = zk_system.prove_identity(
             self.identity_secret,
@@ -93,7 +90,7 @@ impl IdentityCircuit {
             params.required_jurisdiction,
             params.verification_level,
         )?;
-        
+
         // Convert Plonky2Proof to ZkProof
         let zk_proof = ZkProof::new(
             "ZHTP-Optimized-Identity".to_string(),
@@ -102,18 +99,18 @@ impl IdentityCircuit {
             proof.verification_key_hash.to_vec(),
             Some(proof),
         );
-        
+
         info!("Generated identity verification proof");
         Ok(zk_proof)
     }
-    
+
     /// Verify identity proof with custom parameters
     pub async fn verify_proof(
         proof: &ZkProof,
         public_inputs: &IdentityPublicInputs,
     ) -> Result<bool> {
         let zk_system = ZkProofSystem::new()?;
-        
+
         // Convert ZkProof back to Plonky2Proof format
         let plonky2_proof = if let Some(ref p2_proof) = proof.plonky2_proof {
             p2_proof.clone()
@@ -121,11 +118,15 @@ impl IdentityCircuit {
             // Create Plonky2Proof from ZkProof fields with 4-element public inputs
             let public_inputs_vec = vec![
                 if public_inputs.age_valid { 1u64 } else { 0u64 },
-                if public_inputs.jurisdiction_valid { 1u64 } else { 0u64 },
+                if public_inputs.jurisdiction_valid {
+                    1u64
+                } else {
+                    0u64
+                },
                 public_inputs.verification_level,
                 public_inputs.proof_timestamp,
             ];
-            
+
             Plonky2Proof {
                 proof: proof.proof_data.clone(),
                 public_inputs: public_inputs_vec,
@@ -145,10 +146,10 @@ impl IdentityCircuit {
                 private_input_commitment: [0u8; 32],
             }
         };
-        
+
         // Verify proof using the ZK system
         let is_valid = zk_system.verify_identity(&plonky2_proof)?;
-        
+
         info!("Identity proof verification result: {}", is_valid);
         Ok(is_valid)
     }
@@ -172,13 +173,15 @@ impl IdentityPublicInputs {
             self.proof_timestamp,
         ]
     }
-    
+
     /// Create from field elements
     pub fn from_field_elements(elements: &[u64]) -> Result<Self> {
         if elements.len() < 4 {
-            return Err(anyhow!("Insufficient field elements for IdentityPublicInputs"));
+            return Err(anyhow!(
+                "Insufficient field elements for IdentityPublicInputs"
+            ));
         }
-        
+
         Ok(Self {
             age_valid: elements[0] == 1,
             jurisdiction_valid: elements[1] == 1,
@@ -196,26 +199,26 @@ pub async fn generate_identity_proof() -> Result<Vec<u8>> {
 /// Generate identity proof with custom parameters
 pub async fn generate_identity_proof_with_params(params: &IdentityProofParams) -> Result<Vec<u8>> {
     info!("Generating identity proof for mesh network participation...");
-    
+
     // Initialize the ZK proof system
     let zk_system = ZkProofSystem::new()?;
-    
+
     // Generate realistic identity parameters for mesh network
     let identity_secret = generate_identity_secret()?;
-    
+
     // Generate an age that meets the generation parameters but allows testing parameter mismatches
     let age = generate_age_credential_for_params(params)?;
-    
+
     let jurisdiction_hash = if params.required_jurisdiction != 0 {
         params.required_jurisdiction
     } else {
         generate_jurisdiction_hash()?
     };
     let credential_hash = generate_credential_hash(identity_secret, age)?;
-    
+
     info!("Identity parameters generated: age={}, min_age_required={}, jurisdiction={}, required_jurisdiction={}", 
           age, params.min_age, jurisdiction_hash, params.required_jurisdiction);
-    
+
     // Create identity circuit
     let _circuit = IdentityCircuit {
         identity_secret,
@@ -223,7 +226,7 @@ pub async fn generate_identity_proof_with_params(params: &IdentityProofParams) -
         jurisdiction: jurisdiction_hash,
         credential_hash,
     };
-    
+
     // Generate zero-knowledge identity proof
     let proof = zk_system.prove_identity(
         identity_secret,
@@ -234,7 +237,7 @@ pub async fn generate_identity_proof_with_params(params: &IdentityProofParams) -
         params.required_jurisdiction,
         params.verification_level,
     )?;
-    
+
     info!("Generated identity proof with age={}, jurisdiction={}, min_age={}, required_jurisdiction={}", 
           age, jurisdiction_hash, params.min_age, params.required_jurisdiction);
 
@@ -249,7 +252,7 @@ pub async fn generate_identity_proof_with_params(params: &IdentityProofParams) -
 
     // Serialize the proof for network transmission
     let proof_bytes = serialize_identity_proof(&zk_proof)?;
-    
+
     info!("identity proof generated: {} bytes", proof_bytes.len());
     Ok(proof_bytes)
 }
@@ -260,30 +263,38 @@ pub async fn verify_identity_proof(proof_bytes: &[u8]) -> Result<bool> {
 }
 
 /// Verify identity proof with custom parameters
-pub async fn verify_identity_proof_with_params(proof_bytes: &[u8], params: &IdentityProofParams) -> Result<bool> {
+pub async fn verify_identity_proof_with_params(
+    proof_bytes: &[u8],
+    params: &IdentityProofParams,
+) -> Result<bool> {
     info!("Verifying identity proof...");
-    
+
     // Initialize the ZK proof system
     let zk_system = ZkProofSystem::new()?;
-    
+
     // Deserialize the proof
     let proof = deserialize_identity_proof(proof_bytes)
         .map_err(|e| anyhow!("Failed to deserialize identity proof: {}", e))?;
-    
+
     // Convert ZkProof to Plonky2Proof format for verification
     let plonky2_proof = if let Some(ref p2_proof) = proof.plonky2_proof {
         p2_proof.clone()
     } else {
         // Parse public inputs from proof - should be 4 elements
-        let public_inputs: Vec<u64> = serde_json::from_slice(&proof.public_inputs)
-            .unwrap_or_else(|_| {
+        let public_inputs: Vec<u64> =
+            serde_json::from_slice(&proof.public_inputs).unwrap_or_else(|_| {
                 // Default to valid identity proof inputs for backward compatibility
-                vec![1, 1, 1, std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs()]
+                vec![
+                    1,
+                    1,
+                    1,
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                ]
             });
-        
+
         Plonky2Proof {
             proof: proof.proof_data.clone(),
             public_inputs,
@@ -320,52 +331,76 @@ pub async fn verify_identity_proof_with_params(proof_bytes: &[u8], params: &Iden
                 .as_secs(),
         }
     };
-    
+
     // Extract actual age from proof data for validation
     let actual_age = if plonky2_proof.proof.len() >= 16 {
         u64::from_le_bytes([
-            plonky2_proof.proof[8], plonky2_proof.proof[9], plonky2_proof.proof[10], plonky2_proof.proof[11],
-            plonky2_proof.proof[12], plonky2_proof.proof[13], plonky2_proof.proof[14], plonky2_proof.proof[15],
+            plonky2_proof.proof[8],
+            plonky2_proof.proof[9],
+            plonky2_proof.proof[10],
+            plonky2_proof.proof[11],
+            plonky2_proof.proof[12],
+            plonky2_proof.proof[13],
+            plonky2_proof.proof[14],
+            plonky2_proof.proof[15],
         ])
     } else {
         // Default age for backward compatibility
         25
     };
-    
+
     // Extract actual jurisdiction from proof data
     let actual_jurisdiction = if plonky2_proof.proof.len() >= 24 {
         u64::from_le_bytes([
-            plonky2_proof.proof[16], plonky2_proof.proof[17], plonky2_proof.proof[18], plonky2_proof.proof[19],
-            plonky2_proof.proof[20], plonky2_proof.proof[21], plonky2_proof.proof[22], plonky2_proof.proof[23],
+            plonky2_proof.proof[16],
+            plonky2_proof.proof[17],
+            plonky2_proof.proof[18],
+            plonky2_proof.proof[19],
+            plonky2_proof.proof[20],
+            plonky2_proof.proof[21],
+            plonky2_proof.proof[22],
+            plonky2_proof.proof[23],
         ])
     } else {
         0 // Default no jurisdiction requirement
     };
-    
+
     info!("Proof validation: actual_age={}, required_min_age={}, actual_jurisdiction={}, required_jurisdiction={}", 
           actual_age, params.min_age, actual_jurisdiction, params.required_jurisdiction);
-    
+
     // Validate proof parameters match requirements - this is the key validation
     if actual_age < params.min_age {
-        warn!("Identity proof age requirement not satisfied: {} < {}", actual_age, params.min_age);
+        warn!(
+            "Identity proof age requirement not satisfied: {} < {}",
+            actual_age, params.min_age
+        );
         return Ok(false);
     }
-    
+
     if params.required_jurisdiction != 0 && actual_jurisdiction != params.required_jurisdiction {
-        warn!("Identity proof jurisdiction requirement not satisfied: {} != {}", actual_jurisdiction, params.required_jurisdiction);
+        warn!(
+            "Identity proof jurisdiction requirement not satisfied: {} != {}",
+            actual_jurisdiction, params.required_jurisdiction
+        );
         return Ok(false);
     }
-    
+
     if public_inputs.verification_level < params.verification_level {
-        warn!("Identity proof verification level insufficient: {} < {}", public_inputs.verification_level, params.verification_level);
+        warn!(
+            "Identity proof verification level insufficient: {} < {}",
+            public_inputs.verification_level, params.verification_level
+        );
         return Ok(false);
     }
-    
+
     if public_inputs.verification_level < params.verification_level {
-        warn!("Identity proof verification level insufficient: {} < {}", public_inputs.verification_level, params.verification_level);
+        warn!(
+            "Identity proof verification level insufficient: {} < {}",
+            public_inputs.verification_level, params.verification_level
+        );
         return Ok(false);
     }
-    
+
     // Additional validation: For parameter mismatch tests, we need to validate
     // that the proof was actually generated with compatible parameters
     // Check if the proof's internal validation matches the verification requirements
@@ -373,38 +408,59 @@ pub async fn verify_identity_proof_with_params(proof_bytes: &[u8], params: &Iden
         // Extract the actual proof parameters from the proof data
         if p2_proof.proof.len() >= 32 {
             let actual_age = u64::from_le_bytes([
-                p2_proof.proof[8], p2_proof.proof[9], p2_proof.proof[10], p2_proof.proof[11],
-                p2_proof.proof[12], p2_proof.proof[13], p2_proof.proof[14], p2_proof.proof[15],
+                p2_proof.proof[8],
+                p2_proof.proof[9],
+                p2_proof.proof[10],
+                p2_proof.proof[11],
+                p2_proof.proof[12],
+                p2_proof.proof[13],
+                p2_proof.proof[14],
+                p2_proof.proof[15],
             ]);
             let actual_jurisdiction = u64::from_le_bytes([
-                p2_proof.proof[16], p2_proof.proof[17], p2_proof.proof[18], p2_proof.proof[19],
-                p2_proof.proof[20], p2_proof.proof[21], p2_proof.proof[22], p2_proof.proof[23],
+                p2_proof.proof[16],
+                p2_proof.proof[17],
+                p2_proof.proof[18],
+                p2_proof.proof[19],
+                p2_proof.proof[20],
+                p2_proof.proof[21],
+                p2_proof.proof[22],
+                p2_proof.proof[23],
             ]);
-            
+
             // Validate actual age meets verification requirement
             if actual_age < params.min_age {
-                warn!("Actual age {} does not meet minimum requirement {}", actual_age, params.min_age);
+                warn!(
+                    "Actual age {} does not meet minimum requirement {}",
+                    actual_age, params.min_age
+                );
                 return Ok(false);
             }
-            
+
             // Validate jurisdiction if required
-            if params.required_jurisdiction != 0 && actual_jurisdiction != params.required_jurisdiction {
-                warn!("Actual jurisdiction {} does not match requirement {}", actual_jurisdiction, params.required_jurisdiction);
+            if params.required_jurisdiction != 0
+                && actual_jurisdiction != params.required_jurisdiction
+            {
+                warn!(
+                    "Actual jurisdiction {} does not match requirement {}",
+                    actual_jurisdiction, params.required_jurisdiction
+                );
                 return Ok(false);
             }
         }
     }
-    
+
     // Perform zero-knowledge verification
-    let is_valid = zk_system.verify_identity(&plonky2_proof)
+    let is_valid = zk_system
+        .verify_identity(&plonky2_proof)
         .map_err(|e| anyhow!("Identity proof verification failed: {}", e))?;
-    
+
     if is_valid {
         info!("Identity proof verification successful");
     } else {
         warn!("Identity proof verification failed");
     }
-    
+
     Ok(is_valid)
 }
 
@@ -415,7 +471,7 @@ fn generate_identity_secret() -> Result<u64> {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos() as u64;
-    
+
     Ok(timestamp ^ 0x1234567890ABCDEF)
 }
 
@@ -442,8 +498,9 @@ fn generate_jurisdiction_hash() -> Result<u64> {
     let jurisdictions = [840, 826, 276, 124, 392, 036, 250, 380];
     let index = (std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs() % jurisdictions.len() as u64) as usize;
-    
+        .as_secs()
+        % jurisdictions.len() as u64) as usize;
+
     Ok(jurisdictions[index])
 }
 
@@ -451,11 +508,10 @@ fn generate_jurisdiction_hash() -> Result<u64> {
 fn generate_credential_hash(identity_secret: u64, age: u64) -> Result<u64> {
     let credential_data = format!("identity:{}:age:{}", identity_secret, age);
     let hash = hash_blake3(credential_data.as_bytes());
-    
+
     // Convert first 8 bytes of hash to u64
     Ok(u64::from_le_bytes([
-        hash[0], hash[1], hash[2], hash[3],
-        hash[4], hash[5], hash[6], hash[7],
+        hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6], hash[7],
     ]))
 }
 
@@ -470,9 +526,9 @@ fn serialize_identity_proof(proof: &ZkProof) -> Result<Vec<u8>> {
 fn deserialize_identity_proof(proof_bytes: &[u8]) -> Result<ZkProof> {
     let json = String::from_utf8(proof_bytes.to_vec())
         .map_err(|e| anyhow!("Invalid UTF-8 in identity proof: {}", e))?;
-    
+
     let proof: ZkProof = serde_json::from_str(&json)
         .map_err(|e| anyhow!("Failed to deserialize identity proof: {}", e))?;
-    
+
     Ok(proof)
 }

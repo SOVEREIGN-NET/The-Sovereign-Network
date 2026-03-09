@@ -198,7 +198,11 @@ async fn test_nonce_cache_1m_entries_stress() -> Result<()> {
     println!("  Total time: {:?}", elapsed);
     println!("  Entries inserted: {}", ENTRY_COUNT);
     println!("  Throughput: {:.2} entries/sec", throughput);
-    println!("  Latency - p50: {:?}, p99: {:?}", metrics.p50(), metrics.p99());
+    println!(
+        "  Latency - p50: {:?}, p99: {:?}",
+        metrics.p50(),
+        metrics.p99()
+    );
     println!("  Memory usage: {:.2} MB", memory_mb);
     println!("  Cache size: {}", cache.size());
     println!("  Cache utilization: {:.2}%", cache.utilization() * 100.0);
@@ -318,7 +322,10 @@ async fn test_nonce_cache_concurrent_100_workers() -> Result<()> {
     println!("  Total operations: {}", total_ops);
     println!("  Throughput: {:.2} ops/sec", throughput);
     println!("  New nonces: {}", success_count.load(Ordering::Relaxed));
-    println!("  Replays detected: {}", replay_count.load(Ordering::Relaxed));
+    println!(
+        "  Replays detected: {}",
+        replay_count.load(Ordering::Relaxed)
+    );
     println!("  Errors: {}", error_count.load(Ordering::Relaxed));
     println!(
         "  Latency - p50: {:?}, p99: {:?}",
@@ -489,7 +496,10 @@ async fn test_nonce_cache_memory_bounded() -> Result<()> {
 
     println!("\nResults:");
     println!("  Total time: {:?}", elapsed);
-    println!("  Final cache size: {} (max: {})", final_cache_size, MAX_CACHE_SIZE);
+    println!(
+        "  Final cache size: {} (max: {})",
+        final_cache_size, MAX_CACHE_SIZE
+    );
     println!("  Memory usage: {:.2} MB", memory_mb);
     println!("  Utilization: {:.2}%", cache.utilization() * 100.0);
 
@@ -606,7 +616,10 @@ async fn test_nonce_cache_performance_baseline() -> Result<()> {
         "║ Date: {}                                      ║",
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
     );
-    println!("║ Iterations: {:>6}                                          ║", ITERATIONS);
+    println!(
+        "║ Iterations: {:>6}                                          ║",
+        ITERATIONS
+    );
     println!("╚══════════════════════════════════════════════════════════════╝");
 
     // mark_nonce_seen performance (new nonces)

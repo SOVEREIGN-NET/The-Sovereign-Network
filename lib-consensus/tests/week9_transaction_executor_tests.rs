@@ -5,8 +5,8 @@
 
 #[cfg(test)]
 mod transaction_executor_tests {
+    use lib_consensus::engines::{BlockExecutionContext, TransactionExecutor};
     use lib_consensus::{Mempool, MempoolTransaction};
-    use lib_consensus::engines::{TransactionExecutor, BlockExecutionContext};
     use lib_crypto::Hash;
 
     #[test]
@@ -15,7 +15,9 @@ mod transaction_executor_tests {
         let tx_hash = [1u8; 32];
 
         // Add transaction
-        assert!(mempool.add_transaction(tx_hash, 1000, 200, 100, 1000000).is_ok());
+        assert!(mempool
+            .add_transaction(tx_hash, 1000, 200, 100, 1000000)
+            .is_ok());
         assert_eq!(mempool.size(), 1);
         assert_eq!(mempool.total_pending_fees(), 1000);
 
@@ -31,9 +33,15 @@ mod transaction_executor_tests {
         let mut mempool = Mempool::new(100, 1000);
 
         // Add transactions with different fees
-        mempool.add_transaction([1u8; 32], 100, 100, 100, 1000000).ok();
-        mempool.add_transaction([2u8; 32], 1000, 100, 100, 1000000).ok(); // High fee
-        mempool.add_transaction([3u8; 32], 500, 100, 100, 1000000).ok();
+        mempool
+            .add_transaction([1u8; 32], 100, 100, 100, 1000000)
+            .ok();
+        mempool
+            .add_transaction([2u8; 32], 1000, 100, 100, 1000000)
+            .ok(); // High fee
+        mempool
+            .add_transaction([3u8; 32], 500, 100, 100, 1000000)
+            .ok();
 
         // Select top 2 by priority
         let selected = mempool.select_transactions(2, 100);
@@ -55,9 +63,18 @@ mod transaction_executor_tests {
         let mut executor = TransactionExecutor::new(100, 1_000_000, 1000, 1000);
 
         // Add transactions to mempool
-        executor.mempool.add_transaction([1u8; 32], 1000, 200, 100, 1000000).ok();
-        executor.mempool.add_transaction([2u8; 32], 500, 100, 100, 1000000).ok();
-        executor.mempool.add_transaction([3u8; 32], 300, 150, 100, 1000000).ok();
+        executor
+            .mempool
+            .add_transaction([1u8; 32], 1000, 200, 100, 1000000)
+            .ok();
+        executor
+            .mempool
+            .add_transaction([2u8; 32], 500, 100, 100, 1000000)
+            .ok();
+        executor
+            .mempool
+            .add_transaction([3u8; 32], 300, 150, 100, 1000000)
+            .ok();
 
         // Prepare block
         let (selected, total_fees, total_size) = executor.prepare_block_transactions(100);
@@ -69,9 +86,7 @@ mod transaction_executor_tests {
         // Verify total fees match sum of selected
         let expected_fees: u64 = selected
             .iter()
-            .filter_map(|tx_hash| {
-                executor.mempool.get_transaction(tx_hash).map(|tx| tx.fee)
-            })
+            .filter_map(|tx_hash| executor.mempool.get_transaction(tx_hash).map(|tx| tx.fee))
             .sum();
         assert_eq!(total_fees, expected_fees);
     }
@@ -81,7 +96,10 @@ mod transaction_executor_tests {
         let mut executor = TransactionExecutor::new(100, 1_000_000, 1000, 1000);
 
         // Add transaction to mempool
-        executor.mempool.add_transaction([1u8; 32], 1000, 200, 100, 1000000).ok();
+        executor
+            .mempool
+            .add_transaction([1u8; 32], 1000, 200, 100, 1000000)
+            .ok();
 
         // Execute transaction
         let (total_fees, results) = executor.execute_transactions(&[[1u8; 32]], 100);
@@ -97,7 +115,10 @@ mod transaction_executor_tests {
         let mut executor = TransactionExecutor::new(100, 1_000_000, 1000, 1000);
 
         // Add transaction to mempool
-        executor.mempool.add_transaction([1u8; 32], 1000, 200, 100, 1000000).ok();
+        executor
+            .mempool
+            .add_transaction([1u8; 32], 1000, 200, 100, 1000000)
+            .ok();
         assert_eq!(executor.get_mempool_size(), 1);
 
         // Finalize block (remove from mempool)
@@ -110,7 +131,9 @@ mod transaction_executor_tests {
         let mut mempool = Mempool::new(100, 10); // 10 block max age
 
         // Add transaction
-        mempool.add_transaction([1u8; 32], 1000, 200, 100, 1000000).ok();
+        mempool
+            .add_transaction([1u8; 32], 1000, 200, 100, 1000000)
+            .ok();
         assert_eq!(mempool.size(), 1);
 
         // Evict expired transactions (block 115 > 100 + 10)
@@ -138,8 +161,12 @@ mod transaction_executor_tests {
     fn test_mempool_statistics() {
         let mut mempool = Mempool::new(100, 1000);
 
-        mempool.add_transaction([1u8; 32], 1000, 200, 100, 1000000).ok();
-        mempool.add_transaction([2u8; 32], 500, 150, 100, 1000000).ok();
+        mempool
+            .add_transaction([1u8; 32], 1000, 200, 100, 1000000)
+            .ok();
+        mempool
+            .add_transaction([2u8; 32], 500, 150, 100, 1000000)
+            .ok();
 
         let stats = mempool.stats();
         assert_eq!(stats.transaction_count, 2);
@@ -174,7 +201,9 @@ mod transaction_executor_tests {
         let tx_hash = [1u8; 32];
 
         // Add transaction
-        assert!(mempool.add_transaction(tx_hash, 1000, 200, 100, 1000000).is_ok());
+        assert!(mempool
+            .add_transaction(tx_hash, 1000, 200, 100, 1000000)
+            .is_ok());
 
         // Try to add duplicate
         let result = mempool.add_transaction(tx_hash, 1000, 200, 100, 1000000);
@@ -187,8 +216,12 @@ mod transaction_executor_tests {
         let mut mempool = Mempool::new(2, 1000); // Capacity 2
 
         // Add 2 transactions
-        mempool.add_transaction([1u8; 32], 1000, 200, 100, 1000000).ok();
-        mempool.add_transaction([2u8; 32], 500, 100, 100, 1000000).ok();
+        mempool
+            .add_transaction([1u8; 32], 1000, 200, 100, 1000000)
+            .ok();
+        mempool
+            .add_transaction([2u8; 32], 500, 100, 100, 1000000)
+            .ok();
         assert_eq!(mempool.size(), 2);
 
         // Try to add 3rd (should fail)
@@ -202,7 +235,10 @@ mod transaction_executor_tests {
         let mut executor = TransactionExecutor::new(100, 1_000_000, 1000, 1000);
 
         let tx_hash = [1u8; 32];
-        executor.mempool.add_transaction(tx_hash, 1000, 200, 100, 1000000).ok();
+        executor
+            .mempool
+            .add_transaction(tx_hash, 1000, 200, 100, 1000000)
+            .ok();
 
         // Check if transaction is pending
         assert!(executor.is_pending(&tx_hash));
@@ -217,14 +253,24 @@ mod transaction_executor_tests {
         let mut mempool = Mempool::new(100, 1000);
 
         // Low fee, small tx: fee/byte = 1000/100 = 10
-        mempool.add_transaction([1u8; 32], 1000, 100, 100, 1000000).ok();
+        mempool
+            .add_transaction([1u8; 32], 1000, 100, 100, 1000000)
+            .ok();
 
         // High fee, large tx: fee/byte = 1000/200 = 5
-        mempool.add_transaction([2u8; 32], 1000, 200, 100, 1000000).ok();
+        mempool
+            .add_transaction([2u8; 32], 1000, 200, 100, 1000000)
+            .ok();
 
         // First transaction should have higher priority (higher fee/byte)
-        let tx1_priority = mempool.get_transaction(&[1u8; 32]).unwrap().priority_score(100);
-        let tx2_priority = mempool.get_transaction(&[2u8; 32]).unwrap().priority_score(100);
+        let tx1_priority = mempool
+            .get_transaction(&[1u8; 32])
+            .unwrap()
+            .priority_score(100);
+        let tx2_priority = mempool
+            .get_transaction(&[2u8; 32])
+            .unwrap()
+            .priority_score(100);
 
         assert!(tx1_priority > tx2_priority);
     }

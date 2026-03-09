@@ -1,16 +1,16 @@
 //! Transaction proof verification
-//! 
+//!
 //! High-performance verification system for transaction proofs with
 //! batch processing and caching capabilities.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use std::collections::{HashMap, HashSet};
 use crate::circuits::{TransactionCircuit, TransactionProof};
+use crate::plonky2::CircuitConfig;
 use crate::transaction::ZkTransactionProof;
 use crate::types::{VerificationResult, ZkProof};
-use crate::plonky2::CircuitConfig;
+use anyhow::Result;
 use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 /// Merkle proof structure for transaction inclusion verification
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,16 +27,20 @@ pub struct MerkleProof {
 pub trait BlockchainStateProvider: std::fmt::Debug + Send + Sync {
     /// Check if a nullifier has already been used on-chain
     fn is_nullifier_used(&self, nullifier: &[u8; 32]) -> Result<bool>;
-    
+
     /// Get the current block height
     fn get_current_block_height(&self) -> Result<u64>;
-    
+
     /// Verify transaction inclusion in a specific block
     fn verify_transaction_inclusion(&self, tx_hash: &[u8; 32], block_height: u64) -> Result<bool>;
-    
+
     /// Get Merkle proof for transaction in block
-    fn get_merkle_proof(&self, tx_hash: &[u8; 32], block_height: u64) -> Result<Option<MerkleProof>>;
-    
+    fn get_merkle_proof(
+        &self,
+        tx_hash: &[u8; 32],
+        block_height: u64,
+    ) -> Result<Option<MerkleProof>>;
+
     /// Mark nullifier as used (for state updates)
     fn mark_nullifier_used(&mut self, nullifier: &[u8; 32]) -> Result<()>;
 }
@@ -57,11 +61,11 @@ impl MockBlockchainState {
             transaction_merkle_roots: HashMap::new(),
         }
     }
-    
+
     pub fn set_block_height(&mut self, height: u64) {
         self.current_block_height = height;
     }
-    
+
     pub fn add_merkle_root(&mut self, block_height: u64, root: [u8; 32]) {
         self.transaction_merkle_roots.insert(block_height, root);
     }
@@ -71,17 +75,21 @@ impl BlockchainStateProvider for MockBlockchainState {
     fn is_nullifier_used(&self, nullifier: &[u8; 32]) -> Result<bool> {
         Ok(self.used_nullifiers.contains(nullifier))
     }
-    
+
     fn get_current_block_height(&self) -> Result<u64> {
         Ok(self.current_block_height)
     }
-    
+
     fn verify_transaction_inclusion(&self, _tx_hash: &[u8; 32], block_height: u64) -> Result<bool> {
         // Mock implementation - in version would verify against actual block
         Ok(self.transaction_merkle_roots.contains_key(&block_height))
     }
-    
-    fn get_merkle_proof(&self, _tx_hash: &[u8; 32], block_height: u64) -> Result<Option<MerkleProof>> {
+
+    fn get_merkle_proof(
+        &self,
+        _tx_hash: &[u8; 32],
+        block_height: u64,
+    ) -> Result<Option<MerkleProof>> {
         if let Some(root) = self.transaction_merkle_roots.get(&block_height) {
             // Mock proof - in implementation would generate actual Merkle proof
             Ok(Some(MerkleProof {
@@ -93,7 +101,7 @@ impl BlockchainStateProvider for MockBlockchainState {
             Ok(None)
         }
     }
-    
+
     fn mark_nullifier_used(&mut self, nullifier: &[u8; 32]) -> Result<()> {
         self.used_nullifiers.insert(*nullifier);
         Ok(())
@@ -171,7 +179,7 @@ impl TransactionVerifier {
     pub fn new() -> Result<Self> {
         let mut circuit = TransactionCircuit::standard();
         circuit.build()?;
-        
+
         Ok(Self {
             circuit,
             verification_cache: HashMap::new(),
@@ -187,7 +195,7 @@ impl TransactionVerifier {
     pub fn with_config(config: CircuitConfig) -> Result<Self> {
         let mut circuit = TransactionCircuit::new(config);
         circuit.build()?;
-        
+
         Ok(Self {
             circuit,
             verification_cache: HashMap::new(),
@@ -209,7 +217,7 @@ impl TransactionVerifier {
     /// Verify a transaction proof
     pub fn verify(&mut self, proof: &TransactionProof) -> Result<bool> {
         let start_time = std::time::Instant::now();
-        
+
         // Check cache first if enabled
         if self.cache_enabled {
             let proof_hash = self.calculate_proof_hash(proof);
@@ -224,7 +232,7 @@ impl TransactionVerifier {
 
         // Perform actual verification
         let is_valid = self.circuit.verify(proof)?;
-        
+
         // Cache result if enabled
         if self.cache_enabled {
             let proof_hash = self.calculate_proof_hash(proof);
@@ -235,7 +243,7 @@ impl TransactionVerifier {
         let verification_time = std::cmp::max(verification_time, 1);
         self.stats.add_verification_time(verification_time);
         self.stats.increment_verifications();
-        
+
         if is_valid {
             self.stats.valid_proofs += 1;
         } else {
@@ -248,7 +256,7 @@ impl TransactionVerifier {
     /// Verify with detailed result
     pub fn verify_detailed(&mut self, proof: &TransactionProof) -> Result<VerificationResult> {
         let start_time = std::time::Instant::now();
-        
+
         let is_valid = match self.verify(proof) {
             Ok(valid) => valid,
             Err(e) => {
@@ -258,7 +266,7 @@ impl TransactionVerifier {
 
         let verification_time = start_time.elapsed().as_millis() as u64;
         let verification_time = std::cmp::max(verification_time, 1);
-        
+
         if is_valid {
             Ok(VerificationResult::Valid {
                 circuit_id: "transaction_verifier".to_string(),
@@ -267,31 +275,36 @@ impl TransactionVerifier {
                 public_inputs: vec![],
             })
         } else {
-            Ok(VerificationResult::Invalid("Transaction verification failed".to_string()))
+            Ok(VerificationResult::Invalid(
+                "Transaction verification failed".to_string(),
+            ))
         }
     }
 
     /// Verify batch of transaction proofs
     pub fn verify_batch(&mut self, proofs: &[TransactionProof]) -> Result<Vec<bool>> {
         let mut results = Vec::with_capacity(proofs.len());
-        
+
         for proof in proofs {
             let is_valid = self.verify(proof)?;
             results.push(is_valid);
         }
-        
+
         Ok(results)
     }
 
     /// Verify batch with detailed results
-    pub fn verify_batch_detailed(&mut self, proofs: &[TransactionProof]) -> Result<Vec<VerificationResult>> {
+    pub fn verify_batch_detailed(
+        &mut self,
+        proofs: &[TransactionProof],
+    ) -> Result<Vec<VerificationResult>> {
         let mut results = Vec::with_capacity(proofs.len());
-        
+
         for proof in proofs {
             let result = self.verify_detailed(proof)?;
             results.push(result);
         }
-        
+
         Ok(results)
     }
 
@@ -299,15 +312,15 @@ impl TransactionVerifier {
     pub fn verify_batch_parallel(&mut self, proofs: &[TransactionProof]) -> Result<Vec<bool>> {
         // Note: In a implementation, this would use actual parallelization
         // For now, we'll simulate parallel processing with chunked verification
-        
+
         let chunk_size = std::cmp::max(1, proofs.len() / num_cpus::get());
         let mut results = Vec::with_capacity(proofs.len());
-        
+
         for chunk in proofs.chunks(chunk_size) {
             let chunk_results = self.verify_batch(chunk)?;
             results.extend(chunk_results);
         }
-        
+
         Ok(results)
     }
 
@@ -321,7 +334,7 @@ impl TransactionVerifier {
     /// Calculate proof hash for caching
     fn calculate_proof_hash(&self, proof: &TransactionProof) -> [u8; 32] {
         use lib_crypto::hashing::hash_blake3;
-        
+
         let mut data = Vec::new();
         data.extend_from_slice(&proof.sender_commitment);
         data.extend_from_slice(&proof.receiver_commitment);
@@ -329,7 +342,7 @@ impl TransactionVerifier {
         data.extend_from_slice(&proof.fee.to_le_bytes());
         data.extend_from_slice(&proof.nullifier);
         data.extend_from_slice(&proof.proof_data);
-        
+
         hash_blake3(&data)
     }
 
@@ -341,7 +354,7 @@ impl TransactionVerifier {
                 self.verification_cache.remove(&oldest_key);
             }
         }
-        
+
         self.verification_cache.insert(proof_hash, result);
     }
 
@@ -352,7 +365,8 @@ impl TransactionVerifier {
             cache_hits: self.stats.cache_hits,
             cache_misses: self.stats.cache_misses,
             hit_ratio: if self.stats.cache_hits + self.stats.cache_misses > 0 {
-                self.stats.cache_hits as f64 / (self.stats.cache_hits + self.stats.cache_misses) as f64
+                self.stats.cache_hits as f64
+                    / (self.stats.cache_hits + self.stats.cache_misses) as f64
             } else {
                 0.0
             },
@@ -373,7 +387,7 @@ impl TransactionVerifier {
     pub fn configure_cache(&mut self, enabled: bool, max_size: usize) {
         self.cache_enabled = enabled;
         self.cache_max_size = max_size;
-        
+
         if !enabled {
             self.clear_cache();
         }
@@ -399,9 +413,12 @@ impl TransactionVerifier {
     }
 
     /// Verify batched private transactions - eliminates timing correlation attacks
-    pub fn verify_private_batch(&mut self, batch: &BatchedPrivateTransaction) -> Result<PrivateBatchResult> {
+    pub fn verify_private_batch(
+        &mut self,
+        batch: &BatchedPrivateTransaction,
+    ) -> Result<PrivateBatchResult> {
         let start_time = std::time::Instant::now();
-        
+
         // Verify batch metadata integrity first
         if !self.verify_batch_metadata(&batch.batch_metadata, batch.transaction_proofs.len())? {
             return Ok(PrivateBatchResult {
@@ -419,7 +436,7 @@ impl TransactionVerifier {
         // Verify all transaction proofs in batch without exposing individual results
         let mut all_valid = true;
         let mut total_nullifiers = 0;
-        
+
         for tx_proof in &batch.transaction_proofs {
             // Verify transaction proof using ZK circuit verification
             // This uses actual Plonky2 circuits through ZkTransactionProof
@@ -435,14 +452,14 @@ impl TransactionVerifier {
                     // Continue for timing consistency
                 }
             }
-            
+
             // Verify nullifier is fresh (prevents double-spending)
             // Extract nullifier from nullifier proof public inputs (first 8 bytes)
             let mut nullifier = [0u8; 32];
             if tx_proof.nullifier_proof.public_inputs.len() >= 8 {
                 nullifier[..8].copy_from_slice(&tx_proof.nullifier_proof.public_inputs[..8]);
             }
-            
+
             if !self.verify_nullifier_fresh(&nullifier)? {
                 all_valid = false;
             }
@@ -450,10 +467,8 @@ impl TransactionVerifier {
         }
 
         // Verify Merkle root commitment to batch
-        let inclusion_verifications = self.verify_batch_merkle_inclusion(
-            &batch.merkle_root, 
-            &batch.transaction_proofs
-        )?;
+        let inclusion_verifications =
+            self.verify_batch_merkle_inclusion(&batch.merkle_root, &batch.transaction_proofs)?;
 
         let total_time = start_time.elapsed().as_millis() as u64;
         // Ensure minimum 1ms recorded for testing purposes
@@ -491,17 +506,17 @@ impl TransactionVerifier {
         if metadata.transaction_count as usize != actual_count {
             return Ok(false);
         }
-        
+
         // Verify fee tier is valid (standardized fees only)
         if metadata.fee_tier > 3 {
             return Ok(false);
         }
-        
+
         // Verify batch commitment is non-zero
         if metadata.batch_commitment == [0u8; 32] {
             return Ok(false);
         }
-        
+
         Ok(true)
     }
 
@@ -516,13 +531,14 @@ impl TransactionVerifier {
         // Second check: verify nullifier follows proper generation pattern
         // Nullifiers should be cryptographically random with sufficient entropy
         let zero_count = nullifier.iter().filter(|&&b| b == 0).count();
-        if zero_count > 16 {  // More than half zeros indicates weak generation
+        if zero_count > 16 {
+            // More than half zeros indicates weak generation
             return Ok(false);
         }
 
         // Third check: local nullifier cache (fast path)
         if self.used_nullifiers.contains(nullifier) {
-            return Ok(false);  // Already used locally
+            return Ok(false); // Already used locally
         }
 
         // Fourth check: blockchain state validation (authoritative)
@@ -530,7 +546,7 @@ impl TransactionVerifier {
             match blockchain_state.is_nullifier_used(nullifier) {
                 Ok(is_used) => {
                     if is_used {
-                        return Ok(false);  // Used on-chain
+                        return Ok(false); // Used on-chain
                     }
                 }
                 Err(e) => {
@@ -564,19 +580,21 @@ impl TransactionVerifier {
 
         // Verify bit distribution is reasonably balanced (crypto randomness check)
         for &count in bit_counts.iter() {
-            if count < 8 || count > 24 {  // Should be roughly 16 ± 8 for good randomness
+            if count < 8 || count > 24 {
+                // Should be roughly 16 ± 8 for good randomness
                 return Ok(false);
             }
         }
 
         // Check 2: Verify nullifier is not a known weak pattern
         let known_weak_patterns = [
-            [0x00; 32],                    // All zeros
-            [0xFF; 32],                    // All ones  
-            [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-             0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-             0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-             0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20], // Sequential pattern
+            [0x00; 32], // All zeros
+            [0xFF; 32], // All ones
+            [
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+                0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
+                0x1D, 0x1E, 0x1F, 0x20,
+            ], // Sequential pattern
         ];
 
         for weak_pattern in known_weak_patterns.iter() {
@@ -589,7 +607,7 @@ impl TransactionVerifier {
         // A proper nullifier should be: H(secret || commitment || nonce)
         // We can verify this by checking if it could be a valid hash output
         let hash_verification = hash_blake3(nullifier);
-        
+
         // The nullifier itself should not be equal to its own hash (would indicate poor generation)
         if nullifier == &hash_verification {
             return Ok(false);
@@ -614,7 +632,11 @@ impl TransactionVerifier {
 
     /// Verify Merkle inclusion of all transaction proofs in batch
     /// Full cryptographic implementation with proper Merkle path verification
-    fn verify_batch_merkle_inclusion(&self, merkle_root: &[u8; 32], tx_proofs: &[ZkTransactionProof]) -> Result<bool> {
+    fn verify_batch_merkle_inclusion(
+        &self,
+        merkle_root: &[u8; 32],
+        tx_proofs: &[ZkTransactionProof],
+    ) -> Result<bool> {
         // First check: ensure valid Merkle root
         if *merkle_root == [0u8; 32] {
             return Ok(false);
@@ -638,7 +660,12 @@ impl TransactionVerifier {
 
         // Fifth check: verify individual Merkle paths for each transaction
         for (index, tx_proof) in tx_proofs.iter().enumerate() {
-            if !self.verify_single_transaction_inclusion(tx_proof, index, merkle_root, tx_proofs.len())? {
+            if !self.verify_single_transaction_inclusion(
+                tx_proof,
+                index,
+                merkle_root,
+                tx_proofs.len(),
+            )? {
                 return Ok(false);
             }
         }
@@ -662,7 +689,7 @@ impl TransactionVerifier {
         // Check 2: Verify entropy distribution
         let zero_count = merkle_root.iter().filter(|&&b| b == 0).count();
         let ff_count = merkle_root.iter().filter(|&&b| b == 0xFF).count();
-        
+
         // Healthy hash should not have excessive repetition
         if zero_count > 16 || ff_count > 16 {
             return Ok(false);
@@ -690,14 +717,19 @@ impl TransactionVerifier {
     }
 
     /// Compute Merkle root from transaction proofs using BLAKE3
-    fn compute_merkle_root_from_proofs(&self, tx_proofs: &[ZkTransactionProof]) -> Result<[u8; 32]> {
+    fn compute_merkle_root_from_proofs(
+        &self,
+        tx_proofs: &[ZkTransactionProof],
+    ) -> Result<[u8; 32]> {
         if tx_proofs.is_empty() {
-            return Err(anyhow::anyhow!("Cannot compute Merkle root from empty proof set"));
+            return Err(anyhow::anyhow!(
+                "Cannot compute Merkle root from empty proof set"
+            ));
         }
 
         // Convert transaction proofs to leaf hashes
         let mut leaf_hashes: Vec<[u8; 32]> = Vec::with_capacity(tx_proofs.len());
-        
+
         for tx_proof in tx_proofs {
             let leaf_hash = self.compute_transaction_leaf_hash(tx_proof)?;
             leaf_hashes.push(leaf_hash);
@@ -710,20 +742,20 @@ impl TransactionVerifier {
     /// Compute leaf hash for a single transaction proof
     fn compute_transaction_leaf_hash(&self, tx_proof: &ZkTransactionProof) -> Result<[u8; 32]> {
         let mut hasher_data = Vec::new();
-        
+
         // Include all proof components in leaf hash
         // Amount proof hash
         let amount_hash = self.hash_zk_proof(&tx_proof.amount_proof)?;
         hasher_data.extend_from_slice(&amount_hash);
-        
-        // Balance proof hash  
+
+        // Balance proof hash
         let balance_hash = self.hash_zk_proof(&tx_proof.balance_proof)?;
         hasher_data.extend_from_slice(&balance_hash);
-        
+
         // Nullifier proof hash
         let nullifier_hash = self.hash_zk_proof(&tx_proof.nullifier_proof)?;
         hasher_data.extend_from_slice(&nullifier_hash);
-        
+
         // Add proof metadata for uniqueness
         hasher_data.extend_from_slice(&tx_proof.amount_proof.proof_data);
         hasher_data.extend_from_slice(&tx_proof.balance_proof.proof_data);
@@ -735,18 +767,18 @@ impl TransactionVerifier {
     /// Hash a ZK proof for Merkle tree construction
     fn hash_zk_proof(&self, zk_proof: &ZkProof) -> Result<[u8; 32]> {
         let mut hasher_data = Vec::new();
-        
+
         // Include proof system identifier
         hasher_data.extend_from_slice(zk_proof.proof_system.as_bytes());
-        
+
         // Include proof data
         hasher_data.extend_from_slice(&zk_proof.proof_data);
-        
+
         // Include public inputs
         for input in &zk_proof.public_inputs {
             hasher_data.push(*input);
         }
-        
+
         // Include verification key
         hasher_data.extend_from_slice(&zk_proof.verification_key);
 
@@ -756,7 +788,9 @@ impl TransactionVerifier {
     /// Build Merkle tree from leaf hashes using BLAKE3
     fn build_merkle_tree(&self, leaf_hashes: &[[u8; 32]]) -> Result<[u8; 32]> {
         if leaf_hashes.is_empty() {
-            return Err(anyhow::anyhow!("Cannot build Merkle tree from empty leaves"));
+            return Err(anyhow::anyhow!(
+                "Cannot build Merkle tree from empty leaves"
+            ));
         }
 
         if leaf_hashes.len() == 1 {
@@ -764,11 +798,11 @@ impl TransactionVerifier {
         }
 
         let mut current_level = leaf_hashes.to_vec();
-        
+
         // Build tree bottom-up
         while current_level.len() > 1 {
             let mut next_level = Vec::new();
-            
+
             // Process pairs of hashes
             for chunk in current_level.chunks(2) {
                 let combined_hash = if chunk.len() == 2 {
@@ -784,10 +818,10 @@ impl TransactionVerifier {
                     combined_data.extend_from_slice(&chunk[0]);
                     hash_blake3(&combined_data)
                 };
-                
+
                 next_level.push(combined_hash);
             }
-            
+
             current_level = next_level;
         }
 
@@ -796,34 +830,42 @@ impl TransactionVerifier {
 
     /// Verify single transaction inclusion in Merkle tree
     fn verify_single_transaction_inclusion(
-        &self, 
-        tx_proof: &ZkTransactionProof, 
-        leaf_index: usize, 
+        &self,
+        tx_proof: &ZkTransactionProof,
+        leaf_index: usize,
         merkle_root: &[u8; 32],
-        total_leaves: usize
+        total_leaves: usize,
     ) -> Result<bool> {
         // Compute leaf hash for this transaction
         let leaf_hash = self.compute_transaction_leaf_hash(tx_proof)?;
-        
+
         // Generate Merkle path for verification
         let merkle_path = self.generate_merkle_path(leaf_index, total_leaves)?;
-        
+
         // Verify the Merkle path leads to the expected root
         let computed_root = self.verify_merkle_path(&leaf_hash, leaf_index, &merkle_path)?;
-        
+
         Ok(computed_root == *merkle_root)
     }
 
     /// Generate Merkle path for a given leaf index
-    fn generate_merkle_path(&self, leaf_index: usize, total_leaves: usize) -> Result<Vec<[u8; 32]>> {
+    fn generate_merkle_path(
+        &self,
+        leaf_index: usize,
+        total_leaves: usize,
+    ) -> Result<Vec<[u8; 32]>> {
         if leaf_index >= total_leaves {
-            return Err(anyhow::anyhow!("Leaf index {} exceeds total leaves {}", leaf_index, total_leaves));
+            return Err(anyhow::anyhow!(
+                "Leaf index {} exceeds total leaves {}",
+                leaf_index,
+                total_leaves
+            ));
         }
 
         let mut path = Vec::new();
         let mut current_index = leaf_index;
         let mut current_level_size = total_leaves;
-        
+
         // Build path from leaf to root
         while current_level_size > 1 {
             let sibling_index = if current_index % 2 == 0 {
@@ -831,43 +873,48 @@ impl TransactionVerifier {
             } else {
                 current_index - 1
             };
-            
+
             // For this implementation, we'll use a deterministic sibling hash
             // In a implementation, this would come from the actual Merkle tree
-            let sibling_hash = self.compute_deterministic_sibling_hash(sibling_index, current_level_size)?;
+            let sibling_hash =
+                self.compute_deterministic_sibling_hash(sibling_index, current_level_size)?;
             path.push(sibling_hash);
-            
+
             current_index /= 2;
             current_level_size = (current_level_size + 1) / 2;
         }
-        
+
         Ok(path)
     }
 
     /// Compute deterministic sibling hash for Merkle path verification
-    fn compute_deterministic_sibling_hash(&self, sibling_index: usize, level_size: usize) -> Result<[u8; 32]> {
+    fn compute_deterministic_sibling_hash(
+        &self,
+        sibling_index: usize,
+        level_size: usize,
+    ) -> Result<[u8; 32]> {
         // Create deterministic but cryptographically secure sibling hash
         let mut sibling_data = Vec::new();
         sibling_data.extend_from_slice(b"MERKLE_SIBLING");
         sibling_data.extend_from_slice(&sibling_index.to_le_bytes());
         sibling_data.extend_from_slice(&level_size.to_le_bytes());
-        
+
         Ok(hash_blake3(&sibling_data))
     }
 
     /// Verify Merkle path from leaf to root
     fn verify_merkle_path(
-        &self, 
-        leaf_hash: &[u8; 32], 
-        leaf_index: usize, 
-        merkle_path: &[[u8; 32]]
+        &self,
+        leaf_hash: &[u8; 32],
+        leaf_index: usize,
+        merkle_path: &[[u8; 32]],
     ) -> Result<[u8; 32]> {
         let mut current_hash = *leaf_hash;
         let mut current_index = leaf_index;
-        
+
         for sibling_hash in merkle_path {
             let mut combined_data = Vec::with_capacity(64);
-            
+
             if current_index % 2 == 0 {
                 // Current node is left child
                 combined_data.extend_from_slice(&current_hash);
@@ -877,40 +924,50 @@ impl TransactionVerifier {
                 combined_data.extend_from_slice(sibling_hash);
                 combined_data.extend_from_slice(&current_hash);
             }
-            
+
             current_hash = hash_blake3(&combined_data);
             current_index /= 2;
         }
-        
+
         Ok(current_hash)
     }
 
     /// Verify batch commitment integrity
-    fn verify_batch_commitment_integrity(&self, merkle_root: &[u8; 32], tx_proofs: &[ZkTransactionProof]) -> Result<bool> {
+    fn verify_batch_commitment_integrity(
+        &self,
+        merkle_root: &[u8; 32],
+        tx_proofs: &[ZkTransactionProof],
+    ) -> Result<bool> {
         // Check 1: Verify commitment includes transaction count
         let commitment_data = self.compute_batch_commitment_data(merkle_root, tx_proofs)?;
         let commitment_hash = hash_blake3(&commitment_data);
-        
+
         // Check 2: Verify commitment is cryptographically binding
         // The commitment should bind the Merkle root to the transaction set
-        let binding_check = self.verify_commitment_binding(&commitment_hash, merkle_root, tx_proofs)?;
-        
+        let binding_check =
+            self.verify_commitment_binding(&commitment_hash, merkle_root, tx_proofs)?;
+
         // Check 3: Verify commitment prevents batch malleability
-        let malleability_check = self.verify_commitment_non_malleability(&commitment_hash, tx_proofs)?;
-        
+        let malleability_check =
+            self.verify_commitment_non_malleability(&commitment_hash, tx_proofs)?;
+
         Ok(binding_check && malleability_check)
     }
 
     /// Compute batch commitment data
-    fn compute_batch_commitment_data(&self, merkle_root: &[u8; 32], tx_proofs: &[ZkTransactionProof]) -> Result<Vec<u8>> {
+    fn compute_batch_commitment_data(
+        &self,
+        merkle_root: &[u8; 32],
+        tx_proofs: &[ZkTransactionProof],
+    ) -> Result<Vec<u8>> {
         let mut commitment_data = Vec::new();
-        
+
         // Include Merkle root
         commitment_data.extend_from_slice(merkle_root);
-        
+
         // Include transaction count
         commitment_data.extend_from_slice(&(tx_proofs.len() as u64).to_le_bytes());
-        
+
         // Include hash of all transaction hashes
         let mut tx_hashes = Vec::new();
         for tx_proof in tx_proofs {
@@ -919,38 +976,48 @@ impl TransactionVerifier {
         }
         let aggregated_tx_hash = hash_blake3(&tx_hashes);
         commitment_data.extend_from_slice(&aggregated_tx_hash);
-        
+
         Ok(commitment_data)
     }
 
     /// Verify commitment binding property
-    fn verify_commitment_binding(&self, commitment_hash: &[u8; 32], merkle_root: &[u8; 32], tx_proofs: &[ZkTransactionProof]) -> Result<bool> {
+    fn verify_commitment_binding(
+        &self,
+        commitment_hash: &[u8; 32],
+        merkle_root: &[u8; 32],
+        tx_proofs: &[ZkTransactionProof],
+    ) -> Result<bool> {
         // Recompute commitment with slightly different data to ensure binding
         let mut modified_data = Vec::new();
         modified_data.extend_from_slice(merkle_root);
         modified_data.extend_from_slice(&((tx_proofs.len() + 1) as u64).to_le_bytes()); // Modified count
-        
+
         let modified_commitment = hash_blake3(&modified_data);
-        
+
         // Commitment should be different with modified data (binding property)
         Ok(*commitment_hash != modified_commitment)
     }
 
     /// Verify commitment non-malleability
-    fn verify_commitment_non_malleability(&self, commitment_hash: &[u8; 32], tx_proofs: &[ZkTransactionProof]) -> Result<bool> {
+    fn verify_commitment_non_malleability(
+        &self,
+        commitment_hash: &[u8; 32],
+        tx_proofs: &[ZkTransactionProof],
+    ) -> Result<bool> {
         // Verify that changing transaction order would change commitment
         if tx_proofs.len() < 2 {
             return Ok(true); // Single transaction can't be reordered
         }
-        
+
         // Compute commitment with reversed transaction order
         let mut reversed_proofs = tx_proofs.to_vec();
         reversed_proofs.reverse();
-        
+
         let reversed_root = self.compute_merkle_root_from_proofs(&reversed_proofs)?;
-        let reversed_commitment_data = self.compute_batch_commitment_data(&reversed_root, &reversed_proofs)?;
+        let reversed_commitment_data =
+            self.compute_batch_commitment_data(&reversed_root, &reversed_proofs)?;
         let reversed_commitment = hash_blake3(&reversed_commitment_data);
-        
+
         // Commitment should be different with reordered transactions (non-malleability)
         Ok(*commitment_hash != reversed_commitment)
     }
@@ -1010,7 +1077,7 @@ impl VerificationStats {
     /// Update average verification time
     fn update_average(&mut self) {
         if self.total_verifications > 0 {
-            self.average_verification_time_ms = 
+            self.average_verification_time_ms =
                 self.total_verification_time_ms as f64 / self.total_verifications as f64;
         }
     }
@@ -1077,7 +1144,7 @@ impl BatchTransactionVerifier {
     /// Process large batch with automatic chunking
     pub fn verify_large_batch(&mut self, proofs: &[TransactionProof]) -> Result<Vec<bool>> {
         let mut all_results = Vec::with_capacity(proofs.len());
-        
+
         for chunk in proofs.chunks(self.batch_size) {
             let chunk_results = if self.parallel_enabled && chunk.len() > 4 {
                 self.verifier.verify_batch_parallel(chunk)?
@@ -1086,7 +1153,7 @@ impl BatchTransactionVerifier {
             };
             all_results.extend(chunk_results);
         }
-        
+
         Ok(all_results)
     }
 
@@ -1149,22 +1216,22 @@ impl VerificationResultAggregator {
     /// Add single verification result
     pub fn add_result(&mut self, result: &VerificationResult) {
         self.total_results += 1;
-        
+
         if result.is_valid() {
             self.valid_count += 1;
         } else {
             self.invalid_count += 1;
         }
-        
+
         if result.error_message().is_some() {
             self.error_count += 1;
         }
-        
+
         // Update timing statistics
         if let Some(time_ms) = result.verification_time_ms() {
             self.min_time_ms = self.min_time_ms.min(time_ms);
             self.max_time_ms = self.max_time_ms.max(time_ms);
-            
+
             // Update average (incremental calculation)
             let old_avg = self.average_time_ms;
             self.average_time_ms = old_avg + (time_ms as f64 - old_avg) / self.total_results as f64;
@@ -1212,12 +1279,11 @@ mod tests {
     fn test_transaction_verification() {
         let mut prover = TransactionProver::new().unwrap();
         let mut verifier = TransactionVerifier::new().unwrap();
-        
-        let proof = prover.prove_transaction(
-            1000, 500, 100, 10,
-            [1u8; 32], [2u8; 32], [3u8; 32]
-        ).unwrap();
-        
+
+        let proof = prover
+            .prove_transaction(1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32])
+            .unwrap();
+
         let is_valid = verifier.verify(&proof).unwrap();
         assert!(is_valid);
     }
@@ -1226,12 +1292,11 @@ mod tests {
     fn test_detailed_verification() {
         let mut prover = TransactionProver::new().unwrap();
         let mut verifier = TransactionVerifier::new().unwrap();
-        
-        let proof = prover.prove_transaction(
-            1000, 500, 100, 10,
-            [1u8; 32], [2u8; 32], [3u8; 32]
-        ).unwrap();
-        
+
+        let proof = prover
+            .prove_transaction(1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32])
+            .unwrap();
+
         let result = verifier.verify_detailed(&proof).unwrap();
         assert!(result.is_valid());
         assert!(result.error_message().is_none());
@@ -1242,16 +1307,16 @@ mod tests {
     fn test_batch_verification() {
         let mut prover = TransactionProver::new().unwrap();
         let mut verifier = TransactionVerifier::new().unwrap();
-        
+
         let transactions = vec![
             (1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32]),
             (2000, 600, 200, 15, [4u8; 32], [5u8; 32], [6u8; 32]),
             (1500, 700, 150, 12, [7u8; 32], [8u8; 32], [9u8; 32]),
         ];
-        
+
         let proofs = prover.prove_transaction_batch(transactions).unwrap();
         let results = verifier.verify_batch(&proofs).unwrap();
-        
+
         assert_eq!(results.len(), 3);
         assert!(results.iter().all(|&r| r));
     }
@@ -1260,18 +1325,17 @@ mod tests {
     fn test_verification_cache() {
         let mut prover = TransactionProver::new().unwrap();
         let mut verifier = TransactionVerifier::new().unwrap();
-        
-        let proof = prover.prove_transaction(
-            1000, 500, 100, 10,
-            [1u8; 32], [2u8; 32], [3u8; 32]
-        ).unwrap();
-        
+
+        let proof = prover
+            .prove_transaction(1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32])
+            .unwrap();
+
         // First verification (cache miss)
         let _result1 = verifier.verify(&proof).unwrap();
-        
+
         // Second verification (cache hit)
         let _result2 = verifier.verify(&proof).unwrap();
-        
+
         let cache_stats = verifier.cache_stats();
         assert_eq!(cache_stats.cache_hits, 1);
         assert_eq!(cache_stats.cache_misses, 1);
@@ -1282,12 +1346,11 @@ mod tests {
     fn test_fast_verification() {
         let mut prover = TransactionProver::new().unwrap();
         let mut verifier = TransactionVerifier::new().unwrap();
-        
-        let proof = prover.prove_transaction(
-            1000, 500, 100, 10,
-            [1u8; 32], [2u8; 32], [3u8; 32]
-        ).unwrap();
-        
+
+        let proof = prover
+            .prove_transaction(1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32])
+            .unwrap();
+
         let is_valid = verifier.verify_fast(&proof).unwrap();
         assert!(is_valid);
     }
@@ -1296,16 +1359,23 @@ mod tests {
     fn test_verification_stats() {
         let mut prover = TransactionProver::new().unwrap();
         let mut verifier = TransactionVerifier::new().unwrap();
-        
+
         // Verify several proofs
         for i in 0..5 {
-            let proof = prover.prove_transaction(
-                1000 + i * 100, 500, 100, 10,
-                [i as u8; 32], [2u8; 32], [3u8; 32]
-            ).unwrap();
+            let proof = prover
+                .prove_transaction(
+                    1000 + i * 100,
+                    500,
+                    100,
+                    10,
+                    [i as u8; 32],
+                    [2u8; 32],
+                    [3u8; 32],
+                )
+                .unwrap();
             let _result = verifier.verify(&proof).unwrap();
         }
-        
+
         let stats = verifier.get_stats();
         assert_eq!(stats.total_verifications, 5);
         assert_eq!(stats.valid_proofs, 5);
@@ -1318,17 +1388,17 @@ mod tests {
     fn test_batch_transaction_verifier() {
         let mut prover = TransactionProver::new().unwrap();
         let mut batch_verifier = BatchTransactionVerifier::new(2).unwrap();
-        
+
         let transactions = vec![
             (1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32]),
             (2000, 600, 200, 15, [4u8; 32], [5u8; 32], [6u8; 32]),
             (1500, 700, 150, 12, [7u8; 32], [8u8; 32], [9u8; 32]),
             (1200, 800, 120, 8, [10u8; 32], [11u8; 32], [12u8; 32]),
         ];
-        
+
         let proofs = prover.prove_transaction_batch(transactions).unwrap();
         let results = batch_verifier.verify_large_batch(&proofs).unwrap();
-        
+
         assert_eq!(results.len(), 4);
         assert!(results.iter().all(|&r| r));
     }
@@ -1336,7 +1406,7 @@ mod tests {
     #[test]
     fn test_verification_result_aggregator() {
         let mut aggregator = VerificationResultAggregator::new();
-        
+
         let results = vec![
             VerificationResult::Valid {
                 circuit_id: "test1".to_string(),
@@ -1350,9 +1420,9 @@ mod tests {
             },
             VerificationResult::Invalid("test error".to_string()),
         ];
-        
+
         aggregator.add_results(&results);
-        
+
         assert_eq!(aggregator.total_results, 3);
         assert_eq!(aggregator.valid_count, 2);
         assert_eq!(aggregator.invalid_count, 1);
@@ -1364,13 +1434,13 @@ mod tests {
     #[test]
     fn test_cache_configuration() {
         let mut verifier = TransactionVerifier::new().unwrap();
-        
+
         // Disable cache
         verifier.configure_cache(false, 0);
-        
+
         let cache_stats = verifier.cache_stats();
         assert_eq!(cache_stats.cache_size, 0);
-        
+
         // Re-enable cache with smaller size
         verifier.configure_cache(true, 100);
         assert_eq!(verifier.cache_max_size, 100);
@@ -1379,7 +1449,7 @@ mod tests {
     #[test]
     fn test_batch_private_transaction_verification() {
         let mut verifier = TransactionVerifier::new().unwrap();
-        
+
         // Helper function to create mock ZkTransactionProof
         fn create_mock_zk_transaction_proof(amount: u64, fee: u64) -> ZkTransactionProof {
             // Use ZK system to generate proper transaction proof
@@ -1388,29 +1458,25 @@ mod tests {
             let nullifier_seed = amount + fee;
 
             let zk_system = crate::plonky2::ZkProofSystem::new().unwrap();
-            let plonky2_proof = zk_system.prove_transaction(
-                sender_balance,
-                amount,
-                fee,
-                sender_secret,
-                nullifier_seed,
-            ).unwrap_or_else(|_| {
-                // Fallback to empty proof on error
-                crate::plonky2::Plonky2Proof {
-                    proof: vec![],
-                    public_inputs: vec![],
-                    verification_key_hash: [0u8; 32],
-                    proof_system: "ZHTP-Optimized-Transaction".to_string(),
-                    generated_at: 0,
-                    circuit_id: "transaction_v1".to_string(),
-                    private_input_commitment: [0u8; 32],
-                }
-            });
+            let plonky2_proof = zk_system
+                .prove_transaction(sender_balance, amount, fee, sender_secret, nullifier_seed)
+                .unwrap_or_else(|_| {
+                    // Fallback to empty proof on error
+                    crate::plonky2::Plonky2Proof {
+                        proof: vec![],
+                        public_inputs: vec![],
+                        verification_key_hash: [0u8; 32],
+                        proof_system: "ZHTP-Optimized-Transaction".to_string(),
+                        generated_at: 0,
+                        circuit_id: "transaction_v1".to_string(),
+                        private_input_commitment: [0u8; 32],
+                    }
+                });
 
             let proof = ZkProof::from_plonky2(plonky2_proof);
             ZkTransactionProof::new(proof.clone(), proof.clone(), proof)
         }
-        
+
         // Create test batch with privacy-preserving structure
         let test_batch = BatchedPrivateTransaction {
             transaction_proofs: vec![
@@ -1425,21 +1491,21 @@ mod tests {
                 batch_commitment: [0xCD; 32],
             },
         };
-        
+
         // Verify batch - should not reveal individual transaction data
         let result = verifier.verify_private_batch(&test_batch).unwrap();
-        
+
         // Verify privacy-preserving results
         assert_eq!(result.batch_size, 2);
         assert!(result.total_time_ms > 0);
         assert_eq!(result.privacy_stats.nullifiers_processed, 2);
         // Individual transaction details should not be accessible
     }
-    
+
     #[test]
     fn test_batch_metadata_validation() {
         let mut verifier = TransactionVerifier::new().unwrap();
-        
+
         // Helper function to create mock ZkTransactionProof
         fn create_mock_zk_transaction_proof(amount: u64, fee: u64) -> ZkTransactionProof {
             // Use ZK system to generate proper transaction proof
@@ -1448,29 +1514,25 @@ mod tests {
             let nullifier_seed = amount + fee;
 
             let zk_system = crate::plonky2::ZkProofSystem::new().unwrap();
-            let plonky2_proof = zk_system.prove_transaction(
-                sender_balance,
-                amount,
-                fee,
-                sender_secret,
-                nullifier_seed,
-            ).unwrap_or_else(|_| {
-                // Fallback to empty proof on error
-                crate::plonky2::Plonky2Proof {
-                    proof: vec![],
-                    public_inputs: vec![],
-                    verification_key_hash: [0u8; 32],
-                    proof_system: "ZHTP-Optimized-Transaction".to_string(),
-                    generated_at: 0,
-                    circuit_id: "transaction_v1".to_string(),
-                    private_input_commitment: [0u8; 32],
-                }
-            });
+            let plonky2_proof = zk_system
+                .prove_transaction(sender_balance, amount, fee, sender_secret, nullifier_seed)
+                .unwrap_or_else(|_| {
+                    // Fallback to empty proof on error
+                    crate::plonky2::Plonky2Proof {
+                        proof: vec![],
+                        public_inputs: vec![],
+                        verification_key_hash: [0u8; 32],
+                        proof_system: "ZHTP-Optimized-Transaction".to_string(),
+                        generated_at: 0,
+                        circuit_id: "transaction_v1".to_string(),
+                        private_input_commitment: [0u8; 32],
+                    }
+                });
 
             let proof = ZkProof::from_plonky2(plonky2_proof);
             ZkTransactionProof::new(proof.clone(), proof.clone(), proof)
         }
-        
+
         // Test invalid fee tier
         let invalid_batch = BatchedPrivateTransaction {
             transaction_proofs: vec![create_mock_zk_transaction_proof(100, 5)],
@@ -1482,10 +1544,10 @@ mod tests {
                 batch_commitment: [0xCD; 32],
             },
         };
-        
+
         let result = verifier.verify_private_batch(&invalid_batch).unwrap();
         assert!(!result.batch_valid); // Should be invalid due to bad fee tier
-        
+
         // Test mismatched transaction count
         let mismatched_batch = BatchedPrivateTransaction {
             transaction_proofs: vec![
@@ -1500,7 +1562,7 @@ mod tests {
                 batch_commitment: [0xCD; 32],
             },
         };
-        
+
         let result = verifier.verify_private_batch(&mismatched_batch).unwrap();
         assert!(!result.batch_valid); // Should be invalid due to count mismatch
     }

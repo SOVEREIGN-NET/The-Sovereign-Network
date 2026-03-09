@@ -11,21 +11,18 @@
 //! - Peer connections re-establish automatically
 
 mod common_network_test;
-use common_network_test::{create_test_identity_with_seed as create_test_identity, peer_id_from_node_id};
+use common_network_test::{
+    create_test_identity_with_seed as create_test_identity, peer_id_from_node_id,
+};
 
 use anyhow::Result;
 use lib_identity::NodeId;
-use lib_network::{
-    discovery::UnifiedDiscoveryService,
-    identity::UnifiedPeerId,
-};
+use lib_network::{discovery::UnifiedDiscoveryService, identity::UnifiedPeerId};
 use std::{net::SocketAddr, time::Duration};
 use uuid::Uuid;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 const DISCOVERY_WAIT_TIME: Duration = Duration::from_secs(2);
-
-
 
 /// Test 1: Two-Node Discovery via DHT
 ///
@@ -51,17 +48,11 @@ async fn test_two_node_discovery_via_dht() -> Result<()> {
         );
 
         // Create discovery services
-        let _alice_discovery = UnifiedDiscoveryService::new(
-            alice_peer_id,
-            9443,
-            alice.public_key.clone(),
-        );
+        let _alice_discovery =
+            UnifiedDiscoveryService::new(alice_peer_id, 9443, alice.public_key.clone());
 
-        let _bob_discovery = UnifiedDiscoveryService::new(
-            bob_peer_id,
-            9444,
-            bob.public_key.clone(),
-        );
+        let _bob_discovery =
+            UnifiedDiscoveryService::new(bob_peer_id, 9444, bob.public_key.clone());
 
         // Simulate peer discovery: Alice learns about Bob's address
         let _bob_addr: SocketAddr = "127.0.0.1:9444".parse()?;
@@ -78,7 +69,8 @@ async fn test_two_node_discovery_via_dht() -> Result<()> {
         bob_peer.verify_node_id()?;
 
         Ok(())
-    }).await?
+    })
+    .await?
 }
 
 /// Test 2: Three-Node Network with DHT Routing Population
@@ -136,7 +128,8 @@ async fn test_three_node_dht_routing_population() -> Result<()> {
         }
 
         Ok(())
-    }).await?
+    })
+    .await?
 }
 
 /// Test 3: NodeId Stability Across Restart (Two-Node Scenario)
@@ -180,7 +173,8 @@ async fn test_two_node_nodeid_stability_across_restart() -> Result<()> {
         );
 
         Ok(())
-    }).await?
+    })
+    .await?
 }
 
 /// Test 4: Four-Node Mesh with All Pairs Connected
@@ -228,7 +222,8 @@ async fn test_four_node_mesh_full_connectivity() -> Result<()> {
         }
 
         Ok(())
-    }).await?
+    })
+    .await?
 }
 
 /// Test 5: Multi-Node Restart with Connection Re-establishment
@@ -282,7 +277,10 @@ async fn test_three_node_restart_with_reconnection() -> Result<()> {
         );
 
         // Charlie should still have routing entries for restarted nodes
-        for (alice_before, alice_after) in identities_before[..2].iter().zip(identities_after[..2].iter()) {
+        for (alice_before, alice_after) in identities_before[..2]
+            .iter()
+            .zip(identities_after[..2].iter())
+        {
             assert_eq!(
                 alice_before.node_id, alice_after.node_id,
                 "Restarted node NodeId must match"
@@ -290,7 +288,8 @@ async fn test_three_node_restart_with_reconnection() -> Result<()> {
         }
 
         Ok(())
-    }).await?
+    })
+    .await?
 }
 
 /// Test 6: NodeId Determinism Across Multiple Cycles
@@ -383,24 +382,26 @@ async fn test_five_node_network_formation() -> Result<()> {
         }
 
         // Verify all nodes are unique
-        let mut node_ids = identities.iter().map(|id| id.node_id.clone()).collect::<Vec<_>>();
+        let mut node_ids = identities
+            .iter()
+            .map(|id| id.node_id.clone())
+            .collect::<Vec<_>>();
         node_ids.sort();
 
         for i in 1..node_ids.len() {
             assert_ne!(
-                node_ids[i - 1], node_ids[i],
+                node_ids[i - 1],
+                node_ids[i],
                 "No NodeId collisions in 5-node network"
             );
         }
 
         // Verify full mesh connectivity info is present
-        assert_eq!(
-            identities.len(), 5,
-            "All 5 nodes should be created"
-        );
+        assert_eq!(identities.len(), 5, "All 5 nodes should be created");
 
         Ok(())
-    }).await?
+    })
+    .await?
 }
 
 #[cfg(test)]
@@ -411,9 +412,9 @@ mod helpers {
     fn test_peer_id_derivation_from_node_id() {
         let seed = [0xAA; 64];
         let identity = create_test_identity("test-device", seed).unwrap();
-        
+
         let peer_id = peer_id_from_node_id(&identity.node_id);
-        
+
         // Verify peer_id is valid UUID
         assert_eq!(peer_id.as_bytes().len(), 16);
     }

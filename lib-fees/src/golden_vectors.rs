@@ -110,7 +110,10 @@ mod tests {
         let fee = compute_fee_v2(&input, &params);
 
         // GOLDEN VECTOR: This exact value MUST NOT change
-        assert_eq!(fee, 7776, "Golden vector mismatch: native_transfer_dilithium5");
+        assert_eq!(
+            fee, 7776,
+            "Golden vector mismatch: native_transfer_dilithium5"
+        );
     }
 
     // =========================================================================
@@ -390,12 +393,12 @@ mod tests {
         };
 
         let params = FeeParams {
-            base_fee_per_byte: 5,        // 5x default
+            base_fee_per_byte: 5, // 5x default
             fee_per_exec_unit: 10,
-            fee_per_state_read: 200,     // 2x default
-            fee_per_state_write: 1000,   // 2x default
+            fee_per_state_read: 200,      // 2x default
+            fee_per_state_write: 1000,    // 2x default
             fee_per_state_write_byte: 20, // 2x default
-            fee_per_signature: 2000,     // 2x default
+            fee_per_signature: 2000,      // 2x default
             minimum_fee: 500,
             maximum_fee: 1_000_000_000,
         };

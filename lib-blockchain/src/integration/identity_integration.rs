@@ -1,11 +1,11 @@
 //! Identity integration for ZHTP blockchain
 //! Provides DID creation, validation, and identity management functionality
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
 use crate::integration::crypto_integration::PublicKey;
 use crate::transaction::IdentityTransactionData;
-use lib_identity::{IdentityType, AccessLevel};
+use anyhow::Result;
+use lib_identity::{AccessLevel, IdentityType};
+use serde::{Deserialize, Serialize};
 
 /// DID (Decentralized Identifier) structure
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,7 +52,10 @@ pub fn parse_identity_type(identity_type_str: &str) -> Result<IdentityType> {
         "contract" | "smart_contract" => Ok(IdentityType::Contract),
         "organization" | "org" | "company" => Ok(IdentityType::Organization),
         "device" | "iot" | "sensor" => Ok(IdentityType::Device),
-        _ => Err(anyhow::anyhow!("Unknown identity type: {}", identity_type_str)),
+        _ => Err(anyhow::anyhow!(
+            "Unknown identity type: {}",
+            identity_type_str
+        )),
     }
 }
 
@@ -76,11 +79,11 @@ pub fn determine_access_level(identity_type: &IdentityType, reputation_score: u3
             } else {
                 AccessLevel::Visitor // Assuming Visitor exists in AccessLevel
             }
-        },
+        }
         IdentityType::Organization => AccessLevel::FullCitizen, // Organizations get full access
         IdentityType::Agent | IdentityType::Contract | IdentityType::Device => {
             AccessLevel::Visitor // AI/devices get limited access initially
-        },
+        }
     }
 }
 
@@ -88,8 +91,12 @@ pub fn determine_access_level(identity_type: &IdentityType, reputation_score: u3
 pub fn create_blockchain_did(public_key: &PublicKey, method_specific_id: &str) -> Result<Did> {
     // Create identifier from public key hash and method-specific ID
     let pk_hash = blake3::hash(&public_key.key_id);
-    let identifier = format!("{}:{}", method_specific_id, hex::encode(&pk_hash.as_bytes()[..16]));
-    
+    let identifier = format!(
+        "{}:{}",
+        method_specific_id,
+        hex::encode(&pk_hash.as_bytes()[..16])
+    );
+
     Ok(Did {
         method: "zhtp".to_string(),
         identifier,
@@ -134,16 +141,20 @@ pub fn process_identity_registration(identity_data: &IdentityTransactionData) ->
         identity_data.did.as_bytes(),
         &identity_data.public_key,
         identity_data.identity_type.as_bytes(),
-    ].concat();
-    
+    ]
+    .concat();
+
     let registration_hash = blake3::hash(&registration_data);
     let registration_id = hex::encode(registration_hash.as_bytes());
-    
+
     Ok(registration_id)
 }
 
 /// Process identity update
-pub fn process_identity_update(did: Did, identity_data: &IdentityTransactionData) -> Result<String> {
+pub fn process_identity_update(
+    did: Did,
+    identity_data: &IdentityTransactionData,
+) -> Result<String> {
     // Validate that DID matches
     if did.to_string() != identity_data.did {
         return Err(anyhow::anyhow!("DID mismatch in identity update"));
@@ -164,11 +175,12 @@ pub fn process_identity_update(did: Did, identity_data: &IdentityTransactionData
             .unwrap_or_default()
             .as_secs()
             .to_le_bytes(),
-    ].concat();
-    
+    ]
+    .concat();
+
     let update_hash = blake3::hash(&update_data);
     let update_id = hex::encode(update_hash.as_bytes());
-    
+
     Ok(update_id)
 }
 
@@ -194,11 +206,12 @@ pub fn process_identity_revocation(
             .unwrap_or_default()
             .as_secs()
             .to_le_bytes(),
-    ].concat();
-    
+    ]
+    .concat();
+
     let revocation_hash = blake3::hash(&revocation_data);
     let revocation_id = hex::encode(revocation_hash.as_bytes());
-    
+
     Ok(revocation_id)
 }
 
@@ -233,11 +246,11 @@ pub fn create_identity_commitment(
     let mut commitment_data = Vec::new();
     commitment_data.extend_from_slice(did.to_string().as_bytes());
     commitment_data.extend_from_slice(&secret);
-    
+
     for attr in attributes {
         commitment_data.extend_from_slice(attr.as_bytes());
     }
-    
+
     // Generate commitment hash
     let commitment_hash = blake3::hash(&commitment_data);
     Ok(*commitment_hash.as_bytes())
@@ -290,23 +303,23 @@ impl IdentityAttributes {
     /// Convert to string array for commitment generation
     pub fn to_string_array(&self) -> Vec<String> {
         let mut attrs = Vec::new();
-        
+
         if let Some(ref citizenship) = self.citizenship {
             attrs.push(format!("citizenship:{}", citizenship));
         }
-        
+
         if let Some(ref age_range) = self.age_range {
             attrs.push(format!("age_range:{}", age_range));
         }
-        
+
         if let Some(ref verification_level) = self.verification_level {
             attrs.push(format!("verification_level:{}", verification_level));
         }
-        
+
         for (key, value) in &self.custom_attributes {
             attrs.push(format!("{}:{}", key, value));
         }
-        
+
         attrs
     }
 }
@@ -320,18 +333,18 @@ impl Default for IdentityAttributes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::KeyPair;
     use crate::types::Hash;
+    use lib_crypto::KeyPair;
 
     #[test]
     fn test_did_parsing() -> Result<()> {
         let did_string = "did:zhtp:user123";
         let did = Did::parse(did_string)?;
-        
+
         assert_eq!(did.method, "zhtp");
         assert_eq!(did.identifier, "user123");
         assert_eq!(did.to_string(), did_string);
-        
+
         Ok(())
     }
 
@@ -339,11 +352,11 @@ mod tests {
     fn test_blockchain_did_creation() -> Result<()> {
         let keypair = KeyPair::generate()?;
         let did = create_blockchain_did(&keypair.public_key, "user123")?;
-        
+
         assert_eq!(did.method, "zhtp");
         assert!(did.identifier.starts_with("user123:"));
         assert!(did.to_string().starts_with("did:zhtp:user123:"));
-        
+
         Ok(())
     }
 
@@ -363,9 +376,9 @@ mod tests {
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
         };
-        
+
         assert!(validate_identity_data(&identity_data)?);
-        
+
         Ok(())
     }
 
@@ -385,11 +398,11 @@ mod tests {
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
         };
-        
+
         let registration_id = process_identity_registration(&identity_data)?;
         assert!(!registration_id.is_empty());
         assert_eq!(registration_id.len(), 64); // hex encoded 32 bytes
-        
+
         Ok(())
     }
 
@@ -398,19 +411,19 @@ mod tests {
         let did = Did::parse("did:zhtp:commitment_test")?;
         let secret = [42u8; 32];
         let attributes = vec!["citizenship:US", "age_range:25-35"];
-        
+
         let commitment = create_identity_commitment(&did, secret, &attributes)?;
         assert_ne!(commitment, [0u8; 32]);
-        
+
         // Same inputs should produce same commitment
         let commitment2 = create_identity_commitment(&did, secret, &attributes)?;
         assert_eq!(commitment, commitment2);
-        
+
         // Different secret should produce different commitment
         let different_secret = [24u8; 32];
         let commitment3 = create_identity_commitment(&did, different_secret, &attributes)?;
         assert_ne!(commitment, commitment3);
-        
+
         Ok(())
     }
 
@@ -421,7 +434,7 @@ mod tests {
             .with_age_range("25-35".to_string())
             .with_verification_level("verified".to_string())
             .with_custom_attribute("employer".to_string(), "TechCorp".to_string());
-        
+
         let attr_strings = attributes.to_string_array();
         assert!(attr_strings.contains(&"citizenship:US".to_string()));
         assert!(attr_strings.contains(&"age_range:25-35".to_string()));

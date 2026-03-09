@@ -21,7 +21,8 @@ pub trait MempoolStateExt {
     /// Get sender's pending transaction count
     fn sender_pending_count(&self, address: &Address) -> u32;
     /// Get sender's transactions in current period
-    fn sender_period_count(&self, address: &Address, current_block: u64, period_blocks: u32) -> u32;
+    fn sender_period_count(&self, address: &Address, current_block: u64, period_blocks: u32)
+        -> u32;
     /// Record a transaction being added to mempool
     fn add_tx(&mut self, sender: Address, tx_bytes: u64, current_block: u64, period_blocks: u32);
     /// Record a transaction being removed from mempool
@@ -52,7 +53,12 @@ impl MempoolStateExt for MempoolState {
             .unwrap_or(0)
     }
 
-    fn sender_period_count(&self, address: &Address, current_block: u64, period_blocks: u32) -> u32 {
+    fn sender_period_count(
+        &self,
+        address: &Address,
+        current_block: u64,
+        period_blocks: u32,
+    ) -> u32 {
         self.per_sender
             .get(address)
             .map(|s| {

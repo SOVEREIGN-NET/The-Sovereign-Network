@@ -13,17 +13,15 @@
 //!
 //! QUIC does NOT negotiate PQC or identity; it only transports UHP messages.
 
-use anyhow::{Result, Context as AnyhowContext, anyhow};
+use crate::handshake::{HandshakeCapabilities, HandshakeContext, PqcCapability, VerifiedPeer};
+use anyhow::{anyhow, Context as AnyhowContext, Result};
 use lib_identity::ZhtpIdentity;
-use crate::handshake::{
-    HandshakeContext, HandshakeCapabilities, VerifiedPeer, PqcCapability,
-};
 use quinn::Connection;
-use tokio::time::{timeout, Duration};
-use tracing::{trace, debug, info};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::time::{timeout, Duration};
+use tracing::{debug, info, trace};
 
 /// Handshake timeout for QUIC connections (30 seconds)
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -42,7 +40,9 @@ struct QuicStream {
 
 impl QuicStream {
     async fn finish(&mut self) -> Result<()> {
-        self.send.finish().context("Failed to finish handshake stream")
+        self.send
+            .finish()
+            .context("Failed to finish handshake stream")
     }
 }
 
@@ -60,7 +60,10 @@ impl AsyncRead for QuicStream {
 
         match &result {
             Poll::Ready(Ok(())) => {
-                trace!("QuicStream::poll_read: Ready(Ok), bytes_read={}", bytes_read);
+                trace!(
+                    "QuicStream::poll_read: Ready(Ok), bytes_read={}",
+                    bytes_read
+                );
             }
             Poll::Ready(Err(e)) => {
                 debug!("QuicStream::poll_read: Ready(Err): {}", e);
@@ -81,19 +84,22 @@ impl AsyncWrite for QuicStream {
         data: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         let this = self.get_mut();
-        Pin::new(&mut this.send).poll_write(cx, data)
+        Pin::new(&mut this.send)
+            .poll_write(cx, data)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        Pin::new(&mut this.send).poll_flush(cx)
+        Pin::new(&mut this.send)
+            .poll_flush(cx)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        Pin::new(&mut this.send).poll_shutdown(cx)
+        Pin::new(&mut this.send)
+            .poll_shutdown(cx)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
 }
@@ -188,7 +194,9 @@ pub async fn handshake_as_initiator(
         let channel_binding = export_quic_channel_binding(conn)?;
         let ctx = ctx.for_client_with_transport(channel_binding, "quic");
 
-        let (send, recv) = conn.open_bi().await
+        let (send, recv) = conn
+            .open_bi()
+            .await
             .context("Failed to open handshake stream")?;
         let mut stream = QuicStream { send, recv };
 
@@ -204,7 +212,9 @@ pub async fn handshake_as_initiator(
             &ctx,
             identity,
             capabilities,
-        ).await.context("UHP v2 handshake failed")?;
+        )
+        .await
+        .context("UHP v2 handshake failed")?;
 
         stream.finish().await?;
 
@@ -377,10 +387,7 @@ fn create_quic_capabilities() -> HandshakeCapabilities {
         protocols: vec!["quic".to_string()],
         max_throughput: 100_000_000,
         max_message_size: 10_485_760,
-        encryption_methods: vec![
-            "chacha20-poly1305".to_string(),
-            "aes-256-gcm".to_string(),
-        ],
+        encryption_methods: vec!["chacha20-poly1305".to_string(), "aes-256-gcm".to_string()],
         pqc_capability: PqcCapability::Kyber1024Dilithium5,
         dht_capable: true,
         relay_capable: true,

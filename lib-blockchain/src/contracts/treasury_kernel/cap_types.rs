@@ -42,7 +42,12 @@ pub struct RoleCap {
 
 impl RoleCap {
     /// Create a new role cap
-    pub fn new(role_id: RoleId, period_cap: u64, lifetime_cap: Option<u64>, current_period: u64) -> Self {
+    pub fn new(
+        role_id: RoleId,
+        period_cap: u64,
+        lifetime_cap: Option<u64>,
+        current_period: u64,
+    ) -> Self {
         Self {
             role_id,
             period_cap,
@@ -60,7 +65,8 @@ impl RoleCap {
 
     /// Get remaining lifetime capacity (if applicable)
     pub fn remaining_lifetime(&self) -> Option<u64> {
-        self.lifetime_cap.map(|cap| cap.saturating_sub(self.lifetime_consumed))
+        self.lifetime_cap
+            .map(|cap| cap.saturating_sub(self.lifetime_consumed))
     }
 
     /// Reset period consumption for new period
@@ -133,12 +139,14 @@ impl AssignmentConsumption {
 
     /// Get remaining annual capacity
     pub fn remaining_annual(&self) -> u64 {
-        self.snap_annual_cap.saturating_sub(self.current_period_consumed)
+        self.snap_annual_cap
+            .saturating_sub(self.current_period_consumed)
     }
 
     /// Get remaining lifetime capacity (if applicable)
     pub fn remaining_lifetime(&self) -> Option<u64> {
-        self.snap_lifetime_cap.map(|cap| cap.saturating_sub(self.total_consumed))
+        self.snap_lifetime_cap
+            .map(|cap| cap.saturating_sub(self.total_consumed))
     }
 
     /// Reset period consumption for new period
@@ -298,45 +306,72 @@ pub enum CapError {
     ReservationAlreadyConsumed(ReservationId),
 
     /// Period mismatch (reservation from different period)
-    PeriodMismatch {
-        expected: u64,
-        actual: u64,
-    },
+    PeriodMismatch { expected: u64, actual: u64 },
 }
 
 impl fmt::Display for CapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Overflow => write!(f, "Arithmetic overflow in cap calculation"),
-            Self::GlobalCapExceeded { cap, consumed, requested } => {
+            Self::GlobalCapExceeded {
+                cap,
+                consumed,
+                requested,
+            } => {
                 write!(
                     f,
                     "Global cap exceeded: cap={}, consumed={}, requested={}",
                     cap, consumed, requested
                 )
             }
-            Self::RolePeriodCapExceeded { role_id, cap, consumed, requested } => {
+            Self::RolePeriodCapExceeded {
+                role_id,
+                cap,
+                consumed,
+                requested,
+            } => {
                 write!(
                     f,
                     "Role period cap exceeded: role={:?}, cap={}, consumed={}, requested={}",
-                    &role_id[..4], cap, consumed, requested
+                    &role_id[..4],
+                    cap,
+                    consumed,
+                    requested
                 )
             }
-            Self::RoleLifetimeCapExceeded { role_id, cap, consumed, requested } => {
+            Self::RoleLifetimeCapExceeded {
+                role_id,
+                cap,
+                consumed,
+                requested,
+            } => {
                 write!(
                     f,
                     "Role lifetime cap exceeded: role={:?}, cap={}, consumed={}, requested={}",
-                    &role_id[..4], cap, consumed, requested
+                    &role_id[..4],
+                    cap,
+                    consumed,
+                    requested
                 )
             }
-            Self::AssignmentAnnualCapExceeded { assignment_id, cap, consumed, requested } => {
+            Self::AssignmentAnnualCapExceeded {
+                assignment_id,
+                cap,
+                consumed,
+                requested,
+            } => {
                 write!(
                     f,
                     "Assignment annual cap exceeded: assignment={:?}, cap={}, consumed={}, requested={}",
                     &assignment_id[..4], cap, consumed, requested
                 )
             }
-            Self::AssignmentLifetimeCapExceeded { assignment_id, cap, consumed, requested } => {
+            Self::AssignmentLifetimeCapExceeded {
+                assignment_id,
+                cap,
+                consumed,
+                requested,
+            } => {
                 write!(
                     f,
                     "Assignment lifetime cap exceeded: assignment={:?}, cap={}, consumed={}, requested={}",
@@ -353,10 +388,18 @@ impl fmt::Display for CapError {
                 write!(f, "Reservation not found: {:?}", &reservation_id[..4])
             }
             Self::ReservationAlreadyConsumed(reservation_id) => {
-                write!(f, "Reservation already consumed: {:?}", &reservation_id[..4])
+                write!(
+                    f,
+                    "Reservation already consumed: {:?}",
+                    &reservation_id[..4]
+                )
             }
             Self::PeriodMismatch { expected, actual } => {
-                write!(f, "Period mismatch: expected={}, actual={}", expected, actual)
+                write!(
+                    f,
+                    "Period mismatch: expected={}, actual={}",
+                    expected, actual
+                )
             }
         }
     }

@@ -16,7 +16,7 @@ use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{error, warn, info};
+use tracing::{error, info, warn};
 
 /// Global counter for rate limit violations (for security monitoring)
 static RATE_LIMIT_VIOLATIONS: AtomicU64 = AtomicU64::new(0);
@@ -89,12 +89,12 @@ pub struct RateLimiterConfig {
 impl Default for RateLimiterConfig {
     fn default() -> Self {
         Self {
-            max_attempts_per_ip: 10,      // 10 connection attempts per IP per window
-            max_attempts_per_did: 5,       // 5 connection attempts per DID per window
-            window_secs: 60,               // 1 minute window
-            base_block_secs: 30,           // Start with 30 second block
-            max_block_secs: 3600,          // Max 1 hour block
-            cleanup_interval_secs: 300,    // Cleanup every 5 minutes
+            max_attempts_per_ip: 10,    // 10 connection attempts per IP per window
+            max_attempts_per_did: 5,    // 5 connection attempts per DID per window
+            window_secs: 60,            // 1 minute window
+            base_block_secs: 30,        // Start with 30 second block
+            max_block_secs: 3600,       // Max 1 hour block
+            cleanup_interval_secs: 300, // Cleanup every 5 minutes
         }
     }
 }
@@ -135,8 +135,10 @@ impl ConnectionRateLimiter {
         // Check if blocked
         if entry.is_blocked() {
             let remaining = entry.block_remaining_secs();
-            warn!("🚫 RATE LIMIT: IP {} blocked for {} more seconds (violations: {})",
-                  ip, remaining, entry.violation_count);
+            warn!(
+                "🚫 RATE LIMIT: IP {} blocked for {} more seconds (violations: {})",
+                ip, remaining, entry.violation_count
+            );
             RATE_LIMIT_VIOLATIONS.fetch_add(1, Ordering::Relaxed);
             return Err(Duration::from_secs(remaining));
         }
@@ -158,7 +160,7 @@ impl ConnectionRateLimiter {
             // Calculate exponential backoff: base * 2^(violations-1), capped at max
             let backoff = std::cmp::min(
                 self.config.base_block_secs * (1 << (entry.violation_count.saturating_sub(1))),
-                self.config.max_block_secs
+                self.config.max_block_secs,
             );
             entry.blocked_until = now + backoff;
 
@@ -179,13 +181,17 @@ impl ConnectionRateLimiter {
         let mut limits = self.did_limits.write().await;
         let now = current_timestamp();
 
-        let entry = limits.entry(did.to_string()).or_insert_with(RateLimitEntry::new);
+        let entry = limits
+            .entry(did.to_string())
+            .or_insert_with(RateLimitEntry::new);
 
         // Check if blocked
         if entry.is_blocked() {
             let remaining = entry.block_remaining_secs();
-            warn!("🚫 RATE LIMIT: DID {} blocked for {} more seconds (violations: {})",
-                  did, remaining, entry.violation_count);
+            warn!(
+                "🚫 RATE LIMIT: DID {} blocked for {} more seconds (violations: {})",
+                did, remaining, entry.violation_count
+            );
             RATE_LIMIT_VIOLATIONS.fetch_add(1, Ordering::Relaxed);
             return Err(Duration::from_secs(remaining));
         }
@@ -207,7 +213,7 @@ impl ConnectionRateLimiter {
             // Calculate exponential backoff
             let backoff = std::cmp::min(
                 self.config.base_block_secs * (1 << (entry.violation_count.saturating_sub(1))),
-                self.config.max_block_secs
+                self.config.max_block_secs,
             );
             entry.blocked_until = now + backoff;
 
@@ -244,7 +250,10 @@ impl ConnectionRateLimiter {
             if let Some(entry) = limits.get_mut(&ip) {
                 if entry.violation_count > 0 {
                     entry.violation_count = entry.violation_count.saturating_sub(1);
-                    info!("✅ Rate limit: IP {} violation count reduced to {}", ip, entry.violation_count);
+                    info!(
+                        "✅ Rate limit: IP {} violation count reduced to {}",
+                        ip, entry.violation_count
+                    );
                 }
             }
         }
@@ -255,7 +264,10 @@ impl ConnectionRateLimiter {
             if let Some(entry) = limits.get_mut(did) {
                 if entry.violation_count > 0 {
                     entry.violation_count = entry.violation_count.saturating_sub(1);
-                    info!("✅ Rate limit: DID {} violation count reduced to {}", did, entry.violation_count);
+                    info!(
+                        "✅ Rate limit: DID {} violation count reduced to {}",
+                        did, entry.violation_count
+                    );
                 }
             }
         }
@@ -276,7 +288,10 @@ impl ConnectionRateLimiter {
             });
             let removed = before - limits.len();
             if removed > 0 {
-                info!("🧹 Rate limiter cleanup: removed {} expired IP entries", removed);
+                info!(
+                    "🧹 Rate limiter cleanup: removed {} expired IP entries",
+                    removed
+                );
             }
         }
 
@@ -284,12 +299,13 @@ impl ConnectionRateLimiter {
         {
             let mut limits = self.did_limits.write().await;
             let before = limits.len();
-            limits.retain(|_, entry| {
-                entry.last_attempt > expiry_threshold || entry.is_blocked()
-            });
+            limits.retain(|_, entry| entry.last_attempt > expiry_threshold || entry.is_blocked());
             let removed = before - limits.len();
             if removed > 0 {
-                info!("🧹 Rate limiter cleanup: removed {} expired DID entries", removed);
+                info!(
+                    "🧹 Rate limiter cleanup: removed {} expired DID entries",
+                    removed
+                );
             }
         }
     }

@@ -4,7 +4,7 @@
 
 use crate::transaction::core::Transaction;
 use crate::types::Hash;
-use lib_crypto::{Signature, PrivateKey, PublicKey};
+use lib_crypto::{PrivateKey, PublicKey, Signature};
 
 /// Transaction signing error types
 #[derive(Debug, Clone)]
@@ -35,27 +35,31 @@ pub fn sign_transaction(
 ) -> Result<(), SigningError> {
     // Create signing hash (without existing signature)
     let signing_hash = crate::transaction::hashing::hash_for_signature(transaction);
-    
+
     // Create a keypair from the provided private key for signing
     // TODO: In a proper implementation, would construct keypair from the provided private_key
     // For now, we use the private_key validation but generate a new keypair
     if private_key.dilithium_sk.is_empty() {
         return Err(SigningError::InvalidPrivateKey);
     }
-    
-    let keypair = lib_crypto::KeyPair::generate()
-        .map_err(|e| SigningError::CryptoError(e.to_string()))?;
-    
+
+    let keypair =
+        lib_crypto::KeyPair::generate().map_err(|e| SigningError::CryptoError(e.to_string()))?;
+
     // Sign the hash using the keypair and transaction context
-    let signature = keypair.sign(signing_hash.as_bytes())
+    let signature = keypair
+        .sign(signing_hash.as_bytes())
         .map_err(|e| SigningError::CryptoError(e.to_string()))?;
-    
+
     // Set the signature on the transaction
     transaction.signature = signature;
-    
+
     // Log the transaction ID for auditing
-    log::info!("Successfully signed transaction: {}", hex::encode(&transaction.id()));
-    
+    log::info!(
+        "Successfully signed transaction: {}",
+        hex::encode(&transaction.id())
+    );
+
     Ok(())
 }
 
@@ -72,13 +76,13 @@ pub fn verify_transaction_signature(
         algorithm: lib_crypto::SignatureAlgorithm::Dilithium5,
         timestamp: 0,
     };
-    
+
     let signing_hash = crate::transaction::hashing::hash_for_signature(&tx_for_verification);
-    
+
     // Use lib_crypto's verify_signature function
     let signature_bytes = transaction.signature.signature.clone();
     let public_key_bytes = public_key.as_bytes();
-    
+
     lib_crypto::verify_signature(signing_hash.as_bytes(), &signature_bytes, &public_key_bytes)
         .map_err(|e| SigningError::CryptoError(e.to_string()))
 }
@@ -131,12 +135,13 @@ impl MultiSigContext {
             if let Some(signature) = signature_opt {
                 let signature_bytes = signature.signature.clone();
                 let public_key_bytes = self.public_keys[i].as_bytes();
-                
+
                 let is_valid = lib_crypto::verify_signature(
-                    signing_hash.as_bytes(), 
-                    &signature_bytes, 
-                    &public_key_bytes
-                ).map_err(|e| SigningError::CryptoError(e.to_string()))?;
+                    signing_hash.as_bytes(),
+                    &signature_bytes,
+                    &public_key_bytes,
+                )
+                .map_err(|e| SigningError::CryptoError(e.to_string()))?;
 
                 if is_valid {
                     valid_signatures += 1;
@@ -150,7 +155,9 @@ impl MultiSigContext {
     /// Combine signatures into a single signature for the transaction
     pub fn finalize_signature(&self) -> Result<Signature, SigningError> {
         if !self.is_complete() {
-            return Err(SigningError::CryptoError("Not enough signatures".to_string()));
+            return Err(SigningError::CryptoError(
+                "Not enough signatures".to_string(),
+            ));
         }
 
         // For ZHTP, we use the first valid signature as the transaction signature
@@ -161,7 +168,9 @@ impl MultiSigContext {
             }
         }
 
-        Err(SigningError::CryptoError("No valid signatures found".to_string()))
+        Err(SigningError::CryptoError(
+            "No valid signatures found".to_string(),
+        ))
     }
 }
 
@@ -201,9 +210,7 @@ pub mod utils {
     use super::*;
 
     /// Extract public key from transaction signature (if possible)
-    pub fn extract_public_key_from_signature(
-        transaction: &Transaction,
-    ) -> Option<PublicKey> {
+    pub fn extract_public_key_from_signature(transaction: &Transaction) -> Option<PublicKey> {
         // In CRYSTALS-Dilithium, public keys cannot be directly extracted from signatures
         // However, we can return the public key stored in the signature if available
         if !transaction.signature.public_key.dilithium_pk.is_empty() {
@@ -211,8 +218,10 @@ pub mod utils {
             Some(transaction.signature.public_key.clone())
         } else {
             // Log the transaction ID for debugging when no public key is available
-            log::debug!("No public key available in transaction signature: {}", 
-                hex::encode(&transaction.id()));
+            log::debug!(
+                "No public key available in transaction signature: {}",
+                hex::encode(&transaction.id())
+            );
             None
         }
     }
@@ -226,22 +235,23 @@ pub mod utils {
     pub fn get_signer_count(transaction: &Transaction) -> usize {
         // For single signature transactions, always 1
         // Multi-sig would require additional metadata
-        if is_transaction_signed(transaction) { 1 } else { 0 }
+        if is_transaction_signed(transaction) {
+            1
+        } else {
+            0
+        }
     }
 
     /// Create deterministic signing nonce
-    pub fn create_signing_nonce(
-        transaction: &Transaction,
-        private_key: &PrivateKey,
-    ) -> Hash {
+    pub fn create_signing_nonce(transaction: &Transaction, private_key: &PrivateKey) -> Hash {
         let tx_hash = transaction.hash();
         // Use the Dilithium secret key bytes for nonce generation
         let key_bytes = &private_key.dilithium_sk;
-        
+
         let mut nonce_data = Vec::new();
         nonce_data.extend_from_slice(tx_hash.as_bytes());
         nonce_data.extend_from_slice(key_bytes);
-        
+
         crate::types::hash::blake3_hash(&nonce_data)
     }
 
@@ -267,13 +277,17 @@ pub mod utils {
     pub fn calculate_verification_cost(transaction: &Transaction) -> u64 {
         // Base cost for signature verification
         let base_cost = 1000u64;
-        
+
         // Additional cost for zero-knowledge proofs
         let zk_cost = transaction.inputs.len() as u64 * 5000;
-        
+
         // Additional cost for identity transactions
-        let identity_cost = if transaction.identity_data.is_some() { 2000 } else { 0 };
-        
+        let identity_cost = if transaction.identity_data.is_some() {
+            2000
+        } else {
+            0
+        };
+
         base_cost + zk_cost + identity_cost
     }
 }

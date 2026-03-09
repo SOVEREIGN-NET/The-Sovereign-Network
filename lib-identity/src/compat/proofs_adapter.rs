@@ -80,8 +80,7 @@ impl ProofsSecretAdapter {
     pub const fn to_u64(secret: &[u8; 32]) -> u64 {
         // Extract first 8 bytes and convert from little-endian
         u64::from_le_bytes([
-            secret[0], secret[1], secret[2], secret[3],
-            secret[4], secret[5], secret[6], secret[7],
+            secret[0], secret[1], secret[2], secret[3], secret[4], secret[5], secret[6], secret[7],
         ])
     }
 
@@ -124,12 +123,9 @@ impl ProofsSecretAdapter {
     pub const fn from_u64(val: u64) -> [u8; 32] {
         let bytes = val.to_le_bytes();
         [
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
             // Zero-pad the remaining 24 bytes
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ]
     }
 
@@ -169,12 +165,11 @@ mod tests {
     #[test]
     fn test_to_u64_basic() {
         let secret: [u8; 32] = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-            0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
         ];
-        
+
         let result = ProofsSecretAdapter::to_u64(&secret);
         // Little-endian: bytes are interpreted as 0x0807060504030201
         assert_eq!(result, 0x0807060504030201);
@@ -190,10 +185,9 @@ mod tests {
     #[test]
     fn test_to_u64_max() {
         let secret: [u8; 32] = [
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
         ];
         let result = ProofsSecretAdapter::to_u64(&secret);
         assert_eq!(result, u64::MAX);
@@ -203,7 +197,7 @@ mod tests {
     fn test_from_u64_basic() {
         let val: u64 = 0x0807060504030201;
         let result = ProofsSecretAdapter::from_u64(val);
-        
+
         // First 8 bytes in little-endian
         assert_eq!(result[0], 0x01);
         assert_eq!(result[1], 0x02);
@@ -213,7 +207,7 @@ mod tests {
         assert_eq!(result[5], 0x06);
         assert_eq!(result[6], 0x07);
         assert_eq!(result[7], 0x08);
-        
+
         // Rest should be zero
         assert_eq!(result[8..], [0u8; 24]);
     }
@@ -228,10 +222,9 @@ mod tests {
     fn test_from_u64_max() {
         let result = ProofsSecretAdapter::from_u64(u64::MAX);
         let expected: [u8; 32] = [
-            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
         ];
         assert_eq!(result, expected);
     }
@@ -248,7 +241,7 @@ mod tests {
             0x0102030405060708,
             0x0807060504030201,
         ];
-        
+
         for &val in &test_values {
             let secret = ProofsSecretAdapter::from_u64(val);
             let recovered = ProofsSecretAdapter::to_u64(&secret);
@@ -273,7 +266,7 @@ mod tests {
         // Verify that we're using little-endian, not big-endian
         let val: u64 = 0x0102030405060708;
         let secret = ProofsSecretAdapter::from_u64(val);
-        
+
         // In little-endian, the least significant byte comes first
         assert_eq!(secret[0], 0x08);
         assert_eq!(secret[1], 0x07);
@@ -283,7 +276,7 @@ mod tests {
         assert_eq!(secret[5], 0x03);
         assert_eq!(secret[6], 0x02);
         assert_eq!(secret[7], 0x01);
-        
+
         // Verify round-trip
         let recovered = ProofsSecretAdapter::to_u64(&secret);
         assert_eq!(recovered, val);
@@ -293,7 +286,7 @@ mod tests {
     fn test_zero_padding() {
         let val: u64 = 0x0102030405060708;
         let secret = ProofsSecretAdapter::from_u64(val);
-        
+
         // All bytes from index 8 onwards should be zero
         for i in 8..32 {
             assert_eq!(secret[i], 0, "Byte at index {} should be zero", i);
@@ -307,7 +300,7 @@ mod tests {
         secret[0] = 0x01;
         secret[8] = 0xFF; // This should be ignored
         secret[31] = 0xFF; // This should be ignored
-        
+
         let result = ProofsSecretAdapter::to_u64(&secret);
         assert_eq!(result, 0x0000000000000001);
     }
@@ -319,7 +312,7 @@ mod tests {
         const SECRET: [u8; 32] = ProofsSecretAdapter::from_u64(TEST_VAL);
         const RECOVERED: u64 = ProofsSecretAdapter::to_u64(&SECRET);
         const VERIFIED: bool = ProofsSecretAdapter::verify_round_trip(TEST_VAL);
-        
+
         assert_eq!(RECOVERED, TEST_VAL);
         assert!(VERIFIED);
     }

@@ -2,9 +2,9 @@
 //!
 //! Provides secure session tokens for authenticated identities
 
-use lib_crypto::hash_blake3;
 use crate::types::IdentityId;
 use anyhow::Result;
+use lib_crypto::hash_blake3;
 use rand::RngCore;
 
 /// Session token for authenticated users
@@ -26,7 +26,7 @@ impl SessionToken {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         now < self.expires_at
     }
 
@@ -60,8 +60,9 @@ impl SessionToken {
             identity_id.0.as_slice(),
             &now.to_le_bytes(),
             &random_bytes,
-            b"ZHTP_session_token_v1"
-        ].concat();
+            b"ZHTP_session_token_v1",
+        ]
+        .concat();
 
         let token_hash = hash_blake3(&token_material);
         let token = hex::encode(token_hash);

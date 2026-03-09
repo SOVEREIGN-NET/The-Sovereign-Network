@@ -1,10 +1,11 @@
 //! ZHTP Startup Banner Display
-//! 
+//!
 //! Displays the ZHTP startup banner with version and system information
 
 /// Display the ZHTP startup banner
 pub fn show_lib_banner() {
-    println!(r#"
+    println!(
+        r#"
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                              ║
 ║    ███████╗██╗  ██╗████████╗██████╗     ███╗   ██╗ ██████╗ ██████╗ ███████╗ ║
@@ -37,7 +38,9 @@ pub fn show_lib_banner() {
 ║     The result: A free internet that pays users to participate!           ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-"#, env!("CARGO_PKG_VERSION"));
+"#,
+        env!("CARGO_PKG_VERSION")
+    );
 
     // System information
     println!("System Information:");
@@ -93,9 +96,11 @@ pub fn show_hybrid_mode_banner() {
 pub fn show_startup_progress(step: &str, current: usize, total: usize) {
     let percentage = (current as f32 / total as f32 * 100.0) as usize;
     let progress_bar = "█".repeat(percentage / 5) + &"░".repeat(20 - percentage / 5);
-    
-    println!(" [{:2}/{}] [{}] {}% - {}", 
-             current, total, progress_bar, percentage, step);
+
+    println!(
+        " [{:2}/{}] [{}] {}% - {}",
+        current, total, progress_bar, percentage, step
+    );
 }
 
 /// Display component status

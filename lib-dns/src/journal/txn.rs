@@ -8,16 +8,15 @@ use crate::rr_data::inter::rr_data::RRData;
 pub struct Txn {
     serial_0: u32,
     serial_1: u32,
-    records: [Vec<Record>; 2]
+    records: [Vec<Record>; 2],
 }
 
 impl Txn {
-
     pub fn new(serial_0: u32, serial_1: u32) -> Self {
         Self {
             serial_0,
             serial_1,
-            records: Default::default()
+            records: Default::default(),
         }
     }
 
@@ -37,7 +36,15 @@ impl Txn {
         self.serial_1
     }
 
-    pub fn add_record(&mut self, op_code: TxnOpCodes, query: &str, class: RRClasses, _type: RRTypes, ttl: u32, record: Option<Box<dyn RRData>>) {
+    pub fn add_record(
+        &mut self,
+        op_code: TxnOpCodes,
+        query: &str,
+        class: RRClasses,
+        _type: RRTypes,
+        ttl: u32,
+        record: Option<Box<dyn RRData>>,
+    ) {
         self.records[op_code as usize].push(Record::new(query, class, _type, ttl, record));
     }
 

@@ -2,10 +2,10 @@
 //!
 //! Tests transaction creation, validation, hashing, and signing functionality.
 
-use lib_blockchain::*;
-use lib_blockchain::transaction::*;
-use lib_blockchain::integration::*;
 use anyhow::Result;
+use lib_blockchain::integration::*;
+use lib_blockchain::transaction::*;
+use lib_blockchain::*;
 
 #[test]
 fn test_transaction_creation() -> Result<()> {
@@ -14,7 +14,7 @@ fn test_transaction_creation() -> Result<()> {
         Hash::from_hex("2222222222222222222222222222222222222222222222222222222222222222")?,
         crypto_integration::PublicKey::new(vec![1, 2, 3, 4]),
     );
-    
+
     let transaction = Transaction::new(
         vec![], // No inputs for this test
         vec![output],
@@ -27,7 +27,7 @@ fn test_transaction_creation() -> Result<()> {
         },
         "test transaction".as_bytes().to_vec(),
     );
-    
+
     // Verify transaction properties
     assert_eq!(transaction.version, 1);
     assert_eq!(transaction.transaction_type, TransactionType::Transfer);
@@ -35,7 +35,7 @@ fn test_transaction_creation() -> Result<()> {
     assert_eq!(transaction.fee, 100);
     assert!(!transaction.is_coinbase());
     assert!(!transaction.has_identity_data());
-    
+
     Ok(())
 }
 
@@ -51,7 +51,7 @@ fn test_identity_transaction_creation() -> Result<()> {
         1000,
         100,
     );
-    
+
     let transaction = Transaction::new_identity_registration(
         identity_data.clone(),
         vec![], // No outputs for simplicity
@@ -63,17 +63,20 @@ fn test_identity_transaction_creation() -> Result<()> {
         },
         "identity registration".as_bytes().to_vec(),
     );
-    
+
     // Verify identity transaction properties
-    assert_eq!(transaction.transaction_type, TransactionType::IdentityRegistration);
+    assert_eq!(
+        transaction.transaction_type,
+        TransactionType::IdentityRegistration
+    );
     assert!(transaction.has_identity_data());
     assert_eq!(transaction.fee, 1100); // registration_fee + dao_fee
     assert!(transaction.inputs.is_empty());
-    
+
     let tx_identity_data = transaction.identity_data.as_ref().unwrap();
     assert_eq!(tx_identity_data.did, "did:zhtp:test_creation");
     assert_eq!(tx_identity_data.display_name, "Test User");
-    
+
     Ok(())
 }
 
@@ -89,19 +92,19 @@ fn test_identity_update_transaction() -> Result<()> {
         0, // No registration fee for updates
         0,
     );
-    
+
     let auth_input = TransactionInput::new(
         Hash::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?,
         0,
         Hash::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")?,
         zk_integration::ZkTransactionProof::default(),
     );
-    
+
     let transaction = Transaction::new_identity_update(
         identity_data.clone(),
         vec![auth_input],
         vec![], // No outputs
-        50, // Update fee
+        50,     // Update fee
         crypto_integration::Signature {
             signature: vec![13, 14, 15],
             public_key: crypto_integration::PublicKey::new(vec![16, 17, 18]),
@@ -110,13 +113,16 @@ fn test_identity_update_transaction() -> Result<()> {
         },
         "identity update".as_bytes().to_vec(),
     );
-    
+
     // Verify update transaction properties
-    assert_eq!(transaction.transaction_type, TransactionType::IdentityUpdate);
+    assert_eq!(
+        transaction.transaction_type,
+        TransactionType::IdentityUpdate
+    );
     assert!(transaction.has_identity_data());
     assert_eq!(transaction.fee, 50);
     assert_eq!(transaction.inputs.len(), 1);
-    
+
     Ok(())
 }
 
@@ -125,7 +131,7 @@ fn test_identity_revocation_transaction() -> Result<()> {
     let transaction = Transaction::new_identity_revocation(
         "did:zhtp:test_revoke".to_string(),
         vec![], // No inputs for simplicity
-        25, // Revocation fee
+        25,     // Revocation fee
         crypto_integration::Signature {
             signature: vec![19, 20, 21],
             public_key: crypto_integration::PublicKey::new(vec![22, 23, 24]),
@@ -134,17 +140,20 @@ fn test_identity_revocation_transaction() -> Result<()> {
         },
         "identity revocation".as_bytes().to_vec(),
     );
-    
+
     // Verify revocation transaction properties
-    assert_eq!(transaction.transaction_type, TransactionType::IdentityRevocation);
+    assert_eq!(
+        transaction.transaction_type,
+        TransactionType::IdentityRevocation
+    );
     assert!(transaction.has_identity_data());
     assert_eq!(transaction.fee, 25);
-    
+
     let revocation_data = transaction.identity_data.as_ref().unwrap();
     assert_eq!(revocation_data.did, "did:zhtp:test_revoke");
     assert_eq!(revocation_data.identity_type, "revoked");
     assert!(revocation_data.is_revoked());
-    
+
     Ok(())
 }
 
@@ -162,19 +171,19 @@ fn test_transaction_hashing() -> Result<()> {
         },
         "hash test".as_bytes().to_vec(),
     );
-    
+
     // Test hash calculation
     let hash1 = transaction.hash();
     let hash2 = transaction.hash();
     assert_eq!(hash1, hash2); // Should be deterministic
-    
+
     // Test signing hash (should be different)
     let signing_hash = transaction.signing_hash();
     assert_ne!(hash1, signing_hash);
-    
+
     // Test ID (should equal hash)
     assert_eq!(transaction.id(), hash1);
-    
+
     Ok(())
 }
 
@@ -186,14 +195,14 @@ fn test_transaction_validation() -> Result<()> {
         Hash::from_hex("2222222222222222222222222222222222222222222222222222222222222222")?,
         crypto_integration::PublicKey::new(vec![1, 2, 3, 4]),
     );
-    
+
     let input = TransactionInput::new(
         Hash::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?,
         0,
         Hash::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")?,
         zk_integration::ZkTransactionProof::default(),
     );
-    
+
     let transaction = Transaction::new(
         vec![input],
         vec![output],
@@ -212,7 +221,11 @@ fn test_transaction_validation() -> Result<()> {
     let validation_result = lib_blockchain::validation::validate_stateless(&transaction);
 
     // Should pass stateless validation (has inputs, has outputs, no duplicate outpoints)
-    assert!(validation_result.is_ok(), "Stateless validation should pass for well-formed transaction: {:?}", validation_result);
+    assert!(
+        validation_result.is_ok(),
+        "Stateless validation should pass for well-formed transaction: {:?}",
+        validation_result
+    );
 
     Ok(())
 }
@@ -226,11 +239,14 @@ fn test_transaction_input_output() -> Result<()> {
         Hash::from_hex("2222222222222222222222222222222222222222222222222222222222222222")?,
         zk_integration::ZkTransactionProof::default(),
     );
-    
+
     let (prev_hash, index) = input.outpoint();
     assert_eq!(index, 5);
-    assert_eq!(prev_hash, Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?);
-    
+    assert_eq!(
+        prev_hash,
+        Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?
+    );
+
     // Test TransactionOutput
     let recipient_key = crypto_integration::PublicKey::new(vec![1, 2, 3, 4]);
     let output = TransactionOutput::new(
@@ -238,12 +254,12 @@ fn test_transaction_input_output() -> Result<()> {
         Hash::from_hex("4444444444444444444444444444444444444444444444444444444444444444")?,
         recipient_key.clone(),
     );
-    
+
     assert!(output.is_to_recipient(&recipient_key));
-    
+
     let other_key = crypto_integration::PublicKey::new(vec![5, 6, 7, 8]);
     assert!(!output.is_to_recipient(&other_key));
-    
+
     Ok(())
 }
 
@@ -253,14 +269,15 @@ fn test_transaction_builder() -> Result<()> {
     // We test the builder fluent interface, not signing which requires full crypto setup
 
     let mock_zk_proof = zk_integration::generate_proofs_transaction_proof(
-        10000,  // sender_balance
-        0,      // receiver_balance
-        1000,   // amount
-        150,    // fee
-        [1u8; 32],  // sender_blinding
-        [0u8; 32],  // receiver_blinding
-        [2u8; 32],  // nullifier
-    ).expect("Failed to generate mock proof");
+        10000,     // sender_balance
+        0,         // receiver_balance
+        1000,      // amount
+        150,       // fee
+        [1u8; 32], // sender_blinding
+        [0u8; 32], // receiver_blinding
+        [2u8; 32], // nullifier
+    )
+    .expect("Failed to generate mock proof");
 
     let input = TransactionInput::new(
         Hash::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?,
@@ -294,27 +311,27 @@ fn test_transaction_builder() -> Result<()> {
 fn test_transaction_size_estimation() -> Result<()> {
     // Test size estimation utility
     let estimated_size = creation::utils::estimate_transaction_size(
-        2, // inputs
-        3, // outputs
-        100, // memo size
+        2,     // inputs
+        3,     // outputs
+        100,   // memo size
         false, // no identity data
     );
-    
+
     assert!(estimated_size > 0);
     assert!(estimated_size > 100); // Should be larger than just memo
-    
+
     // Test with identity data - use same inputs/outputs/memo to properly compare identity impact
     let estimated_size_with_identity = creation::utils::estimate_transaction_size(
-        2, // inputs (same as above)
-        3, // outputs (same as above) 
-        100, // memo size (same as above)
+        2,    // inputs (same as above)
+        3,    // outputs (same as above)
+        100,  // memo size (same as above)
         true, // has identity data
     );
-    
+
     // With identity data, the transaction should be larger by 256 bytes
     assert!(estimated_size_with_identity > estimated_size);
     assert_eq!(estimated_size_with_identity, estimated_size + 256);
-    
+
     Ok(())
 }
 
@@ -323,10 +340,10 @@ fn test_minimum_fee_calculation() -> Result<()> {
     // Test minimum fee calculation
     let min_fee_small = creation::utils::calculate_minimum_fee(100);
     let min_fee_large = creation::utils::calculate_minimum_fee(1000);
-    
+
     assert!(min_fee_large > min_fee_small);
     assert!(min_fee_small >= 100); // Base fee reduced from 1000 to 100
-    
+
     Ok(())
 }
 
@@ -344,17 +361,17 @@ fn test_transaction_serialization() -> Result<()> {
         },
         "serialization test".as_bytes().to_vec(),
     );
-    
+
     // Test serialization
     let serialized = bincode::serialize(&transaction)?;
     assert!(!serialized.is_empty());
-    
+
     // Test deserialization
     let deserialized: Transaction = bincode::deserialize(&serialized)?;
     assert_eq!(deserialized.version, transaction.version);
     assert_eq!(deserialized.fee, transaction.fee);
     assert_eq!(deserialized.memo, transaction.memo);
-    
+
     Ok(())
 }
 
@@ -370,17 +387,17 @@ fn test_identity_transaction_data() -> Result<()> {
         2000,
         200,
     );
-    
+
     // Test properties
     assert_eq!(identity_data.total_fees(), 2200);
     assert!(!identity_data.is_revoked());
     assert_eq!(identity_data.identity_type, "organization");
-    
+
     // Test revoked identity
     let mut revoked_data = identity_data.clone();
     revoked_data.identity_type = "revoked".to_string();
     assert!(revoked_data.is_revoked());
-    
+
     Ok(())
 }
 
@@ -393,7 +410,10 @@ fn test_difficulty_update_transaction_type_exists() {
     // Verify the DifficultyUpdate variant exists
     let tx_type = TransactionType::DifficultyUpdate;
     assert_eq!(tx_type.as_str(), "difficulty_update");
-    assert_eq!(tx_type.description(), "Difficulty parameter update (via DAO governance)");
+    assert_eq!(
+        tx_type.description(),
+        "Difficulty parameter update (via DAO governance)"
+    );
 }
 
 #[test]
@@ -411,7 +431,7 @@ fn test_difficulty_update_transaction_type_from_str() {
     let tx_type = TransactionType::from_str("difficulty_update");
     assert!(tx_type.is_some());
     assert_eq!(tx_type.unwrap(), TransactionType::DifficultyUpdate);
-    
+
     // Case sensitivity
     let tx_type_upper = TransactionType::from_str("DIFFICULTY_UPDATE");
     assert!(tx_type_upper.is_none()); // from_str is case-sensitive
@@ -420,16 +440,15 @@ fn test_difficulty_update_transaction_type_from_str() {
 #[test]
 fn test_difficulty_update_transaction_type_serialization() {
     let tx_type = TransactionType::DifficultyUpdate;
-    
+
     // Test bincode serialization
     let serialized = bincode::serialize(&tx_type).expect("serialize tx type");
-    let deserialized: TransactionType = 
+    let deserialized: TransactionType =
         bincode::deserialize(&serialized).expect("deserialize tx type");
     assert_eq!(deserialized, TransactionType::DifficultyUpdate);
-    
+
     // Test JSON serialization
     let json = serde_json::to_string(&tx_type).expect("serialize to JSON");
-    let from_json: TransactionType = 
-        serde_json::from_str(&json).expect("deserialize from JSON");
+    let from_json: TransactionType = serde_json::from_str(&json).expect("deserialize from JSON");
     assert_eq!(from_json, TransactionType::DifficultyUpdate);
 }

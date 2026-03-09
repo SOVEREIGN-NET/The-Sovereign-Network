@@ -161,7 +161,8 @@ pub fn assert_peer_identity_valid(peer_key: &PublicKey) -> Result<(), String> {
     // key_id is [u8; 32] so is_empty() does not apply; the all-zero check is sufficient.
     if peer_key.key_id == [0u8; 32] {
         return Err(
-            "IDENTITY INVARIANT: peer public key has all-zero key_id (uninitialized key)".to_string()
+            "IDENTITY INVARIANT: peer public key has all-zero key_id (uninitialized key)"
+                .to_string(),
         );
     }
     Ok(())
@@ -223,7 +224,10 @@ mod tests {
         let prefix_key = make_key(&[0x01, 0x02]);
         let set = vec![validator];
         let result = assert_consensus_sender_is_validator(&prefix_key, &set);
-        assert!(result.is_err(), "Prefix key should not satisfy validator membership");
+        assert!(
+            result.is_err(),
+            "Prefix key should not satisfy validator membership"
+        );
     }
 
     // ---- assert_peer_identity_valid ----

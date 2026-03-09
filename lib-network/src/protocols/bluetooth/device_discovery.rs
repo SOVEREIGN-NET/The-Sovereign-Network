@@ -13,9 +13,7 @@ impl BluetoothMeshProtocol {
     pub(crate) async fn linux_discover_device(&self, address: &str) -> Result<()> {
         use std::process::Command;
 
-        let _ = Command::new("bluetoothctl")
-            .args(&["scan", "on"])
-            .output();
+        let _ = Command::new("bluetoothctl").args(&["scan", "on"]).output();
 
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
@@ -29,8 +27,8 @@ impl BluetoothMeshProtocol {
             if output_str.contains("Device") {
                 let raw_mac = super::common::parse_mac_address(address)?;
 
-                let mut device =
-                    self.create_secure_tracked_device(&raw_mac, Self::extract_device_name(&output_str));
+                let mut device = self
+                    .create_secure_tracked_device(&raw_mac, Self::extract_device_name(&output_str));
                 device.services = Self::extract_services(&output_str);
 
                 self.track_device(&raw_mac, device).await?;

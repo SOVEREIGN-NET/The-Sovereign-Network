@@ -2,11 +2,11 @@
 //!
 //! Provides endpoints for investigating and managing PoUW disputes.
 
-use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc};
 
 /// Dispute status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,12 +197,12 @@ impl DisputeService {
         offset: usize,
     ) -> Vec<Dispute> {
         let disputes = self.disputes.read().await;
-        
+
         disputes
             .values()
             .filter(|d| {
-                client_did.map_or(true, |did| d.client_did == did) &&
-                status.map_or(true, |s| d.status == s)
+                client_did.map_or(true, |did| d.client_did == did)
+                    && status.map_or(true, |s| d.status == s)
             })
             .skip(offset)
             .take(limit)
@@ -218,12 +218,12 @@ impl DisputeService {
         data: String,
     ) -> Result<(), DisputeError> {
         let mut disputes = self.disputes.write().await;
-        
-        let dispute = disputes
-            .get_mut(dispute_id)
-            .ok_or(DisputeError::NotFound)?;
 
-        if dispute.status != DisputeStatus::Open && dispute.status != DisputeStatus::UnderInvestigation {
+        let dispute = disputes.get_mut(dispute_id).ok_or(DisputeError::NotFound)?;
+
+        if dispute.status != DisputeStatus::Open
+            && dispute.status != DisputeStatus::UnderInvestigation
+        {
             return Err(DisputeError::DisputeClosed);
         }
 
@@ -246,10 +246,8 @@ impl DisputeService {
         author: &str,
     ) -> Result<(), DisputeError> {
         let mut disputes = self.disputes.write().await;
-        
-        let dispute = disputes
-            .get_mut(dispute_id)
-            .ok_or(DisputeError::NotFound)?;
+
+        let dispute = disputes.get_mut(dispute_id).ok_or(DisputeError::NotFound)?;
 
         dispute.status = new_status;
         dispute.updated_at = Utc::now();
@@ -275,10 +273,8 @@ impl DisputeService {
         compensation: Option<Compensation>,
     ) -> Result<(), DisputeError> {
         let mut disputes = self.disputes.write().await;
-        
-        let dispute = disputes
-            .get_mut(dispute_id)
-            .ok_or(DisputeError::NotFound)?;
+
+        let dispute = disputes.get_mut(dispute_id).ok_or(DisputeError::NotFound)?;
 
         let status = match resolution_type {
             ResolutionType::ClaimantCorrect => DisputeStatus::ResolvedForClaimant,
@@ -303,7 +299,7 @@ impl DisputeService {
     /// Get dispute statistics
     pub async fn get_statistics(&self) -> DisputeStatistics {
         let disputes = self.disputes.read().await;
-        
+
         let mut stats = DisputeStatistics::default();
         stats.total = disputes.len() as u64;
 
@@ -391,14 +387,16 @@ mod tests {
     #[tokio::test]
     async fn test_file_and_retrieve_dispute() {
         let service = DisputeService::new();
-        
-        let dispute = service.file_dispute(
-            "did:sov:test123".to_string(),
-            "challenge-001".to_string(),
-            Some("receipt-001".to_string()),
-            DisputeType::RewardNotReceived,
-            "Did not receive reward for valid receipt".to_string(),
-        ).await;
+
+        let dispute = service
+            .file_dispute(
+                "did:sov:test123".to_string(),
+                "challenge-001".to_string(),
+                Some("receipt-001".to_string()),
+                DisputeType::RewardNotReceived,
+                "Did not receive reward for valid receipt".to_string(),
+            )
+            .await;
 
         assert!(dispute.id.starts_with("DISPUTE-"));
         assert_eq!(dispute.status, DisputeStatus::Open);
@@ -411,21 +409,25 @@ mod tests {
     #[tokio::test]
     async fn test_add_evidence() {
         let service = DisputeService::new();
-        
-        let dispute = service.file_dispute(
-            "did:sov:test".to_string(),
-            "challenge-002".to_string(),
-            None,
-            DisputeType::ReceiptWronglyRejected,
-            "Receipt was valid".to_string(),
-        ).await;
 
-        let result = service.add_evidence(
-            &dispute.id,
-            "signature".to_string(),
-            "0xabc123...".to_string(),
-        ).await;
-        
+        let dispute = service
+            .file_dispute(
+                "did:sov:test".to_string(),
+                "challenge-002".to_string(),
+                None,
+                DisputeType::ReceiptWronglyRejected,
+                "Receipt was valid".to_string(),
+            )
+            .await;
+
+        let result = service
+            .add_evidence(
+                &dispute.id,
+                "signature".to_string(),
+                "0xabc123...".to_string(),
+            )
+            .await;
+
         assert!(result.is_ok());
 
         let updated = service.get_dispute(&dispute.id).await.unwrap();
@@ -435,26 +437,30 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_dispute() {
         let service = DisputeService::new();
-        
-        let dispute = service.file_dispute(
-            "did:sov:client".to_string(),
-            "challenge-003".to_string(),
-            None,
-            DisputeType::IncorrectRewardAmount,
-            "Reward amount is wrong".to_string(),
-        ).await;
 
-        let result = service.resolve_dispute(
-            &dispute.id,
-            "admin".to_string(),
-            ResolutionType::ClaimantCorrect,
-            "Verified: reward calculation had a bug".to_string(),
-            Some(Compensation {
-                amount: 100,
-                currency: "SOV".to_string(),
-                transaction_id: Some("tx-123".to_string()),
-            }),
-        ).await;
+        let dispute = service
+            .file_dispute(
+                "did:sov:client".to_string(),
+                "challenge-003".to_string(),
+                None,
+                DisputeType::IncorrectRewardAmount,
+                "Reward amount is wrong".to_string(),
+            )
+            .await;
+
+        let result = service
+            .resolve_dispute(
+                &dispute.id,
+                "admin".to_string(),
+                ResolutionType::ClaimantCorrect,
+                "Verified: reward calculation had a bug".to_string(),
+                Some(Compensation {
+                    amount: 100,
+                    currency: "SOV".to_string(),
+                    transaction_id: Some("tx-123".to_string()),
+                }),
+            )
+            .await;
 
         assert!(result.is_ok());
 
@@ -466,11 +472,35 @@ mod tests {
     #[tokio::test]
     async fn test_statistics() {
         let service = DisputeService::new();
-        
+
         // File multiple disputes
-        service.file_dispute("did:1".into(), "c1".into(), None, DisputeType::RewardNotReceived, "test".into()).await;
-        service.file_dispute("did:2".into(), "c2".into(), None, DisputeType::RewardNotReceived, "test".into()).await;
-        service.file_dispute("did:3".into(), "c3".into(), None, DisputeType::DoubleSpend, "test".into()).await;
+        service
+            .file_dispute(
+                "did:1".into(),
+                "c1".into(),
+                None,
+                DisputeType::RewardNotReceived,
+                "test".into(),
+            )
+            .await;
+        service
+            .file_dispute(
+                "did:2".into(),
+                "c2".into(),
+                None,
+                DisputeType::RewardNotReceived,
+                "test".into(),
+            )
+            .await;
+        service
+            .file_dispute(
+                "did:3".into(),
+                "c3".into(),
+                None,
+                DisputeType::DoubleSpend,
+                "test".into(),
+            )
+            .await;
 
         let stats = service.get_statistics().await;
         assert_eq!(stats.total, 3);

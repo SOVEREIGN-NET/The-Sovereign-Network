@@ -288,9 +288,7 @@ impl CitizenRegistry {
         citizen_id: &[u8; 32],
         revoked_epoch: u64,
     ) -> Result<(), CitizenRoleError> {
-        let citizen = self
-            .get_mut(citizen_id)
-            .ok_or(CitizenRoleError::NotFound)?;
+        let citizen = self.get_mut(citizen_id).ok_or(CitizenRoleError::NotFound)?;
 
         citizen.revoke(revoked_epoch)?;
         self.active_count -= 1;
@@ -312,7 +310,8 @@ impl CitizenRegistry {
     /// # Used by Treasury Kernel
     /// When processing UBI claims, Kernel calls this to gate access
     pub fn is_eligible_for_ubi(&self, citizen_id: &[u8; 32], current_epoch: u64) -> Option<bool> {
-        self.get(citizen_id).map(|role| role.is_eligible_for_ubi(current_epoch))
+        self.get(citizen_id)
+            .map(|role| role.is_eligible_for_ubi(current_epoch))
     }
 
     /// Get all active citizens (for batch processing by Treasury Kernel)
@@ -414,7 +413,9 @@ mod tests {
         let citizen_id = [1u8; 32];
         let role = CitizenRole::new(citizen_id, 100, 50);
 
-        registry.register(role).expect("registration should succeed");
+        registry
+            .register(role)
+            .expect("registration should succeed");
 
         assert_eq!(registry.get(&citizen_id), Some(&role));
         assert_eq!(registry.stats().active_count, 1);
@@ -427,7 +428,9 @@ mod tests {
         let citizen_id = [1u8; 32];
         let role = CitizenRole::new(citizen_id, 100, 50);
 
-        registry.register(role).expect("first registration should succeed");
+        registry
+            .register(role)
+            .expect("first registration should succeed");
 
         let result = registry.register(role);
         assert_eq!(result, Err(CitizenRoleError::AlreadyExists));
@@ -439,7 +442,9 @@ mod tests {
         let citizen_id = [1u8; 32];
         let role = CitizenRole::new(citizen_id, 100, 50);
 
-        registry.register(role).expect("registration should succeed");
+        registry
+            .register(role)
+            .expect("registration should succeed");
         assert_eq!(registry.stats().active_count, 1);
 
         registry
@@ -457,7 +462,9 @@ mod tests {
         let citizen_id = [1u8; 32];
         let role = CitizenRole::new(citizen_id, 100, 50);
 
-        registry.register(role).expect("registration should succeed");
+        registry
+            .register(role)
+            .expect("registration should succeed");
 
         // Before citizenship epoch: not eligible
         assert_eq!(registry.is_eligible_for_ubi(&citizen_id, 99), Some(false));
@@ -476,12 +483,18 @@ mod tests {
         let role1 = CitizenRole::new([1u8; 32], 100, 50);
         let role2 = CitizenRole::new([2u8; 32], 100, 50);
 
-        registry.register(role1).expect("registration should succeed");
-        registry.register(role2).expect("registration should succeed");
+        registry
+            .register(role1)
+            .expect("registration should succeed");
+        registry
+            .register(role2)
+            .expect("registration should succeed");
 
         assert_eq!(registry.get_active_citizens().len(), 2);
 
-        registry.revoke(&[1u8; 32], 150).expect("revocation should succeed");
+        registry
+            .revoke(&[1u8; 32], 150)
+            .expect("revocation should succeed");
 
         assert_eq!(registry.get_active_citizens().len(), 1);
         let active = registry.get_active_citizens();

@@ -19,14 +19,14 @@
 //! - Metadata and contracts (SQLite)
 //! - Audit logging (SQLite)
 
-pub mod traits;
 mod sled_backend;
+pub mod traits;
 
 #[cfg(feature = "sqlite")]
 pub mod sqlite_backend;
 
+pub use sled_backend::{BatchOp, Result, SledBackend, SledTree, StorageBackend, StorageError};
 pub use traits::{BackendStats, StorageKey};
-pub use sled_backend::{SledBackend, SledTree, BatchOp, StorageBackend, StorageError, Result};
 
 #[cfg(feature = "sqlite")]
 pub use sqlite_backend::SqliteBackend;

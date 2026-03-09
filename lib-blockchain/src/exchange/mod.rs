@@ -5,8 +5,4 @@
 
 pub mod state;
 
-pub use state::{
-    ExchangeState,
-    LastTradePrice,
-    TradingPair,
-};
+pub use state::{ExchangeState, LastTradePrice, TradingPair};

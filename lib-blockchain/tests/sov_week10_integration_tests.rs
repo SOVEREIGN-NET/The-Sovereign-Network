@@ -13,13 +13,12 @@
 #[cfg(test)]
 mod sov_week10_integration_tests {
     use lib_blockchain::{
-        Block, BlockHeader, Transaction, TransactionType, TransactionOutput,
-        Hash, Difficulty,
         integration::crypto_integration::{Signature, SignatureAlgorithm},
+        Block, BlockHeader, Difficulty, Hash, Transaction, TransactionOutput, TransactionType,
     };
     use lib_crypto::PublicKey;
-    use std::time::Instant;
     use std::collections::HashMap;
+    use std::time::Instant;
 
     // ========================================================================
     // TEST UTILITIES AND FIXTURES
@@ -37,13 +36,13 @@ mod sov_week10_integration_tests {
         const KEY_PATTERN_MULTIPLIER: u8 = 7;
         let mut key_bytes = vec![0u8; 32];
         let index_bytes = index.to_le_bytes();
-        
+
         // Fill key with a deterministic but varied pattern based on index
         for i in 0..32 {
-            key_bytes[i] = (index_bytes[i % 4].wrapping_add(i as u8))
-                .wrapping_mul(KEY_PATTERN_MULTIPLIER);
+            key_bytes[i] =
+                (index_bytes[i % 4].wrapping_add(i as u8)).wrapping_mul(KEY_PATTERN_MULTIPLIER);
         }
-        
+
         PublicKey::new(key_bytes)
     }
 
@@ -54,13 +53,11 @@ mod sov_week10_integration_tests {
             chain_id: 1,
             transaction_type: tx_type,
             inputs: vec![],
-            outputs: vec![
-                TransactionOutput {
-                    commitment: Hash::default(),
-                    note: Hash::default(),
-                    recipient: create_test_public_key(index),
-                }
-            ],
+            outputs: vec![TransactionOutput {
+                commitment: Hash::default(),
+                note: Hash::default(),
+                recipient: create_test_public_key(index),
+            }],
             fee,
             signature: Signature {
                 signature: format!("sig_{}", index).as_bytes().to_vec(),
@@ -79,7 +76,7 @@ mod sov_week10_integration_tests {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-                        governance_config_data: None,
+            governance_config_data: None,
             bonding_curve_deploy_data: None,
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
@@ -164,8 +161,15 @@ mod sov_week10_integration_tests {
         let construction_time = start.elapsed();
 
         // Verify block structure
-        assert_eq!(block.transactions.len(), 1000, "Block should contain 1000 transactions");
-        assert_eq!(block.header.transaction_count, 1000, "Header should reflect 1000 transactions");
+        assert_eq!(
+            block.transactions.len(),
+            1000,
+            "Block should contain 1000 transactions"
+        );
+        assert_eq!(
+            block.header.transaction_count, 1000,
+            "Header should reflect 1000 transactions"
+        );
         assert_eq!(block.height(), 100, "Block height should be 100");
 
         // Verify all transactions are present and accessible
@@ -179,12 +183,21 @@ mod sov_week10_integration_tests {
         // Expected fees: 1000 transactions distributed across 4 types in round-robin
         // 250 × 100 + 250 × 50 + 250 × 200 + 250 × 25 = 25,000 + 12,500 + 50,000 + 6,250 = 93,750
         let expected_total = 250 * 100 + 250 * 50 + 250 * 200 + 250 * 25;
-        assert_eq!(total_fees, expected_total, "Total fees should match calculation");
+        assert_eq!(
+            total_fees, expected_total,
+            "Total fees should match calculation"
+        );
         assert_eq!(tx_count, 1000, "Transaction count should be 1000");
 
         println!("✓ Block construction completed in {:?}", construction_time);
-        println!("✓ Block contains 1000 transactions with total fees: {}", total_fees);
-        println!("✓ Block construction time: {:.2}ms", construction_time.as_secs_f64() * 1000.0);
+        println!(
+            "✓ Block contains 1000 transactions with total fees: {}",
+            total_fees
+        );
+        println!(
+            "✓ Block construction time: {:.2}ms",
+            construction_time.as_secs_f64() * 1000.0
+        );
 
         // Performance assertion: Should construct 1K tx block in < 100ms
         assert!(
@@ -211,7 +224,11 @@ mod sov_week10_integration_tests {
         let transfer_fees = type_fees.get("Transfer").unwrap_or(&0);
         let expected_fees = 100 * 100; // 100 transactions × 100 fee each
 
-        assert_eq!(*transfer_fees, expected_fees, "Transfer fees should total {}", expected_fees);
+        assert_eq!(
+            *transfer_fees, expected_fees,
+            "Transfer fees should total {}",
+            expected_fees
+        );
         println!("✓ Extracted {} total Transfer fees", transfer_fees);
     }
 
@@ -227,7 +244,11 @@ mod sov_week10_integration_tests {
         let ubi_fees = type_fees.get("UbiDistribution").unwrap_or(&0);
         let expected_fees = 200 * 50; // 200 transactions × 50 fee each
 
-        assert_eq!(*ubi_fees, expected_fees, "UBI fees should total {}", expected_fees);
+        assert_eq!(
+            *ubi_fees, expected_fees,
+            "UBI fees should total {}",
+            expected_fees
+        );
         println!("✓ Extracted {} total UBI Distribution fees", ubi_fees);
     }
 
@@ -243,8 +264,15 @@ mod sov_week10_integration_tests {
         let contract_fees = type_fees.get("ContractExecution").unwrap_or(&0);
         let expected_fees = 150 * 200; // 150 transactions × 200 fee each
 
-        assert_eq!(*contract_fees, expected_fees, "Contract execution fees should total {}", expected_fees);
-        println!("✓ Extracted {} total Contract Execution fees", contract_fees);
+        assert_eq!(
+            *contract_fees, expected_fees,
+            "Contract execution fees should total {}",
+            expected_fees
+        );
+        println!(
+            "✓ Extracted {} total Contract Execution fees",
+            contract_fees
+        );
     }
 
     #[test]
@@ -259,7 +287,11 @@ mod sov_week10_integration_tests {
         let session_fees = type_fees.get("SessionCreation").unwrap_or(&0);
         let expected_fees = 300 * 25; // 300 transactions × 25 fee each
 
-        assert_eq!(*session_fees, expected_fees, "Session creation fees should total {}", expected_fees);
+        assert_eq!(
+            *session_fees, expected_fees,
+            "Session creation fees should total {}",
+            expected_fees
+        );
         println!("✓ Extracted {} total Session Creation fees", session_fees);
     }
 
@@ -279,12 +311,31 @@ mod sov_week10_integration_tests {
 
         // Verify distribution (round-robin: 100 of each type)
         assert_eq!(tx_count, 400, "Should have 400 transactions");
-        assert_eq!(*type_fees.get("Transfer").unwrap_or(&0), 100 * 100, "Transfer fees mismatch");
-        assert_eq!(*type_fees.get("UbiDistribution").unwrap_or(&0), 100 * 50, "UBI fees mismatch");
-        assert_eq!(*type_fees.get("ContractExecution").unwrap_or(&0), 100 * 200, "Contract fees mismatch");
-        assert_eq!(*type_fees.get("SessionCreation").unwrap_or(&0), 100 * 25, "Session fees mismatch");
+        assert_eq!(
+            *type_fees.get("Transfer").unwrap_or(&0),
+            100 * 100,
+            "Transfer fees mismatch"
+        );
+        assert_eq!(
+            *type_fees.get("UbiDistribution").unwrap_or(&0),
+            100 * 50,
+            "UBI fees mismatch"
+        );
+        assert_eq!(
+            *type_fees.get("ContractExecution").unwrap_or(&0),
+            100 * 200,
+            "Contract fees mismatch"
+        );
+        assert_eq!(
+            *type_fees.get("SessionCreation").unwrap_or(&0),
+            100 * 25,
+            "Session fees mismatch"
+        );
 
-        println!("✓ Correctly extracted fees for {} transaction types", type_fees.len());
+        println!(
+            "✓ Correctly extracted fees for {} transaction types",
+            type_fees.len()
+        );
         for (tx_type, fees) in &type_fees {
             println!("  - {}: {} total fees", tx_type, fees);
         }
@@ -317,8 +368,14 @@ mod sov_week10_integration_tests {
             processing_time
         );
 
-        println!("✓ Processed 100 transactions in {:.2}ms", processing_time.as_secs_f64() * 1000.0);
-        println!("✓ Processing rate: {:.0} tx/ms", 100.0 / processing_time.as_secs_f64() / 1000.0);
+        println!(
+            "✓ Processed 100 transactions in {:.2}ms",
+            processing_time.as_secs_f64() * 1000.0
+        );
+        println!(
+            "✓ Processing rate: {:.0} tx/ms",
+            100.0 / processing_time.as_secs_f64() / 1000.0
+        );
     }
 
     #[test]
@@ -344,8 +401,14 @@ mod sov_week10_integration_tests {
             processing_time
         );
 
-        println!("✓ Processed 500 transactions in {:.2}ms", processing_time.as_secs_f64() * 1000.0);
-        println!("✓ Processing rate: {:.0} tx/ms", 500.0 / processing_time.as_secs_f64() / 1000.0);
+        println!(
+            "✓ Processed 500 transactions in {:.2}ms",
+            processing_time.as_secs_f64() * 1000.0
+        );
+        println!(
+            "✓ Processing rate: {:.0} tx/ms",
+            500.0 / processing_time.as_secs_f64() / 1000.0
+        );
     }
 
     #[test]
@@ -372,8 +435,14 @@ mod sov_week10_integration_tests {
             processing_time
         );
 
-        println!("✓ Processed 1000 transactions in {:.2}ms", processing_time.as_secs_f64() * 1000.0);
-        println!("✓ Processing rate: {:.0} tx/ms", 1000.0 / processing_time.as_secs_f64() / 1000.0);
+        println!(
+            "✓ Processed 1000 transactions in {:.2}ms",
+            processing_time.as_secs_f64() * 1000.0
+        );
+        println!(
+            "✓ Processing rate: {:.0} tx/ms",
+            1000.0 / processing_time.as_secs_f64() / 1000.0
+        );
     }
 
     // ========================================================================
@@ -391,14 +460,21 @@ mod sov_week10_integration_tests {
         let (total_fees, tx_count, _type_fees) = calculate_fee_distribution(&block);
 
         let expected_total = 500 * 100;
-        assert_eq!(total_fees, expected_total, "Total fees should be exactly {}", expected_total);
+        assert_eq!(
+            total_fees, expected_total,
+            "Total fees should be exactly {}",
+            expected_total
+        );
         assert_eq!(tx_count, 500, "Transaction count should be 500");
 
         // Verify average fee calculation
         let average_fee = block.average_fee();
         assert_eq!(average_fee, 100, "Average fee should be 100");
 
-        println!("✓ Uniform distribution: {} total fees, {} average", total_fees, average_fee);
+        println!(
+            "✓ Uniform distribution: {} total fees, {} average",
+            total_fees, average_fee
+        );
     }
 
     #[test]
@@ -407,7 +483,7 @@ mod sov_week10_integration_tests {
 
         // Mix of high (500) and low (10) fees
         let fee_distribution = vec![
-            (TransactionType::Transfer, 500),      // high fee
+            (TransactionType::Transfer, 500),       // high fee
             (TransactionType::SessionCreation, 10), // low fee
         ];
 
@@ -416,13 +492,27 @@ mod sov_week10_integration_tests {
 
         // 200 Transfer @ 500 + 200 SessionCreation @ 10 = 100,000 + 2,000 = 102,000
         let expected_total = 200 * 500 + 200 * 10;
-        assert_eq!(total_fees, expected_total, "Total fees should be {}", expected_total);
+        assert_eq!(
+            total_fees, expected_total,
+            "Total fees should be {}",
+            expected_total
+        );
 
         // Verify per-type accuracy
         let transfer_fees = type_fees.get("Transfer").unwrap_or(&0);
         let session_fees = type_fees.get("SessionCreation").unwrap_or(&0);
-        assert_eq!(*transfer_fees, 200 * 500, "Transfer fees should be {}", 200 * 500);
-        assert_eq!(*session_fees, 200 * 10, "Session creation fees should be {}", 200 * 10);
+        assert_eq!(
+            *transfer_fees,
+            200 * 500,
+            "Transfer fees should be {}",
+            200 * 500
+        );
+        assert_eq!(
+            *session_fees,
+            200 * 10,
+            "Session creation fees should be {}",
+            200 * 10
+        );
 
         println!("✓ Mixed distribution: {} total fees", total_fees);
         println!("  - Transfer (high): {}", transfer_fees);
@@ -449,11 +539,22 @@ mod sov_week10_integration_tests {
         // = 10,000 + 5,000 + 20,000 + 2,500 + 30,000 = 67,500
         let expected_total = 100 * 100 + 100 * 50 + 100 * 200 + 100 * 25 + 100 * 300;
 
-        assert_eq!(total_fees, expected_total, "Total fees should be {}", expected_total);
+        assert_eq!(
+            total_fees, expected_total,
+            "Total fees should be {}",
+            expected_total
+        );
         assert_eq!(tx_count, 500, "Should have 500 transactions");
-        assert_eq!(type_fees.len(), 5, "Should have 5 distinct transaction types");
+        assert_eq!(
+            type_fees.len(),
+            5,
+            "Should have 5 distinct transaction types"
+        );
 
-        println!("✓ Complex mix: {} total fees across 5 transaction types", total_fees);
+        println!(
+            "✓ Complex mix: {} total fees across 5 transaction types",
+            total_fees
+        );
         for (tx_type, fees) in &type_fees {
             println!("  - {}: {}", tx_type, fees);
         }
@@ -479,15 +580,25 @@ mod sov_week10_integration_tests {
 
         for i in 0..num_blocks {
             let start = Instant::now();
-            let _block = create_block_with_transactions((100 + i) as u64, transactions_per_block, &fee_distribution);
+            let _block = create_block_with_transactions(
+                (100 + i) as u64,
+                transactions_per_block,
+                &fee_distribution,
+            );
             total_time += start.elapsed();
         }
 
         let average_time = total_time / num_blocks;
 
-        println!("✓ Constructed {} blocks with {} txs each", num_blocks, transactions_per_block);
+        println!(
+            "✓ Constructed {} blocks with {} txs each",
+            num_blocks, transactions_per_block
+        );
         println!("✓ Total time: {:.2}ms", total_time.as_secs_f64() * 1000.0);
-        println!("✓ Average per block: {:.2}ms", average_time.as_secs_f64() * 1000.0);
+        println!(
+            "✓ Average per block: {:.2}ms",
+            average_time.as_secs_f64() * 1000.0
+        );
 
         // Each block should average < 50ms
         assert!(
@@ -515,7 +626,10 @@ mod sov_week10_integration_tests {
         let (_total, _count, _type_fees) = calculate_fee_distribution(&block);
         let calc_time = start.elapsed();
 
-        println!("✓ Calculated fee distribution for 1000 transactions in {:.2}µs", calc_time.as_secs_f64() * 1_000_000.0);
+        println!(
+            "✓ Calculated fee distribution for 1000 transactions in {:.2}µs",
+            calc_time.as_secs_f64() * 1_000_000.0
+        );
 
         // Fee calculation should be very fast (< 1ms for 1K transactions)
         assert!(
@@ -529,7 +643,10 @@ mod sov_week10_integration_tests {
         let (ubi, consensus, gov, treasury) = block.fee_summary();
         let summary_time = start.elapsed();
 
-        println!("✓ Called fee_summary() in {:.2}µs", summary_time.as_secs_f64() * 1_000_000.0);
+        println!(
+            "✓ Called fee_summary() in {:.2}µs",
+            summary_time.as_secs_f64() * 1_000_000.0
+        );
         println!("  - UBI (45%): {}", ubi);
         println!("  - Consensus (30%): {}", consensus);
         println!("  - Governance (15%): {}", gov);

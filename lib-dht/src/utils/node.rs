@@ -1,9 +1,9 @@
+use super::hash::crc32c::Crc32c;
+use super::uid::UID;
+use std::fmt::Formatter;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{cmp, fmt};
-use std::fmt::Formatter;
-use super::uid::UID;
-use super::hash::crc32c::Crc32c;
 
 pub const V4_MASK: [u8; 4] = [0x03, 0x0f, 0x3f, 0xff];
 pub const V6_MASK: [u8; 8] = [0x01, 0x03, 0x07, 0x0f, 0x1f, 0x3f, 0x7f, 0xff];
@@ -18,7 +18,6 @@ pub struct Node {
 }
 
 impl Node {
-
     pub fn new(uid: UID, address: SocketAddr) -> Self {
         Self {
             uid,
@@ -88,7 +87,6 @@ impl PartialEq for Node {
 }
 
 impl fmt::Display for Node {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{{ \x1b[34mUID\x1b[0m: \x1b[35m{}\x1b[0m, \x1b[34mADDRESS\x1b[0m: \x1b[35m{}\x1b[0m, \x1b[34mPORT\x1b[0m: \x1b[35m{}\x1b[0m, \x1b[34mSECURE\x1b[0m: \x1b[35m{}\x1b[0m }}",
                 self.uid.to_string(),

@@ -37,30 +37,27 @@
 //! - Race conditions during network partitions
 //! - Consensus bypass attacks
 
+use anyhow::{anyhow, Result};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use anyhow::{Result, anyhow};
-use tokio::sync::{RwLock, mpsc};
-use tracing::{info, warn, error, debug};
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, error, info, warn};
 
 use lib_consensus::{
-    ConsensusEngine, ConsensusConfig, ConsensusEvent, ValidatorStatus,
-    DaoProposalType, DaoVoteChoice,
-    RewardCalculator, RewardRound,
-    ConsensusProposal, ConsensusVote, VoteType, ConsensusStep,
-    ConsensusType, ConsensusProof, NoOpBroadcaster,
-    DifficultyConfig, DifficultyManager,
+    ConsensusConfig, ConsensusEngine, ConsensusEvent, ConsensusProof, ConsensusProposal,
+    ConsensusStep, ConsensusType, ConsensusVote, DaoProposalType, DaoVoteChoice, DifficultyConfig,
+    DifficultyManager, NoOpBroadcaster, RewardCalculator, RewardRound, ValidatorStatus, VoteType,
 };
-use lib_crypto::{Hash, hash_blake3, KeyPair};
+use lib_crypto::{hash_blake3, Hash, KeyPair};
 use lib_identity::IdentityId;
 
 use crate::{
-    Blockchain, Block, BlockHeader, Transaction, TransactionType, TransactionOutput,
-    types::{Hash as BlockchainHash, Difficulty},
     mempool::Mempool,
-    utils::time::current_timestamp,
     transaction::IdentityTransactionData,
+    types::{Difficulty, Hash as BlockchainHash},
+    utils::time::current_timestamp,
+    Block, BlockHeader, Blockchain, Transaction, TransactionOutput, TransactionType,
 };
 
 /// Validator keypair for cryptographic operations
@@ -201,12 +198,13 @@ impl BlockchainConsensusCoordinator {
         mempool: Arc<RwLock<Mempool>>,
         consensus_config: ConsensusConfig,
     ) -> Result<Self> {
-        let consensus_engine = Arc::new(RwLock::new(
-            ConsensusEngine::new(consensus_config, Arc::new(NoOpBroadcaster))?
-        ));
+        let consensus_engine = Arc::new(RwLock::new(ConsensusEngine::new(
+            consensus_config,
+            Arc::new(NoOpBroadcaster),
+        )?));
 
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
-        
+
         // Initialize difficulty manager with default configuration
         let difficulty_manager = Arc::new(RwLock::new(DifficultyManager::default()));
 
@@ -225,7 +223,7 @@ impl BlockchainConsensusCoordinator {
             difficulty_manager,
         })
     }
-    
+
     /// Create a new blockchain consensus coordinator with custom difficulty configuration
     pub async fn new_with_difficulty_config(
         blockchain: Arc<RwLock<Blockchain>>,
@@ -233,12 +231,13 @@ impl BlockchainConsensusCoordinator {
         consensus_config: ConsensusConfig,
         difficulty_config: DifficultyConfig,
     ) -> Result<Self> {
-        let consensus_engine = Arc::new(RwLock::new(
-            ConsensusEngine::new(consensus_config, Arc::new(NoOpBroadcaster))?
-        ));
+        let consensus_engine = Arc::new(RwLock::new(ConsensusEngine::new(
+            consensus_config,
+            Arc::new(NoOpBroadcaster),
+        )?));
 
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
-        
+
         // Initialize difficulty manager with provided configuration
         let difficulty_manager = Arc::new(RwLock::new(DifficultyManager::new(difficulty_config)));
 
@@ -275,16 +274,19 @@ impl BlockchainConsensusCoordinator {
         //   consensus_key : BFT vote-signing (Dilithium2, hot)
         //   networking_key: P2P transport identity (Ed25519/X25519, hot)
         //   rewards_key   : Reward wallet public key (cold-capable)
-        consensus_engine.register_validator(
-            identity.clone(),
-            stake_amount,
-            storage_capacity,
-            consensus_keypair.public_key.dilithium_pk.clone(),
-            networking_keypair.public_key.dilithium_pk.clone(),
-            rewards_keypair.public_key.dilithium_pk.clone(),
-            commission_rate,
-            false, // Not genesis validator
-        ).await.map_err(|e| anyhow::anyhow!("Consensus registration failed: {}", e))?;
+        consensus_engine
+            .register_validator(
+                identity.clone(),
+                stake_amount,
+                storage_capacity,
+                consensus_keypair.public_key.dilithium_pk.clone(),
+                networking_keypair.public_key.dilithium_pk.clone(),
+                rewards_keypair.public_key.dilithium_pk.clone(),
+                commission_rate,
+                false, // Not genesis validator
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("Consensus registration failed: {}", e))?;
 
         if let Err(error) = consensus_engine.set_validator_keypair(consensus_keypair.clone()) {
             warn!(
@@ -299,25 +301,30 @@ impl BlockchainConsensusCoordinator {
 
         // Create validator registration transaction
         let mut blockchain = self.blockchain.write().await;
-        let registration_tx = self.create_validator_registration_transaction(
-            &identity,
-            stake_amount,
-            storage_capacity,
-            consensus_keypair,
-            commission_rate,
-        ).await?;
+        let registration_tx = self
+            .create_validator_registration_transaction(
+                &identity,
+                stake_amount,
+                storage_capacity,
+                consensus_keypair,
+                commission_rate,
+            )
+            .await?;
 
         // Add to pending transactions
         blockchain.add_pending_transaction(registration_tx)?;
 
-        info!("Registered as validator: {:?} with {} SOV stake", identity, stake_amount);
+        info!(
+            "Registered as validator: {:?} with {} SOV stake",
+            identity, stake_amount
+        );
         Ok(())
     }
 
     /// Start the consensus coordinator event loop
     pub async fn start_consensus_coordinator(&mut self) -> Result<()> {
         info!(" Starting blockchain consensus coordinator");
-        
+
         self.is_producing_blocks = true;
 
         // Start consensus event processing loop
@@ -367,12 +374,12 @@ impl BlockchainConsensusCoordinator {
             difficulty_manager: self.difficulty_manager.clone(),
         }
     }
-    
+
     /// Get the difficulty manager
     pub fn difficulty_manager(&self) -> &Arc<RwLock<DifficultyManager>> {
         &self.difficulty_manager
     }
-    
+
     /// Get the current difficulty configuration
     ///
     /// **Note**: This clones the entire DifficultyConfig. For better performance,
@@ -402,28 +409,33 @@ impl BlockchainConsensusCoordinator {
     ) -> Result<Option<u32>> {
         let manager = self.difficulty_manager.read().await;
         manager
-            .adjust_difficulty(height, current_difficulty, interval_start_time, interval_end_time)
+            .adjust_difficulty(
+                height,
+                current_difficulty,
+                interval_start_time,
+                interval_end_time,
+            )
             .map_err(|e| anyhow!("Difficulty adjustment failed: {}", e))
     }
-    
+
     /// Check if difficulty should be adjusted at the given height
     pub async fn should_adjust_difficulty(&self, height: u64) -> bool {
         let manager = self.difficulty_manager.read().await;
         manager.should_adjust(height)
     }
-    
+
     /// Get the initial difficulty value from consensus policy
     pub async fn get_initial_difficulty(&self) -> u32 {
         let manager = self.difficulty_manager.read().await;
         manager.initial_difficulty()
     }
-    
+
     /// Get the difficulty adjustment interval from consensus policy
     pub async fn get_difficulty_adjustment_interval(&self) -> u64 {
         let manager = self.difficulty_manager.read().await;
         manager.adjustment_interval()
     }
-    
+
     /// Apply DAO governance updates to difficulty parameters
     pub async fn apply_difficulty_governance_update(
         &self,
@@ -440,7 +452,7 @@ impl BlockchainConsensusCoordinator {
     /// Main consensus event processing loop
     async fn consensus_event_loop(&self) {
         info!(" Starting consensus event processing loop");
-        
+
         loop {
             if let Ok(mut receiver) = self.event_receiver.try_write() {
                 if let Some(event) = receiver.recv().await {
@@ -449,7 +461,7 @@ impl BlockchainConsensusCoordinator {
                     }
                 }
             }
-            
+
             // Brief pause to prevent busy waiting
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
@@ -463,7 +475,10 @@ impl BlockchainConsensusCoordinator {
             ConsensusEvent::StartRound { height, trigger } => {
                 self.handle_start_round(height, trigger).await?;
             }
-            ConsensusEvent::NewBlock { height, previous_hash } => {
+            ConsensusEvent::NewBlock {
+                height,
+                previous_hash,
+            } => {
                 self.handle_new_block(height, previous_hash).await?;
             }
             ConsensusEvent::ProposalReceived { proposal } => {
@@ -500,7 +515,10 @@ impl BlockchainConsensusCoordinator {
 
     /// Handle start round event
     async fn handle_start_round(&self, height: u64, trigger: String) -> Result<()> {
-        info!(" Starting consensus round {} (trigger: {})", height, trigger);
+        info!(
+            " Starting consensus round {} (trigger: {})",
+            height, trigger
+        );
 
         // Update current round cache
         {
@@ -511,9 +529,9 @@ impl BlockchainConsensusCoordinator {
 
         // Trigger consensus engine event handling
         let mut consensus_engine = self.consensus_engine.write().await;
-        let events = consensus_engine.handle_consensus_event(
-            ConsensusEvent::StartRound { height, trigger }
-        ).await?;
+        let events = consensus_engine
+            .handle_consensus_event(ConsensusEvent::StartRound { height, trigger })
+            .await?;
 
         // Process resulting events
         for event in events {
@@ -533,7 +551,8 @@ impl BlockchainConsensusCoordinator {
         // Convert consensus hash to blockchain hash
         let mut hash_bytes = [0u8; 32];
         let prev_bytes = previous_hash.as_bytes();
-        hash_bytes[..prev_bytes.len().min(32)].copy_from_slice(&prev_bytes[..prev_bytes.len().min(32)]);
+        hash_bytes[..prev_bytes.len().min(32)]
+            .copy_from_slice(&prev_bytes[..prev_bytes.len().min(32)]);
         let blockchain_previous_hash = BlockchainHash::from(hash_bytes);
 
         // Verify block can be added to blockchain
@@ -541,8 +560,11 @@ impl BlockchainConsensusCoordinator {
         if let Some(latest_block) = blockchain.latest_block() {
             // Validate that the previous hash matches the latest block
             if latest_block.header.hash() != blockchain_previous_hash {
-                return Err(anyhow!("Previous hash mismatch: expected {}, got {}", 
-                    latest_block.header.hash(), blockchain_previous_hash));
+                return Err(anyhow!(
+                    "Previous hash mismatch: expected {}, got {}",
+                    latest_block.header.hash(),
+                    blockchain_previous_hash
+                ));
             }
             if latest_block.height() + 1 != height {
                 return Err(anyhow::anyhow!(
@@ -556,9 +578,12 @@ impl BlockchainConsensusCoordinator {
 
         // Process through consensus engine
         let mut consensus_engine = self.consensus_engine.write().await;
-        let events = consensus_engine.handle_consensus_event(
-            ConsensusEvent::NewBlock { height, previous_hash }
-        ).await?;
+        let events = consensus_engine
+            .handle_consensus_event(ConsensusEvent::NewBlock {
+                height,
+                previous_hash,
+            })
+            .await?;
 
         // Forward resulting events
         for event in events {
@@ -575,7 +600,10 @@ impl BlockchainConsensusCoordinator {
         info!("Received consensus proposal: {:?}", proposal.id);
 
         // Store proposal
-        self.pending_proposals.write().await.push_back(proposal.clone());
+        self.pending_proposals
+            .write()
+            .await
+            .push_back(proposal.clone());
 
         // Convert consensus proposal to blockchain block
         let block = self.consensus_proposal_to_block(&proposal).await?;
@@ -603,7 +631,8 @@ impl BlockchainConsensusCoordinator {
 
         // If we're a validator, cast our vote
         if let Some(ref _validator_id) = self.local_validator_id {
-            self.cast_consensus_vote(&proposal.id, VoteType::PreVote).await?;
+            self.cast_consensus_vote(&proposal.id, VoteType::PreVote)
+                .await?;
         }
 
         Ok(())
@@ -611,11 +640,16 @@ impl BlockchainConsensusCoordinator {
 
     /// Handle vote received event
     async fn handle_vote_received(&self, vote: ConsensusVote) -> Result<()> {
-        debug!(" Received consensus vote: {:?} on proposal {:?}", vote.vote_type, vote.proposal_id);
+        debug!(
+            " Received consensus vote: {:?} on proposal {:?}",
+            vote.vote_type, vote.proposal_id
+        );
 
         // Store vote
         let proposal_id = vote.proposal_id.clone();
-        self.active_votes.write().await
+        self.active_votes
+            .write()
+            .await
             .entry(proposal_id)
             .or_insert_with(Vec::new)
             .push(vote);
@@ -631,7 +665,10 @@ impl BlockchainConsensusCoordinator {
         if let Some(winning_proposal) = self.determine_winning_proposal(height).await? {
             // Week 10 Phase 1: Extract actual transaction fees from the proposal
             // This provides real fee data instead of simulation
-            let (_total_fees, _tx_count) = match self.extract_transaction_fees_from_proposal(&winning_proposal).await {
+            let (_total_fees, _tx_count) = match self
+                .extract_transaction_fees_from_proposal(&winning_proposal)
+                .await
+            {
                 Ok((fees, count)) => {
                     info!(
                         "Week 10 Phase 1: Extracted {} transactions with total fees: {} from block at height {}",
@@ -646,12 +683,15 @@ impl BlockchainConsensusCoordinator {
             };
 
             // Extract actual transactions from the proposal
-            let transactions = self.extract_transactions_from_proposal(&winning_proposal).await?;
+            let transactions = self
+                .extract_transactions_from_proposal(&winning_proposal)
+                .await?;
 
             // Week 10 Phase 2: Validate transactions before block inclusion
             // This prevents double-spends, invalid signatures, and other transaction-level issues
             let blockchain = self.blockchain.read().await;
-            let stateful_validator = crate::transaction::validation::StatefulTransactionValidator::new(&blockchain);
+            let stateful_validator =
+                crate::transaction::validation::StatefulTransactionValidator::new(&blockchain);
 
             let mut total_fees = 0u64;
             let mut validated_count = 0usize;
@@ -678,21 +718,32 @@ impl BlockchainConsensusCoordinator {
             );
             drop(blockchain);
 
-            let block = self.consensus_proposal_to_block_with_transactions(&winning_proposal, transactions).await?;
+            let block = self
+                .consensus_proposal_to_block_with_transactions(&winning_proposal, transactions)
+                .await?;
 
             // Only generate proof if we were the block proposer (otherwise we're just accepting someone else's block)
             let mut blockchain = self.blockchain.write().await;
-            let was_proposer = self.local_validator_id.as_ref()
+            let was_proposer = self
+                .local_validator_id
+                .as_ref()
                 .map(|id| id == &winning_proposal.proposer)
                 .unwrap_or(false);
 
             if was_proposer {
                 // We proposed this block - generate proof
-                info!("We were the proposer - generating recursive proof for block at height {}", height);
+                info!(
+                    "We were the proposer - generating recursive proof for block at height {}",
+                    height
+                );
                 blockchain.add_block_with_proof(block.clone()).await?;
             } else {
                 // Another validator proposed this block - just accept it (already has proof)
-                info!("Accepting block from proposer {} at height {}", hex::encode(winning_proposal.proposer.as_bytes()), height);
+                info!(
+                    "Accepting block from proposer {} at height {}",
+                    hex::encode(winning_proposal.proposer.as_bytes()),
+                    height
+                );
                 blockchain.add_block(block.clone()).await?;
             }
 
@@ -704,7 +755,8 @@ impl BlockchainConsensusCoordinator {
 
             // Remove processed transactions from mempool
             let mut mempool = self.mempool.write().await;
-            let tx_hashes: Vec<_> = winning_proposal.block_data
+            let tx_hashes: Vec<_> = winning_proposal
+                .block_data
                 .chunks(32)
                 .map(|chunk| {
                     let mut hash_bytes = [0u8; 32];
@@ -714,8 +766,11 @@ impl BlockchainConsensusCoordinator {
                 .collect();
             mempool.remove_transactions(&tx_hashes);
 
-            info!(" Added new block to blockchain at height {} with {} transactions",
-                  height, tx_hashes.len());
+            info!(
+                " Added new block to blockchain at height {} with {} transactions",
+                height,
+                tx_hashes.len()
+            );
         }
 
         // Clear processed proposals and votes
@@ -724,9 +779,13 @@ impl BlockchainConsensusCoordinator {
 
         Ok(())
     }
-    
+
     /// Convert consensus proposal to blockchain block with specific transactions
-    async fn consensus_proposal_to_block_with_transactions(&self, proposal: &ConsensusProposal, transactions: Vec<Transaction>) -> Result<Block> {
+    async fn consensus_proposal_to_block_with_transactions(
+        &self,
+        proposal: &ConsensusProposal,
+        transactions: Vec<Transaction>,
+    ) -> Result<Block> {
         // Week 10 Phase 3: Construct block with real transaction effects
         // This method ensures blocks are constructed with validated transactions and proper fee tracking
 
@@ -738,14 +797,22 @@ impl BlockchainConsensusCoordinator {
         // Validate that the proposal height is consistent with blockchain state
         if let Some(ref prev_block) = previous_block {
             if height != prev_block.header.height + 1 {
-                return Err(anyhow!("Invalid height: expected {}, got {}", prev_block.header.height + 1, height));
+                return Err(anyhow!(
+                    "Invalid height: expected {}, got {}",
+                    prev_block.header.height + 1,
+                    height
+                ));
             }
-            debug!("Validated block height against previous block: {}", prev_block.header.height);
+            debug!(
+                "Validated block height against previous block: {}",
+                prev_block.header.height
+            );
         }
 
         let mut hash_bytes = [0u8; 32];
         let prop_bytes = proposal.previous_hash.as_bytes();
-        hash_bytes[..prop_bytes.len().min(32)].copy_from_slice(&prop_bytes[..prop_bytes.len().min(32)]);
+        hash_bytes[..prop_bytes.len().min(32)]
+            .copy_from_slice(&prop_bytes[..prop_bytes.len().min(32)]);
         let previous_hash = BlockchainHash::from(hash_bytes);
         let timestamp = proposal.timestamp;
 
@@ -757,7 +824,8 @@ impl BlockchainConsensusCoordinator {
         debug!("Proposal timestamp validated: {}", timestamp);
 
         // Calculate merkle root from actual transactions
-        let merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&transactions);
+        let merkle_root =
+            crate::transaction::hashing::calculate_transaction_merkle_root(&transactions);
 
         // Week 10 Phase 3: Calculate transaction fees for block metadata
         let total_fees: u64 = transactions.iter().map(|tx| tx.fee).sum();
@@ -817,7 +885,8 @@ impl BlockchainConsensusCoordinator {
 
         let blockchain = self.blockchain.read().await;
         let current_height = blockchain.get_height() + 1;
-        let previous_hash = blockchain.latest_block()
+        let previous_hash = blockchain
+            .latest_block()
             .map(|b| b.hash())
             .unwrap_or_default();
         drop(blockchain);
@@ -825,15 +894,19 @@ impl BlockchainConsensusCoordinator {
         // Check if we should be the proposer for this round
         let consensus_engine = self.consensus_engine.read().await;
         let validator_manager = consensus_engine.validator_manager();
-        
+
         if let Some(proposer) = validator_manager.select_proposer(current_height, 0) {
             if &proposer.identity == validator_id {
                 // We are the proposer, create a consensus proposal with transaction data
-                let consensus_proposal = self.create_consensus_proposal(current_height, previous_hash).await?;
-                
+                let consensus_proposal = self
+                    .create_consensus_proposal(current_height, previous_hash)
+                    .await?;
+
                 // Send the proposal through consensus engine
-                let proposal_event = ConsensusEvent::ProposalReceived { proposal: consensus_proposal };
-                
+                let proposal_event = ConsensusEvent::ProposalReceived {
+                    proposal: consensus_proposal,
+                };
+
                 if let Err(e) = self.event_sender.send(proposal_event) {
                     warn!("Failed to send consensus proposal event: {}", e);
                 }
@@ -842,27 +915,29 @@ impl BlockchainConsensusCoordinator {
 
         Ok(())
     }
-    
+
     /// Create a consensus proposal with transaction data
-    async fn create_consensus_proposal(&self, height: u64, previous_hash: BlockchainHash) -> Result<ConsensusProposal> {
+    async fn create_consensus_proposal(
+        &self,
+        height: u64,
+        previous_hash: BlockchainHash,
+    ) -> Result<ConsensusProposal> {
         // Select transactions from mempool
         let mempool = self.mempool.read().await;
-        let selected_transactions = mempool.get_transactions_for_block(
-            crate::MAX_TRANSACTIONS_PER_BLOCK,
-            crate::MAX_BLOCK_SIZE,
-        );
+        let selected_transactions = mempool
+            .get_transactions_for_block(crate::MAX_TRANSACTIONS_PER_BLOCK, crate::MAX_BLOCK_SIZE);
         drop(mempool);
-        
+
         // Serialize transaction hashes into block_data
         let mut block_data = Vec::new();
         for transaction in &selected_transactions {
             let tx_hash = transaction.hash();
             block_data.extend_from_slice(tx_hash.as_bytes());
         }
-        
+
         // Convert blockchain hash to consensus hash
         let consensus_previous_hash = Hash::from_bytes(previous_hash.as_bytes());
-        
+
         // Generate proposal ID
         let mut proposal_data = Vec::new();
         proposal_data.extend_from_slice(&height.to_le_bytes());
@@ -870,14 +945,17 @@ impl BlockchainConsensusCoordinator {
         proposal_data.extend_from_slice(&block_data);
         let consensus_timestamp = get_current_unix_timestamp().unwrap_or(0);
         proposal_data.extend_from_slice(&consensus_timestamp.to_le_bytes());
-        
+
         let proposal_id = Hash::from_bytes(&hash_blake3(&proposal_data));
-        
+
         let proposal = ConsensusProposal {
             id: proposal_id.clone(),
             height,
             round: 0,
-            proposer: self.local_validator_id.clone().unwrap_or_else(|| Hash::from_bytes(&[0u8; 32])),
+            proposer: self
+                .local_validator_id
+                .clone()
+                .unwrap_or_else(|| Hash::from_bytes(&[0u8; 32])),
             previous_hash: consensus_previous_hash,
             block_data,
             timestamp: consensus_timestamp,
@@ -896,10 +974,14 @@ impl BlockchainConsensusCoordinator {
                 timestamp: current_timestamp(),
             },
         };
-        
-        info!("Created consensus proposal {} at height {} with {} transactions", 
-              hex::encode(proposal_id.as_bytes()), height, selected_transactions.len());
-        
+
+        info!(
+            "Created consensus proposal {} at height {} with {} transactions",
+            hex::encode(proposal_id.as_bytes()),
+            height,
+            selected_transactions.len()
+        );
+
         Ok(proposal)
     }
 
@@ -950,12 +1032,13 @@ impl BlockchainConsensusCoordinator {
 
         let consensus_engine = self.consensus_engine.read().await;
         let validator_manager = consensus_engine.validator_manager();
-        
+
         // Create a temporary reward calculator for this operation
         let mut reward_calculator = RewardCalculator::new();
-        
+
         // Calculate rewards for the current round
-        let reward_round = reward_calculator.calculate_round_rewards(validator_manager, current_height)?;
+        let reward_round =
+            reward_calculator.calculate_round_rewards(validator_manager, current_height)?;
 
         // Create reward transactions
         let reward_transactions = self.create_reward_transactions(&reward_round).await?;
@@ -967,8 +1050,11 @@ impl BlockchainConsensusCoordinator {
             blockchain.add_system_transaction(tx)?;
         }
 
-        info!(" Distributed {} SOV in rewards to {} validators", 
-              reward_round.total_rewards, reward_round.validator_rewards.len());
+        info!(
+            " Distributed {} SOV in rewards to {} validators",
+            reward_round.total_rewards,
+            reward_round.validator_rewards.len()
+        );
 
         Ok(())
     }
@@ -980,20 +1066,25 @@ impl BlockchainConsensusCoordinator {
         system_keypair: &KeyPair,
     ) -> Result<Vec<BlockchainHash>> {
         info!("Creating UBI distributions for {} citizens", citizens.len());
-        
+
         // Simple treasury balance validation to avoid consensus engine deadlock
         // Use conservative estimate based on initial treasury setup
         let estimated_treasury_available = 200000u64; // Conservative estimate
-        
+
         let total_ubi: u64 = citizens.iter().map(|(_, amount)| *amount).sum();
         if total_ubi > estimated_treasury_available {
-            return Err(anyhow::anyhow!("UBI distribution amount {} exceeds estimated treasury capacity {}", 
-                total_ubi, estimated_treasury_available));
+            return Err(anyhow::anyhow!(
+                "UBI distribution amount {} exceeds estimated treasury capacity {}",
+                total_ubi,
+                estimated_treasury_available
+            ));
         }
-        
-        info!("Treasury validation passed: {} SOV needed, estimated {} SOV available", 
-            total_ubi, estimated_treasury_available);
-        
+
+        info!(
+            "Treasury validation passed: {} SOV needed, estimated {} SOV available",
+            total_ubi, estimated_treasury_available
+        );
+
         // Create UBI transactions for each citizen
         let mut ubi_tx_hashes = Vec::new();
         for (citizen_id, amount) in citizens {
@@ -1004,59 +1095,76 @@ impl BlockchainConsensusCoordinator {
                     commitment: BlockchainHash::from_slice(&citizen_id.as_bytes()[..32]),
                     note: BlockchainHash::from_slice(b"UBI_PAYMENT_________________"),
                     recipient: crate::integration::crypto_integration::PublicKey::new(
-                        citizen_id.as_bytes().to_vec()
+                        citizen_id.as_bytes().to_vec(),
                     ),
                 }],
                 10, // UBI transaction fee
                 crate::integration::crypto_integration::Signature {
                     signature: vec![0u8; 64], // System signature
                     public_key: crate::integration::crypto_integration::PublicKey::new(
-                        system_keypair.public_key.dilithium_pk.clone()
+                        system_keypair.public_key.dilithium_pk.clone(),
                     ),
-                    algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                    algorithm:
+                        crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                     timestamp: current_timestamp(),
                 },
-                format!("UBI_DISTRIBUTION:citizen:{}:amount:{}", 
-                    hex::encode(citizen_id.as_bytes()), amount).into_bytes(),
+                format!(
+                    "UBI_DISTRIBUTION:citizen:{}:amount:{}",
+                    hex::encode(citizen_id.as_bytes()),
+                    amount
+                )
+                .into_bytes(),
             );
-            
+
             let tx_hash = ubi_transaction.hash();
-            
+
             // For demo purposes, we'll simulate successful transaction creation
             // In production, this would integrate with the actual economic transaction system
             info!("Created UBI payment transaction of {} SOV for citizen {} (Demo: Transaction hash: {})", 
                 amount, hex::encode(&citizen_id.as_bytes()[..8]), hex::encode(tx_hash.as_bytes()));
-            
+
             // Since we can't access blockchain due to consensus locks, we'll record the transaction
             // In production, this would be handled by a separate economic transaction processor
             ubi_tx_hashes.push(tx_hash);
         }
-        
-        info!("Created {} UBI distribution transactions totaling {} SOV", 
-            ubi_tx_hashes.len(), total_ubi);
-        
+
+        info!(
+            "Created {} UBI distribution transactions totaling {} SOV",
+            ubi_tx_hashes.len(),
+            total_ubi
+        );
+
         Ok(ubi_tx_hashes)
-    }    /// Create welfare funding transactions through consensus  
+    }
+    /// Create welfare funding transactions through consensus  
     pub async fn create_welfare_funding(
         &self,
         services: &[(String, [u8; 32], u64)], // (service_name, address, amount)
         system_keypair: &KeyPair,
     ) -> Result<Vec<BlockchainHash>> {
-        info!("🏥 Creating welfare funding for {} services", services.len());
-        
+        info!(
+            "🏥 Creating welfare funding for {} services",
+            services.len()
+        );
+
         // Simple treasury balance validation to avoid consensus engine deadlock
         // Use conservative estimate based on initial treasury setup
         let estimated_treasury_available = 200000u64; // Conservative estimate
-        
+
         let total_welfare: u64 = services.iter().map(|(_, _, amount)| *amount).sum();
         if total_welfare > estimated_treasury_available {
-            return Err(anyhow::anyhow!("Welfare funding amount {} exceeds estimated treasury capacity {}", 
-                total_welfare, estimated_treasury_available));
+            return Err(anyhow::anyhow!(
+                "Welfare funding amount {} exceeds estimated treasury capacity {}",
+                total_welfare,
+                estimated_treasury_available
+            ));
         }
-        
-        info!("Treasury validation passed: {} SOV needed, estimated {} SOV available", 
-            total_welfare, estimated_treasury_available);
-        
+
+        info!(
+            "Treasury validation passed: {} SOV needed, estimated {} SOV available",
+            total_welfare, estimated_treasury_available
+        );
+
         // Create welfare funding transactions
         let mut welfare_tx_hashes = Vec::new();
         for (service_name, service_address, amount) in services {
@@ -1067,53 +1175,63 @@ impl BlockchainConsensusCoordinator {
                     commitment: BlockchainHash::from_slice(service_address),
                     note: BlockchainHash::from_slice(b"WELFARE_FUNDING_____________"),
                     recipient: crate::integration::crypto_integration::PublicKey::new(
-                        service_address.to_vec()
+                        service_address.to_vec(),
                     ),
                 }],
                 25, // Welfare transaction fee
                 crate::integration::crypto_integration::Signature {
                     signature: vec![0u8; 64], // System signature
                     public_key: crate::integration::crypto_integration::PublicKey::new(
-                        system_keypair.public_key.dilithium_pk.clone()
+                        system_keypair.public_key.dilithium_pk.clone(),
                     ),
-                    algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                    algorithm:
+                        crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                     timestamp: current_timestamp(),
                 },
-                format!("WELFARE_FUNDING:service:{}:amount:{}", 
-                    service_name, amount).into_bytes(),
+                format!("WELFARE_FUNDING:service:{}:amount:{}", service_name, amount).into_bytes(),
             );
-            
+
             let tx_hash = welfare_transaction.hash();
-            
+
             // For demo purposes, we'll simulate successful transaction creation
             // In production, this would integrate with the actual economic transaction system
             info!("Created welfare funding transaction of {} SOV for service {} (Demo: Transaction hash: {})", 
                 amount, service_name, hex::encode(tx_hash.as_bytes()));
-            
+
             // Since we can't access blockchain due to consensus locks, we'll record the transaction
             // In production, this would be handled by a separate economic transaction processor
             welfare_tx_hashes.push(tx_hash);
         }
-        
-        info!("Created {} welfare funding transactions totaling {} SOV", 
-            welfare_tx_hashes.len(), total_welfare);
-        
+
+        info!(
+            "Created {} welfare funding transactions totaling {} SOV",
+            welfare_tx_hashes.len(),
+            total_welfare
+        );
+
         Ok(welfare_tx_hashes)
     }
 
     /// Cast a consensus vote
     async fn cast_consensus_vote(&self, proposal_id: &Hash, vote_type: VoteType) -> Result<()> {
-        let validator_id = self.local_validator_id.as_ref()
+        let validator_id = self
+            .local_validator_id
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Not a validator"))?;
 
         let mut consensus_engine = self.consensus_engine.write().await;
-        
+
         // Log the validator casting the vote
-        debug!("Validator {} casting vote {:?} for proposal {}", 
-               validator_id, vote_type, proposal_id);
+        debug!(
+            "Validator {} casting vote {:?} for proposal {}",
+            validator_id, vote_type, proposal_id
+        );
         let vote = ConsensusVote {
             id: lib_crypto::Hash::from_bytes(&[0u8; 32]),
-            voter: self.local_validator_id.clone().unwrap_or_else(|| lib_crypto::Hash::from_bytes(&[0u8; 32])),
+            voter: self
+                .local_validator_id
+                .clone()
+                .unwrap_or_else(|| lib_crypto::Hash::from_bytes(&[0u8; 32])),
             proposal_id: proposal_id.clone(),
             vote_type: vote_type.clone(),
             height: 0, // Would be set properly in implementation
@@ -1122,7 +1240,9 @@ impl BlockchainConsensusCoordinator {
             signature: self.create_vote_signature(proposal_id, &vote_type).await?,
         };
         let vote_event = ConsensusEvent::VoteReceived { vote };
-        consensus_engine.handle_consensus_event(vote_event).await
+        consensus_engine
+            .handle_consensus_event(vote_event)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to cast vote: {}", e))?;
 
         Ok(())
@@ -1136,23 +1256,25 @@ impl BlockchainConsensusCoordinator {
         // Create block header
         let blockchain = self.blockchain.read().await;
         let previous_block = blockchain.latest_block();
-        
+
         // Determine height based on previous block
         let height = if let Some(ref prev_block) = previous_block {
             prev_block.header.height + 1
         } else {
             proposal.height // Genesis block case
         };
-        
+
         let mut hash_bytes = [0u8; 32];
         let prop_bytes = proposal.previous_hash.as_bytes();
-        hash_bytes[..prop_bytes.len().min(32)].copy_from_slice(&prop_bytes[..prop_bytes.len().min(32)]);
+        hash_bytes[..prop_bytes.len().min(32)]
+            .copy_from_slice(&prop_bytes[..prop_bytes.len().min(32)]);
         let previous_hash = BlockchainHash::from(hash_bytes);
         let timestamp = proposal.timestamp;
-        
+
         // Calculate merkle root
-        let merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&transactions);
-        
+        let merkle_root =
+            crate::transaction::hashing::calculate_transaction_merkle_root(&transactions);
+
         let header = BlockHeader::new(
             1, // version
             previous_hash,
@@ -1170,39 +1292,53 @@ impl BlockchainConsensusCoordinator {
     }
 
     /// Extract transactions from consensus proposal
-    async fn extract_transactions_from_proposal(&self, proposal: &ConsensusProposal) -> Result<Vec<Transaction>> {
+    async fn extract_transactions_from_proposal(
+        &self,
+        proposal: &ConsensusProposal,
+    ) -> Result<Vec<Transaction>> {
         let mut transactions = Vec::new();
         let mempool = self.mempool.read().await;
-        
+
         // Parse block_data to extract transaction hashes
         // The block_data should contain serialized transaction hashes (32 bytes each)
         if proposal.block_data.len() % 32 != 0 {
-            return Err(anyhow::anyhow!("Invalid block_data: length must be multiple of 32 bytes"));
+            return Err(anyhow::anyhow!(
+                "Invalid block_data: length must be multiple of 32 bytes"
+            ));
         }
-        
+
         let transaction_count = proposal.block_data.len() / 32;
-        debug!("Extracting {} transactions from consensus proposal", transaction_count);
-        
+        debug!(
+            "Extracting {} transactions from consensus proposal",
+            transaction_count
+        );
+
         for i in 0..transaction_count {
             let start_idx = i * 32;
             let end_idx = start_idx + 32;
-            
+
             // Extract transaction hash from proposal
             let mut tx_hash_bytes = [0u8; 32];
             tx_hash_bytes.copy_from_slice(&proposal.block_data[start_idx..end_idx]);
             let tx_hash = BlockchainHash::from(tx_hash_bytes);
-            
+
             // Look up transaction in mempool
             if let Some(transaction) = mempool.get_transaction(&tx_hash) {
                 transactions.push(transaction.clone());
-                debug!("Found transaction in mempool: {}", hex::encode(tx_hash.as_bytes()));
+                debug!(
+                    "Found transaction in mempool: {}",
+                    hex::encode(tx_hash.as_bytes())
+                );
             } else {
                 // Transaction not found in mempool - this could happen if:
                 // 1. Transaction was already processed in a previous block
                 // 2. Transaction is invalid or expired
                 // 3. Network synchronization issue
-                warn!("Transaction {} not found in mempool", hex::encode(tx_hash.as_bytes()));
-                
+                warn!(
+                    "Transaction {} not found in mempool",
+                    hex::encode(tx_hash.as_bytes())
+                );
+
                 // In a production system, we might want to:
                 // - Request the transaction from peers
                 // - Check if it's already in a previous block
@@ -1210,21 +1346,26 @@ impl BlockchainConsensusCoordinator {
                 continue;
             }
         }
-        
+
         // Validate transaction ordering and dependencies
         self.validate_transaction_order(&transactions)?;
-        
+
         // Verify transactions are still valid
         let blockchain = self.blockchain.read().await;
         for transaction in &transactions {
             if !blockchain.verify_transaction(transaction)? {
-                return Err(anyhow::anyhow!("Invalid transaction in proposal: {}", 
-                    hex::encode(transaction.hash().as_bytes())));
+                return Err(anyhow::anyhow!(
+                    "Invalid transaction in proposal: {}",
+                    hex::encode(transaction.hash().as_bytes())
+                ));
             }
         }
         drop(blockchain);
-        
-        info!("Successfully extracted {} valid transactions from consensus proposal", transactions.len());
+
+        info!(
+            "Successfully extracted {} valid transactions from consensus proposal",
+            transactions.len()
+        );
         Ok(transactions)
     }
 
@@ -1235,7 +1376,10 @@ impl BlockchainConsensusCoordinator {
     /// - Transaction count for fee tracking
     ///
     /// This replaces the simulation-based fee extraction with real transaction data.
-    async fn extract_transaction_fees_from_proposal(&self, proposal: &ConsensusProposal) -> Result<(u64, u32)> {
+    async fn extract_transaction_fees_from_proposal(
+        &self,
+        proposal: &ConsensusProposal,
+    ) -> Result<(u64, u32)> {
         // Get the actual transactions from the proposal
         let transactions = self.extract_transactions_from_proposal(proposal).await?;
 
@@ -1259,41 +1403,46 @@ impl BlockchainConsensusCoordinator {
     fn validate_transaction_order(&self, transactions: &[Transaction]) -> Result<()> {
         let mut seen_outputs = std::collections::HashSet::new();
         let mut spent_outputs = std::collections::HashSet::new();
-        
+
         for transaction in transactions {
             // Check that all inputs reference outputs that exist (either from previous transactions in this block or previous blocks)
             for input in &transaction.inputs {
                 let output_ref = (input.previous_output.clone(), input.output_index);
-                
+
                 // Check if the output is being double-spent within this block
                 if spent_outputs.contains(&output_ref) {
-                    return Err(anyhow::anyhow!("Double spend detected in transaction order"));
+                    return Err(anyhow::anyhow!(
+                        "Double spend detected in transaction order"
+                    ));
                 }
-                
+
                 spent_outputs.insert(output_ref);
             }
-            
+
             // Track outputs created by this transaction
             for (index, _output) in transaction.outputs.iter().enumerate() {
                 let tx_hash = transaction.hash();
                 seen_outputs.insert((tx_hash, index as u32));
             }
-            
+
             // Verify transaction dependencies are satisfied
             for input in &transaction.inputs {
                 let required_output = (input.previous_output.clone(), input.output_index);
-                
+
                 // The referenced output should either:
                 // 1. Be from a previous transaction in this block (seen_outputs)
                 // 2. Be from a previous block (we assume blockchain verification covers this)
                 if !seen_outputs.contains(&required_output) {
                     // This is okay - it means the output is from a previous block
                     // The blockchain verification will ensure it exists and is unspent
-                    debug!("Transaction references output from previous block: {:?}", required_output);
+                    debug!(
+                        "Transaction references output from previous block: {:?}",
+                        required_output
+                    );
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -1308,7 +1457,8 @@ impl BlockchainConsensusCoordinator {
 
         for proposal in pending_proposals.iter() {
             if proposal.height == height {
-                let vote_count = active_votes.get(&proposal.id)
+                let vote_count = active_votes
+                    .get(&proposal.id)
                     .map(|votes| votes.len())
                     .unwrap_or(0);
 
@@ -1333,14 +1483,19 @@ impl BlockchainConsensusCoordinator {
     ) -> Result<Transaction> {
         // Create validator registration transaction
         let validator_data = IdentityTransactionData {
-            did: format!("did:zhtp:validator:{}", hex::encode(&identity.as_bytes()[..8])),
+            did: format!(
+                "did:zhtp:validator:{}",
+                hex::encode(&identity.as_bytes()[..8])
+            ),
             display_name: format!("Validator {}", hex::encode(&identity.as_bytes()[..4])),
             public_key: consensus_keypair.public_key.dilithium_pk.clone(),
             identity_type: "validator".to_string(),
-            did_document_hash: BlockchainHash::from(hash_blake3(&consensus_keypair.public_key.dilithium_pk)),
+            did_document_hash: BlockchainHash::from(hash_blake3(
+                &consensus_keypair.public_key.dilithium_pk,
+            )),
             created_at: current_timestamp(),
             registration_fee: 0, // System transaction - no fees
-            dao_fee: 0, // System transaction - no fees
+            dao_fee: 0,          // System transaction - no fees
             ownership_proof: hash_blake3(&consensus_keypair.public_key.dilithium_pk).to_vec(), // Create ownership proof from public key
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
@@ -1358,8 +1513,13 @@ impl BlockchainConsensusCoordinator {
             validator_data,
             vec![], // No inputs for system registration
             empty_signature,
-            format!("Validator registration: {} SOV stake, {} GB storage, {}% commission", 
-                   stake_amount, storage_capacity / (1024*1024*1024), commission_rate).into_bytes(),
+            format!(
+                "Validator registration: {} SOV stake, {} GB storage, {}% commission",
+                stake_amount,
+                storage_capacity / (1024 * 1024 * 1024),
+                commission_rate
+            )
+            .into_bytes(),
         );
 
         // Set fee to 0 for system transactions (transactions with no inputs)
@@ -1373,7 +1533,7 @@ impl BlockchainConsensusCoordinator {
         transaction.signature = crate::integration::crypto_integration::Signature {
             signature: signature_result.signature.clone(),
             public_key: crate::integration::crypto_integration::PublicKey::new(
-                consensus_keypair.public_key.dilithium_pk.clone()
+                consensus_keypair.public_key.dilithium_pk.clone(),
             ),
             algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
             timestamp: current_timestamp(),
@@ -1383,7 +1543,10 @@ impl BlockchainConsensusCoordinator {
     }
 
     /// Create reward transactions for validators
-    async fn create_reward_transactions(&self, reward_round: &RewardRound) -> Result<Vec<Transaction>> {
+    async fn create_reward_transactions(
+        &self,
+        reward_round: &RewardRound,
+    ) -> Result<Vec<Transaction>> {
         let mut reward_transactions = Vec::new();
 
         for (validator_id, reward) in &reward_round.validator_rewards {
@@ -1393,23 +1556,24 @@ impl BlockchainConsensusCoordinator {
                 commitment_data.extend_from_slice(validator_id.as_bytes());
                 commitment_data.extend_from_slice(&reward.total_reward.to_le_bytes());
                 commitment_data.extend_from_slice(b"reward");
-                
+
                 let mut note_data = Vec::new();
                 note_data.extend_from_slice(&reward_round.height.to_le_bytes());
                 note_data.extend_from_slice(&reward.total_reward.to_le_bytes());
-                
+
                 let output = crate::transaction::TransactionOutput {
                     commitment: BlockchainHash::from(hash_blake3(&commitment_data)),
                     note: BlockchainHash::from(hash_blake3(&note_data)),
                     recipient: crate::integration::crypto_integration::PublicKey::new(
-                        validator_id.as_bytes().to_vec()
+                        validator_id.as_bytes().to_vec(),
                     ),
                 };
 
                 let signature = crate::integration::crypto_integration::Signature {
                     signature: hash_blake3(b"system_reward").to_vec(),
                     public_key: crate::integration::crypto_integration::PublicKey::new(vec![0; 32]),
-                    algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                    algorithm:
+                        crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                     timestamp: current_timestamp(),
                 };
 
@@ -1419,7 +1583,11 @@ impl BlockchainConsensusCoordinator {
                     inputs: vec![], // System transaction, no inputs
                     outputs: vec![output],
                     fee: 0, // No fee for reward transactions
-                    memo: format!("Validator reward: {} SOV (height: {})", reward.total_reward, reward_round.height).into_bytes(),
+                    memo: format!(
+                        "Validator reward: {} SOV (height: {})",
+                        reward.total_reward, reward_round.height
+                    )
+                    .into_bytes(),
                     signature,
                     transaction_type: TransactionType::Transfer,
                     identity_data: None,
@@ -1428,20 +1596,20 @@ impl BlockchainConsensusCoordinator {
                     dao_proposal_data: None,
                     dao_vote_data: None,
                     dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-                        governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-        };
+                    ubi_claim_data: None,
+                    profit_declaration_data: None,
+                    token_transfer_data: None,
+                    token_mint_data: None,
+                    governance_config_data: None,
+                    bonding_curve_deploy_data: None,
+                    bonding_curve_buy_data: None,
+                    bonding_curve_sell_data: None,
+                    bonding_curve_graduate_data: None,
+                    oracle_committee_update_data: None,
+                    oracle_config_update_data: None,
+                    oracle_attestation_data: None,
+                    cancel_oracle_update_data: None,
+                };
 
                 reward_transactions.push(reward_tx);
             }
@@ -1482,10 +1650,13 @@ impl BlockchainConsensusCoordinator {
     }
 
     /// Get detailed validator information
-    pub async fn get_validator_info(&self, validator_id: &IdentityId) -> Result<Option<ValidatorInfo>> {
+    pub async fn get_validator_info(
+        &self,
+        validator_id: &IdentityId,
+    ) -> Result<Option<ValidatorInfo>> {
         let consensus_engine = self.consensus_engine.read().await;
         let validator_manager = consensus_engine.validator_manager();
-        
+
         // Get the specific validator
         if let Some(validator) = validator_manager.get_validator(validator_id) {
             Ok(Some(ValidatorInfo {
@@ -1506,9 +1677,9 @@ impl BlockchainConsensusCoordinator {
     pub async fn list_all_validators(&self) -> Result<Vec<ValidatorInfo>> {
         let consensus_engine = self.consensus_engine.read().await;
         let validator_manager = consensus_engine.validator_manager();
-        
+
         let mut validator_infos = Vec::new();
-        
+
         // Get all active validators and their details
         for validator in validator_manager.get_active_validators() {
             validator_infos.push(ValidatorInfo {
@@ -1521,7 +1692,7 @@ impl BlockchainConsensusCoordinator {
                 slashing_count: validator.slash_count,
             });
         }
-        
+
         Ok(validator_infos)
     }
 
@@ -1538,7 +1709,11 @@ impl BlockchainConsensusCoordinator {
     /// This function MUST use Dilithium2 (CONSENSUS_SIGNATURE_SCHEME) exclusively.
     /// Dilithium5 and other schemes are prohibited for consensus votes.
     /// The signing key is the Dilithium2 key bound to the validator at registration.
-    async fn create_vote_signature(&self, proposal_id: &Hash, vote_type: &VoteType) -> Result<lib_crypto::Signature> {
+    async fn create_vote_signature(
+        &self,
+        proposal_id: &Hash,
+        vote_type: &VoteType,
+    ) -> Result<lib_crypto::Signature> {
         // Create the vote data to sign
         let mut vote_data = Vec::new();
         vote_data.extend_from_slice(proposal_id.as_bytes());
@@ -1552,13 +1727,13 @@ impl BlockchainConsensusCoordinator {
 
         // Get the validator's keypair (in production this would come from secure storage)
         let validator_keypair = self.get_validator_keypair().await?;
-        
+
         // Create a KeyPair from the ValidatorKeypair components
         let keypair = lib_crypto::KeyPair {
             public_key: validator_keypair.public_key,
             private_key: validator_keypair.private_key,
         };
-        
+
         // BFT-I: Only Dilithium2 (CONSENSUS_SIGNATURE_SCHEME) is permitted here.
         // Dilithium5 and other schemes are prohibited for consensus votes.
         //
@@ -1577,22 +1752,28 @@ impl BlockchainConsensusCoordinator {
 
         // Create signature using lib-crypto
         let signature = lib_crypto::sign_message(&keypair, &vote_data)?;
-        
+
         Ok(signature)
     }
 
     /// Get the validator's keypair (placeholder for secure key management)
     async fn get_validator_keypair(&self) -> Result<ValidatorKeypair> {
-        let validator_id = self.local_validator_id.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Consensus signing rejected: local validator identity is not configured"))?;
-        let keypair = self.local_validator_keypair.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Consensus signing rejected: local validator keypair is not loaded"))?;
+        let validator_id = self.local_validator_id.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Consensus signing rejected: local validator identity is not configured"
+            )
+        })?;
+        let keypair = self.local_validator_keypair.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Consensus signing rejected: local validator keypair is not loaded")
+        })?;
 
         let consensus_engine = self.consensus_engine.read().await;
         let validator = consensus_engine
             .validator_manager()
             .get_validator(validator_id)
-            .ok_or_else(|| anyhow::anyhow!("Consensus signing rejected: local validator is not registered"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("Consensus signing rejected: local validator is not registered")
+            })?;
 
         if validator.consensus_key != keypair.public_key.dilithium_pk {
             return Err(anyhow::anyhow!(
@@ -1618,7 +1799,10 @@ impl BlockchainConsensusCoordinator {
         let total_fees = block.total_fees();
 
         if total_fees == 0 {
-            debug!("Week 11 Phase 5a: Block {} has no fees to distribute", block.height());
+            debug!(
+                "Week 11 Phase 5a: Block {} has no fees to distribute",
+                block.height()
+            );
             return Ok(());
         }
 
@@ -1683,10 +1867,7 @@ impl BlockchainConsensusCoordinator {
     /// # Rounding Tolerance
     /// Allows up to 1 wei rounding error per pool due to integer division.
     /// This is acceptable and expected behavior.
-    pub async fn validate_fee_pipeline(
-        &self,
-        block: &Block,
-    ) -> Result<FeeValidationReport> {
+    pub async fn validate_fee_pipeline(&self, block: &Block) -> Result<FeeValidationReport> {
         // Step 1: Extract fees from block
         let block_fees = block.total_fees();
         let (ubi, consensus, gov, treasury) = block.fee_summary();
@@ -1782,7 +1963,7 @@ pub async fn initialize_consensus_integration(
 ) -> Result<BlockchainConsensusCoordinator> {
     let consensus_config = ConsensusConfig {
         consensus_type,
-        min_stake: 1000 * 1_000_000, // 1000 SOV minimum stake
+        min_stake: 1000 * 1_000_000,           // 1000 SOV minimum stake
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB minimum storage
         max_validators: 100,
         block_time: 10, // 10 second blocks
@@ -1799,18 +1980,15 @@ pub async fn initialize_consensus_integration(
         development_mode: false, // Production mode by default
     };
 
-    let coordinator = BlockchainConsensusCoordinator::new(
-        blockchain,
-        mempool,
-        consensus_config,
-    ).await?;
+    let coordinator =
+        BlockchainConsensusCoordinator::new(blockchain, mempool, consensus_config).await?;
 
     info!("Consensus integration initialized successfully");
     Ok(coordinator)
 }
 
 /// Initialize consensus integration with custom difficulty configuration
-/// 
+///
 /// This variant allows specifying a custom `DifficultyConfig` for the blockchain
 /// mining difficulty adjustment policy.
 pub async fn initialize_consensus_integration_with_difficulty_config(
@@ -1821,7 +1999,7 @@ pub async fn initialize_consensus_integration_with_difficulty_config(
 ) -> Result<BlockchainConsensusCoordinator> {
     let consensus_config = ConsensusConfig {
         consensus_type,
-        min_stake: 1000 * 1_000_000, // 1000 SOV minimum stake
+        min_stake: 1000 * 1_000_000,           // 1000 SOV minimum stake
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB minimum storage
         max_validators: 100,
         block_time: 10, // 10 second blocks
@@ -1843,7 +2021,8 @@ pub async fn initialize_consensus_integration_with_difficulty_config(
         mempool,
         consensus_config,
         difficulty_config,
-    ).await?;
+    )
+    .await?;
 
     info!("Consensus integration initialized with custom difficulty config");
     Ok(coordinator)
@@ -1859,15 +2038,17 @@ pub fn create_dao_proposal_transaction(
     // In the correct ZHTP pattern, DAO proposals are handled by the consensus engine's DAO system,
     // not as blockchain transactions. This function creates a minimal transaction record
     // for blockchain transparency while the actual DAO logic is handled by lib-consensus.
-    
-    let memo = format!("dao:proposal:title:{}|description:{}|type:{:?}", 
-                      title, description, proposal_type);
+
+    let memo = format!(
+        "dao:proposal:title:{}|description:{}|type:{:?}",
+        title, description, proposal_type
+    );
 
     // Create system transaction signed by the proposer for validation
     let mut transaction = Transaction::new(
         vec![], // No inputs for record transaction
         vec![], // No outputs for record transaction
-        100, // DAO proposal fee
+        100,    // DAO proposal fee
         crate::integration::crypto_integration::Signature {
             signature: vec![], // Will be filled after signing
             public_key: proposer_keypair.public_key.clone(),
@@ -1894,21 +2075,23 @@ pub fn create_dao_vote_transaction(
     // In the correct ZHTP pattern, DAO votes are handled by the consensus engine's DAO system,
     // not as blockchain transactions. This function creates a minimal transaction record
     // for blockchain transparency while the actual DAO logic is handled by lib-consensus.
-    
-    let memo = format!("dao:vote:proposal:{}|vote:{}",
-                      hex::encode(proposal_id.as_bytes()),
-                      match vote_choice {
-                          DaoVoteChoice::Yes => "yes",
-                          DaoVoteChoice::No => "no",
-                          DaoVoteChoice::Abstain => "abstain",
-                          DaoVoteChoice::Delegate(_) => "delegate",
-                      });
+
+    let memo = format!(
+        "dao:vote:proposal:{}|vote:{}",
+        hex::encode(proposal_id.as_bytes()),
+        match vote_choice {
+            DaoVoteChoice::Yes => "yes",
+            DaoVoteChoice::No => "no",
+            DaoVoteChoice::Abstain => "abstain",
+            DaoVoteChoice::Delegate(_) => "delegate",
+        }
+    );
 
     // Create system transaction signed by the voter for validation
     let mut transaction = Transaction::new(
         vec![], // No inputs for record transaction
         vec![], // No outputs for record transaction
-        10, // DAO vote fee
+        10,     // DAO vote fee
         crate::integration::crypto_integration::Signature {
             signature: vec![], // Will be filled after signing
             public_key: voter_keypair.public_key.clone(),
@@ -1929,7 +2112,8 @@ pub fn create_dao_vote_transaction(
 /// Get current UNIX timestamp using proper SystemTime
 fn get_current_unix_timestamp() -> Result<u64> {
     let now = SystemTime::now();
-    let duration = now.duration_since(UNIX_EPOCH)
+    let duration = now
+        .duration_since(UNIX_EPOCH)
         .map_err(|e| anyhow!("System time before UNIX epoch: {}", e))?;
     Ok(duration.as_secs())
 }
@@ -1938,21 +2122,30 @@ fn get_current_unix_timestamp() -> Result<u64> {
 fn validate_consensus_timestamp(timestamp: u64) -> Result<()> {
     let current_time = get_current_unix_timestamp()?;
     let max_time_drift = 300; // 5 minutes tolerance
-    
+
     if timestamp > current_time + max_time_drift {
-        return Err(anyhow!("Timestamp too far in future: {} vs {}", timestamp, current_time));
+        return Err(anyhow!(
+            "Timestamp too far in future: {} vs {}",
+            timestamp,
+            current_time
+        ));
     }
-    
+
     if timestamp < current_time.saturating_sub(max_time_drift) {
-        return Err(anyhow!("Timestamp too far in past: {} vs {}", timestamp, current_time));
+        return Err(anyhow!(
+            "Timestamp too far in past: {} vs {}",
+            timestamp,
+            current_time
+        ));
     }
-    
+
     Ok(())
 }
 
 /// Convert SystemTime to consensus timestamp
 fn system_time_to_consensus_timestamp(time: SystemTime) -> Result<u64> {
-    let duration = time.duration_since(UNIX_EPOCH)
+    let duration = time
+        .duration_since(UNIX_EPOCH)
         .map_err(|e| anyhow!("Time conversion error: {}", e))?;
     Ok(duration.as_secs())
 }

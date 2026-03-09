@@ -1,14 +1,17 @@
 //! Blockchain commands for ZHTP orchestrator CLI.
 
 use crate::argument_parsing::{format_output, BlockchainAction, BlockchainArgs, ZhtpCli};
-use crate::commands::transaction_utils::{broadcast_signed_tx, parse_hex, parse_hex_32, submit_signed_tx};
-use crate::commands::web4_utils::{connect_default, default_keystore_path, load_identity_from_keystore};
+use crate::commands::transaction_utils::{
+    broadcast_signed_tx, parse_hex, parse_hex_32, submit_signed_tx,
+};
+use crate::commands::web4_utils::{
+    connect_default, default_keystore_path, load_identity_from_keystore,
+};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_blockchain::{
-    blake3_hash,
-    CallPermissions, ContractCall, ContractTransactionBuilder,
-    ContractDeploymentPayloadV1, ContractType, Transaction, TransactionOutput, TransactionType,
+    blake3_hash, CallPermissions, ContractCall, ContractDeploymentPayloadV1,
+    ContractTransactionBuilder, ContractType, Transaction, TransactionOutput, TransactionType,
 };
 use lib_crypto::keypair::KeyPair;
 use lib_network::client::ZhtpClient;
@@ -16,7 +19,9 @@ use serde_json::json;
 
 fn validate_tx_hash(tx_hash: &str) -> CliResult<()> {
     if tx_hash.is_empty() {
-        return Err(CliError::Other("Transaction hash cannot be empty".to_string()));
+        return Err(CliError::Other(
+            "Transaction hash cannot be empty".to_string(),
+        ));
     }
     if tx_hash.len() < 32 {
         return Err(CliError::Other(
@@ -59,7 +64,10 @@ fn parse_contract_type(value: &str) -> CliResult<ContractType> {
 }
 
 fn build_contract_call_endpoint(contract_id: [u8; 32]) -> String {
-    format!("/api/v1/blockchain/contracts/{}/call", hex::encode(contract_id))
+    format!(
+        "/api/v1/blockchain/contracts/{}/call",
+        hex::encode(contract_id)
+    )
 }
 
 fn build_contract_list_endpoint(filter: &str, limit: usize, offset: usize) -> String {
@@ -71,7 +79,10 @@ fn build_contract_info_endpoint(contract_id: [u8; 32]) -> String {
 }
 
 fn build_contract_state_endpoint(contract_id: [u8; 32]) -> String {
-    format!("/api/v1/blockchain/contracts/{}/state", hex::encode(contract_id))
+    format!(
+        "/api/v1/blockchain/contracts/{}/state",
+        hex::encode(contract_id)
+    )
 }
 
 fn load_default_keypair() -> CliResult<KeyPair> {
@@ -112,7 +123,8 @@ fn build_signed_contract_call_tx(
     let temp_tx = builder
         .build(keypair)
         .map_err(|e| CliError::ConfigError(format!("Failed to build temp tx: {e}")))?;
-    let min_fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(temp_tx.size());
+    let min_fee =
+        lib_blockchain::transaction::creation::utils::calculate_minimum_fee(temp_tx.size());
     builder.set_fee(min_fee);
 
     builder
@@ -134,7 +146,9 @@ fn build_signed_contract_deploy_tx(
     );
     let placeholder_signature = keypair
         .sign(b"deployment-placeholder-signature")
-        .map_err(|e| CliError::ConfigError(format!("Failed to create placeholder signature: {e}")))?;
+        .map_err(|e| {
+            CliError::ConfigError(format!("Failed to create placeholder signature: {e}"))
+        })?;
 
     let mut tx = Transaction {
         version: 1,
@@ -156,14 +170,14 @@ fn build_signed_contract_deploy_tx(
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     };
     tx.fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
     tx.signature = keypair
@@ -199,9 +213,8 @@ async fn handle_blockchain_command_impl(
             memory_limit_bytes,
         } => {
             let keypair = load_default_keypair()?;
-            serde_json::from_str::<serde_json::Value>(&abi_json).map_err(|e| {
-                CliError::ConfigError(format!("Invalid abi_json: {e}"))
-            })?;
+            serde_json::from_str::<serde_json::Value>(&abi_json)
+                .map_err(|e| CliError::ConfigError(format!("Invalid abi_json: {e}")))?;
             let code = parse_hex("code", &code_hex)?;
             let init_args = match init_args_hex {
                 Some(raw) => parse_hex("init args", &raw)?,
@@ -246,21 +259,27 @@ async fn handle_blockchain_command_impl(
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
         }
-        BlockchainAction::ContractList { contract_type, limit, offset } => {
+        BlockchainAction::ContractList {
+            contract_type,
+            limit,
+            offset,
+        } => {
             let filter = parse_contract_filter(&contract_type)?;
             let endpoint = build_contract_list_endpoint(filter, limit, offset);
-            let response = client.get(&endpoint).await.map_err(|e| CliError::ApiCallFailed {
-                endpoint: endpoint.clone(),
-                status: 0,
-                reason: e.to_string(),
-            })?;
-            let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-                CliError::ApiCallFailed {
+            let response = client
+                .get(&endpoint)
+                .await
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.clone(),
+                    status: 0,
+                    reason: e.to_string(),
+                })?;
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: endpoint.clone(),
                     status: 0,
                     reason: format!("Failed to parse response: {e}"),
-                }
-            })?;
+                })?;
             output.header("Deployed Contracts")?;
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
@@ -268,18 +287,20 @@ async fn handle_blockchain_command_impl(
         BlockchainAction::ContractInfo { contract_id } => {
             let contract_id = parse_hex_32("contract_id", &contract_id)?;
             let endpoint = build_contract_info_endpoint(contract_id);
-            let response = client.get(&endpoint).await.map_err(|e| CliError::ApiCallFailed {
-                endpoint: endpoint.clone(),
-                status: 0,
-                reason: e.to_string(),
-            })?;
-            let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-                CliError::ApiCallFailed {
+            let response = client
+                .get(&endpoint)
+                .await
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.clone(),
+                    status: 0,
+                    reason: e.to_string(),
+                })?;
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: endpoint.clone(),
                     status: 0,
                     reason: format!("Failed to parse response: {e}"),
-                }
-            })?;
+                })?;
             output.header("Contract Info")?;
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
@@ -287,18 +308,20 @@ async fn handle_blockchain_command_impl(
         BlockchainAction::ContractState { contract_id } => {
             let contract_id = parse_hex_32("contract_id", &contract_id)?;
             let endpoint = build_contract_state_endpoint(contract_id);
-            let response = client.get(&endpoint).await.map_err(|e| CliError::ApiCallFailed {
-                endpoint: endpoint.clone(),
-                status: 0,
-                reason: e.to_string(),
-            })?;
-            let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-                CliError::ApiCallFailed {
+            let response = client
+                .get(&endpoint)
+                .await
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.clone(),
+                    status: 0,
+                    reason: e.to_string(),
+                })?;
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: endpoint.clone(),
                     status: 0,
                     reason: format!("Failed to parse response: {e}"),
-                }
-            })?;
+                })?;
             output.header("Contract State")?;
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
@@ -314,13 +337,12 @@ async fn handle_blockchain_command_impl(
                     status: 0,
                     reason: e.to_string(),
                 })?;
-            let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-                CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: "/api/v1/blockchain/transaction/broadcast".to_string(),
                     status: 0,
                     reason: format!("Failed to parse response: {e}"),
-                }
-            })?;
+                })?;
             output.header("Raw Transaction Broadcast")?;
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
@@ -335,22 +357,22 @@ async fn fetch_and_display_blockchain_status(
 ) -> CliResult<()> {
     output.print("Querying blockchain status...")?;
 
-    let response = client
-        .get("/api/v1/blockchain/status")
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/blockchain/status".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
+    let response =
+        client
+            .get("/api/v1/blockchain/status")
+            .await
+            .map_err(|e| CliError::ApiCallFailed {
+                endpoint: "/api/v1/blockchain/status".to_string(),
+                status: 0,
+                reason: e.to_string(),
+            })?;
 
-    let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-        CliError::ApiCallFailed {
+    let result: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: "/api/v1/blockchain/status".to_string(),
             status: 0,
             reason: format!("Failed to parse response: {e}"),
-        }
-    })?;
+        })?;
     let formatted = format_output(&result, &cli.format)?;
     output.header("Blockchain Status")?;
     output.print(&formatted)?;
@@ -367,19 +389,21 @@ async fn fetch_and_display_transaction(
     output.print(&format!("Looking up transaction: {tx_hash}"))?;
     let endpoint = build_transaction_endpoint(tx_hash);
 
-    let response = client.get(&endpoint).await.map_err(|e| CliError::ApiCallFailed {
-        endpoint: endpoint.clone(),
-        status: 0,
-        reason: e.to_string(),
-    })?;
+    let response = client
+        .get(&endpoint)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: endpoint.clone(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
 
-    let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-        CliError::ApiCallFailed {
+    let result: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint,
             status: 0,
             reason: format!("Failed to parse response: {e}"),
-        }
-    })?;
+        })?;
     output.header("Transaction Details")?;
     output.print(&format_output(&result, &cli.format)?)?;
     Ok(())
@@ -392,22 +416,22 @@ async fn fetch_and_display_blockchain_stats(
 ) -> CliResult<()> {
     output.print("Collecting blockchain statistics...")?;
 
-    let response = client
-        .get("/api/v1/blockchain/stats")
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: "/api/v1/blockchain/stats".to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
+    let response =
+        client
+            .get("/api/v1/blockchain/stats")
+            .await
+            .map_err(|e| CliError::ApiCallFailed {
+                endpoint: "/api/v1/blockchain/stats".to_string(),
+                status: 0,
+                reason: e.to_string(),
+            })?;
 
-    let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-        CliError::ApiCallFailed {
+    let result: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: "/api/v1/blockchain/stats".to_string(),
             status: 0,
             reason: format!("Failed to parse response: {e}"),
-        }
-    })?;
+        })?;
     output.header("Blockchain Statistics")?;
     output.print(&format_output(&result, &cli.format)?)?;
     Ok(())
@@ -416,8 +440,8 @@ async fn fetch_and_display_blockchain_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_crypto::keypair::KeyPair;
     use lib_blockchain::{TransactionType, CONTRACT_DEPLOYMENT_MEMO_PREFIX};
+    use lib_crypto::keypair::KeyPair;
 
     #[test]
     fn test_validate_tx_hash_valid() {
@@ -474,13 +498,9 @@ mod tests {
     #[test]
     fn test_build_signed_contract_call_tx_uses_contract_execution_format() {
         let keypair = KeyPair::generate().unwrap();
-        let tx = build_signed_contract_call_tx(
-            &keypair,
-            ContractType::Token,
-            "mint",
-            vec![1, 2, 3],
-        )
-        .unwrap();
+        let tx =
+            build_signed_contract_call_tx(&keypair, ContractType::Token, "mint", vec![1, 2, 3])
+                .unwrap();
 
         assert_eq!(tx.transaction_type, TransactionType::ContractExecution);
         assert!(tx.memo.starts_with(b"ZHTP"));

@@ -5,9 +5,9 @@
 //! - Private CA for .zhtp/.sov domains (enterprise deployments)
 //! - Self-signed certificates (development)
 
-use std::path::PathBuf;
-use std::net::{IpAddr, Ipv4Addr};
 use serde::{Deserialize, Serialize};
+use std::net::{IpAddr, Ipv4Addr};
+use std::path::PathBuf;
 
 /// TLS mode for the gateway
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -107,8 +107,16 @@ impl GatewayTlsConfig {
             https_port: 443,
             http_port: Some(80),
             bind_addr: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            cert_path: Some(PathBuf::from("/etc/letsencrypt/live").join(domain).join("fullchain.pem")),
-            key_path: Some(PathBuf::from("/etc/letsencrypt/live").join(domain).join("privkey.pem")),
+            cert_path: Some(
+                PathBuf::from("/etc/letsencrypt/live")
+                    .join(domain)
+                    .join("fullchain.pem"),
+            ),
+            key_path: Some(
+                PathBuf::from("/etc/letsencrypt/live")
+                    .join(domain)
+                    .join("privkey.pem"),
+            ),
             ca_cert_path: None,
             gateway_suffix: format!(".{}", domain),
             allow_bare_sovereign_domains: false,
@@ -202,16 +210,16 @@ impl GatewayTlsConfig {
 
     /// Get effective certificate path (with fallback to auto-generated)
     pub fn effective_cert_path(&self) -> PathBuf {
-        self.cert_path.clone().unwrap_or_else(|| {
-            self.data_dir.join("server.crt")
-        })
+        self.cert_path
+            .clone()
+            .unwrap_or_else(|| self.data_dir.join("server.crt"))
     }
 
     /// Get effective key path (with fallback to auto-generated)
     pub fn effective_key_path(&self) -> PathBuf {
-        self.key_path.clone().unwrap_or_else(|| {
-            self.data_dir.join("server.key")
-        })
+        self.key_path
+            .clone()
+            .unwrap_or_else(|| self.data_dir.join("server.key"))
     }
 
     /// Validate configuration

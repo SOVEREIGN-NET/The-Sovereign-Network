@@ -1,5 +1,5 @@
 //! Environment-Specific Configuration
-//! 
+//!
 //! Handles development, testnet, and mainnet environment settings
 
 use anyhow::Result;
@@ -178,7 +178,7 @@ pub struct MemorySettings {
 
 impl Environment {
     /// Get network-specific data directory
-    /// 
+    ///
     /// Returns the base data directory path for this environment.
     /// Each environment uses a separate directory to prevent data contamination.
     pub fn data_directory(&self) -> String {
@@ -188,7 +188,7 @@ impl Environment {
             Environment::Mainnet => "./data/mainnet".to_string(),
         }
     }
-    
+
     /// Get blockchain database path for this environment (legacy)
     pub fn blockchain_db_path(&self) -> String {
         format!("{}/blockchain.db", self.data_directory())
@@ -199,22 +199,22 @@ impl Environment {
     pub fn blockchain_data_path(&self) -> String {
         format!("{}/blockchain.dat", self.data_directory())
     }
-    
+
     /// Get wallet database path for this environment
     pub fn wallet_db_path(&self) -> String {
         format!("{}/wallet.db", self.data_directory())
     }
-    
+
     /// Get identity registry database path for this environment
     pub fn identity_db_path(&self) -> String {
         format!("{}/identity.db", self.data_directory())
     }
-    
+
     /// Get state database path for this environment
     pub fn state_db_path(&self) -> String {
         format!("{}/state.db", self.data_directory())
     }
-    
+
     /// Get network configuration path for this environment
     pub fn network_config_path(&self) -> String {
         match self {
@@ -223,12 +223,12 @@ impl Environment {
             Environment::Mainnet => "./configs/mainnet-full-node.toml".to_string(),
         }
     }
-    
+
     /// Get logs directory for this environment
     pub fn logs_directory(&self) -> String {
         format!("{}/logs", self.data_directory())
     }
-    
+
     /// Get default configuration for this environment
     pub fn get_default_config(&self) -> EnvironmentConfig {
         match self {
@@ -296,7 +296,7 @@ impl Environment {
                     },
                 },
             },
-            
+
             Environment::Testnet => EnvironmentConfig {
                 environment: *self,
                 network_settings: NetworkSettings {
@@ -361,7 +361,7 @@ impl Environment {
                     },
                 },
             },
-            
+
             Environment::Mainnet => EnvironmentConfig {
                 environment: *self,
                 network_settings: NetworkSettings {
@@ -429,7 +429,7 @@ impl Environment {
             },
         }
     }
-    
+
     /// Validate environment-specific requirements
     pub fn validate_requirements(&self) -> Result<()> {
         match self {
@@ -447,15 +447,20 @@ impl Environment {
             Environment::Mainnet => {
                 // Validate production requirements
                 if std::env::var("ZHTP_MAINNET_KEY").is_err() {
-                    return Err(anyhow::anyhow!("ZHTP_MAINNET_KEY environment variable required for mainnet"));
+                    return Err(anyhow::anyhow!(
+                        "ZHTP_MAINNET_KEY environment variable required for mainnet"
+                    ));
                 }
-                
+
                 // Check for sufficient resources
                 let available_memory = get_available_memory_mb();
                 if available_memory < 2048 {
-                    tracing::warn!("Insufficient memory for mainnet operation: {}MB available", available_memory);
+                    tracing::warn!(
+                        "Insufficient memory for mainnet operation: {}MB available",
+                        available_memory
+                    );
                 }
-                
+
                 Ok(())
             }
         }
@@ -465,17 +470,17 @@ impl Environment {
 /// Load environment-specific configuration
 pub async fn load_environment_config(environment: Environment) -> Result<EnvironmentConfig> {
     tracing::info!("Loading configuration for {} environment", environment);
-    
+
     // Validate environment requirements
     environment.validate_requirements()?;
-    
+
     // Get default config for environment
     let mut config = environment.get_default_config();
-    
+
     // Load environment-specific overrides if available
     if let Ok(env_override) = std::env::var("ZHTP_CONFIG_OVERRIDE") {
         tracing::info!("Loading environment config override from: {}", env_override);
-        
+
         if let Ok(override_content) = tokio::fs::read_to_string(&env_override).await {
             if let Ok(override_config) = toml::from_str::<EnvironmentConfig>(&override_content) {
                 config = override_config;
@@ -483,7 +488,7 @@ pub async fn load_environment_config(environment: Environment) -> Result<Environ
             }
         }
     }
-    
+
     Ok(config)
 }
 
@@ -491,19 +496,19 @@ pub async fn load_environment_config(environment: Environment) -> Result<Environ
 fn get_available_memory_mb() -> usize {
     // Simple implementation - in production would use proper system info
     // Command would be used for system memory detection in production
-    
+
     #[cfg(windows)]
     {
         // Windows implementation would go here
         4096 // Default assumption
     }
-    
+
     #[cfg(unix)]
     {
         // Unix implementation would go here
         4096 // Default assumption
     }
-    
+
     #[cfg(not(any(windows, unix)))]
     {
         2048 // Conservative default

@@ -1,12 +1,12 @@
 //! Credential-based zero-knowledge proof implementation
-//! 
+//!
 //! Provides proofs for verifiable credentials that allow proving possession
 //! of specific credentials without revealing the full credential data.
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Credential schema definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,11 +27,7 @@ pub struct CredentialSchema {
 
 impl CredentialSchema {
     /// Create a new credential schema
-    pub fn new(
-        schema_id: String,
-        version: String,
-        issuer_public_key: [u8; 32],
-    ) -> Self {
+    pub fn new(schema_id: String, version: String, issuer_public_key: [u8; 32]) -> Self {
         Self {
             schema_id,
             version,
@@ -60,7 +56,10 @@ impl CredentialSchema {
     pub fn validate_fields(&self, fields: &HashMap<String, String>) -> Result<()> {
         for required_field in &self.required_fields {
             if !fields.contains_key(required_field) {
-                return Err(anyhow::anyhow!("Missing required field: {}", required_field));
+                return Err(anyhow::anyhow!(
+                    "Missing required field: {}",
+                    required_field
+                ));
             }
         }
         Ok(())
@@ -71,20 +70,22 @@ impl CredentialSchema {
         let mut data = Vec::new();
         data.extend_from_slice(self.schema_id.as_bytes());
         data.extend_from_slice(self.version.as_bytes());
-        
+
         // Sort fields for deterministic hashing
-        let mut all_fields: Vec<_> = self.required_fields.iter()
+        let mut all_fields: Vec<_> = self
+            .required_fields
+            .iter()
             .chain(self.optional_fields.iter())
             .collect();
         all_fields.sort();
-        
+
         for field in all_fields {
             data.extend_from_slice(field.as_bytes());
             if let Some(field_type) = self.field_types.get(field) {
                 data.extend_from_slice(field_type.as_bytes());
             }
         }
-        
+
         data.extend_from_slice(&self.issuer_public_key);
         hash_blake3(&data)
     }
@@ -105,7 +106,12 @@ pub struct CredentialClaim {
 
 impl CredentialClaim {
     /// Create a new credential claim
-    pub fn new(claim_name: String, claim_value: String, claim_type: String, is_revealed: bool) -> Self {
+    pub fn new(
+        claim_name: String,
+        claim_value: String,
+        claim_type: String,
+        is_revealed: bool,
+    ) -> Self {
         let claim_value_hash = hash_blake3(claim_value.as_bytes());
         Self {
             claim_name,
@@ -159,14 +165,15 @@ impl ZkCredentialProof {
         validity_duration_seconds: u64,
     ) -> Result<Self> {
         // Validate claims against schema
-        let claim_map: HashMap<String, String> = claims.iter()
+        let claim_map: HashMap<String, String> = claims
+            .iter()
             .filter(|c| c.is_revealed)
             .map(|c| (c.claim_name.clone(), format!("{:?}", c.claim_value_hash)))
             .collect();
         schema.validate_fields(&claim_map)?;
 
         let schema_hash = schema.schema_hash();
-        
+
         // Generate claims commitment
         let mut claims_data = Vec::new();
         for claim in &claims {
@@ -184,7 +191,7 @@ impl ZkCredentialProof {
                     u64::from_le_bytes(credential_secret[0..8].try_into().unwrap_or([0u8; 8])),
                     u64::from_le_bytes(claims_data[0..8].try_into().unwrap_or([0u8; 8])),
                     claims.len() as u64, // permission level = number of claims
-                    1, // required permission = at least 1 claim
+                    1,                   // required permission = at least 1 claim
                 ) {
                     Ok(zk_proof) => {
                         println!("Generated ZK claims commitment using circuit");
@@ -194,14 +201,14 @@ impl ZkCredentialProof {
                         let mut commitment_array = [0u8; 32];
                         commitment_array.copy_from_slice(&commitment_data[0..32]);
                         commitment_array
-                    },
+                    }
                     Err(e) => {
                         println!(" ZK commitment generation failed, using fallback: {:?}", e);
                         // Fallback to hash-based commitment
                         hash_blake3(&claims_data)
                     }
                 }
-            },
+            }
             Err(e) => {
                 println!(" ZK system init failed, using fallback: {:?}", e);
                 // Fallback to hash-based commitment
@@ -210,15 +217,9 @@ impl ZkCredentialProof {
         };
 
         // Separate revealed and hidden claims
-        let revealed_claims: Vec<_> = claims.iter()
-            .filter(|c| c.is_revealed)
-            .cloned()
-            .collect();
-        
-        let hidden_claims: Vec<_> = claims.iter()
-            .filter(|c| !c.is_revealed)
-            .cloned()
-            .collect();
+        let revealed_claims: Vec<_> = claims.iter().filter(|c| c.is_revealed).cloned().collect();
+
+        let hidden_claims: Vec<_> = claims.iter().filter(|c| !c.is_revealed).cloned().collect();
 
         // Generate proof for hidden claims
         let mut hidden_data = Vec::new();
@@ -233,19 +234,19 @@ impl ZkCredentialProof {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-            
+
         let validity_proof = match crate::plonky2::ZkProofSystem::new() {
             Ok(zk_system) => {
                 // Use ZK circuit to generate a validity proof
                 match zk_system.prove_data_integrity(
                     u64::from_le_bytes(schema_hash[0..8].try_into().unwrap_or([0u8; 8])),
-                    claims.len() as u64, // chunk_count = number of claims
-                    claims_data.len() as u64,  // total_size
+                    claims.len() as u64,      // chunk_count = number of claims
+                    claims_data.len() as u64, // total_size
                     u64::from_le_bytes(claims_commitment[0..8].try_into().unwrap_or([0u8; 8])), // checksum
                     u64::from_le_bytes(credential_secret[0..8].try_into().unwrap_or([0u8; 8])), // owner_secret
                     created_at, // timestamp
-                    100, // max_chunk_count
-                    1048576, // max_size (1MB)
+                    100,        // max_chunk_count
+                    1048576,    // max_size (1MB)
                 ) {
                     Ok(zk_proof) => {
                         println!("Generated ZK validity proof using circuit");
@@ -255,7 +256,7 @@ impl ZkCredentialProof {
                         let mut validity_array = [0u8; 32];
                         validity_array.copy_from_slice(&validity_data[0..32]);
                         validity_array
-                    },
+                    }
                     Err(e) => {
                         println!(" ZK proof generation failed, using fallback: {:?}", e);
                         // Fallback to hash-based validity proof
@@ -264,11 +265,12 @@ impl ZkCredentialProof {
                             &claims_commitment[..],
                             &issuer_signature[..],
                             &credential_secret[..],
-                        ].concat();
+                        ]
+                        .concat();
                         hash_blake3(&validity_data)
                     }
                 }
-            },
+            }
             Err(e) => {
                 println!(" ZK system init failed, using fallback: {:?}", e);
                 // Fallback to hash-based validity proof
@@ -277,7 +279,8 @@ impl ZkCredentialProof {
                     &claims_commitment[..],
                     &issuer_signature[..],
                     &credential_secret[..],
-                ].concat();
+                ]
+                .concat();
                 hash_blake3(&validity_data)
             }
         };
@@ -285,11 +288,13 @@ impl ZkCredentialProof {
         // Generate nonce
         let mut nonce_data = Vec::new();
         nonce_data.extend_from_slice(&claims_commitment);
-        nonce_data.extend_from_slice(&std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            .to_le_bytes());
+        nonce_data.extend_from_slice(
+            &std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                .to_le_bytes(),
+        );
         let nonce = hash_blake3(&nonce_data);
 
         let expires_at = created_at + validity_duration_seconds;
@@ -329,14 +334,28 @@ impl ZkCredentialProof {
         let mut claims = vec![
             CredentialClaim::revealed("degree".to_string(), degree, "string".to_string()),
             CredentialClaim::revealed("institution".to_string(), institution, "string".to_string()),
-            CredentialClaim::revealed("graduation_year".to_string(), graduation_year.to_string(), "integer".to_string()),
+            CredentialClaim::revealed(
+                "graduation_year".to_string(),
+                graduation_year.to_string(),
+                "integer".to_string(),
+            ),
         ];
 
         if let Some(gpa_value) = gpa {
-            claims.push(CredentialClaim::hidden("gpa".to_string(), gpa_value.to_string(), "float".to_string()));
+            claims.push(CredentialClaim::hidden(
+                "gpa".to_string(),
+                gpa_value.to_string(),
+                "float".to_string(),
+            ));
         }
 
-        Self::generate(&schema, claims, issuer_signature, credential_secret, 365 * 24 * 60 * 60) // 1 year validity
+        Self::generate(
+            &schema,
+            claims,
+            issuer_signature,
+            credential_secret,
+            365 * 24 * 60 * 60,
+        ) // 1 year validity
     }
 
     /// Generate employment credential proof
@@ -367,14 +386,28 @@ impl ZkCredentialProof {
         ];
 
         if let Some(end) = end_date {
-            claims.push(CredentialClaim::revealed("end_date".to_string(), end, "date".to_string()));
+            claims.push(CredentialClaim::revealed(
+                "end_date".to_string(),
+                end,
+                "date".to_string(),
+            ));
         }
 
         if let Some(salary) = salary_range {
-            claims.push(CredentialClaim::hidden("salary_range".to_string(), salary, "string".to_string()));
+            claims.push(CredentialClaim::hidden(
+                "salary_range".to_string(),
+                salary,
+                "string".to_string(),
+            ));
         }
 
-        Self::generate(&schema, claims, issuer_signature, credential_secret, 180 * 24 * 60 * 60) // 6 months validity
+        Self::generate(
+            &schema,
+            claims,
+            issuer_signature,
+            credential_secret,
+            180 * 24 * 60 * 60,
+        ) // 6 months validity
     }
 
     /// Generate professional license proof
@@ -399,14 +432,32 @@ impl ZkCredentialProof {
         .with_optional_field("license_number".to_string(), "string".to_string());
 
         let claims = vec![
-            CredentialClaim::revealed("license_type".to_string(), license_type, "string".to_string()),
-            CredentialClaim::hidden("license_number".to_string(), license_number, "string".to_string()),
-            CredentialClaim::revealed("issuing_authority".to_string(), issuing_authority, "string".to_string()),
+            CredentialClaim::revealed(
+                "license_type".to_string(),
+                license_type,
+                "string".to_string(),
+            ),
+            CredentialClaim::hidden(
+                "license_number".to_string(),
+                license_number,
+                "string".to_string(),
+            ),
+            CredentialClaim::revealed(
+                "issuing_authority".to_string(),
+                issuing_authority,
+                "string".to_string(),
+            ),
             CredentialClaim::revealed("issue_date".to_string(), issue_date, "date".to_string()),
             CredentialClaim::revealed("expiry_date".to_string(), expiry_date, "date".to_string()),
         ];
 
-        Self::generate(&schema, claims, issuer_signature, credential_secret, 30 * 24 * 60 * 60) // 30 days validity
+        Self::generate(
+            &schema,
+            claims,
+            issuer_signature,
+            credential_secret,
+            30 * 24 * 60 * 60,
+        ) // 30 days validity
     }
 
     /// Check if the proof is expired
@@ -415,7 +466,7 @@ impl ZkCredentialProof {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         current_time > self.expires_at
     }
 
@@ -425,13 +476,15 @@ impl ZkCredentialProof {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         self.expires_at as i64 - current_time as i64
     }
 
     /// Get revealed claim by name
     pub fn get_revealed_claim(&self, claim_name: &str) -> Option<&CredentialClaim> {
-        self.revealed_claims.iter().find(|c| c.claim_name == claim_name)
+        self.revealed_claims
+            .iter()
+            .find(|c| c.claim_name == claim_name)
     }
 
     /// Check if a specific claim is revealed
@@ -455,7 +508,7 @@ impl ZkCredentialProof {
         32 + // hidden_claims_proof
         32 + // validity_proof
         16 + // created_at + expires_at
-        32   // nonce
+        32 // nonce
     }
 }
 
@@ -476,7 +529,9 @@ impl BatchCredentialProof {
     /// Create batch proof from individual credential proofs
     pub fn create(proofs: Vec<ZkCredentialProof>) -> Result<Self> {
         if proofs.is_empty() {
-            return Err(anyhow::anyhow!("Cannot create empty batch credential proof"));
+            return Err(anyhow::anyhow!(
+                "Cannot create empty batch credential proof"
+            ));
         }
 
         // Check that all proofs are still valid
@@ -523,7 +578,7 @@ impl BatchCredentialProof {
         self.proofs.iter().map(|p| p.proof_size()).sum::<usize>() +
         32 + // aggregated_validity
         32 + // combined_commitment
-        8    // batch_timestamp
+        8 // batch_timestamp
     }
 
     /// Get proof at specific index
@@ -543,18 +598,14 @@ mod tests {
 
     #[test]
     fn test_credential_schema() {
-        let schema = CredentialSchema::new(
-            "test_schema".to_string(),
-            "1.0".to_string(),
-            [1u8; 32],
-        )
-        .with_required_field("name".to_string(), "string".to_string())
-        .with_optional_field("age".to_string(), "integer".to_string());
+        let schema = CredentialSchema::new("test_schema".to_string(), "1.0".to_string(), [1u8; 32])
+            .with_required_field("name".to_string(), "string".to_string())
+            .with_optional_field("age".to_string(), "integer".to_string());
 
         assert_eq!(schema.schema_id, "test_schema");
         assert_eq!(schema.required_fields.len(), 1);
         assert_eq!(schema.optional_fields.len(), 1);
-        
+
         let mut valid_fields = HashMap::new();
         valid_fields.insert("name".to_string(), "John".to_string());
         assert!(schema.validate_fields(&valid_fields).is_ok());
@@ -570,17 +621,14 @@ mod tests {
             "PhD Computer Science".to_string(),
             "string".to_string(),
         );
-        
+
         assert!(revealed_claim.is_revealed);
         assert_eq!(revealed_claim.claim_name, "degree");
         assert_eq!(revealed_claim.claim_type, "string");
 
-        let hidden_claim = CredentialClaim::hidden(
-            "gpa".to_string(),
-            "3.8".to_string(),
-            "float".to_string(),
-        );
-        
+        let hidden_claim =
+            CredentialClaim::hidden("gpa".to_string(), "3.8".to_string(), "float".to_string());
+
         assert!(!hidden_claim.is_revealed);
     }
 
@@ -588,7 +636,7 @@ mod tests {
     fn test_education_credential_proof() {
         let issuer_signature = [2u8; 64];
         let credential_secret = [3u8; 32];
-        
+
         let proof = ZkCredentialProof::generate_education_proof(
             "Bachelor of Science".to_string(),
             "MIT".to_string(),
@@ -596,7 +644,8 @@ mod tests {
             Some(3.9),
             issuer_signature,
             credential_secret,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(!proof.is_expired());
         assert!(proof.is_claim_revealed("degree"));
@@ -609,7 +658,7 @@ mod tests {
     fn test_employment_credential_proof() {
         let issuer_signature = [4u8; 64];
         let credential_secret = [5u8; 32];
-        
+
         let proof = ZkCredentialProof::generate_employment_proof(
             "Tech Corp".to_string(),
             "Senior Engineer".to_string(),
@@ -618,7 +667,8 @@ mod tests {
             Some("$100k-150k".to_string()),
             issuer_signature,
             credential_secret,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(proof.is_claim_revealed("company"));
         assert!(proof.is_claim_revealed("position"));
@@ -629,7 +679,7 @@ mod tests {
     fn test_license_credential_proof() {
         let issuer_signature = [6u8; 64];
         let credential_secret = [7u8; 32];
-        
+
         let proof = ZkCredentialProof::generate_license_proof(
             "Medical License".to_string(),
             "MD-12345".to_string(),
@@ -638,7 +688,8 @@ mod tests {
             "2025-01-01".to_string(),
             issuer_signature,
             credential_secret,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(proof.is_claim_revealed("license_type"));
         assert!(!proof.is_claim_revealed("license_number"));
@@ -650,7 +701,7 @@ mod tests {
         let issuer_signature = [8u8; 64];
         let credential_secret1 = [9u8; 32];
         let credential_secret2 = [10u8; 32];
-        
+
         let proof1 = ZkCredentialProof::generate_education_proof(
             "MBA".to_string(),
             "Harvard".to_string(),
@@ -658,7 +709,8 @@ mod tests {
             None,
             issuer_signature,
             credential_secret1,
-        ).unwrap();
+        )
+        .unwrap();
 
         let proof2 = ZkCredentialProof::generate_employment_proof(
             "Finance Corp".to_string(),
@@ -668,10 +720,11 @@ mod tests {
             None,
             issuer_signature,
             credential_secret2,
-        ).unwrap();
+        )
+        .unwrap();
 
         let batch = BatchCredentialProof::create(vec![proof1, proof2]).unwrap();
-        
+
         assert_eq!(batch.batch_size(), 2);
         assert!(!batch.has_expired_proofs());
         assert!(batch.get_proof(0).is_some());
@@ -682,7 +735,7 @@ mod tests {
     fn test_credential_proof_expiration() {
         let issuer_signature = [11u8; 64];
         let credential_secret = [12u8; 32];
-        
+
         let mut proof = ZkCredentialProof::generate_education_proof(
             "PhD".to_string(),
             "Stanford".to_string(),
@@ -690,13 +743,15 @@ mod tests {
             None,
             issuer_signature,
             credential_secret,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Set expiry to past
         proof.expires_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() - 3600; // 1 hour ago
+            .as_secs()
+            - 3600; // 1 hour ago
 
         assert!(proof.is_expired());
         assert!(proof.time_until_expiration() < 0);
@@ -704,21 +759,13 @@ mod tests {
 
     #[test]
     fn test_schema_hash_deterministic() {
-        let schema1 = CredentialSchema::new(
-            "test".to_string(),
-            "1.0".to_string(),
-            [1u8; 32],
-        )
-        .with_required_field("a".to_string(), "string".to_string())
-        .with_required_field("b".to_string(), "integer".to_string());
+        let schema1 = CredentialSchema::new("test".to_string(), "1.0".to_string(), [1u8; 32])
+            .with_required_field("a".to_string(), "string".to_string())
+            .with_required_field("b".to_string(), "integer".to_string());
 
-        let schema2 = CredentialSchema::new(
-            "test".to_string(),
-            "1.0".to_string(),
-            [1u8; 32],
-        )
-        .with_required_field("b".to_string(), "integer".to_string())
-        .with_required_field("a".to_string(), "string".to_string());
+        let schema2 = CredentialSchema::new("test".to_string(), "1.0".to_string(), [1u8; 32])
+            .with_required_field("b".to_string(), "integer".to_string())
+            .with_required_field("a".to_string(), "string".to_string());
 
         // Should be the same hash regardless of field order
         assert_eq!(schema1.schema_hash(), schema2.schema_hash());

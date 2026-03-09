@@ -23,19 +23,19 @@
 //!
 //! For production use, credentials must be verified before proof generation.
 
+use anyhow::Result;
+use base64::{engine::general_purpose, Engine as _};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
-use anyhow::Result;
-use base64::{Engine as _, engine::general_purpose};
 
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
-use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_identity::IdentityManager;
 use lib_proofs::ZkRangeProof;
+use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use lib_protocols::zhtp::ZhtpRequestHandler;
 
-use crate::session_manager::SessionManager;
 use crate::api::middleware::RateLimiter;
+use crate::session_manager::SessionManager;
 
 /// Request to generate a zero-knowledge proof
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,12 +143,7 @@ impl ZkpHandler {
 
     /// Handle: POST /api/v1/zkp/verify
     async fn handle_verify_proof(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        handle_verify_proof(
-            &request.body,
-            self.rate_limiter.clone(),
-            &request,
-        )
-        .await
+        handle_verify_proof(&request.body, self.rate_limiter.clone(), &request).await
     }
 }
 
@@ -158,12 +153,10 @@ impl ZhtpRequestHandler for ZkpHandler {
         match (request.method.as_str(), request.uri.as_str()) {
             ("POST", "/api/v1/zkp/generate") => self.handle_generate_proof(request).await,
             ("POST", "/api/v1/zkp/verify") => self.handle_verify_proof(request).await,
-            _ => {
-                Ok(ZhtpResponse::error(
-                    ZhtpStatus::NotFound,
-                    format!("ZKP endpoint not found: {} {}", request.method, request.uri),
-                ))
-            }
+            _ => Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                format!("ZKP endpoint not found: {} {}", request.method, request.uri),
+            )),
         }
     }
 
@@ -194,18 +187,23 @@ async fn handle_generate_proof(
     let client_ip = extract_client_ip(request);
 
     // Security: Rate limit proof generation (10 requests per hour per IP)
-    if let Err(response) = rate_limiter.check_rate_limit_aggressive(&client_ip, 10, 3600).await {
+    if let Err(response) = rate_limiter
+        .check_rate_limit_aggressive(&client_ip, 10, 3600)
+        .await
+    {
         return Ok(response);
     }
 
     // Parse request
-    let req: GenerateProofRequest = serde_json::from_slice(body)
-        .map_err(|_| anyhow::anyhow!("Invalid request format"))?;
+    let req: GenerateProofRequest =
+        serde_json::from_slice(body).map_err(|_| anyhow::anyhow!("Invalid request format"))?;
 
     // Security: Validate proof_type against allowlist
     const VALID_PROOF_TYPES: &[&str] = &[
-        "age_over_18", "age_range",
-        "citizenship_verified", "jurisdiction_membership"
+        "age_over_18",
+        "age_range",
+        "citizenship_verified",
+        "jurisdiction_membership",
     ];
     if !VALID_PROOF_TYPES.contains(&req.proof_type.as_str()) {
         return Err(anyhow::anyhow!("Invalid proof type"));
@@ -226,8 +224,8 @@ async fn handle_generate_proof(
         .map_err(|e| anyhow::anyhow!("Invalid or expired session: {}", e))?;
 
     // Convert request identity_id string to IdentityId (Hash)
-    let identity_id_bytes = hex::decode(&req.identity_id)
-        .map_err(|_| anyhow::anyhow!("Invalid identity_id format"))?;
+    let identity_id_bytes =
+        hex::decode(&req.identity_id).map_err(|_| anyhow::anyhow!("Invalid identity_id format"))?;
     if identity_id_bytes.len() != 32 {
         return Err(anyhow::anyhow!("Invalid identity_id length"));
     }
@@ -237,7 +235,9 @@ async fn handle_generate_proof(
 
     // Security: Verify authenticated identity matches requested identity
     if session_token_obj.identity_id != identity_id {
-        return Err(anyhow::anyhow!("Identity mismatch - cannot generate proofs for other identities"));
+        return Err(anyhow::anyhow!(
+            "Identity mismatch - cannot generate proofs for other identities"
+        ));
     }
 
     // Verify identity exists and is active
@@ -261,7 +261,9 @@ async fn handle_generate_proof(
     // Generate proof based on type
     let (proof, _claim) = match req.proof_type.as_str() {
         "age_over_18" => {
-            let age = req.credential_data.age
+            let age = req
+                .credential_data
+                .age
                 .ok_or_else(|| anyhow::anyhow!("Missing age in credential_data"))?;
 
             // Generate range proof: age >= 18
@@ -271,7 +273,9 @@ async fn handle_generate_proof(
             let proof_bytes = serde_json::to_vec(&range_proof)?;
 
             // Security: Use opaque commitment instead of revealing range bounds
-            let commitment = lib_crypto::hashing::hash_blake3(&[&age.to_le_bytes()[..], &identity_id.0[..]].concat());
+            let commitment = lib_crypto::hashing::hash_blake3(
+                &[&age.to_le_bytes()[..], &identity_id.0[..]].concat(),
+            );
 
             let proof_data = ProofData {
                 proof_data: general_purpose::STANDARD.encode(&proof_bytes),
@@ -282,9 +286,11 @@ async fn handle_generate_proof(
             };
 
             (proof_data, "age_over_18")
-        },
+        }
         "age_range" => {
-            let age = req.credential_data.age
+            let age = req
+                .credential_data
+                .age
                 .ok_or_else(|| anyhow::anyhow!("Missing age in credential_data"))?;
 
             // For alpha: support common ranges (18-25, 26-40, 41-65, 66+)
@@ -304,7 +310,7 @@ async fn handle_generate_proof(
 
             // Security: Use opaque bracket identifier instead of revealing bounds
             let bracket_hash = lib_crypto::hashing::hash_blake3(
-                &[&min.to_le_bytes()[..], &max.to_le_bytes()[..]].concat()
+                &[&min.to_le_bytes()[..], &max.to_le_bytes()[..]].concat(),
             );
 
             let proof_data = ProofData {
@@ -316,13 +322,17 @@ async fn handle_generate_proof(
             };
 
             (proof_data, "age_range")
-        },
+        }
         "citizenship_verified" => {
-            let is_verified = req.credential_data.is_verified_citizen
+            let is_verified = req
+                .credential_data
+                .is_verified_citizen
                 .ok_or_else(|| anyhow::anyhow!("Missing is_verified_citizen in credential_data"))?;
 
             if !is_verified {
-                return Err(anyhow::anyhow!("Cannot generate citizenship proof for unverified citizen"));
+                return Err(anyhow::anyhow!(
+                    "Cannot generate citizenship proof for unverified citizen"
+                ));
             }
 
             // Generate a simple proof (value=1 means verified, range [1,1])
@@ -342,9 +352,11 @@ async fn handle_generate_proof(
             };
 
             (proof_data, "citizenship_verified")
-        },
+        }
         "jurisdiction_membership" => {
-            let jurisdiction = req.credential_data.jurisdiction
+            let jurisdiction = req
+                .credential_data
+                .jurisdiction
                 .ok_or_else(|| anyhow::anyhow!("Missing jurisdiction in credential_data"))?;
 
             // Security: Use salted hash with identity-specific salt to prevent rainbow table attacks
@@ -353,14 +365,22 @@ async fn handle_generate_proof(
             let jurisdiction_hash = lib_crypto::hashing::hash_blake3(&salted_data);
 
             let jurisdiction_value = u64::from_le_bytes([
-                jurisdiction_hash[0], jurisdiction_hash[1],
-                jurisdiction_hash[2], jurisdiction_hash[3],
-                jurisdiction_hash[4], jurisdiction_hash[5],
-                jurisdiction_hash[6], jurisdiction_hash[7],
+                jurisdiction_hash[0],
+                jurisdiction_hash[1],
+                jurisdiction_hash[2],
+                jurisdiction_hash[3],
+                jurisdiction_hash[4],
+                jurisdiction_hash[5],
+                jurisdiction_hash[6],
+                jurisdiction_hash[7],
             ]);
 
             // Generate proof that user belongs to this jurisdiction
-            let range_proof = ZkRangeProof::generate_simple(jurisdiction_value, jurisdiction_value, jurisdiction_value)?;
+            let range_proof = ZkRangeProof::generate_simple(
+                jurisdiction_value,
+                jurisdiction_value,
+                jurisdiction_value,
+            )?;
 
             let proof_bytes = serde_json::to_vec(&range_proof)?;
             let proof_data = ProofData {
@@ -372,9 +392,12 @@ async fn handle_generate_proof(
             };
 
             (proof_data, "jurisdiction_membership")
-        },
+        }
         _ => {
-            return Err(anyhow::anyhow!("Unsupported proof type: {}", req.proof_type));
+            return Err(anyhow::anyhow!(
+                "Unsupported proof type: {}",
+                req.proof_type
+            ));
         }
     };
 
@@ -384,10 +407,7 @@ async fn handle_generate_proof(
         valid_until,
     };
 
-    Ok(ZhtpResponse::success(
-        serde_json::to_vec(&response)?,
-        None,
-    ))
+    Ok(ZhtpResponse::success(serde_json::to_vec(&response)?, None))
 }
 
 /// Handle proof verification
@@ -412,8 +432,8 @@ async fn handle_verify_proof(
     }
 
     // Parse request
-    let req: VerifyProofRequest = serde_json::from_slice(body)
-        .map_err(|_| anyhow::anyhow!("Invalid request format"))?;
+    let req: VerifyProofRequest =
+        serde_json::from_slice(body).map_err(|_| anyhow::anyhow!("Invalid request format"))?;
 
     // Security: Validate proof expiration
     let now = std::time::SystemTime::now()
@@ -452,7 +472,7 @@ async fn handle_verify_proof(
             let is_valid = range_proof.verify()?;
 
             (is_valid, req.proof.proof_type.clone())
-        },
+        }
         _ => {
             return Err(anyhow::anyhow!("Invalid proof type"));
         }
@@ -469,10 +489,7 @@ async fn handle_verify_proof(
         verified_at,
     };
 
-    Ok(ZhtpResponse::success(
-        serde_json::to_vec(&response)?,
-        None,
-    ))
+    Ok(ZhtpResponse::success(serde_json::to_vec(&response)?, None))
 }
 
 // Helper functions
@@ -482,9 +499,10 @@ fn extract_client_ip(request: &ZhtpRequest) -> String {
         .headers
         .get("X-Real-IP")
         .or_else(|| {
-            request.headers.get("X-Forwarded-For").and_then(|f| {
-                f.split(',').next().map(|s| s.trim().to_string())
-            })
+            request
+                .headers
+                .get("X-Forwarded-For")
+                .and_then(|f| f.split(',').next().map(|s| s.trim().to_string()))
         })
         .unwrap_or_else(|| "unknown".to_string())
 }

@@ -1,5 +1,5 @@
 //! DAO Treasury statistics and analytics system
-//! 
+//!
 //! Provides comprehensive treasury management, UBI distribution tracking,
 //! and financial analytics for the economics system.
 //!
@@ -7,17 +7,17 @@
 //! This module adds behavior through the TreasuryStatsManager.
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use std::collections::{HashMap, BTreeMap};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::wasm::logging::info;
 use crate::network_types::{get_mesh_status, get_network_statistics};
-use crate::types::{
-    TreasuryFund, TreasuryFundData, FundEfficiencyMetrics, UbiDistributionStats,
-    TreasuryOperation, TreasuryHealthMetrics, TreasurySettings, UbiImpactMetrics,
-};
 use crate::types::TreasuryFundExt;
+use crate::types::{
+    FundEfficiencyMetrics, TreasuryFund, TreasuryFundData, TreasuryHealthMetrics,
+    TreasuryOperation, TreasurySettings, UbiDistributionStats, UbiImpactMetrics,
+};
+use crate::wasm::logging::info;
 
 // Local stub functions to avoid circular dependencies with lib-consensus
 async fn get_validator_stats() -> Result<ValidatorStats> {
@@ -62,7 +62,7 @@ struct StakingRewards {
 }
 
 /// Comprehensive DAO Treasury Statistics Manager
-/// 
+///
 /// This struct adds behavior (methods) to the pure data types from lib-types.
 /// All data fields use types re-exported from lib-types::economy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,7 +91,10 @@ impl TreasuryStatsManager {
 
         // Initialize fund data with recommended allocations
         let mut fund_data = HashMap::new();
-        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
         for fund in [
             TreasuryFund::Operations,
@@ -107,20 +110,24 @@ impl TreasuryStatsManager {
             TreasuryFund::SmartContractFund,
         ] {
             let allocated_percentage = fund.recommended_allocation_percentage();
-            let allocated_amount = (total_treasury_balance as f64 * allocated_percentage / 100.0) as u64;
-            
-            fund_data.insert(fund.clone(), TreasuryFundData {
-                fund: fund.clone(),
-                current_balance: allocated_amount,
-                allocated_percentage,
-                total_allocated: allocated_amount,
-                total_spent: 0,
-                pending_expenditures: 0,
-                last_allocation: current_time,
-                utilization_rate: 0.0,
-                average_monthly_expenditure: 0.0,
-                efficiency_metrics: FundEfficiencyMetrics::default(),
-            });
+            let allocated_amount =
+                (total_treasury_balance as f64 * allocated_percentage / 100.0) as u64;
+
+            fund_data.insert(
+                fund.clone(),
+                TreasuryFundData {
+                    fund: fund.clone(),
+                    current_balance: allocated_amount,
+                    allocated_percentage,
+                    total_allocated: allocated_amount,
+                    total_spent: 0,
+                    pending_expenditures: 0,
+                    last_allocation: current_time,
+                    utilization_rate: 0.0,
+                    average_monthly_expenditure: 0.0,
+                    efficiency_metrics: FundEfficiencyMetrics::default(),
+                },
+            );
         }
 
         // Initialize UBI statistics
@@ -141,7 +148,8 @@ impl TreasuryStatsManager {
 
         info!(
             " Treasury stats manager initialized with {} SOV across {} funds",
-            total_treasury_balance, manager.fund_data.len()
+            total_treasury_balance,
+            manager.fund_data.len()
         );
 
         Ok(manager)
@@ -162,22 +170,26 @@ impl TreasuryStatsManager {
         if let Ok(validator_stats) = get_validator_stats().await {
             if let Some(validator_fund) = self.fund_data.get_mut(&TreasuryFund::ValidatorRewards) {
                 // Use validator statistics to update fund metrics
-                validator_fund.efficiency_metrics.project_success_rate = validator_stats.uptime_percentage;
-                validator_fund.efficiency_metrics.roi_percentage = validator_stats.average_uptime * 100.0;
-                
+                validator_fund.efficiency_metrics.project_success_rate =
+                    validator_stats.uptime_percentage;
+                validator_fund.efficiency_metrics.roi_percentage =
+                    validator_stats.average_uptime * 100.0;
+
                 // Calculate validator participation metrics
-                let participation_rate = validator_stats.active_validators as f64 / validator_stats.total_validators as f64;
+                let participation_rate = validator_stats.active_validators as f64
+                    / validator_stats.total_validators as f64;
                 validator_fund.efficiency_metrics.impact_score = participation_rate * 100.0;
-                
+
                 // Update fund utilization based on validator activity
                 validator_fund.utilization_rate = participation_rate;
-                
+
                 // Estimate fund allocation needs based on total stake
                 let recommended_allocation = (validator_stats.total_stake as f64 * 0.05) as u64; // 5% of total stake
                 if recommended_allocation > validator_fund.current_balance {
-                    validator_fund.pending_expenditures = recommended_allocation - validator_fund.current_balance;
+                    validator_fund.pending_expenditures =
+                        recommended_allocation - validator_fund.current_balance;
                 }
-                
+
                 info!(
                     "Validator fund updated: {}/{} active validators, {:.1}% uptime, {} total stake",
                     validator_stats.active_validators, validator_stats.total_validators, 
@@ -191,23 +203,27 @@ impl TreasuryStatsManager {
             if let Some(validator_fund) = self.fund_data.get_mut(&TreasuryFund::ValidatorRewards) {
                 // Update spending based on actual distributions
                 validator_fund.total_spent += staking_rewards.total_distributed;
-                
+
                 // Update efficiency metrics based on staking performance
                 validator_fund.efficiency_metrics.roi_percentage = staking_rewards.apy;
-                
+
                 // Calculate average monthly expenditure from per-epoch rewards
                 let epochs_per_month = 30; // Assuming daily epochs
-                validator_fund.average_monthly_expenditure = (staking_rewards.rewards_per_epoch * epochs_per_month) as f64;
-                
+                validator_fund.average_monthly_expenditure =
+                    (staking_rewards.rewards_per_epoch * epochs_per_month) as f64;
+
                 // Update fund allocation if needed for future rewards
                 let projected_monthly_need = validator_fund.average_monthly_expenditure;
-                if (validator_fund.current_balance as f64) < projected_monthly_need * 3.0 { // 3 months runway
+                if (validator_fund.current_balance as f64) < projected_monthly_need * 3.0 {
+                    // 3 months runway
                     validator_fund.pending_expenditures += projected_monthly_need as u64;
                 }
-                
+
                 info!(
                     "Staking rewards updated: {} total rewards, {} per epoch, {:.1}% APY",
-                    staking_rewards.total_rewards, staking_rewards.rewards_per_epoch, staking_rewards.apy
+                    staking_rewards.total_rewards,
+                    staking_rewards.rewards_per_epoch,
+                    staking_rewards.apy
                 );
             }
         }
@@ -216,46 +232,64 @@ impl TreasuryStatsManager {
         update_ubi_stats_from_blockchain(&mut self.ubi_stats).await?;
 
         // Recalculate health metrics
-        self.health_metrics = Self::calculate_health_metrics(&self.fund_data, self.total_treasury_balance);
+        self.health_metrics =
+            Self::calculate_health_metrics(&self.fund_data, self.total_treasury_balance);
 
         // Update timestamp
-        self.last_updated = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        self.last_updated = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
         Ok(())
     }
 
     /// Get comprehensive treasury analytics
     pub async fn get_treasury_analytics(&self) -> Result<serde_json::Value> {
-        let network_stats = get_network_statistics().await.map_err(|e| anyhow::anyhow!("Network stats error: {}", e))?;
-        let mesh_status = get_mesh_status().await.map_err(|e| anyhow::anyhow!("Mesh status error: {}", e))?;
-        let current_epoch = get_current_epoch().await.map_err(|e| anyhow::anyhow!("Epoch error: {}", e))?;
+        let network_stats = get_network_statistics()
+            .await
+            .map_err(|e| anyhow::anyhow!("Network stats error: {}", e))?;
+        let mesh_status = get_mesh_status()
+            .await
+            .map_err(|e| anyhow::anyhow!("Mesh status error: {}", e))?;
+        let current_epoch = get_current_epoch()
+            .await
+            .map_err(|e| anyhow::anyhow!("Epoch error: {}", e))?;
 
         // Calculate fund summaries
-        let fund_summaries: HashMap<String, serde_json::Value> = self.fund_data.iter().map(|(fund, data)| {
-            (
-                format!("{:?}", fund),
-                serde_json::json!({
-                    "current_balance": data.current_balance,
-                    "allocated_percentage": data.allocated_percentage,
-                    "total_spent": data.total_spent,
-                    "utilization_rate": data.utilization_rate,
-                    "efficiency_score": data.efficiency_metrics.impact_score,
-                    "description": fund.description()
-                })
-            )
-        }).collect();
+        let fund_summaries: HashMap<String, serde_json::Value> = self
+            .fund_data
+            .iter()
+            .map(|(fund, data)| {
+                (
+                    format!("{:?}", fund),
+                    serde_json::json!({
+                        "current_balance": data.current_balance,
+                        "allocated_percentage": data.allocated_percentage,
+                        "total_spent": data.total_spent,
+                        "utilization_rate": data.utilization_rate,
+                        "efficiency_score": data.efficiency_metrics.impact_score,
+                        "description": fund.description()
+                    }),
+                )
+            })
+            .collect();
 
         // Recent operations summary
-        let recent_operations: Vec<serde_json::Value> = self.operations_history.iter()
+        let recent_operations: Vec<serde_json::Value> = self
+            .operations_history
+            .iter()
             .rev()
             .take(10)
-            .map(|op| serde_json::json!({
-                "operation_type": format!("{:?}", op.operation_type),
-                "fund": format!("{:?}", op.fund),
-                "amount": op.amount,
-                "timestamp": op.timestamp,
-                "description": op.description
-            }))
+            .map(|op| {
+                serde_json::json!({
+                    "operation_type": format!("{:?}", op.operation_type),
+                    "fund": format!("{:?}", op.fund),
+                    "amount": op.amount,
+                    "timestamp": op.timestamp,
+                    "description": op.description
+                })
+            })
             .collect();
 
         Ok(serde_json::json!({
@@ -310,9 +344,13 @@ impl TreasuryStatsManager {
 
     // Private helper methods
 
-    fn calculate_health_metrics(fund_data: &HashMap<TreasuryFund, TreasuryFundData>, total_balance: u64) -> TreasuryHealthMetrics {
+    fn calculate_health_metrics(
+        fund_data: &HashMap<TreasuryFund, TreasuryFundData>,
+        total_balance: u64,
+    ) -> TreasuryHealthMetrics {
         // Calculate monthly burn rate (simplified)
-        let total_monthly_expenditure: f64 = fund_data.values()
+        let total_monthly_expenditure: f64 = fund_data
+            .values()
             .map(|fund| fund.average_monthly_expenditure)
             .sum();
 
@@ -324,13 +362,17 @@ impl TreasuryStatsManager {
         };
 
         // Calculate emergency fund ratio
-        let emergency_balance = fund_data.get(&TreasuryFund::EmergencyReserve)
+        let emergency_balance = fund_data
+            .get(&TreasuryFund::EmergencyReserve)
             .map(|fund| fund.current_balance)
             .unwrap_or(0);
         let emergency_fund_ratio = emergency_balance as f64 / total_balance as f64;
 
         // Calculate diversification score (simplified)
-        let active_funds = fund_data.values().filter(|fund| fund.current_balance > 0).count();
+        let active_funds = fund_data
+            .values()
+            .filter(|fund| fund.current_balance > 0)
+            .count();
         let diversification_score = (active_funds as f64 / fund_data.len() as f64) * 100.0;
 
         // Calculate risk score (lower is better)
@@ -338,12 +380,15 @@ impl TreasuryStatsManager {
             100.0 - (runway_months * 10.0)
         } else {
             40.0 - (emergency_fund_ratio * 100.0)
-        }.max(0.0).min(100.0);
+        }
+        .max(0.0)
+        .min(100.0);
 
         // Calculate sustainability index
-        let sustainability_index = ((runway_months.min(12.0) / 12.0) * 0.4 +
-                                  (emergency_fund_ratio * 10.0).min(1.0) * 0.3 +
-                                  (diversification_score / 100.0) * 0.3) * 100.0;
+        let sustainability_index = ((runway_months.min(12.0) / 12.0) * 0.4
+            + (emergency_fund_ratio * 10.0).min(1.0) * 0.3
+            + (diversification_score / 100.0) * 0.3)
+            * 100.0;
 
         TreasuryHealthMetrics {
             monthly_burn_rate,
@@ -408,21 +453,25 @@ pub async fn get_ubi_distribution_statistics() -> Result<serde_json::Value> {
 /// Get treasury fund breakdown
 pub async fn get_treasury_fund_breakdown() -> Result<serde_json::Value> {
     let manager = TreasuryStatsManager::new().await?;
-    
-    let fund_breakdown: HashMap<String, serde_json::Value> = manager.fund_data.iter().map(|(fund, data)| {
-        (
-            format!("{:?}", fund),
-            serde_json::json!({
-                "current_balance": data.current_balance,
-                "allocated_percentage": data.allocated_percentage,
-                "total_allocated": data.total_allocated,
-                "total_spent": data.total_spent,
-                "utilization_rate": data.utilization_rate,
-                "description": fund.description(),
-                "requires_governance": fund.requires_governance_approval()
-            })
-        )
-    }).collect();
+
+    let fund_breakdown: HashMap<String, serde_json::Value> = manager
+        .fund_data
+        .iter()
+        .map(|(fund, data)| {
+            (
+                format!("{:?}", fund),
+                serde_json::json!({
+                    "current_balance": data.current_balance,
+                    "allocated_percentage": data.allocated_percentage,
+                    "total_allocated": data.total_allocated,
+                    "total_spent": data.total_spent,
+                    "utilization_rate": data.utilization_rate,
+                    "description": fund.description(),
+                    "requires_governance": fund.requires_governance_approval()
+                }),
+            )
+        })
+        .collect();
 
     Ok(serde_json::json!({
         "total_treasury_balance": manager.total_treasury_balance,
@@ -460,15 +509,18 @@ mod tests {
             TreasuryFund::MeshDiscoveryFund,
             TreasuryFund::BridgeFund,
             TreasuryFund::SmartContractFund,
-        ].iter().map(|fund| fund.recommended_allocation_percentage()).sum();
-        
+        ]
+        .iter()
+        .map(|fund| fund.recommended_allocation_percentage())
+        .sum();
+
         assert!((total_percentage - 100.0).abs() < 0.1); // Should sum to ~100%
     }
 
     #[tokio::test]
     async fn test_get_treasury_statistics() {
         let stats = get_treasury_statistics().await.unwrap();
-        
+
         // Verify expected structure
         assert!(stats.get("treasury_overview").is_some());
         assert!(stats.get("fund_allocation").is_some());
@@ -479,7 +531,7 @@ mod tests {
     #[tokio::test]
     async fn test_treasury_health_score() {
         let health_score = get_treasury_health_score().await.unwrap();
-        
+
         assert!(health_score >= 0.0);
         assert!(health_score <= 100.0);
     }

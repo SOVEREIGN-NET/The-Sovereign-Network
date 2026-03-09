@@ -1,12 +1,12 @@
 //! Proof management and coordination
 
-use anyhow::{Result, anyhow};
+use crate::proofs::challenge::{ChallengeGenerator, ChallengeType, StorageChallenge};
+use crate::proofs::verification::{ProofVerifier, VerificationResult, VerificationStats};
+use crate::proofs::{RetrievalProof, StorageProof};
+use crate::types::ContentHash;
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::proofs::{StorageProof, RetrievalProof};
-use crate::proofs::challenge::{StorageChallenge, ChallengeType, ChallengeGenerator};
-use crate::proofs::verification::{ProofVerifier, VerificationResult, VerificationStats};
-use crate::types::ContentHash;
 
 /// Proof manager coordinates challenges and verification
 pub struct ProofManager {
@@ -30,11 +30,7 @@ pub struct ProofManager {
 
 impl ProofManager {
     /// Create a new proof manager
-    pub fn new(
-        challenge_timeout: u64,
-        sample_count: usize,
-        max_proof_age: u64,
-    ) -> Self {
+    pub fn new(challenge_timeout: u64, sample_count: usize, max_proof_age: u64) -> Self {
         Self {
             challenge_generator: ChallengeGenerator::new(challenge_timeout, sample_count),
             verifier: ProofVerifier::new(max_proof_age),
@@ -177,7 +173,8 @@ impl ProofManager {
         content_hash: &ContentHash,
         challenge_id: &str,
     ) -> Result<StorageChallenge> {
-        let challenges = self.active_challenges
+        let challenges = self
+            .active_challenges
             .get(content_hash)
             .ok_or_else(|| anyhow!("No challenges found for content"))?;
 
@@ -292,11 +289,8 @@ impl ProofManager {
                 bytes.copy_from_slice(&nonce[..8]);
                 let nonce_u64 = u64::from_le_bytes(bytes);
                 let block_index = (nonce_u64 as usize) % total_blocks;
-                let challenge = self.generate_audit_challenge(
-                    content_hash,
-                    block_index,
-                    auditor_id.clone(),
-                );
+                let challenge =
+                    self.generate_audit_challenge(content_hash, block_index, auditor_id.clone());
                 challenges.push(challenge);
             }
         }
@@ -368,14 +362,11 @@ mod tests {
         let mut manager = ProofManager::default();
         let content_hash = content_hash("test_content");
 
-        let challenge = manager.generate_storage_challenge(
-            content_hash.clone(),
-            10,
-            "challenger1".to_string(),
-        );
+        let challenge =
+            manager.generate_storage_challenge(content_hash.clone(), 10, "challenger1".to_string());
 
         assert!(challenge.is_ok());
-        
+
         let active_challenges = manager.get_active_challenges(&content_hash);
         assert_eq!(active_challenges.len(), 1);
     }
@@ -392,7 +383,7 @@ mod tests {
         );
 
         assert!(challenge.is_ok());
-        
+
         let active_challenges = manager.get_active_challenges(&content_hash);
         assert_eq!(active_challenges.len(), 1);
     }
@@ -402,17 +393,13 @@ mod tests {
         let mut manager = ProofManager::default();
         let content_hash = content_hash("test");
 
-        manager.generate_storage_challenge(
-            content_hash.clone(),
-            10,
-            "node1".to_string(),
-        ).unwrap();
+        manager
+            .generate_storage_challenge(content_hash.clone(), 10, "node1".to_string())
+            .unwrap();
 
-        manager.generate_retrieval_challenge(
-            content_hash.clone(),
-            10,
-            "node1".to_string(),
-        ).unwrap();
+        manager
+            .generate_retrieval_challenge(content_hash.clone(), 10, "node1".to_string())
+            .unwrap();
 
         let stats = manager.get_challenge_stats();
         assert_eq!(stats.total_challenges, 2);
@@ -430,10 +417,7 @@ mod tests {
             (content_hash("content3"), 15),
         ];
 
-        let challenges = manager.generate_audit_batch(
-            content_list,
-            "auditor".to_string(),
-        );
+        let challenges = manager.generate_audit_batch(content_list, "auditor".to_string());
 
         assert_eq!(challenges.len(), 3);
         for challenge in challenges {

@@ -1,23 +1,18 @@
 //! Network integration for ZHTP blockchain
 //! Provides serialization and networking functionality for blockchain components
 
+use crate::{block::Block, transaction::Transaction};
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use crate::{
-    block::Block,
-    transaction::Transaction,
-};
+use serde::{Deserialize, Serialize};
 
 /// Serialize a block for network transmission
 pub fn serialize_block_for_network(block: &Block) -> Result<Vec<u8>> {
-    bincode::serialize(block)
-        .map_err(|e| anyhow::anyhow!("Failed to serialize block: {}", e))
+    bincode::serialize(block).map_err(|e| anyhow::anyhow!("Failed to serialize block: {}", e))
 }
 
 /// Deserialize a block from network data
 pub fn deserialize_block_from_network(data: &[u8]) -> Result<Block> {
-    bincode::deserialize(data)
-        .map_err(|e| anyhow::anyhow!("Failed to deserialize block: {}", e))
+    bincode::deserialize(data).map_err(|e| anyhow::anyhow!("Failed to deserialize block: {}", e))
 }
 
 /// Serialize a transaction for network transmission
@@ -131,7 +126,7 @@ impl NetworkNode {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         current_time - self.last_seen < 300 // 5 minutes
     }
 }
@@ -140,40 +135,43 @@ impl NetworkNode {
 mod tests {
     use super::*;
     use crate::block::{Block, BlockHeader};
-    use crate::{TransactionType, types::{Hash, Difficulty}};
+    use crate::{
+        types::{Difficulty, Hash},
+        TransactionType,
+    };
     use lib_crypto::KeyPair;
 
     #[test]
     fn test_block_serialization() -> Result<()> {
         let _keypair = KeyPair::generate()?;
-        
+
         let header = BlockHeader::new(
-            1,                          // version
-            Hash::default(),            // previous_block_hash
-            Hash::default(),            // merkle_root
-            1000,                       // timestamp
-            Difficulty::minimum(),      // difficulty
-            0,                          // height
-            0,                          // transaction_count
-            0,                          // block_size
-            Difficulty::minimum(),      // cumulative_difficulty
+            1,                     // version
+            Hash::default(),       // previous_block_hash
+            Hash::default(),       // merkle_root
+            1000,                  // timestamp
+            Difficulty::minimum(), // difficulty
+            0,                     // height
+            0,                     // transaction_count
+            0,                     // block_size
+            Difficulty::minimum(), // cumulative_difficulty
         );
 
         let block = Block::new(header, Vec::new());
-        
+
         let serialized = serialize_block_for_network(&block)?;
         let deserialized = deserialize_block_from_network(&serialized)?;
-        
+
         assert_eq!(block.header.height, deserialized.header.height);
         assert_eq!(block.header.timestamp, deserialized.header.timestamp);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_transaction_serialization() -> Result<()> {
         let keypair = KeyPair::generate()?;
-        
+
         let transaction = Transaction {
             version: 1,
             chain_id: 0x01, // mainnet
@@ -193,7 +191,7 @@ mod tests {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-                        governance_config_data: None,
+            governance_config_data: None,
             bonding_curve_deploy_data: None,
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
@@ -206,45 +204,45 @@ mod tests {
 
         let serialized = serialize_transaction_for_network(&transaction)?;
         let deserialized = deserialize_transaction_from_network(&serialized)?;
-        
+
         assert_eq!(transaction.version, deserialized.version);
         assert_eq!(transaction.fee, deserialized.fee);
         assert_eq!(transaction.memo, deserialized.memo);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_network_message() -> Result<()> {
         let _keypair = KeyPair::generate()?;
-        
+
         let header = BlockHeader::new(
-            1,                          // version
-            Hash::default(),            // previous_block_hash
-            Hash::default(),            // merkle_root
-            1000,                       // timestamp
-            Difficulty::minimum(),      // difficulty
-            1,                          // height
-            0,                          // transaction_count
-            0,                          // block_size
-            Difficulty::minimum(),      // cumulative_difficulty
+            1,                     // version
+            Hash::default(),       // previous_block_hash
+            Hash::default(),       // merkle_root
+            1000,                  // timestamp
+            Difficulty::minimum(), // difficulty
+            1,                     // height
+            0,                     // transaction_count
+            0,                     // block_size
+            Difficulty::minimum(), // cumulative_difficulty
         );
 
         let block = Block::new(header, Vec::new());
         let message = NetworkMessage::NewBlock(block);
-        
+
         assert_eq!(message.message_type(), "NewBlock");
-        
+
         let serialized = message.to_bytes()?;
         let deserialized = NetworkMessage::from_bytes(&serialized)?;
-        
+
         match deserialized {
             NetworkMessage::NewBlock(received_block) => {
                 assert_eq!(received_block.header.height, 1);
             }
             _ => panic!("Wrong message type"),
         }
-        
+
         Ok(())
     }
 
@@ -258,7 +256,7 @@ mod tests {
             100,
             "1.0.0".to_string(),
         );
-        
+
         assert_eq!(node.node_id, node_id);
         assert_eq!(node.address, "127.0.0.1");
         assert_eq!(node.port, 8080);

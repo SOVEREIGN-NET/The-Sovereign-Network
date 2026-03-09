@@ -42,11 +42,10 @@ pub enum RRTypes {
     Ixfr,
     Axfr,
     Uri,
-    Caa
+    Caa,
 }
 
 impl RRTypes {
-
     pub fn code(&self) -> u16 {
         match self {
             Self::A => 1,
@@ -85,7 +84,7 @@ impl RRTypes {
             Self::Axfr => 252,
             Self::Any => 255,
             Self::Uri => 256,
-            Self::Caa => 257
+            Self::Caa => 257,
         }
     }
 }
@@ -93,21 +92,23 @@ impl RRTypes {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum RRTypeParseError {
     UnknownCode(u16),
-    UnknownName(String)
+    UnknownName(String),
 }
 
 impl fmt::Display for RRTypeParseError {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self {
-            Self::UnknownCode(v) => format!("unknown type code: {}", v),
-            Self::UnknownName(s) => format!("unknown type name: {}", s)
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::UnknownCode(v) => format!("unknown type code: {}", v),
+                Self::UnknownName(s) => format!("unknown type name: {}", s),
+            }
+        )
     }
 }
 
 impl TryFrom<u16> for RRTypes {
-
     type Error = RRTypeParseError;
 
     fn try_from(v: u16) -> Result<Self, Self::Error> {
@@ -149,13 +150,12 @@ impl TryFrom<u16> for RRTypes {
             255 => Self::Any,
             256 => Self::Uri,
             257 => Self::Caa,
-            _  => return Err(RRTypeParseError::UnknownCode(v))
+            _ => return Err(RRTypeParseError::UnknownCode(v)),
         })
     }
 }
 
 impl FromStr for RRTypes {
-
     type Err = RRTypeParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -197,52 +197,55 @@ impl FromStr for RRTypes {
             "ANY" => Self::Any,
             "URI" => Self::Uri,
             "CAA" => Self::Caa,
-            _  => return Err(RRTypeParseError::UnknownName(s.to_string()))
+            _ => return Err(RRTypeParseError::UnknownName(s.to_string())),
         })
     }
 }
 
 impl fmt::Display for RRTypes {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self {
-            Self::A => "A",
-            Self::Aaaa => "AAAA",
-            Self::Ns => "NS",
-            Self::CName => "CNAME",
-            Self::Soa => "SOA",
-            Self::Ptr => "PTR",
-            Self::HInfo => "HINFO",
-            Self::Mx => "MX",
-            Self::Txt => "TXT",
-            Self::Loc => "LOC",
-            Self::Srv => "SRV",
-            Self::Naptr => "NAPTR",
-            Self::Cert => "CERT",
-            Self::Opt => "OPT",
-            Self::Ds => "DS",
-            Self::SshFp => "SSHFP",
-            Self::RRSig => "RRSIG",
-            Self::NSec => "NSEC",
-            Self::DnsKey => "DNSKEY",
-            Self::NSec3 => "NSEC3",
-            Self::NSec3Param => "NSEC3PARAM",
-            Self::Tlsa => "TLSA",
-            Self::Smimea => "SMIMEA",
-            Self::Hip => "HIP",
-            Self::Cds => "CDS",
-            Self::CdnsKey => "CDNSKEY",
-            Self::OpenPGPKey => "OPENPGPKEY",
-            Self::Svcb => "SVCB",
-            Self::Https => "HTTPS",
-            Self::Spf => "SPF",
-            Self::TKey => "TKEY",
-            Self::TSig => "TSIG",
-            Self::Ixfr => "IXFR",
-            Self::Axfr => "AXFR",
-            Self::Any => "ANY",
-            Self::Uri => "URI",
-            Self::Caa => "CAA"
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::A => "A",
+                Self::Aaaa => "AAAA",
+                Self::Ns => "NS",
+                Self::CName => "CNAME",
+                Self::Soa => "SOA",
+                Self::Ptr => "PTR",
+                Self::HInfo => "HINFO",
+                Self::Mx => "MX",
+                Self::Txt => "TXT",
+                Self::Loc => "LOC",
+                Self::Srv => "SRV",
+                Self::Naptr => "NAPTR",
+                Self::Cert => "CERT",
+                Self::Opt => "OPT",
+                Self::Ds => "DS",
+                Self::SshFp => "SSHFP",
+                Self::RRSig => "RRSIG",
+                Self::NSec => "NSEC",
+                Self::DnsKey => "DNSKEY",
+                Self::NSec3 => "NSEC3",
+                Self::NSec3Param => "NSEC3PARAM",
+                Self::Tlsa => "TLSA",
+                Self::Smimea => "SMIMEA",
+                Self::Hip => "HIP",
+                Self::Cds => "CDS",
+                Self::CdnsKey => "CDNSKEY",
+                Self::OpenPGPKey => "OPENPGPKEY",
+                Self::Svcb => "SVCB",
+                Self::Https => "HTTPS",
+                Self::Spf => "SPF",
+                Self::TKey => "TKEY",
+                Self::TSig => "TSIG",
+                Self::Ixfr => "IXFR",
+                Self::Axfr => "AXFR",
+                Self::Any => "ANY",
+                Self::Uri => "URI",
+                Self::Caa => "CAA",
+            }
+        )
     }
 }

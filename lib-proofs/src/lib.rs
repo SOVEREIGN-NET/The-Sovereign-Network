@@ -1,31 +1,31 @@
 //! # ZHTP Zero-Knowledge Proof System - Unified Plonky2 Backend
-//! 
+//!
 //! Production-ready zero-knowledge proof system for ZHTP blockchain with unified Plonky2 backend:
 //! - Unified Plonky2 backend for all proof types
 //! - Transaction privacy and validation
 //! - Identity proofs with selective disclosure
 //! - Range proofs for value validation
 //! - Merkle trees with ZK inclusion proofs
-//! 
+//!
 //! ## Features
-//! 
+//!
 //! - **Unified ZK System**: All proofs use the same Plonky2 backend for consistency
 //! - **Transaction Proofs**: Privacy-preserving transaction validation
 //! - **Identity Proofs**: Selective disclosure of identity attributes
 //! - **Range Proofs**: Prove values are within ranges without revealing them
 //! - **Merkle Proofs**: Zero-knowledge inclusion proofs for data structures
 //! - **Plonky2 Integration**: Production-grade recursive SNARKs
-//! 
+//!
 //! ## Example
-//! 
+//!
 //! ```rust
 //! use lib_proofs::{ZkProof, ZkTransactionProof, ZkRangeProof};
-//! 
+//!
 //! # #[tokio::main]
 //! # async fn main() -> anyhow::Result<()> {
 //! // Generate range proof using unified system
 //! let range_proof = ZkRangeProof::generate(100, 0, 1000, [1u8; 32])?;
-//! 
+//!
 //! // All proofs can be verified using the same interface
 //! let is_valid = range_proof.verify()?;
 //! assert!(is_valid);
@@ -36,19 +36,21 @@
 use anyhow::Result;
 
 // Re-export core types for unified ZK system
-pub use types::zk_proof::ZkProof;
-pub use transaction::transaction_proof::ZkTransactionProof;
-pub use merkle::{tree::*, proof_generation::*, verification::*};
-pub use range::range_proof::ZkRangeProof;
 pub use identity::identity_proof::ZkIdentityProof;
+pub use merkle::{proof_generation::*, tree::*, verification::*};
 pub use plonky2::proof_system::ZkProofSystem;
+pub use range::range_proof::ZkRangeProof;
+pub use transaction::transaction_proof::ZkTransactionProof;
+pub use types::zk_proof::ZkProof;
 
 // Re-export prover and verifier modules
 pub use provers::*;
 pub use verifiers::*;
 
 // Specifically re-export recursive aggregation components
-pub use verifiers::{RecursiveProofAggregator, InstantStateVerifier, BlockAggregatedProof, ChainRecursiveProof};
+pub use verifiers::{
+    BlockAggregatedProof, ChainRecursiveProof, InstantStateVerifier, RecursiveProofAggregator,
+};
 
 // NEW: Re-export ZK integration functionality (moved from lib-crypto)
 pub use zk_integration::*;
@@ -60,14 +62,14 @@ pub use state::*;
 pub use recursive::*;
 
 // Module declarations
-pub mod types;
-pub mod transaction;
-pub mod merkle;
-pub mod range;
-pub mod identity;
-pub mod plonky2;
 pub mod circuits;
+pub mod identity;
+pub mod merkle;
+pub mod plonky2;
 pub mod provers;
+pub mod range;
+pub mod transaction;
+pub mod types;
 pub mod verifiers;
 
 // NEW: ZK integration module (moved from lib-crypto)

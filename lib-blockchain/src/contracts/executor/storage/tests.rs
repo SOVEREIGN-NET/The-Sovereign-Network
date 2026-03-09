@@ -6,8 +6,8 @@ mod storage_integration_tests {
         CachedPersistentStorage, PersistentStorage, StateCache, StateRootComputation,
         StateVersionManager, WalRecoveryManager,
     };
-    use tempfile::TempDir;
     use std::sync::Arc;
+    use tempfile::TempDir;
 
     #[test]
     fn test_full_storage_lifecycle() {
@@ -61,10 +61,7 @@ mod storage_integration_tests {
 
         // Update last finalized height
         manager.update_last_finalized_height(3).unwrap();
-        assert_eq!(
-            manager.get_last_finalized_height().unwrap(),
-            Some(3)
-        );
+        assert_eq!(manager.get_last_finalized_height().unwrap(), Some(3));
     }
 
     #[test]
@@ -74,10 +71,7 @@ mod storage_integration_tests {
         // Miss then hit
         assert_eq!(cache.get(b"key1").unwrap(), None);
         cache.put(b"key1".to_vec(), b"value1".to_vec()).unwrap();
-        assert_eq!(
-            cache.get(b"key1").unwrap(),
-            Some(b"value1".to_vec())
-        );
+        assert_eq!(cache.get(b"key1").unwrap(), Some(b"value1".to_vec()));
 
         // Check stats
         let stats = cache.stats().unwrap();
@@ -91,12 +85,8 @@ mod storage_integration_tests {
         let computer = StateRootComputation::new(storage.clone());
 
         // Store some state
-        storage
-            .set(b"state:100:contract1", b"value1")
-            .unwrap();
-        storage
-            .set(b"state:100:contract2", b"value2")
-            .unwrap();
+        storage.set(b"state:100:contract1", b"value1").unwrap();
+        storage.set(b"state:100:contract2", b"value2").unwrap();
 
         // Compute root
         let root = computer.compute_state_root(100).unwrap();
@@ -140,9 +130,8 @@ mod storage_integration_tests {
         use std::thread;
 
         let temp_dir = TempDir::new().unwrap();
-        let storage = Arc::new(
-            PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap(),
-        );
+        let storage =
+            Arc::new(PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap());
 
         let mut handles = vec![];
 
@@ -153,9 +142,7 @@ mod storage_integration_tests {
                 for j in 0..10 {
                     let key = format!("key_{}", i);
                     let value = format!("value_{}", j);
-                    storage_clone
-                        .set(key.as_bytes(), value.as_bytes())
-                        .unwrap();
+                    storage_clone.set(key.as_bytes(), value.as_bytes()).unwrap();
                 }
             });
             handles.push(handle);

@@ -4,10 +4,10 @@
 //! every node, survives persistence round-trips, and is consistent with the fee
 //! crediting path.
 
-use lib_blockchain::Blockchain;
-use lib_blockchain::contracts::TokenContract;
 use lib_blockchain::contracts::utils::generate_lib_token_id;
+use lib_blockchain::contracts::TokenContract;
 use lib_blockchain::types::hash::blake3_hash;
+use lib_blockchain::Blockchain;
 use lib_crypto::types::keys::PublicKey;
 
 // ---------------------------------------------------------------------------
@@ -67,8 +67,7 @@ fn test_treasury_wallet_deterministic_id() {
     let bc2 = Blockchain::default();
 
     assert_eq!(
-        bc1.dao_treasury_wallet_id,
-        bc2.dao_treasury_wallet_id,
+        bc1.dao_treasury_wallet_id, bc2.dao_treasury_wallet_id,
         "Treasury wallet ID must be identical across independent blockchain instances"
     );
 
@@ -92,7 +91,10 @@ fn test_treasury_wallet_idempotent() {
         .keys()
         .filter(|k| *k == &wallet_id)
         .count();
-    assert_eq!(count, 1, "There must be exactly one treasury wallet registry entry after initial bootstrap");
+    assert_eq!(
+        count, 1,
+        "There must be exactly one treasury wallet registry entry after initial bootstrap"
+    );
     assert_eq!(
         blockchain.dao_treasury_wallet_id.as_deref(),
         Some(wallet_id.as_str())

@@ -21,9 +21,15 @@ pub enum NodeAddress {
     /// Bluetooth Low Energy with MAC address or UUID
     BluetoothLE(String),
     /// WiFi Direct with IP address and optional MAC
-    WiFiDirect { addr: SocketAddr, mac: Option<String> },
+    WiFiDirect {
+        addr: SocketAddr,
+        mac: Option<String>,
+    },
     /// LoRaWAN with DevAddr (device address)
-    LoRaWAN { dev_addr: String, dev_eui: Option<String> },
+    LoRaWAN {
+        dev_addr: String,
+        dev_eui: Option<String>,
+    },
     /// Mesh network with public key routing
     Mesh(Vec<u8>),
     /// Domain name (for ZDNS resolution)
@@ -77,14 +83,19 @@ impl NodeAddress {
     pub fn is_ip_based(&self) -> bool {
         matches!(
             self,
-            NodeAddress::Udp(_) | NodeAddress::Tcp(_) | NodeAddress::Quic(_) | NodeAddress::WiFiDirect { .. }
+            NodeAddress::Udp(_)
+                | NodeAddress::Tcp(_)
+                | NodeAddress::Quic(_)
+                | NodeAddress::WiFiDirect { .. }
         )
     }
 
     /// Get the socket address if this is an IP-based protocol
     pub fn socket_addr(&self) -> Option<SocketAddr> {
         match self {
-            NodeAddress::Udp(addr) | NodeAddress::Tcp(addr) | NodeAddress::Quic(addr) => Some(*addr),
+            NodeAddress::Udp(addr) | NodeAddress::Tcp(addr) | NodeAddress::Quic(addr) => {
+                Some(*addr)
+            }
             NodeAddress::WiFiDirect { addr, .. } => Some(*addr),
             _ => None,
         }
@@ -113,7 +124,9 @@ impl NodeAddress {
             Ok(NodeAddress::BluetoothLE(rest.to_string()))
         } else if let Some(rest) = s.strip_prefix("wifid://") {
             let parts: Vec<&str> = rest.split('?').collect();
-            let addr = parts[0].parse().map_err(|_| AddressParseError::InvalidFormat)?;
+            let addr = parts[0]
+                .parse()
+                .map_err(|_| AddressParseError::InvalidFormat)?;
             let mac = if parts.len() > 1 {
                 parts[1].strip_prefix("mac=").map(String::from)
             } else {
@@ -242,7 +255,11 @@ impl AddressResolver {
     }
 
     /// Get addresses filtered by protocol
-    pub async fn get_addresses_by_protocol(&self, pubkey: &str, protocol: &str) -> Vec<AddressEndpoint> {
+    pub async fn get_addresses_by_protocol(
+        &self,
+        pubkey: &str,
+        protocol: &str,
+    ) -> Vec<AddressEndpoint> {
         self.peer_addresses
             .read()
             .await
@@ -275,7 +292,13 @@ impl AddressResolver {
     }
 
     /// Update metrics for a specific address
-    pub async fn update_metrics(&self, pubkey: &str, address: &NodeAddress, signal_strength: f64, latency_ms: u32) {
+    pub async fn update_metrics(
+        &self,
+        pubkey: &str,
+        address: &NodeAddress,
+        signal_strength: f64,
+        latency_ms: u32,
+    ) {
         let mut map = self.peer_addresses.write().await;
         if let Some(endpoints) = map.get_mut(pubkey) {
             if let Some(endpoint) = endpoints.iter_mut().find(|ep| &ep.address == address) {
@@ -337,7 +360,10 @@ mod tests {
         assert_eq!(addr, NodeAddress::Udp("192.168.1.1:5000".parse().unwrap()));
 
         let addr = NodeAddress::from_string("bt://AA:BB:CC:DD:EE:FF").unwrap();
-        assert_eq!(addr, NodeAddress::BluetoothClassic("AA:BB:CC:DD:EE:FF".to_string()));
+        assert_eq!(
+            addr,
+            NodeAddress::BluetoothClassic("AA:BB:CC:DD:EE:FF".to_string())
+        );
 
         let addr = NodeAddress::from_string("zdns://example.sov").unwrap();
         assert_eq!(addr, NodeAddress::Domain("example.sov".to_string()));

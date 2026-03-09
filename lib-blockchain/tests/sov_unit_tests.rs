@@ -16,7 +16,10 @@ mod sov_token_tests {
     #[test]
     fn test_sov_total_supply_is_1_trillion() {
         assert_eq!(SOV_TOTAL_SUPPLY, 1_000_000_000_000);
-        assert_eq!(SOV_TOTAL_SUPPLY, 1_000_000_000_000, "SOV supply must be exactly 1 trillion");
+        assert_eq!(
+            SOV_TOTAL_SUPPLY, 1_000_000_000_000,
+            "SOV supply must be exactly 1 trillion"
+        );
     }
 
     #[test]
@@ -331,13 +334,7 @@ mod fee_router_tests {
     #[test]
     fn test_five_sector_daos() {
         // Verify 5 Sector DAOs
-        let daos = vec![
-            "Healthcare",
-            "Education",
-            "Energy",
-            "Housing",
-            "Food",
-        ];
+        let daos = vec!["Healthcare", "Education", "Energy", "Housing", "Food"];
         assert_eq!(daos.len(), 5);
         assert_eq!(daos.len() as u8, NUM_SECTOR_DAOS);
     }
@@ -392,11 +389,17 @@ mod week1_financial_validation {
 
         // Per citizen calculation
         let per_citizen_ubi = ubi_total / citizens;
-        assert_eq!(per_citizen_ubi, 450, "Year 1 UBI should be $0.45 per citizen"); // $0.45 = 450 smallest units
+        assert_eq!(
+            per_citizen_ubi, 450,
+            "Year 1 UBI should be $0.45 per citizen"
+        ); // $0.45 = 450 smallest units
 
         // Per DAO calculation
         let per_dao = dao_total / 5;
-        assert_eq!(per_dao, 600_000, "Each DAO should receive $600/month in Year 1");
+        assert_eq!(
+            per_dao, 600_000,
+            "Each DAO should receive $600/month in Year 1"
+        );
     }
 
     #[test]
@@ -414,18 +417,27 @@ mod week1_financial_validation {
 
         // Verify exact projections
         assert_eq!(fees, 5_000_000_000, "Year 3 fees should be $5M");
-        assert_eq!(ubi_total, 2_250_000_000, "Year 3 UBI total should be $2.25M");
+        assert_eq!(
+            ubi_total, 2_250_000_000,
+            "Year 3 UBI total should be $2.25M"
+        );
         assert_eq!(dao_total, 1_500_000_000, "Year 3 DAO total should be $1.5M");
         assert_eq!(emergency, 750_000_000, "Year 3 Emergency should be $750K");
         assert_eq!(dev, 500_000_000, "Year 3 Dev should be $500K");
 
         // Per citizen calculation
         let per_citizen_ubi = ubi_total / citizens;
-        assert_eq!(per_citizen_ubi, 4_500, "Year 3 UBI should be $4.50 per citizen"); // $4.50
+        assert_eq!(
+            per_citizen_ubi, 4_500,
+            "Year 3 UBI should be $4.50 per citizen"
+        ); // $4.50
 
         // Per DAO calculation
         let per_dao = dao_total / 5;
-        assert_eq!(per_dao, 300_000_000, "Each DAO should receive $300K/month in Year 3");
+        assert_eq!(
+            per_dao, 300_000_000,
+            "Each DAO should receive $300K/month in Year 3"
+        );
     }
 
     #[test]
@@ -443,18 +455,27 @@ mod week1_financial_validation {
 
         // Verify exact projections
         assert_eq!(fees, 50_000_000_000, "Year 5 fees should be $50M");
-        assert_eq!(ubi_total, 22_500_000_000, "Year 5 UBI total should be $22.5M");
+        assert_eq!(
+            ubi_total, 22_500_000_000,
+            "Year 5 UBI total should be $22.5M"
+        );
         assert_eq!(dao_total, 15_000_000_000, "Year 5 DAO total should be $15M");
         assert_eq!(emergency, 7_500_000_000, "Year 5 Emergency should be $7.5M");
         assert_eq!(dev, 5_000_000_000, "Year 5 Dev should be $5M");
 
         // Per citizen calculation
         let per_citizen_ubi = ubi_total / citizens;
-        assert_eq!(per_citizen_ubi, 22_500, "Year 5 UBI should be $22.50 per citizen"); // $22.50
+        assert_eq!(
+            per_citizen_ubi, 22_500,
+            "Year 5 UBI should be $22.50 per citizen"
+        ); // $22.50
 
         // Per DAO calculation
         let per_dao = dao_total / 5;
-        assert_eq!(per_dao, 3_000_000_000, "Each DAO should receive $3M/month in Year 5");
+        assert_eq!(
+            per_dao, 3_000_000_000,
+            "Each DAO should receive $3M/month in Year 5"
+        );
     }
 
     #[test]

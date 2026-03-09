@@ -41,7 +41,10 @@ mod canonical_hash_tests {
     #[test]
     fn test_canonical_consensus_hash_is_deterministic() {
         let data = b"consensus-critical block header";
-        assert_eq!(canonical_consensus_hash(data), canonical_consensus_hash(data));
+        assert_eq!(
+            canonical_consensus_hash(data),
+            canonical_consensus_hash(data)
+        );
     }
 
     #[test]
@@ -90,7 +93,7 @@ mod tests {
         let data = b"hello world";
         let hash = hash_blake3(data);
         assert_eq!(hash.len(), 32);
-        
+
         // Test consistency
         let hash2 = hash_blake3(data);
         assert_eq!(hash, hash2);
@@ -101,10 +104,10 @@ mod tests {
         let data1 = b"hello";
         let data2 = b" ";
         let data3 = b"world";
-        
+
         let hash1 = hash_blake3_multiple(&[data1, data2, data3]);
         let hash2 = hash_blake3(b"hello world");
-        
+
         assert_eq!(hash1, hash2);
     }
 

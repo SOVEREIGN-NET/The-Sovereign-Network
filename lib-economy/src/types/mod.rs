@@ -1,22 +1,21 @@
 //! Core economic types module
-//! 
+//!
 //! Defines all fundamental data structures used throughout the economics system.
 //! Pure data types are re-exported from lib-types.
 //! Behavior is added via extension traits.
 
 // Re-export pure data types from lib-types (canonical location)
 pub use lib_types::economy::{
-    Priority, TransactionType, TreasuryFund, TreasuryOperationType, UbiRecipientCategory,
-    WorkMetrics, IspBypassWork, NetworkStats, TreasuryFundData, FundEfficiencyMetrics,
-    UbiDistributionStats, MonthlyUbiData, UbiImpactMetrics, TreasuryOperation,
-    GovernanceApproval, TreasuryHealthMetrics, TreasurySettings, TreasuryStats,
-    SOV_TOTAL_SUPPLY, TRANSACTION_FEE_RATE, UBI_ALLOCATION_PERCENTAGE,
-    SECTOR_DAO_ALLOCATION_PERCENTAGE, EMERGENCY_ALLOCATION_PERCENTAGE,
-    DEV_GRANT_ALLOCATION_PERCENTAGE, DEFAULT_ROUTING_RATE, DEFAULT_STORAGE_RATE,
-    DEFAULT_COMPUTE_RATE, ISP_BYPASS_CONNECTIVITY_RATE, ISP_BYPASS_MESH_RATE,
-    ISP_BYPASS_UPTIME_BONUS, QUALITY_BONUS_THRESHOLD, UPTIME_BONUS_THRESHOLD,
-    HIGH_UTILIZATION_THRESHOLD, LOW_UTILIZATION_THRESHOLD,
-    HIGH_UTILIZATION_ADJUSTMENT, LOW_UTILIZATION_ADJUSTMENT,
+    FundEfficiencyMetrics, GovernanceApproval, IspBypassWork, MonthlyUbiData, NetworkStats,
+    Priority, TransactionType, TreasuryFund, TreasuryFundData, TreasuryHealthMetrics,
+    TreasuryOperation, TreasuryOperationType, TreasurySettings, TreasuryStats,
+    UbiDistributionStats, UbiImpactMetrics, UbiRecipientCategory, WorkMetrics,
+    DEFAULT_COMPUTE_RATE, DEFAULT_ROUTING_RATE, DEFAULT_STORAGE_RATE,
+    DEV_GRANT_ALLOCATION_PERCENTAGE, EMERGENCY_ALLOCATION_PERCENTAGE, HIGH_UTILIZATION_ADJUSTMENT,
+    HIGH_UTILIZATION_THRESHOLD, ISP_BYPASS_CONNECTIVITY_RATE, ISP_BYPASS_MESH_RATE,
+    ISP_BYPASS_UPTIME_BONUS, LOW_UTILIZATION_ADJUSTMENT, LOW_UTILIZATION_THRESHOLD,
+    QUALITY_BONUS_THRESHOLD, SECTOR_DAO_ALLOCATION_PERCENTAGE, SOV_TOTAL_SUPPLY,
+    TRANSACTION_FEE_RATE, UBI_ALLOCATION_PERCENTAGE, UPTIME_BONUS_THRESHOLD,
 };
 
 // Note: Economic constants are defined in lib.rs and lib-types::economy
@@ -45,7 +44,7 @@ impl PriorityExt for Priority {
             Priority::Urgent => 2.0, // Emergency traffic (100% premium)
         }
     }
-    
+
     fn processing_order(&self) -> u8 {
         match self {
             Priority::Urgent => 0,
@@ -54,7 +53,7 @@ impl PriorityExt for Priority {
             Priority::Low => 3,
         }
     }
-    
+
     fn description(&self) -> &'static str {
         match self {
             Priority::Low => "Background processing",
@@ -79,16 +78,16 @@ pub trait TransactionTypeExt {
 
 impl TransactionTypeExt for TransactionType {
     fn is_fee_exempt(&self) -> bool {
-        matches!(self, 
-            TransactionType::UbiDistribution | 
-            TransactionType::WelfareDistribution
+        matches!(
+            self,
+            TransactionType::UbiDistribution | TransactionType::WelfareDistribution
         )
     }
-    
+
     fn requires_dao_fee(&self) -> bool {
         !self.is_fee_exempt() && !matches!(self, TransactionType::DaoFee)
     }
-    
+
     fn base_gas_cost(&self) -> u64 {
         match self {
             TransactionType::Payment => 1000,
@@ -102,7 +101,7 @@ impl TransactionTypeExt for TransactionType {
             TransactionType::ProposalExecution => 3000,
         }
     }
-    
+
     fn description(&self) -> &'static str {
         match self {
             TransactionType::Reward => "Network service reward",
@@ -134,7 +133,9 @@ impl TreasuryFundExt for TreasuryFund {
     fn description(&self) -> &'static str {
         match self {
             TreasuryFund::Operations => "General operational expenses and maintenance",
-            TreasuryFund::UbiDistribution => "Universal Basic Income distribution to verified users",
+            TreasuryFund::UbiDistribution => {
+                "Universal Basic Income distribution to verified users"
+            }
             TreasuryFund::Infrastructure => "Network infrastructure development and expansion",
             TreasuryFund::Governance => "DAO governance operations and proposal funding",
             TreasuryFund::Research => "Research and development initiatives",
@@ -166,10 +167,10 @@ impl TreasuryFundExt for TreasuryFund {
     fn requires_governance_approval(&self) -> bool {
         matches!(
             self,
-            TreasuryFund::EmergencyReserve | 
-            TreasuryFund::Research | 
-            TreasuryFund::Infrastructure |
-            TreasuryFund::Governance
+            TreasuryFund::EmergencyReserve
+                | TreasuryFund::Research
+                | TreasuryFund::Infrastructure
+                | TreasuryFund::Governance
         )
     }
 }
@@ -196,15 +197,15 @@ impl WorkMetricsExt for WorkMetrics {
     fn add_routing_work(&mut self, bytes: u64) {
         self.routing_work += bytes;
     }
-    
+
     fn add_storage_work(&mut self, bytes: u64) {
         self.storage_work += bytes;
     }
-    
+
     fn add_compute_work(&mut self, operations: u64) {
         self.compute_work += operations;
     }
-    
+
     fn update_quality_score(&mut self, score: f64) {
         if score.is_nan() {
             self.quality_score = score;
@@ -212,15 +213,15 @@ impl WorkMetricsExt for WorkMetrics {
             self.quality_score = score.max(0.0).min(1.0);
         }
     }
-    
+
     fn add_uptime_hours(&mut self, hours: u64) {
         self.uptime_hours += hours;
     }
-    
+
     fn qualifies_for_quality_bonus(&self) -> bool {
         self.quality_score > lib_types::economy::QUALITY_BONUS_THRESHOLD
     }
-    
+
     fn qualifies_for_uptime_bonus(&self) -> bool {
         self.uptime_hours >= lib_types::economy::UPTIME_BONUS_THRESHOLD
     }
@@ -246,30 +247,30 @@ impl IspBypassWorkExt for IspBypassWork {
     fn add_bandwidth_shared(&mut self, gb: u64) {
         self.bandwidth_shared_gb += gb;
     }
-    
+
     fn add_packets_routed(&mut self, mb: u64) {
         self.packets_routed_mb += mb;
     }
-    
+
     fn update_connection_quality(&mut self, quality: f64) {
         self.connection_quality = quality.max(0.0).min(1.0);
     }
-    
+
     fn add_users_served(&mut self, count: u64) {
         self.users_served += count;
     }
-    
+
     fn add_cost_savings(&mut self, usd_equivalent: u64) {
         self.cost_savings_provided += usd_equivalent;
     }
-    
+
     fn total_isp_bypass_value(&self) -> u64 {
         let bandwidth_reward = self.bandwidth_shared_gb * crate::ISP_BYPASS_CONNECTIVITY_RATE;
         let routing_reward = self.packets_routed_mb * crate::ISP_BYPASS_MESH_RATE;
         let uptime_bonus = self.uptime_hours * crate::ISP_BYPASS_UPTIME_BONUS;
-        
+
         let base_reward = bandwidth_reward + routing_reward + uptime_bonus;
-        
+
         if self.connection_quality > 0.9 {
             ((base_reward as f64) * 1.5) as u64
         } else {
@@ -312,27 +313,27 @@ impl NetworkStatsExt for NetworkStats {
             self.utilization = utilization.max(0.0).min(1.0);
         }
     }
-    
+
     fn update_avg_quality(&mut self, quality: f64) {
         self.avg_quality = quality.max(0.0).min(1.0);
     }
-    
+
     fn set_total_nodes(&mut self, nodes: u64) {
         self.total_nodes = nodes;
     }
-    
+
     fn add_transactions(&mut self, count: u64) {
         self.total_transactions += count;
     }
-    
+
     fn is_high_utilization(&self) -> bool {
         self.utilization > lib_types::economy::HIGH_UTILIZATION_THRESHOLD
     }
-    
+
     fn is_low_utilization(&self) -> bool {
         self.utilization < crate::LOW_UTILIZATION_THRESHOLD
     }
-    
+
     fn get_reward_adjustment_multiplier(&self) -> u64 {
         if self.is_high_utilization() {
             lib_types::economy::HIGH_UTILIZATION_ADJUSTMENT
@@ -342,21 +343,21 @@ impl NetworkStatsExt for NetworkStats {
             100
         }
     }
-    
+
     fn network_health_score(&self) -> f64 {
         if self.utilization.is_nan() || self.avg_quality.is_nan() {
             return 0.0;
         }
-        
+
         let utilization_factor = if self.utilization > 0.8 {
             1.0 - (self.utilization - 0.8) / 0.2
         } else {
             self.utilization / 0.8
         };
-        
+
         let quality_factor = self.avg_quality;
         let health = (utilization_factor + quality_factor) / 2.0;
-        
+
         health.max(0.0).min(1.0)
     }
 }
@@ -393,7 +394,7 @@ mod tests {
     fn test_transaction_type_fee_exemptions() {
         assert!(TransactionType::UbiDistribution.is_fee_exempt());
         assert!(TransactionType::WelfareDistribution.is_fee_exempt());
-        
+
         assert!(!TransactionType::Payment.is_fee_exempt());
         assert!(!TransactionType::Reward.is_fee_exempt());
         assert!(!TransactionType::Stake.is_fee_exempt());
@@ -404,7 +405,7 @@ mod tests {
         assert!(TransactionType::Payment.requires_dao_fee());
         assert!(TransactionType::Reward.requires_dao_fee());
         assert!(TransactionType::Stake.requires_dao_fee());
-        
+
         assert!(!TransactionType::UbiDistribution.requires_dao_fee());
         assert!(!TransactionType::WelfareDistribution.requires_dao_fee());
         assert!(!TransactionType::DaoFee.requires_dao_fee());
@@ -423,13 +424,13 @@ mod tests {
     #[test]
     fn test_work_metrics_operations() {
         let mut metrics = WorkMetrics::new();
-        
+
         metrics.add_routing_work(1000);
         metrics.add_storage_work(2000);
         metrics.add_compute_work(50);
         metrics.update_quality_score(0.97);
         metrics.add_uptime_hours(25);
-        
+
         assert_eq!(metrics.routing_work, 1000);
         assert_eq!(metrics.storage_work, 2000);
         assert_eq!(metrics.compute_work, 50);
@@ -440,16 +441,16 @@ mod tests {
     #[test]
     fn test_work_metrics_bonus_qualifications() {
         let mut metrics = WorkMetrics::new();
-        
+
         metrics.update_quality_score(0.94);
         assert!(!metrics.qualifies_for_quality_bonus());
-        
+
         metrics.update_quality_score(0.96);
         assert!(metrics.qualifies_for_quality_bonus());
-        
+
         metrics.add_uptime_hours(22);
         assert!(!metrics.qualifies_for_uptime_bonus());
-        
+
         metrics.add_uptime_hours(2);
         assert!(metrics.qualifies_for_uptime_bonus());
     }
@@ -457,12 +458,12 @@ mod tests {
     #[test]
     fn test_network_stats_operations() {
         let mut stats = NetworkStats::new();
-        
+
         stats.update_utilization(0.75);
         stats.update_avg_quality(0.88);
         stats.set_total_nodes(1500);
         stats.add_transactions(25000);
-        
+
         assert_eq!(stats.utilization, 0.75);
         assert_eq!(stats.avg_quality, 0.88);
         assert_eq!(stats.total_nodes, 1500);
@@ -483,8 +484,11 @@ mod tests {
             TreasuryFund::MeshDiscoveryFund,
             TreasuryFund::BridgeFund,
             TreasuryFund::SmartContractFund,
-        ].iter().map(|fund| fund.recommended_allocation_percentage()).sum();
-        
+        ]
+        .iter()
+        .map(|fund| fund.recommended_allocation_percentage())
+        .sum();
+
         assert!((total - 100.0).abs() < 0.1);
     }
 
@@ -549,7 +553,10 @@ mod tests {
     #[test]
     fn test_network_stats_adjustment_multipliers() {
         use lib_types::economy::NetworkStats;
-        use lib_types::economy::{HIGH_UTILIZATION_THRESHOLD, LOW_UTILIZATION_THRESHOLD, HIGH_UTILIZATION_ADJUSTMENT, LOW_UTILIZATION_ADJUSTMENT};
+        use lib_types::economy::{
+            HIGH_UTILIZATION_ADJUSTMENT, HIGH_UTILIZATION_THRESHOLD, LOW_UTILIZATION_ADJUSTMENT,
+            LOW_UTILIZATION_THRESHOLD,
+        };
         let mut stats = NetworkStats::new();
 
         // Low utilization should use LOW_UTILIZATION_ADJUSTMENT

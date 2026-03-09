@@ -5,9 +5,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lib_crypto::{Hash, PostQuantumSignature};
 use lib_crypto::keypair::generation::KeyPair;
 use lib_crypto::verification::verify_signature;
+use lib_crypto::{Hash, PostQuantumSignature};
 
 use crate::proofs::{StorageChallenge, StorageProof, VerificationResult};
 use crate::types::ContentHash;
@@ -115,8 +115,7 @@ impl StorageCapacityAttestation {
             challenge_results: self.challenge_results.clone(),
             timestamp: self.timestamp,
         };
-        bincode::serialize(&payload)
-            .map_err(|e| anyhow!("Attestation serialization failed: {e}"))
+        bincode::serialize(&payload).map_err(|e| anyhow!("Attestation serialization failed: {e}"))
     }
 }
 
@@ -124,9 +123,10 @@ impl StorageCapacityAttestation {
 #[async_trait]
 pub trait StorageProofProvider: Send + Sync {
     async fn active_challenges(&self, validator_id: &Hash) -> Result<Vec<StorageChallenge>>;
-    async fn verified_proof_summaries(&self, validator_id: &Hash) -> Result<Vec<StorageProofSummary>>;
-    async fn capacity_attestation(
+    async fn verified_proof_summaries(
         &self,
         validator_id: &Hash,
-    ) -> Result<StorageCapacityAttestation>;
+    ) -> Result<Vec<StorageProofSummary>>;
+    async fn capacity_attestation(&self, validator_id: &Hash)
+        -> Result<StorageCapacityAttestation>;
 }

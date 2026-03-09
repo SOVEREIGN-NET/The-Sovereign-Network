@@ -110,8 +110,14 @@ mod tests {
     fn test_command_help_availability() {
         // Test that help is available for major commands
         let commands_with_help = vec![
-            "wallet", "dao", "component", "network",
-            "blockchain", "identity", "node", "reward"
+            "wallet",
+            "dao",
+            "component",
+            "network",
+            "blockchain",
+            "identity",
+            "node",
+            "reward",
         ];
 
         for cmd in commands_with_help {
@@ -183,7 +189,12 @@ mod tests {
 
         match cli.command {
             ZhtpCommand::Oracle(OracleArgs {
-                action: OracleAction::CommitteeUpdate { members, activate_epoch, .. },
+                action:
+                    OracleAction::CommitteeUpdate {
+                        members,
+                        activate_epoch,
+                        ..
+                    },
             }) => {
                 assert_eq!(members.len(), 2);
                 assert_eq!(activate_epoch, 12);

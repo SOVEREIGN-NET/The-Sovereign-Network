@@ -1,16 +1,16 @@
 //! Mesh Router Core
-//! 
+//!
 //! Core mesh networking infrastructure with connection management
 
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 // UdpSocket removed - using QUIC only
-use uuid::Uuid;
 use anyhow::Result;
 use lib_crypto::PublicKey;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::debug;
+use uuid::Uuid;
 
 /// Rate limiting state for ZHTP getter requests (100 req/30s per identity)
 #[derive(Debug, Clone)]
@@ -32,7 +32,7 @@ impl ZhtpRateLimitState {
             window_start: now,
         }
     }
-    
+
     /// Check if rate limit exceeded (100 req/30s)
     pub fn check_and_increment(&mut self) -> bool {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -40,51 +40,46 @@ impl ZhtpRateLimitState {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         // Reset if window expired (30 seconds)
         if now - self.window_start >= 30 {
             self.request_count = 0;
             self.window_start = now;
         }
-        
+
         // Check if within limit
         if self.request_count >= 100 {
             return false; // Rate limit exceeded
         }
-        
+
         self.request_count += 1;
         true // Within limit
     }
 }
-use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
-use lib_network::protocols::quic_mesh::QuicMeshProtocol;
-use lib_network::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncryptionSession};
-use lib_network::protocols::zhtp_auth::ZhtpAuthManager;
+use super::identity_verification::IdentityVerificationCache;
+use super::rate_limiting::ConnectionRateLimiter;
+use crate::integration::{
+    dht_integration_channel, setup_mesh_dht_integration, DhtIntegrationDispatcher,
+    DhtIntegrationEvent, DhtPayloadSender, DhtStorageHandle,
+};
 use crate::web4_stub::ZhtpRelayProtocol;
-use lib_network::routing::message_routing::MeshMessageRouter;
-use lib_network::transport::TransportManager;
 use lib_blockchain::types::Hash;
 use lib_blockchain::BlockchainBroadcastMessage;
 use lib_identity::IdentityManager;
-use lib_types::NodeId;
+use lib_network::protocols::bluetooth::BluetoothMeshProtocol;
+use lib_network::protocols::quic_mesh::QuicMeshProtocol;
+use lib_network::protocols::zhtp_auth::ZhtpAuthManager;
+use lib_network::protocols::zhtp_encryption::{ZhtpEncryptionManager, ZhtpEncryptionSession};
+use lib_network::routing::message_routing::MeshMessageRouter;
+use lib_network::transport::TransportManager;
 use lib_protocols::zhtp::ZhtpRequestHandler;
-use crate::integration::{
-    dht_integration_channel,
-    setup_mesh_dht_integration,
-    DhtIntegrationDispatcher,
-    DhtIntegrationEvent,
-    DhtPayloadSender,
-    DhtStorageHandle,
-};
-use super::rate_limiting::ConnectionRateLimiter;
-use super::identity_verification::IdentityVerificationCache;
+use lib_types::NodeId;
 
-use crate::session_manager::SessionManager;
 use super::super::monitoring::{
-    PeerRateLimit, BroadcastMetrics, PeerReputation,
-    SyncPerformanceMetrics, SyncAlert, AlertThresholds,
-    MetricsHistory
+    AlertThresholds, BroadcastMetrics, MetricsHistory, PeerRateLimit, PeerReputation, SyncAlert,
+    SyncPerformanceMetrics,
 };
+use crate::session_manager::SessionManager;
 
 /// Mesh routing, metadata tracking, and service orchestration.
 ///
@@ -98,32 +93,34 @@ pub struct MeshRouter {
     pub server_id: Uuid,
     pub identity_manager: Option<Arc<RwLock<IdentityManager>>>,
     pub session_manager: Arc<SessionManager>,
-    
+
     // Encryption and authentication
     pub relay_protocol: Arc<RwLock<Option<ZhtpRelayProtocol>>>,
     pub encryption_manager: Arc<RwLock<ZhtpEncryptionManager>>,
     pub zhtp_auth_manager: Arc<RwLock<Option<ZhtpAuthManager>>>,
     pub encryption_sessions: Arc<RwLock<HashMap<String, ZhtpEncryptionSession>>>,
-    
+
     // Blockchain sync infrastructure
     pub sync_manager: Arc<lib_network::blockchain_sync::BlockchainSyncManager>,
     pub sync_coordinator: Arc<lib_network::blockchain_sync::SyncCoordinator>,
     // Note: edge_sync_manager removed - use sync_manager.new_edge_node() instead
-    pub blockchain_provider: Arc<RwLock<Option<Arc<dyn lib_network::blockchain_sync::BlockchainProvider>>>>,
+    pub blockchain_provider:
+        Arc<RwLock<Option<Arc<dyn lib_network::blockchain_sync::BlockchainProvider>>>>,
     pub is_edge_node: Arc<RwLock<bool>>, // Track if this node is in edge mode
-    
+
     // Protocol instances for sending
     pub bluetooth_protocol: Arc<RwLock<Option<Arc<BluetoothMeshProtocol>>>>,
     pub quic_protocol: Arc<RwLock<Option<Arc<QuicMeshProtocol>>>>,
     // UDP socket removed - using QUIC only
-    
+
     // Real-time block propagation - duplicate detection
     pub recent_blocks: Arc<RwLock<HashMap<Hash, u64>>>,
     pub recent_transactions: Arc<RwLock<HashMap<Hash, u64>>>,
-    
+
     // Blockchain broadcast receiver
-    pub broadcast_receiver: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<BlockchainBroadcastMessage>>>>,
-    
+    pub broadcast_receiver:
+        Arc<RwLock<Option<tokio::sync::mpsc::UnboundedReceiver<BlockchainBroadcastMessage>>>>,
+
     // Monitoring and metrics
     pub peer_rate_limits: Arc<RwLock<HashMap<String, PeerRateLimit>>>,
     pub broadcast_metrics: Arc<RwLock<BroadcastMetrics>>,
@@ -134,10 +131,10 @@ pub struct MeshRouter {
     pub metrics_history: Arc<RwLock<MetricsHistory>>,
     pub latency_samples_blocks: Arc<RwLock<Vec<u64>>>,
     pub latency_samples_txs: Arc<RwLock<Vec<u64>>>,
-    
+
     // Multi-hop routing
     pub mesh_message_router: Arc<RwLock<MeshMessageRouter>>,
-    
+
     // DHT storage and routing
     pub dht_storage: DhtStorageHandle,
     pub dht_handler: Arc<RwLock<Option<Arc<dyn ZhtpRequestHandler>>>>,
@@ -145,14 +142,15 @@ pub struct MeshRouter {
     pub dht_payload_sender: DhtPayloadSender,
     /// DHT integration dispatcher (Phase 4 relocation)
     pub dht_integration: DhtIntegrationDispatcher,
-    
+
     // ZHTP API router for all endpoints
     pub zhtp_router: Arc<RwLock<Option<Arc<crate::server::zhtp::ZhtpRouter>>>>,
-    
+
     // ✅ Phase 4: Network health monitoring from lib-network
-    pub network_health_monitor: Arc<RwLock<Option<Arc<lib_network::monitoring::health_monitoring::HealthMonitor>>>>,
+    pub network_health_monitor:
+        Arc<RwLock<Option<Arc<lib_network::monitoring::health_monitoring::HealthMonitor>>>>,
     pub mesh_protocol_stats: Arc<RwLock<lib_network::mesh::statistics::MeshProtocolStats>>,
-    
+
     // ZHTP rate limiting (100 req/30s for free getters)
     pub zhtp_rate_limits: Arc<RwLock<HashMap<String, ZhtpRateLimitState>>>,
 
@@ -167,17 +165,18 @@ impl MeshRouter {
     pub fn new(server_id: Uuid, session_manager: Arc<SessionManager>) -> Self {
         // Create shared peer registry (Ticket #149: replaces connections HashMap)
         let connections = Arc::new(RwLock::new(lib_network::peer_registry::PeerRegistry::new()));
-        
+
         // Create blockchain sync manager (defaults to full node mode)
-        let sync_manager = Arc::new(lib_network::blockchain_sync::BlockchainSyncManager::new_full_node());
-        
+        let sync_manager =
+            Arc::new(lib_network::blockchain_sync::BlockchainSyncManager::new_full_node());
+
         // Create sync coordinator
         let sync_coordinator = Arc::new(lib_network::blockchain_sync::SyncCoordinator::new());
-        
+
         // Create duplicate tracking for block propagation
         let recent_blocks = Arc::new(RwLock::new(HashMap::new()));
         let recent_transactions = Arc::new(RwLock::new(HashMap::new()));
-        
+
         // Spawn cleanup task for duplicate tracking
         let recent_blocks_cleanup = recent_blocks.clone();
         let recent_transactions_cleanup = recent_transactions.clone();
@@ -187,38 +186,39 @@ impl MeshRouter {
                 let cutoff = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_secs() - 3600; // Keep 1 hour history
-                
+                    .as_secs()
+                    - 3600; // Keep 1 hour history
+
                 // Cleanup old blocks
                 let mut blocks = recent_blocks_cleanup.write().await;
                 blocks.retain(|_, &mut ts| ts > cutoff);
-                
+
                 // Cleanup old transactions
                 let mut txs = recent_transactions_cleanup.write().await;
                 txs.retain(|_, &mut ts| ts > cutoff);
-                
-                debug!("Cleaned up duplicate tracking maps (blocks: {}, txs: {})", 
-                       blocks.len(), txs.len());
+
+                debug!(
+                    "Cleaned up duplicate tracking maps (blocks: {}, txs: {})",
+                    blocks.len(),
+                    txs.len()
+                );
             }
         });
-        
+
         // Clone connections for router initialization
         let connections_for_router = connections.clone();
-        let mesh_message_router = Arc::new(RwLock::new(
-            MeshMessageRouter::new(
-                connections_for_router.clone(),
-                Arc::new(RwLock::new(HashMap::new()))
-            )
-        ));
+        let mesh_message_router = Arc::new(RwLock::new(MeshMessageRouter::new(
+            connections_for_router.clone(),
+            Arc::new(RwLock::new(HashMap::new())),
+        )));
 
         let (dht_dispatcher, dht_events_rx) = dht_integration_channel();
-        tokio::spawn(crate::integration::dht_dispatcher::drain_dht_events(dht_events_rx));
+        tokio::spawn(crate::integration::dht_dispatcher::drain_dht_events(
+            dht_events_rx,
+        ));
 
-        let dht_handles = setup_mesh_dht_integration(
-            server_id,
-            mesh_message_router.clone(),
-            &dht_dispatcher,
-        );
+        let dht_handles =
+            setup_mesh_dht_integration(server_id, mesh_message_router.clone(), &dht_dispatcher);
         let dht_storage = dht_handles.dht_storage;
 
         // Create DHT mesh transport (Ticket #154: routes DHT through mesh network)
@@ -241,7 +241,7 @@ impl MeshRouter {
                 }
             });
         }
-        
+
         Self {
             connections,
             server_id,
@@ -279,8 +279,10 @@ impl MeshRouter {
             zhtp_router: Arc::new(RwLock::new(None)),
             // ✅ Phase 4: Initialize network health monitoring
             network_health_monitor: Arc::new(RwLock::new(None)),
-            mesh_protocol_stats: Arc::new(RwLock::new(lib_network::mesh::statistics::MeshProtocolStats::default())),
-            
+            mesh_protocol_stats: Arc::new(RwLock::new(
+                lib_network::mesh::statistics::MeshProtocolStats::default(),
+            )),
+
             // Initialize rate limiter for ZHTP getters
             zhtp_rate_limits: Arc::new(RwLock::new(HashMap::new())),
 
@@ -296,25 +298,32 @@ impl MeshRouter {
     pub fn dht_storage(&self) -> DhtStorageHandle {
         self.dht_storage.clone()
     }
-    
+
     /// Get broadcast metrics
     pub async fn get_broadcast_metrics(&self) -> BroadcastMetrics {
         self.broadcast_metrics.read().await.clone()
     }
-    
+
     /// Get list of connected peer addresses
     pub async fn get_peer_addresses(&self) -> Vec<String> {
-        self.connections.read().await
+        self.connections
+            .read()
+            .await
             .all_peers()
-            .filter_map(|peer_entry| peer_entry.endpoints.first().map(|e| e.address.to_address_string()))
+            .filter_map(|peer_entry| {
+                peer_entry
+                    .endpoints
+                    .first()
+                    .map(|e| e.address.to_address_string())
+            })
             .collect()
     }
-    
+
     /// Get peer reputation
     pub async fn get_peer_reputation(&self, peer_id: &str) -> Option<PeerReputation> {
         self.peer_reputations.read().await.get(peer_id).cloned()
     }
-    
+
     /// Set DHT handler for pure UDP mesh protocol
     pub async fn set_dht_handler(&self, handler: Arc<dyn ZhtpRequestHandler>) {
         use tracing::info;
@@ -330,7 +339,7 @@ impl MeshRouter {
     /// Call this method for each message handler that should process DHT messages.
     pub fn wire_dht_to_message_handler(
         &self,
-        handler: &mut lib_network::messaging::MeshMessageHandler
+        handler: &mut lib_network::messaging::MeshMessageHandler,
     ) {
         use tracing::info;
         crate::integration::wire_dht_payload_sender(handler, &self.dht_payload_sender);
@@ -341,7 +350,7 @@ impl MeshRouter {
     pub fn get_dht_payload_sender(&self) -> tokio::sync::mpsc::UnboundedSender<(Vec<u8>, NodeId)> {
         (*self.dht_payload_sender).clone()
     }
-    
+
     pub async fn set_zhtp_router(&self, router: Arc<crate::server::zhtp::ZhtpRouter>) {
         use tracing::info;
         *self.zhtp_router.write().await = Some(router);
@@ -358,17 +367,23 @@ impl MeshRouter {
 
     /// List all peer reputations
     pub async fn list_peer_reputations(&self) -> Vec<PeerReputation> {
-        self.peer_reputations.read().await.values().cloned().collect()
+        self.peer_reputations
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect()
     }
-    
+
     /// Initialize ZHTP relay protocol with post-quantum encryption
     pub async fn initialize_relay_protocol(&self) -> Result<()> {
         use tracing::info;
         info!("Initializing ZHTP relay protocol with post-quantum encryption...");
-        
+
         // Generate Dilithium2 keypair for signing relay messages
-        let (dilithium_pubkey, dilithium_privkey) = lib_crypto::post_quantum::dilithium::dilithium2_keypair();
-        
+        let (dilithium_pubkey, dilithium_privkey) =
+            lib_crypto::post_quantum::dilithium::dilithium2_keypair();
+
         // Create node capabilities for relay protocol
         let capabilities = lib_network::protocols::zhtp_auth::NodeCapabilities {
             has_dht: true,
@@ -378,58 +393,66 @@ impl MeshRouter {
             reputation: 100,
             quantum_secure: true,
         };
-        
+
         // Create relay protocol instance
-        let relay = ZhtpRelayProtocol::new(
-            dilithium_privkey,
-            dilithium_pubkey,
-            capabilities,
-        );
-        
+        let relay = ZhtpRelayProtocol::new(dilithium_privkey, dilithium_pubkey, capabilities);
+
         *self.relay_protocol.write().await = Some(relay);
-        
+
         info!("✅ ZHTP relay protocol initialized (Dilithium2 + Kyber1024 + ChaCha20)");
         Ok(())
     }
-    
+
     /// Initialize ZHTP authentication manager with blockchain identity
     pub async fn initialize_auth_manager(&self, blockchain_pubkey: PublicKey) -> Result<()> {
         use tracing::info;
         info!("🔐 Initializing ZHTP authentication manager...");
-        
+
         let auth_manager = ZhtpAuthManager::new(blockchain_pubkey)?;
         *self.zhtp_auth_manager.write().await = Some(auth_manager);
-        
+
         info!("✅ ZHTP authentication manager initialized");
         Ok(())
     }
-    
+
     /// Bridge Bluetooth messages to DHT
-    pub async fn bridge_bluetooth_to_dht(&self, message_data: &[u8], source_addr: &std::net::SocketAddr) -> Result<()> {
+    pub async fn bridge_bluetooth_to_dht(
+        &self,
+        message_data: &[u8],
+        source_addr: &std::net::SocketAddr,
+    ) -> Result<()> {
         // Delegate to the helper function
         super::helpers::bridge_bluetooth_to_dht(message_data, source_addr).await
     }
-    
+
     /// Configure sync manager for edge node mode (headers + ZK proofs only)
     pub async fn set_edge_sync_mode(&self, max_headers: usize) {
         use tracing::info;
-        
+
         // Set edge node flag
         *self.is_edge_node.write().await = true;
-        
+
         // Create new edge node sync manager
-        let new_sync_manager = Arc::new(lib_network::blockchain_sync::BlockchainSyncManager::new_edge_node(max_headers));
-        
+        let new_sync_manager = Arc::new(
+            lib_network::blockchain_sync::BlockchainSyncManager::new_edge_node(max_headers),
+        );
+
         // Update the QUIC message handler's sync manager
         if let Some(quic) = self.quic_protocol.read().await.as_ref() {
             if let Some(handler) = quic.message_handler.as_ref() {
                 let mut handler_write = handler.write().await;
                 handler_write.sync_manager = new_sync_manager.clone();
-                info!("✅ Updated QUIC message handler to use EdgeNodeStrategy (max_headers={})", max_headers);
+                info!(
+                    "✅ Updated QUIC message handler to use EdgeNodeStrategy (max_headers={})",
+                    max_headers
+                );
             }
         }
-        
-        info!("📱 Edge node mode configured with {} headers capacity", max_headers);
+
+        info!(
+            "📱 Edge node mode configured with {} headers capacity",
+            max_headers
+        );
     }
 }
 

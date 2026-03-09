@@ -88,8 +88,8 @@
 //! These concerns belong to higher-level components that will be implemented
 //! in future tickets.
 
-use std::collections::{HashMap, HashSet};
 use lib_identity::IdentityId;
+use std::collections::{HashMap, HashSet};
 
 // =============================================================================
 // NOTE: CONSENSUS SAFETY INVARIANTS ARE ENFORCED BY THE CONSENSUS ENGINE
@@ -192,7 +192,6 @@ const _: () = assert!(
     MAX_MISSED_BLOCKS < LIVENESS_JAIL_THRESHOLD,
     "LIVE-INV-1: MAX_MISSED_BLOCKS must be less than LIVENESS_JAIL_THRESHOLD"
 );
-
 
 // Compile-time invariant: LIVE-INV-2 — round timeout must be at least 20s
 const _: () = assert!(
@@ -432,7 +431,8 @@ impl LivenessMonitor {
     /// - Maximum responsive: n - t <= n - (floor(n/3) + 1) = floor(2n/3) < 2n/3 + 1
     /// - Cannot reach quorum
     pub fn is_stalled(&self) -> bool {
-        let timed_out_count = self.validator_states
+        let timed_out_count = self
+            .validator_states
             .values()
             .filter(|state| **state == TimeoutState::TimedOut)
             .count();
@@ -534,23 +534,17 @@ mod tests {
         let mut monitor = LivenessMonitor::new();
 
         // 4 validators: threshold = floor(4/3) + 1 = 2
-        let validators: Vec<_> = (0..4)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators: Vec<_> = (0..4).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators);
         assert_eq!(monitor.stall_threshold, 2);
 
         // 7 validators: threshold = floor(7/3) + 1 = 3
-        let validators: Vec<_> = (0..7)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators: Vec<_> = (0..7).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators);
         assert_eq!(monitor.stall_threshold, 3);
 
         // 10 validators: threshold = floor(10/3) + 1 = 4
-        let validators: Vec<_> = (0..10)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators: Vec<_> = (0..10).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators);
         assert_eq!(monitor.stall_threshold, 4);
     }
@@ -558,9 +552,7 @@ mod tests {
     #[test]
     fn test_stall_state_transitions() {
         let mut monitor = LivenessMonitor::new();
-        let validators: Vec<_> = (0..4)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators: Vec<_> = (0..4).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators);
 
         // No transition initially
@@ -594,9 +586,7 @@ mod tests {
     #[test]
     fn test_validator_set_updates() {
         let mut monitor = LivenessMonitor::new();
-        let validators_v1: Vec<_> = (0..4)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators_v1: Vec<_> = (0..4).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators_v1);
 
         // Mark one validator timed out
@@ -604,9 +594,7 @@ mod tests {
         assert_eq!(monitor.timed_out_validators().len(), 1);
 
         // Update set to remove that validator and add new ones
-        let validators_v2: Vec<_> = (2..6)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators_v2: Vec<_> = (2..6).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators_v2);
 
         // Old timed-out validator should be removed
@@ -619,9 +607,7 @@ mod tests {
     #[test]
     fn test_edge_case_exactly_one_third() {
         let mut monitor = LivenessMonitor::new();
-        let validators: Vec<_> = (0..4)
-            .map(|i| IdentityId::from_bytes(&[i; 32]))
-            .collect();
+        let validators: Vec<_> = (0..4).map(|i| IdentityId::from_bytes(&[i; 32])).collect();
         monitor.update_validator_set(&validators);
 
         // With 4 validators, threshold = 2
@@ -692,9 +678,15 @@ mod tests {
     #[test]
     fn test_liveness_jail_threshold_is_reasonable() {
         // Threshold should be large enough to not trigger on transient outages
-        assert!(LIVENESS_JAIL_THRESHOLD >= 100, "LIVENESS_JAIL_THRESHOLD too small");
+        assert!(
+            LIVENESS_JAIL_THRESHOLD >= 100,
+            "LIVENESS_JAIL_THRESHOLD too small"
+        );
         // But not so large that misbehaving validators go unpunished for hours
-        assert!(LIVENESS_JAIL_THRESHOLD <= 10_000, "LIVENESS_JAIL_THRESHOLD too large");
+        assert!(
+            LIVENESS_JAIL_THRESHOLD <= 10_000,
+            "LIVENESS_JAIL_THRESHOLD too large"
+        );
     }
 
     #[test]

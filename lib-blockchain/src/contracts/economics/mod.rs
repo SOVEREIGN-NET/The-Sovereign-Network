@@ -10,13 +10,11 @@ pub mod tribute_router;
 
 // Re-export key types
 pub use fee_router::{
-    FeeRouter, FeeRouterError, FeeDistribution, DaoDistribution, PoolAddresses,
-    FEE_RATE_BASIS_POINTS,
-    UBI_ALLOCATION_PERCENT, DAO_ALLOCATION_PERCENT,
-    EMERGENCY_ALLOCATION_PERCENT, DEV_ALLOCATION_PERCENT,
-    NUM_SECTOR_DAOS, PER_DAO_ALLOCATION_PERCENT,
+    DaoDistribution, FeeDistribution, FeeRouter, FeeRouterError, PoolAddresses,
+    DAO_ALLOCATION_PERCENT, DEV_ALLOCATION_PERCENT, EMERGENCY_ALLOCATION_PERCENT,
+    FEE_RATE_BASIS_POINTS, NUM_SECTOR_DAOS, PER_DAO_ALLOCATION_PERCENT, UBI_ALLOCATION_PERCENT,
 };
 pub use tribute_router::{
-    TributeRouter, ProfitSettlement, AntiCircumventionRule, SettlementStatus,
-    TributeRouterError, TRIBUTE_RATE_PERCENTAGE, TRIBUTE_RATE_BASIS_POINTS,
+    AntiCircumventionRule, ProfitSettlement, SettlementStatus, TributeRouter, TributeRouterError,
+    TRIBUTE_RATE_BASIS_POINTS, TRIBUTE_RATE_PERCENTAGE,
 };

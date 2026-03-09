@@ -1,5 +1,5 @@
 //! Dynamic Pricing System
-//! 
+//!
 //! Implements market-based pricing for storage services based on:
 //! - Supply and demand dynamics
 //! - Storage tier (Hot, Warm, Cold, Archive)
@@ -9,8 +9,8 @@
 
 use crate::types::*;
 use anyhow::Result;
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Dynamic pricing engine that adjusts storage costs based on market conditions
 #[derive(Debug, Clone)]
@@ -66,10 +66,10 @@ pub enum QualityLevel {
 /// Request urgency levels
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UrgencyLevel {
-    Low,     // Can wait hours/days
-    Normal,  // Standard processing
-    High,    // Need within minutes
-    Critical,// Need immediately
+    Low,      // Can wait hours/days
+    Normal,   // Standard processing
+    High,     // Need within minutes
+    Critical, // Need immediately
 }
 
 /// Pricing quote for a storage request
@@ -116,14 +116,14 @@ impl PricingEngine {
     /// Create a new pricing engine with default parameters
     pub fn new() -> Self {
         let mut base_prices = HashMap::new();
-        base_prices.insert(StorageTier::Hot, 1000);      // 10x base for hot storage
-        base_prices.insert(StorageTier::Warm, 300);      // 3x base for warm storage
-        base_prices.insert(StorageTier::Cold, 100);      // 1x base for cold storage
-        base_prices.insert(StorageTier::Archive, 30);    // 0.3x base for archive
+        base_prices.insert(StorageTier::Hot, 1000); // 10x base for hot storage
+        base_prices.insert(StorageTier::Warm, 300); // 3x base for warm storage
+        base_prices.insert(StorageTier::Cold, 100); // 1x base for cold storage
+        base_prices.insert(StorageTier::Archive, 30); // 0.3x base for archive
 
         let mut quality_premiums = HashMap::new();
-        quality_premiums.insert(QualityLevel::Basic, 1.0);      // No premium
-        quality_premiums.insert(QualityLevel::Premium, 1.5);    // 50% premium
+        quality_premiums.insert(QualityLevel::Basic, 1.0); // No premium
+        quality_premiums.insert(QualityLevel::Premium, 1.5); // 50% premium
         quality_premiums.insert(QualityLevel::Enterprise, 2.0); // 100% premium
 
         Self {
@@ -152,7 +152,9 @@ impl PricingEngine {
 
     /// Calculate pricing quote for a storage request
     pub fn calculate_quote(&self, request: &StorageRequest) -> Result<PricingQuote> {
-        let base_price = self.base_prices.get(&request.tier)
+        let base_price = self
+            .base_prices
+            .get(&request.tier)
             .copied()
             .unwrap_or(crate::economic::BASE_STORAGE_PRICE);
 
@@ -160,12 +162,15 @@ impl PricingEngine {
         let market_multiplier = self.calculate_market_multiplier(&request.tier)?;
 
         // Quality premium
-        let quality_multiplier = self.quality_premiums.get(&request.quality_level)
+        let quality_multiplier = self
+            .quality_premiums
+            .get(&request.quality_level)
             .copied()
             .unwrap_or(1.0);
 
         // Geographic multiplier
-        let geographic_multiplier = request.geographic_region
+        let geographic_multiplier = request
+            .geographic_region
             .as_ref()
             .and_then(|region| self.geographic_multipliers.get(region))
             .copied()
@@ -180,16 +185,16 @@ impl PricingEngine {
         };
 
         // Calculate final price
-        let total_multiplier = market_multiplier * quality_multiplier * 
-                              geographic_multiplier * urgency_multiplier;
-        
+        let total_multiplier =
+            market_multiplier * quality_multiplier * geographic_multiplier * urgency_multiplier;
+
         let size_gb = (request.size as f64 / (1024.0 * 1024.0 * 1024.0)).ceil() as u64;
         let duration_days = (request.duration as f64 / 86400.0).ceil() as u64;
-        
-        let final_price = ((base_price as f64 * total_multiplier) as u64) 
-                         * size_gb 
-                         * duration_days 
-                         * (request.replication_factor as u64);
+
+        let final_price = ((base_price as f64 * total_multiplier) as u64)
+            * size_gb
+            * duration_days
+            * (request.replication_factor as u64);
 
         Ok(PricingQuote {
             base_price,
@@ -215,7 +220,7 @@ impl PricingEngine {
             (Some(supply), Some(demand)) => {
                 // Calculate utilization ratio
                 let utilization = supply.utilized_capacity as f64 / supply.total_capacity as f64;
-                
+
                 // Base multiplier on utilization
                 let utilization_multiplier = if utilization < 0.5 {
                     0.8 // Discount when underutilized
@@ -228,7 +233,8 @@ impl PricingEngine {
                 };
 
                 // Adjust for demand pressure
-                let demand_pressure = (demand.daily_requests as f64) / (supply.provider_count as f64);
+                let demand_pressure =
+                    (demand.daily_requests as f64) / (supply.provider_count as f64);
                 let demand_multiplier = if demand_pressure < 10.0 {
                     1.0
                 } else if demand_pressure < 50.0 {
@@ -254,14 +260,17 @@ impl PricingEngine {
             if let Some(demand) = self.demand_metrics.get(tier) {
                 let utilization = supply.utilized_capacity as f64 / supply.total_capacity as f64;
                 let market_multiplier = self.calculate_market_multiplier(tier).unwrap_or(1.0);
-                
-                tier_summaries.insert(tier.clone(), TierSummary {
-                    base_price: self.base_prices.get(tier).copied().unwrap_or(100),
-                    market_multiplier,
-                    utilization,
-                    provider_count: supply.provider_count,
-                    daily_requests: demand.daily_requests,
-                });
+
+                tier_summaries.insert(
+                    tier.clone(),
+                    TierSummary {
+                        base_price: self.base_prices.get(tier).copied().unwrap_or(100),
+                        market_multiplier,
+                        utilization,
+                        provider_count: supply.provider_count,
+                        daily_requests: demand.daily_requests,
+                    },
+                );
             }
         }
 
@@ -312,7 +321,7 @@ mod tests {
     #[test]
     fn test_basic_pricing_quote() {
         let engine = PricingEngine::new();
-        
+
         let request = StorageRequest {
             size: 1024 * 1024 * 1024, // 1 GB
             tier: StorageTier::Cold,
@@ -331,7 +340,7 @@ mod tests {
     #[test]
     fn test_urgency_pricing() {
         let engine = PricingEngine::new();
-        
+
         let normal_request = StorageRequest {
             size: 1024 * 1024 * 1024,
             tier: StorageTier::Cold,

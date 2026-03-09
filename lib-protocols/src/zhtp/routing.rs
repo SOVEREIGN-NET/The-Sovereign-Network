@@ -1,15 +1,15 @@
 //! ZHTP Request Routing System
-//! 
+//!
 //! Advanced routing system with pattern matching, parameter extraction,
 //! middleware integration, and economic route prioritization based on
 //! DAO fees and network incentives.
 
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
+use crate::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use crate::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
+use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use regex::Regex;
 
 /// Route pattern matching types
 #[derive(Debug, Clone)]
@@ -141,9 +141,17 @@ pub struct MaintenanceWindow {
 #[derive(Debug, Clone)]
 pub enum RecurringPattern {
     /// Weekly on specific day and time
-    Weekly { day: u8, hour: u8, duration_hours: u8 },
+    Weekly {
+        day: u8,
+        hour: u8,
+        duration_hours: u8,
+    },
     /// Monthly on specific date and time
-    Monthly { day: u8, hour: u8, duration_hours: u8 },
+    Monthly {
+        day: u8,
+        hour: u8,
+        duration_hours: u8,
+    },
     /// Custom cron-like pattern
     Cron(String),
 }
@@ -238,22 +246,26 @@ pub struct RouteMatch {
 #[async_trait::async_trait]
 pub trait RouteHandler: Send + Sync {
     /// Handle the request for this specific route
-    async fn handle(&self, request: ZhtpRequest, params: HashMap<String, String>) -> ZhtpResult<ZhtpResponse>;
-    
+    async fn handle(
+        &self,
+        request: ZhtpRequest,
+        params: HashMap<String, String>,
+    ) -> ZhtpResult<ZhtpResponse>;
+
     /// Get handler name
     fn name(&self) -> &str;
-    
+
     /// Get handler description
     fn description(&self) -> &str;
-    
+
     /// Check if handler can process the request
     fn can_handle(&self, request: &ZhtpRequest) -> bool;
-    
+
     /// Get economic requirements for this handler
     fn economic_requirements(&self) -> EconomicRequirements {
         EconomicRequirements::default()
     }
-    
+
     /// Get access requirements for this handler
     fn access_requirements(&self) -> AccessRequirements {
         AccessRequirements::default()
@@ -340,24 +352,27 @@ impl Router {
             stats: RouteStats::default(),
         }
     }
-    
+
     /// Add route to router
     pub fn add_route(&mut self, route: Route) -> ZhtpResult<()> {
         let route_arc = Arc::new(route);
         self.routes.push(route_arc.clone());
-        
+
         // Sort routes by priority (highest first)
         self.routes.sort_by(|a, b| b.priority.cmp(&a.priority));
-        
+
         // Clear cache since routes changed
         self.route_cache.clear();
-        
-        tracing::info!("🛣️  Added route: {} (priority: {})", 
-                      route_arc.metadata.name, route_arc.priority);
-        
+
+        tracing::info!(
+            "🛣️  Added route: {} (priority: {})",
+            route_arc.metadata.name,
+            route_arc.priority
+        );
+
         Ok(())
     }
-    
+
     /// Add multiple routes
     pub fn add_routes(&mut self, routes: Vec<Route>) -> ZhtpResult<()> {
         for route in routes {
@@ -365,29 +380,32 @@ impl Router {
         }
         Ok(())
     }
-    
+
     /// Set default handler for 404 responses
     pub fn set_default_handler(&mut self, handler: Arc<dyn ZhtpRequestHandler>) {
         self.default_handler = Some(handler);
     }
-    
+
     /// Find matching route for request
     pub async fn find_route(&mut self, request: &ZhtpRequest) -> ZhtpResult<Option<RouteMatch>> {
         let start_time = std::time::Instant::now();
-        
+
         // Check cache first
         let cache_key = self.generate_cache_key(request);
         if self.config.enable_caching {
             if let Some(cached_routes) = self.route_cache.get(&cache_key) {
                 self.stats.cache_hits += 1;
-                if let Some(route_match) = self.find_best_match_from_routes(request, cached_routes).await? {
+                if let Some(route_match) = self
+                    .find_best_match_from_routes(request, cached_routes)
+                    .await?
+                {
                     return Ok(Some(route_match));
                 }
             } else {
                 self.stats.cache_misses += 1;
             }
         }
-        
+
         // Find matching routes
         let mut matching_routes = Vec::new();
         for route in &self.routes {
@@ -395,15 +413,17 @@ impl Router {
                 matching_routes.push(route.clone());
             }
         }
-        
+
         // Cache the matching routes
         if self.config.enable_caching && !matching_routes.is_empty() {
             self.route_cache.insert(cache_key, matching_routes.clone());
         }
-        
+
         // Find best match
-        let route_match = self.find_best_match_from_routes(request, &matching_routes).await?;
-        
+        let route_match = self
+            .find_best_match_from_routes(request, &matching_routes)
+            .await?;
+
         // Update statistics
         self.stats.total_requests += 1;
         if route_match.is_some() {
@@ -411,36 +431,36 @@ impl Router {
         } else {
             self.stats.failed_routes += 1;
         }
-        
+
         let routing_time = start_time.elapsed();
         tracing::debug!("Route matching took {:?}", routing_time);
-        
+
         Ok(route_match)
     }
-    
+
     /// Route request to appropriate handler
     pub async fn route_request(&mut self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let route_match = self.find_route(&request).await?;
-        
+
         match route_match {
             Some(route_match) => {
                 // Update route performance metrics
                 self.update_route_performance(&route_match.route.metadata.name);
-                
+
                 // Handle economic routing decision
                 if self.config.enable_economic_routing {
                     self.stats.economic_routes += 1;
                     self.record_economic_routing(&request, &route_match)?;
                 }
-                
+
                 // Execute the route handler
                 let start_time = std::time::Instant::now();
                 let response = route_match.route.handler.handle_request(request).await?;
                 let response_time = start_time.elapsed().as_millis() as f64;
-                
+
                 // Update performance metrics
                 self.update_response_time(&route_match.route.metadata.name, response_time);
-                
+
                 Ok(response)
             }
             None => {
@@ -456,37 +476,46 @@ impl Router {
             }
         }
     }
-    
+
     /// Check if route matches request
     async fn route_matches(&self, request: &ZhtpRequest, route: &Route) -> ZhtpResult<bool> {
         // Check HTTP method
         if !route.methods.is_empty() && !route.methods.contains(&request.method) {
             return Ok(false);
         }
-        
+
         // Check pattern match
         if !self.pattern_matches(&route.pattern, &request.uri) {
             return Ok(false);
         }
-        
+
         // Check economic requirements
-        if !self.economic_requirements_met(request, &route.economic_requirements).await? {
+        if !self
+            .economic_requirements_met(request, &route.economic_requirements)
+            .await?
+        {
             return Ok(false);
         }
-        
+
         // Check access requirements
-        if !self.access_requirements_met(request, &route.access_requirements).await? {
+        if !self
+            .access_requirements_met(request, &route.access_requirements)
+            .await?
+        {
             return Ok(false);
         }
-        
+
         // Check time restrictions
-        if !self.time_restrictions_met(&route.access_requirements.time_restrictions).await? {
+        if !self
+            .time_restrictions_met(&route.access_requirements.time_restrictions)
+            .await?
+        {
             return Ok(false);
         }
-        
+
         Ok(true)
     }
-    
+
     /// Check if pattern matches URI
     fn pattern_matches(&self, pattern: &RoutePattern, uri: &str) -> bool {
         let normalized_uri = if self.config.strip_trailing_slash {
@@ -494,13 +523,13 @@ impl Router {
         } else {
             uri
         };
-        
+
         let uri_to_match = if self.config.case_sensitive {
             normalized_uri
         } else {
             &normalized_uri.to_lowercase()
         };
-        
+
         match pattern {
             RoutePattern::Exact(path) => {
                 let pattern_path = if self.config.case_sensitive {
@@ -510,9 +539,7 @@ impl Router {
                 };
                 uri_to_match == pattern_path
             }
-            RoutePattern::Regex(regex) => {
-                regex.is_match(uri_to_match)
-            }
+            RoutePattern::Regex(regex) => regex.is_match(uri_to_match),
             RoutePattern::Parameterized(path, _params) => {
                 self.parameterized_match(path, uri_to_match)
             }
@@ -529,16 +556,16 @@ impl Router {
             }
         }
     }
-    
+
     /// Check parameterized pattern match
     fn parameterized_match(&self, pattern: &str, uri: &str) -> bool {
         let pattern_parts: Vec<&str> = pattern.split('/').collect();
         let uri_parts: Vec<&str> = uri.split('/').collect();
-        
+
         if pattern_parts.len() != uri_parts.len() {
             return false;
         }
-        
+
         for (pattern_part, uri_part) in pattern_parts.iter().zip(uri_parts.iter()) {
             if pattern_part.starts_with('{') && pattern_part.ends_with('}') {
                 // This is a parameter, skip validation
@@ -547,27 +574,24 @@ impl Router {
                 return false;
             }
         }
-        
+
         true
     }
-    
+
     /// Extract parameters from parameterized route
     fn extract_parameters(&self, pattern: &RoutePattern, uri: &str) -> HashMap<String, String> {
         let mut params = HashMap::new();
-        
+
         match pattern {
             RoutePattern::Parameterized(path, param_names) => {
                 let pattern_parts: Vec<&str> = path.split('/').collect();
                 let uri_parts: Vec<&str> = uri.split('/').collect();
-                
+
                 let mut param_index = 0;
                 for (pattern_part, uri_part) in pattern_parts.iter().zip(uri_parts.iter()) {
                     if pattern_part.starts_with('{') && pattern_part.ends_with('}') {
                         if param_index < param_names.len() {
-                            params.insert(
-                                param_names[param_index].clone(),
-                                uri_part.to_string(),
-                            );
+                            params.insert(param_names[param_index].clone(), uri_part.to_string());
                             param_index += 1;
                         }
                     }
@@ -575,10 +599,10 @@ impl Router {
             }
             _ => {}
         }
-        
+
         params
     }
-    
+
     /// Check if economic requirements are met
     async fn economic_requirements_met(
         &self,
@@ -591,41 +615,48 @@ impl Router {
         } else {
             0
         };
-        
+
         // Check minimum fee requirement
         if dao_fee < requirements.min_dao_fee {
             return Ok(false);
         }
-        
+
         // Check maximum fee requirement
         if dao_fee > requirements.max_dao_fee {
             return Ok(false);
         }
-        
+
         // Check payment method requirement
         if !requirements.required_payment_methods.is_empty() {
-            let payment_method = request.headers.get("X-Payment-Method")
+            let payment_method = request
+                .headers
+                .get("X-Payment-Method")
                 .unwrap_or("unknown".to_string());
-            
-            if !requirements.required_payment_methods.contains(&payment_method.to_string()) {
+
+            if !requirements
+                .required_payment_methods
+                .contains(&payment_method.to_string())
+            {
                 return Ok(false);
             }
         }
-        
+
         // Check UBI contribution requirement
         if requirements.ubi_contribution_required {
-            let ubi_contribution = request.headers.get("X-UBI-Contribution")
+            let ubi_contribution = request
+                .headers
+                .get("X-UBI-Contribution")
                 .and_then(|s| s.parse::<bool>().ok())
                 .unwrap_or(false);
-            
+
             if !ubi_contribution {
                 return Ok(false);
             }
         }
-        
+
         Ok(true)
     }
-    
+
     /// Check if access requirements are met
     async fn access_requirements_met(
         &self,
@@ -634,138 +665,158 @@ impl Router {
     ) -> ZhtpResult<bool> {
         // Check authentication methods
         if !requirements.auth_methods.is_empty() {
-            let auth_method = request.headers.get("X-Auth-Method")
+            let auth_method = request
+                .headers
+                .get("X-Auth-Method")
                 .unwrap_or("none".to_string());
-            
+
             if !requirements.auth_methods.contains(&auth_method.to_string()) {
                 return Ok(false);
             }
         }
-        
+
         // Check required roles
         if !requirements.required_roles.is_empty() {
-            let user_roles = request.headers.get("X-User-Roles")
+            let user_roles = request
+                .headers
+                .get("X-User-Roles")
                 .unwrap_or("".to_string())
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect::<Vec<String>>();
-            
+
             for required_role in &requirements.required_roles {
                 if !user_roles.contains(required_role) {
                     return Ok(false);
                 }
             }
         }
-        
+
         // Check required permissions
         if !requirements.required_permissions.is_empty() {
-            let user_permissions = request.headers.get("X-User-Permissions")
+            let user_permissions = request
+                .headers
+                .get("X-User-Permissions")
                 .unwrap_or("".to_string())
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect::<Vec<String>>();
-            
+
             for required_permission in &requirements.required_permissions {
                 if !user_permissions.contains(required_permission) {
                     return Ok(false);
                 }
             }
         }
-        
+
         // Check minimum reputation
         if requirements.min_reputation > 0 {
-            let reputation = request.headers.get("X-User-Reputation")
+            let reputation = request
+                .headers
+                .get("X-User-Reputation")
                 .and_then(|s| s.parse::<u32>().ok())
                 .unwrap_or(0);
-            
+
             if reputation < requirements.min_reputation {
                 return Ok(false);
             }
         }
-        
+
         // Check geographic restrictions
         if let Some(geo_restrictions) = &requirements.geographic_restrictions {
-            if !self.geographic_restrictions_met(request, geo_restrictions).await? {
+            if !self
+                .geographic_restrictions_met(request, geo_restrictions)
+                .await?
+            {
                 return Ok(false);
             }
         }
-        
+
         Ok(true)
     }
-    
+
     /// Check geographic restrictions
     async fn geographic_restrictions_met(
         &self,
         request: &ZhtpRequest,
         restrictions: &GeographicRestrictions,
     ) -> ZhtpResult<bool> {
-        let client_ip_raw = request.headers.get("X-Real-IP")
+        let client_ip_raw = request
+            .headers
+            .get("X-Real-IP")
             .or_else(|| request.headers.get("X-Forwarded-For"))
             .unwrap_or("unknown".to_string());
-        let client_ip = client_ip_raw
-            .split(',')
-            .next()
-            .unwrap_or("unknown")
-            .trim();
-        
+        let client_ip = client_ip_raw.split(',').next().unwrap_or("unknown").trim();
+
         // Check IP whitelist
         if !restrictions.ip_whitelist.is_empty() {
             if !restrictions.ip_whitelist.contains(&client_ip.to_string()) {
                 return Ok(false);
             }
         }
-        
+
         // Check IP blacklist
         if restrictions.ip_blacklist.contains(&client_ip.to_string()) {
             return Ok(false);
         }
-        
+
         // For country/region checks, we'd need a GeoIP service
         // This is a simplified implementation
-        let country_code = request.headers.get("X-Country-Code")
+        let country_code = request
+            .headers
+            .get("X-Country-Code")
             .unwrap_or("unknown".to_string());
-        
+
         // Check allowed countries
         if !restrictions.allowed_countries.is_empty() {
-            if !restrictions.allowed_countries.contains(&country_code.to_string()) {
+            if !restrictions
+                .allowed_countries
+                .contains(&country_code.to_string())
+            {
                 return Ok(false);
             }
         }
-        
+
         // Check blocked countries
-        if restrictions.blocked_countries.contains(&country_code.to_string()) {
+        if restrictions
+            .blocked_countries
+            .contains(&country_code.to_string())
+        {
             return Ok(false);
         }
-        
+
         Ok(true)
     }
-    
+
     /// Check time restrictions
-    async fn time_restrictions_met(&self, restrictions: &Option<TimeRestrictions>) -> ZhtpResult<bool> {
+    async fn time_restrictions_met(
+        &self,
+        restrictions: &Option<TimeRestrictions>,
+    ) -> ZhtpResult<bool> {
         if let Some(time_restrictions) = restrictions {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            
+
             // Convert to the specified timezone (simplified - would use chrono in production)
             let current_hour = ((now / 3600) % 24) as u8;
             let current_day = ((now / 86400 + 4) % 7) as u8; // Unix epoch was Thursday
-            
+
             // Check allowed hours
             if !time_restrictions.allowed_hours.is_empty() {
                 if !time_restrictions.allowed_hours.contains(&current_hour) {
                     return Ok(false);
                 }
             }
-            
+
             // Check allowed days
             if !time_restrictions.allowed_days.is_empty() {
                 if !time_restrictions.allowed_days.contains(&current_day) {
                     return Ok(false);
                 }
             }
-            
+
             // Check maintenance windows
             for window in &time_restrictions.maintenance_windows {
                 if now >= window.start_time && now <= window.end_time {
@@ -773,10 +824,10 @@ impl Router {
                 }
             }
         }
-        
+
         Ok(true)
     }
-    
+
     /// Find best match from candidate routes
     async fn find_best_match_from_routes(
         &self,
@@ -786,16 +837,16 @@ impl Router {
         if routes.is_empty() {
             return Ok(None);
         }
-        
+
         let mut best_match: Option<RouteMatch> = None;
-        
+
         for route in routes {
             let params = self.extract_parameters(&route.pattern, &request.uri);
             let query_params = self.extract_query_parameters(&request.uri);
-            
+
             let match_score = self.calculate_match_score(request, route).await?;
             let economic_score = self.calculate_economic_score(request, route).await?;
-            
+
             let route_match = RouteMatch {
                 route: route.clone(),
                 params,
@@ -803,16 +854,17 @@ impl Router {
                 match_score,
                 economic_score,
             };
-            
+
             if let Some(ref current_best) = best_match {
                 // Prioritize by economic score if economic routing is enabled
                 if self.config.enable_economic_routing {
                     let economic_weight = self.config.economic_weight;
-                    let combined_score = (route_match.match_score as f64 * (1.0 - economic_weight)) +
-                                       (route_match.economic_score as f64 * economic_weight);
-                    let current_combined = (current_best.match_score as f64 * (1.0 - economic_weight)) +
-                                         (current_best.economic_score as f64 * economic_weight);
-                    
+                    let combined_score = (route_match.match_score as f64 * (1.0 - economic_weight))
+                        + (route_match.economic_score as f64 * economic_weight);
+                    let current_combined = (current_best.match_score as f64
+                        * (1.0 - economic_weight))
+                        + (current_best.economic_score as f64 * economic_weight);
+
                     if combined_score > current_combined {
                         best_match = Some(route_match);
                     }
@@ -823,14 +875,14 @@ impl Router {
                 best_match = Some(route_match);
             }
         }
-        
+
         Ok(best_match)
     }
-    
+
     /// Calculate match score for route
     async fn calculate_match_score(&self, request: &ZhtpRequest, route: &Route) -> ZhtpResult<u32> {
         let mut score = route.priority;
-        
+
         // Exact pattern matches get higher scores
         match &route.pattern {
             RoutePattern::Exact(_) => score += 100,
@@ -839,23 +891,29 @@ impl Router {
             RoutePattern::Wildcard(_) => score += 40,
             RoutePattern::EconomicPriority(_, _) => score += 120,
         }
-        
+
         // Method-specific routes get higher scores
         if route.methods.len() == 1 && route.methods.contains(&request.method) {
             score += 50;
         }
-        
+
         Ok(score)
     }
-    
+
     /// Calculate economic score for route
-    async fn calculate_economic_score(&self, request: &ZhtpRequest, route: &Route) -> ZhtpResult<u32> {
-        let dao_fee = request.headers.get("X-DAO-Fee")
+    async fn calculate_economic_score(
+        &self,
+        request: &ZhtpRequest,
+        route: &Route,
+    ) -> ZhtpResult<u32> {
+        let dao_fee = request
+            .headers
+            .get("X-DAO-Fee")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0);
-        
+
         let mut score = 0u32;
-        
+
         // Higher fees get higher scores
         match route.economic_requirements.fee_tier {
             FeeTier::Free => score += 10,
@@ -864,26 +922,26 @@ impl Router {
             FeeTier::Premium => score += 75,
             FeeTier::Enterprise => score += 100,
         }
-        
+
         // Bonus for exceeding minimum fee
         if dao_fee > route.economic_requirements.min_dao_fee {
             let fee_ratio = dao_fee as f64 / route.economic_requirements.min_dao_fee as f64;
             score += (fee_ratio * 20.0) as u32;
         }
-        
+
         // Incentive multiplier affects score
         score = (score as f64 * route.economic_requirements.incentive_multiplier) as u32;
-        
+
         Ok(score)
     }
-    
+
     /// Extract query parameters from URI
     fn extract_query_parameters(&self, uri: &str) -> HashMap<String, String> {
         let mut params = HashMap::new();
-        
+
         if let Some(query_start) = uri.find('?') {
             let query_string = &uri[query_start + 1..];
-            
+
             for pair in query_string.split('&') {
                 if let Some(eq_pos) = pair.find('=') {
                     let key = &pair[..eq_pos];
@@ -900,61 +958,77 @@ impl Router {
                 }
             }
         }
-        
+
         params
     }
-    
+
     /// Generate cache key for request
     fn generate_cache_key(&self, request: &ZhtpRequest) -> String {
         format!("{}:{}", request.method as u8, request.uri)
     }
-    
+
     /// Update route performance metrics
     fn update_route_performance(&mut self, route_name: &str) {
-        let performance = self.stats.route_performance
+        let performance = self
+            .stats
+            .route_performance
             .entry(route_name.to_string())
             .or_default();
         performance.request_count += 1;
     }
-    
+
     /// Update response time metrics
     fn update_response_time(&mut self, route_name: &str, response_time_ms: f64) {
-        let performance = self.stats.route_performance
+        let performance = self
+            .stats
+            .route_performance
             .entry(route_name.to_string())
             .or_default();
-        
+
         // Calculate rolling average
         let total_time = performance.avg_response_time_ms * (performance.request_count - 1) as f64;
-        performance.avg_response_time_ms = (total_time + response_time_ms) / performance.request_count as f64;
+        performance.avg_response_time_ms =
+            (total_time + response_time_ms) / performance.request_count as f64;
     }
-    
+
     /// Record economic routing decision
-    fn record_economic_routing(&mut self, request: &ZhtpRequest, route_match: &RouteMatch) -> ZhtpResult<()> {
-        let dao_fee = request.headers.get("X-DAO-Fee")
+    fn record_economic_routing(
+        &mut self,
+        request: &ZhtpRequest,
+        route_match: &RouteMatch,
+    ) -> ZhtpResult<()> {
+        let dao_fee = request
+            .headers
+            .get("X-DAO-Fee")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0);
-        
-        let performance = self.stats.route_performance
+
+        let performance = self
+            .stats
+            .route_performance
             .entry(route_match.route.metadata.name.clone())
             .or_default();
-        
+
         performance.total_dao_fees += dao_fee;
-        performance.avg_dao_fee = performance.total_dao_fees as f64 / performance.request_count as f64;
-        
-        tracing::info!("Economic routing: {} -> {} (fee: {} wei, score: {})",
-                      request.uri,
-                      route_match.route.metadata.name,
-                      dao_fee,
-                      route_match.economic_score);
-        
+        performance.avg_dao_fee =
+            performance.total_dao_fees as f64 / performance.request_count as f64;
+
+        tracing::info!(
+            "Economic routing: {} -> {} (fee: {} wei, score: {})",
+            request.uri,
+            route_match.route.metadata.name,
+            dao_fee,
+            route_match.economic_score
+        );
+
         Ok(())
     }
-    
+
     /// Get router statistics
     pub fn get_stats(&self) -> &RouteStats {
         &self.stats
     }
-    
+
     /// Clear route cache
     pub fn clear_cache(&mut self) {
         self.route_cache.clear();
@@ -1068,7 +1142,10 @@ pub fn create_economic_route(
             name: name.to_string(),
             description: format!("Economic route for {} (tier: {:?})", name, fee_tier),
             version: "1.0".to_string(),
-            tags: vec!["economic".to_string(), format!("{:?}", fee_tier).to_lowercase()],
+            tags: vec![
+                "economic".to_string(),
+                format!("{:?}", fee_tier).to_lowercase(),
+            ],
             rate_limit: None,
             cache_config: None,
             monitoring: MonitoringConfig {
@@ -1085,17 +1162,16 @@ pub fn create_economic_route(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn test_route_pattern_matching() {
         let router = Router::new(RouterConfig::default());
-        
+
         // Test exact match
         let exact_pattern = RoutePattern::Exact("/api/users".to_string());
         assert!(router.pattern_matches(&exact_pattern, "/api/users"));
         assert!(!router.pattern_matches(&exact_pattern, "/api/users/123"));
-        
+
         // Test wildcard match
         let wildcard_pattern = RoutePattern::Wildcard("/api/".to_string());
         assert!(router.pattern_matches(&wildcard_pattern, "/api/users"));
@@ -1110,7 +1186,7 @@ mod tests {
             "/users/{id}/posts/{post_id}".to_string(),
             vec!["id".to_string(), "post_id".to_string()],
         );
-        
+
         let params = router.extract_parameters(&pattern, "/users/123/posts/456");
         assert_eq!(params.get("id"), Some(&"123".to_string()));
         assert_eq!(params.get("post_id"), Some(&"456".to_string()));
@@ -1120,7 +1196,7 @@ mod tests {
     fn test_query_parameter_extraction() {
         let router = Router::new(RouterConfig::default());
         let params = router.extract_query_parameters("/api/search?q=test&limit=10&sort=desc");
-        
+
         assert_eq!(params.get("q"), Some(&"test".to_string()));
         assert_eq!(params.get("limit"), Some(&"10".to_string()));
         assert_eq!(params.get("sort"), Some(&"desc".to_string()));
@@ -1137,12 +1213,12 @@ mod tests {
     #[tokio::test]
     async fn test_economic_requirements() {
         use lib_economy::{EconomicModel, Priority};
-        
+
         let router = Router::new(RouterConfig::default());
-        
+
         // Create a test economic model
         let economic_model = EconomicModel::new();
-        
+
         let mut request = ZhtpRequest::new(
             ZhtpMethod::Get,
             "/test".to_string(),
@@ -1150,12 +1226,15 @@ mod tests {
             None, // requester
             Priority::Normal,
             &economic_model,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         // Set the required headers after creating the request
         request.headers.set("X-DAO-Fee", "5000".to_string());
-        request.headers.set("X-Payment-Method", "ethereum".to_string());
-        
+        request
+            .headers
+            .set("X-Payment-Method", "ethereum".to_string());
+
         let requirements = EconomicRequirements {
             min_dao_fee: 1000,
             max_dao_fee: 10000,
@@ -1164,8 +1243,11 @@ mod tests {
             ubi_contribution_required: false,
             fee_tier: FeeTier::Standard,
         };
-        
-        let result = router.economic_requirements_met(&request, &requirements).await.unwrap();
+
+        let result = router
+            .economic_requirements_met(&request, &requirements)
+            .await
+            .unwrap();
         assert!(result);
     }
 }

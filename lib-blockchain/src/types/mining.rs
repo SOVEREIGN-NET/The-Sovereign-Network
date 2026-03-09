@@ -3,8 +3,8 @@
 //! Provides environment-aware mining settings to ensure alpha/testnet
 //! boots fast while mainnet uses real difficulty.
 
-use serde::{Serialize, Deserialize};
 use super::Difficulty;
+use serde::{Deserialize, Serialize};
 
 /// Mining profile determines difficulty and iteration limits
 ///
@@ -36,7 +36,7 @@ impl MiningProfile {
         match self {
             MiningProfile::Bootstrap => MiningConfig {
                 difficulty: Difficulty::from_bits(0x207fffff), // Very easy - most hashes pass
-                max_iterations: 1_000,                         // Will find in <100 iterations typically
+                max_iterations: 1_000, // Will find in <100 iterations typically
                 target_block_time_ms: 100,
                 allow_instant_mining: true,
             },
@@ -186,10 +186,16 @@ pub fn get_mining_config_from_env() -> MiningConfig {
             Ok(chain_id) => {
                 if chain_id == 0x01 {
                     // Mainnet - ALWAYS use full difficulty regardless of other settings
-                    if std::env::var("ZHTP_ALLOW_BOOTSTRAP").ok().map(|v| v == "1").unwrap_or(false) {
+                    if std::env::var("ZHTP_ALLOW_BOOTSTRAP")
+                        .ok()
+                        .map(|v| v == "1")
+                        .unwrap_or(false)
+                    {
                         tracing::warn!("⚠️ ZHTP_ALLOW_BOOTSTRAP ignored on mainnet - security guardrail active");
                     }
-                    tracing::info!("🔒 Mainnet detected: Using Mainnet mining profile (full difficulty)");
+                    tracing::info!(
+                        "🔒 Mainnet detected: Using Mainnet mining profile (full difficulty)"
+                    );
                     return MiningProfile::Mainnet.config();
                 }
                 // Non-mainnet chain ID (including custom dev/test IDs like 9999) - continue to check ZHTP_ALLOW_BOOTSTRAP
@@ -221,7 +227,11 @@ pub fn get_mining_config_from_env() -> MiningConfig {
             // Preserve the "mainnet is special" invariant.
             if chain_id == 0x01 {
                 let profile = MiningProfile::Mainnet;
-                tracing::info!("Using {} mining profile from ZHTP_CHAIN_ID={}", profile, chain_id);
+                tracing::info!(
+                    "Using {} mining profile from ZHTP_CHAIN_ID={}",
+                    profile,
+                    chain_id
+                );
                 return profile.config();
             }
 
@@ -239,7 +249,11 @@ pub fn get_mining_config_from_env() -> MiningConfig {
                         MiningProfile::Bootstrap
                     }
                 };
-                tracing::info!("Using {} mining profile from ZHTP_CHAIN_ID={}", profile, chain_id);
+                tracing::info!(
+                    "Using {} mining profile from ZHTP_CHAIN_ID={}",
+                    profile,
+                    chain_id
+                );
                 return profile.config();
             }
 
@@ -306,7 +320,8 @@ mod tests {
         assert_eq!(MiningProfile::from_chain_id(0x01), MiningProfile::Mainnet);
         assert_eq!(MiningProfile::from_chain_id(0x02), MiningProfile::Testnet);
         assert_eq!(MiningProfile::from_chain_id(0x03), MiningProfile::Bootstrap);
-        assert_eq!(MiningProfile::from_chain_id(0xFF), MiningProfile::Bootstrap); // Unknown defaults to bootstrap
+        assert_eq!(MiningProfile::from_chain_id(0xFF), MiningProfile::Bootstrap);
+        // Unknown defaults to bootstrap
     }
 
     #[test]

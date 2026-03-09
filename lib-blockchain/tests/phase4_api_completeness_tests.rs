@@ -212,10 +212,7 @@ mod tests {
         let response = WalletListResponse {
             status: "success".to_string(),
             wallet_count: 2,
-            wallets: vec![
-                "wallet_1".to_string(),
-                "wallet_2".to_string(),
-            ],
+            wallets: vec!["wallet_1".to_string(), "wallet_2".to_string()],
         };
 
         let json = serde_json::to_string(&response).expect("Failed to serialize");

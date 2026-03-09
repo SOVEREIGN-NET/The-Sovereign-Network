@@ -1,5 +1,5 @@
 //! Reputation and Trust System
-//! 
+//!
 //! Implements a comprehensive reputation system for storage providers including:
 //! - Multi-dimensional reputation scoring
 //! - Historical performance tracking
@@ -9,10 +9,10 @@
 
 use crate::types::QualityViolation;
 // Note: No contracts imports needed - reputation is independent
-use anyhow::{Result, anyhow};
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
+use anyhow::{anyhow, Result};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Reputation manager for tracking provider trustworthiness
 #[derive(Debug)]
@@ -219,11 +219,11 @@ pub struct ReputationWeights {
 /// Trust level categories based on reputation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TrustLevel {
-    Untrusted,    // 0.0-0.3
-    LowTrust,     // 0.3-0.5
+    Untrusted,     // 0.0-0.3
+    LowTrust,      // 0.3-0.5
     ModerateTrust, // 0.5-0.7
-    HighTrust,    // 0.7-0.9
-    ExpertTrust,  // 0.9-1.0
+    HighTrust,     // 0.7-0.9
+    ExpertTrust,   // 0.9-1.0
 }
 
 /// Reputation-based provider ranking
@@ -288,7 +288,8 @@ impl ReputationManager {
             trend: ReputationTrend::NewProvider,
         };
 
-        self.provider_scores.insert(provider_id.clone(), initial_score);
+        self.provider_scores
+            .insert(provider_id.clone(), initial_score);
         self.performance_history.insert(provider_id, Vec::new());
         Ok(())
     }
@@ -327,11 +328,7 @@ impl ReputationManager {
     }
 
     /// Record an incident affecting reputation
-    pub fn record_incident(
-        &mut self,
-        provider_id: &str,
-        incident: IncidentRecord,
-    ) -> Result<()> {
+    pub fn record_incident(&mut self, provider_id: &str, incident: IncidentRecord) -> Result<()> {
         // Add incident to latest performance record
         if let Some(history) = self.performance_history.get_mut(provider_id) {
             if let Some(latest_record) = history.last_mut() {
@@ -341,11 +338,13 @@ impl ReputationManager {
 
         // Apply immediate reputation impact
         if let Some(score) = self.provider_scores.get_mut(provider_id) {
-            let penalty = self.config.incident_penalties
+            let penalty = self
+                .config
+                .incident_penalties
                 .get(&incident.incident_type)
                 .copied()
                 .unwrap_or(0.1);
-            
+
             // Apply penalty based on severity
             let severity_multiplier = match incident.severity {
                 IncidentSeverity::Low => 1.0,
@@ -380,7 +379,9 @@ impl ReputationManager {
 
     /// Recalculate reputation score for a provider
     fn recalculate_score(&mut self, provider_id: &str) -> Result<()> {
-        let history = self.performance_history.get(provider_id)
+        let history = self
+            .performance_history
+            .get(provider_id)
             .ok_or_else(|| anyhow!("No performance history found"))?;
 
         if history.is_empty() {
@@ -388,7 +389,8 @@ impl ReputationManager {
         }
 
         // Calculate metric scores based on recent performance
-        let recent_records: Vec<_> = history.iter()
+        let recent_records: Vec<_> = history
+            .iter()
             .rev()
             .take(10) // Last 10 records
             .collect();
@@ -399,7 +401,7 @@ impl ReputationManager {
         let honesty = self.calculate_honesty_score(&recent_records);
         let responsiveness = self.calculate_responsiveness_score(&recent_records);
         let longevity = self.calculate_longevity_score(provider_id);
-        
+
         // Calculate confidence based on data points
         let confidence = self.calculate_confidence(history.len() as u32);
 
@@ -421,9 +423,10 @@ impl ReputationManager {
             contracts_completed: 0, // Temp value
             total_value_handled: 0, // Temp value
         };
-        
+
         // Calculate weighted overall score using the method
-        let overall_score = self.calculate_overall_score(&temp_score) + (longevity * self.config.metric_weights.longevity);
+        let overall_score = self.calculate_overall_score(&temp_score)
+            + (longevity * self.config.metric_weights.longevity);
 
         // Apply peer attestation influence
         let peer_influence = self.calculate_peer_influence(provider_id);
@@ -461,13 +464,14 @@ impl ReputationManager {
             return 0.5;
         }
 
-        let avg_uptime: f64 = records.iter()
-            .map(|r| r.metrics.uptime)
-            .sum::<f64>() / records.len() as f64;
+        let avg_uptime: f64 =
+            records.iter().map(|r| r.metrics.uptime).sum::<f64>() / records.len() as f64;
 
-        let avg_integrity: f64 = records.iter()
+        let avg_integrity: f64 = records
+            .iter()
             .map(|r| r.metrics.data_integrity)
-            .sum::<f64>() / records.len() as f64;
+            .sum::<f64>()
+            / records.len() as f64;
 
         (avg_uptime + avg_integrity) / 2.0
     }
@@ -479,16 +483,17 @@ impl ReputationManager {
         }
 
         // Lower response time is better
-        let avg_response_time: f64 = records.iter()
+        let avg_response_time: f64 = records
+            .iter()
             .map(|r| r.metrics.avg_response_time as f64)
-            .sum::<f64>() / records.len() as f64;
+            .sum::<f64>()
+            / records.len() as f64;
 
         let response_score = (1000.0 - avg_response_time.min(1000.0)) / 1000.0;
 
         // Lower error rate is better
-        let avg_error_rate: f64 = records.iter()
-            .map(|r| r.metrics.error_rate)
-            .sum::<f64>() / records.len() as f64;
+        let avg_error_rate: f64 =
+            records.iter().map(|r| r.metrics.error_rate).sum::<f64>() / records.len() as f64;
 
         let error_score = 1.0 - avg_error_rate.min(1.0);
 
@@ -498,10 +503,14 @@ impl ReputationManager {
     /// Calculate security score (simplified)
     fn calculate_security_score(&self, records: &[&PerformanceRecord]) -> f64 {
         // For now, base on incident history
-        let security_incidents: usize = records.iter()
-            .map(|r| r.incidents.iter()
-                .filter(|i| matches!(i.incident_type, IncidentType::SecurityBreach))
-                .count())
+        let security_incidents: usize = records
+            .iter()
+            .map(|r| {
+                r.incidents
+                    .iter()
+                    .filter(|i| matches!(i.incident_type, IncidentType::SecurityBreach))
+                    .count()
+            })
             .sum();
 
         if security_incidents == 0 {
@@ -517,9 +526,11 @@ impl ReputationManager {
             return 0.5;
         }
 
-        let avg_compliance: f64 = records.iter()
+        let avg_compliance: f64 = records
+            .iter()
             .map(|r| r.sla_compliance.overall_compliance)
-            .sum::<f64>() / records.len() as f64;
+            .sum::<f64>()
+            / records.len() as f64;
 
         avg_compliance
     }
@@ -531,9 +542,7 @@ impl ReputationManager {
         }
 
         // Base on client ratings if available
-        let ratings: Vec<f64> = records.iter()
-            .filter_map(|r| r.client_rating)
-            .collect();
+        let ratings: Vec<f64> = records.iter().filter_map(|r| r.client_rating).collect();
 
         if ratings.is_empty() {
             0.5 // Neutral if no ratings
@@ -548,8 +557,10 @@ impl ReputationManager {
             let age_days = (std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() - score.last_updated) / 86400;
-            
+                .as_secs()
+                - score.last_updated)
+                / 86400;
+
             // Score increases with time, capped at 1.0
             (age_days as f64 / 365.0).min(1.0)
         } else {
@@ -564,13 +575,12 @@ impl ReputationManager {
                 return 0.5; // Neutral influence
             }
 
-            let weighted_sum: f64 = attestations.iter()
+            let weighted_sum: f64 = attestations
+                .iter()
                 .map(|a| a.value * a.attester_weight)
                 .sum();
-            
-            let weight_sum: f64 = attestations.iter()
-                .map(|a| a.attester_weight)
-                .sum();
+
+            let weight_sum: f64 = attestations.iter().map(|a| a.attester_weight).sum();
 
             if weight_sum > 0.0 {
                 weighted_sum / weight_sum
@@ -598,13 +608,22 @@ impl ReputationManager {
                 return ReputationTrend::NewProvider;
             }
 
-            let recent_avg = history.iter().rev().take(3)
+            let recent_avg = history
+                .iter()
+                .rev()
+                .take(3)
                 .map(|r| r.sla_compliance.overall_compliance)
-                .sum::<f64>() / 3.0;
+                .sum::<f64>()
+                / 3.0;
 
-            let older_avg = history.iter().rev().skip(3).take(3)
+            let older_avg = history
+                .iter()
+                .rev()
+                .skip(3)
+                .take(3)
                 .map(|r| r.sla_compliance.overall_compliance)
-                .sum::<f64>() / 3.0;
+                .sum::<f64>()
+                / 3.0;
 
             if recent_avg > older_avg + 0.05 {
                 ReputationTrend::Improving
@@ -640,11 +659,13 @@ impl ReputationManager {
 
     /// Get provider rankings
     pub fn get_provider_rankings(&self) -> Vec<ProviderRanking> {
-        let mut rankings: Vec<_> = self.provider_scores.iter()
+        let mut rankings: Vec<_> = self
+            .provider_scores
+            .iter()
             .map(|(id, score)| {
                 let trust_level = self.get_trust_level(id);
                 let contract_limits = self.calculate_contract_limits(score);
-                
+
                 ProviderRanking {
                     provider_id: id.clone(),
                     rank: 0, // Will be set after sorting
@@ -679,51 +700,70 @@ impl ReputationManager {
         ContractLimits {
             max_contract_value: base_value,
             max_storage_capacity: base_value * 1024, // GB
-            max_contract_duration: if score.overall_score >= 0.7 { 31536000 } else { 2592000 }, // 1 year vs 1 month
+            max_contract_duration: if score.overall_score >= 0.7 {
+                31536000
+            } else {
+                2592000
+            }, // 1 year vs 1 month
             required_escrow_percentage: if score.overall_score >= 0.8 { 0.1 } else { 0.3 }, // 10% vs 30%
         }
     }
 
     /// Record a violation for a provider
-    pub async fn record_violation(&mut self, node_id: lib_crypto::Hash, violation: QualityViolation) -> anyhow::Result<()> {
+    pub async fn record_violation(
+        &mut self,
+        node_id: lib_crypto::Hash,
+        violation: QualityViolation,
+    ) -> anyhow::Result<()> {
         let node_id_str = hex::encode(node_id.as_bytes());
-        
+
         // Initialize provider if not exists
         if !self.provider_scores.contains_key(&node_id_str) {
             self.initialize_provider(node_id_str.clone())?;
         }
-        
+
         // Calculate trend before mutable borrow
         let trend = self.calculate_trend(&node_id_str);
-        
+
         if let Some(score) = self.provider_scores.get_mut(&node_id_str) {
             // Apply violation penalty based on severity
             let penalty = match violation.severity {
-                s if s <= 0.25 => 0.05,    // Low severity
-                s if s <= 0.50 => 0.15,    // Medium severity
-                s if s <= 0.75 => 0.30,    // High severity
-                _ => 0.50,                 // Critical severity
+                s if s <= 0.25 => 0.05, // Low severity
+                s if s <= 0.50 => 0.15, // Medium severity
+                s if s <= 0.75 => 0.30, // High severity
+                _ => 0.50,              // Critical severity
             };
-            
+
             // Reduce reputation based on violation type
             match violation.violation_type.as_str() {
-                "data_loss" => score.metric_scores.reliability = (score.metric_scores.reliability - penalty).max(0.0),
-                "downtime" => score.metric_scores.reliability = (score.metric_scores.reliability - penalty).max(0.0),
-                "slow_response" => score.metric_scores.performance = (score.metric_scores.performance - penalty).max(0.0),
-                "breach" => score.metric_scores.security = (score.metric_scores.security - penalty).max(0.0),
+                "data_loss" => {
+                    score.metric_scores.reliability =
+                        (score.metric_scores.reliability - penalty).max(0.0)
+                }
+                "downtime" => {
+                    score.metric_scores.reliability =
+                        (score.metric_scores.reliability - penalty).max(0.0)
+                }
+                "slow_response" => {
+                    score.metric_scores.performance =
+                        (score.metric_scores.performance - penalty).max(0.0)
+                }
+                "breach" => {
+                    score.metric_scores.security = (score.metric_scores.security - penalty).max(0.0)
+                }
                 _ => score.overall_score = (score.overall_score - penalty * 0.5).max(0.0),
             }
-            
+
             // Recalculate overall score using the method (calculate directly to avoid borrowing issues)
             let metrics = &score.metric_scores;
-            let weighted_score = (metrics.reliability * 0.3) +
-                               (metrics.performance * 0.25) +
-                               (metrics.security * 0.2) +
-                               (metrics.honesty * 0.15) +
-                               (metrics.responsiveness * 0.1);
+            let weighted_score = (metrics.reliability * 0.3)
+                + (metrics.performance * 0.25)
+                + (metrics.security * 0.2)
+                + (metrics.honesty * 0.15)
+                + (metrics.responsiveness * 0.1);
             let overall_score = weighted_score * score.confidence;
             score.overall_score = overall_score;
-            
+
             // Update trend
             score.trend = trend;
             score.last_updated = std::time::SystemTime::now()
@@ -731,20 +771,20 @@ impl ReputationManager {
                 .unwrap()
                 .as_secs();
         }
-        
+
         Ok(())
     }
-    
+
     /// Calculate overall score from individual metrics
     fn calculate_overall_score(&self, score: &ReputationScore) -> f64 {
         let metrics = &score.metric_scores;
         // Weighted average of different metrics
-        let weighted_score = (metrics.reliability * 0.3) +
-                           (metrics.performance * 0.25) +
-                           (metrics.security * 0.2) +
-                           (metrics.honesty * 0.15) +
-                           (metrics.responsiveness * 0.1);
-        
+        let weighted_score = (metrics.reliability * 0.3)
+            + (metrics.performance * 0.25)
+            + (metrics.security * 0.2)
+            + (metrics.honesty * 0.15)
+            + (metrics.responsiveness * 0.1);
+
         // Apply confidence factor
         weighted_score * score.confidence
     }
@@ -793,9 +833,11 @@ mod tests {
     fn test_provider_initialization() {
         let config = ReputationConfig::default();
         let mut manager = ReputationManager::new(config);
-        
-        manager.initialize_provider("provider1".to_string()).unwrap();
-        
+
+        manager
+            .initialize_provider("provider1".to_string())
+            .unwrap();
+
         let score = manager.get_reputation("provider1").unwrap();
         assert_eq!(score.overall_score, 0.5);
         assert_eq!(score.trend, ReputationTrend::NewProvider);
@@ -805,9 +847,11 @@ mod tests {
     fn test_trust_level_calculation() {
         let config = ReputationConfig::default();
         let mut manager = ReputationManager::new(config);
-        
-        manager.initialize_provider("provider1".to_string()).unwrap();
-        
+
+        manager
+            .initialize_provider("provider1".to_string())
+            .unwrap();
+
         let trust_level = manager.get_trust_level("provider1");
         assert_eq!(trust_level, TrustLevel::ModerateTrust);
     }

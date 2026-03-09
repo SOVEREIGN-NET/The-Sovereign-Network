@@ -2,10 +2,10 @@
 //!
 //! Implements a minimal constant product AMM for SOV↔DAO token swaps.
 
-use serde::{Deserialize, Serialize};
+use super::{DEFAULT_FEE_BPS, MAX_FEE_BPS, MINIMUM_LIQUIDITY, POOL_ID_DOMAIN};
 use crate::integration::crypto_integration::PublicKey;
 use crate::types::dao::DAOType;
-use super::{DEFAULT_FEE_BPS, MAX_FEE_BPS, MINIMUM_LIQUIDITY, POOL_ID_DOMAIN};
+use serde::{Deserialize, Serialize};
 
 /// Swap direction indicator
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,7 +89,9 @@ impl std::fmt::Display for SwapError {
             SwapError::InsufficientLiquidity => write!(f, "Insufficient liquidity in pool"),
             SwapError::InsufficientBalance => write!(f, "Insufficient balance for swap"),
             SwapError::SlippageExceeded => write!(f, "Slippage tolerance exceeded"),
-            SwapError::DirectNpFpSwapBlocked => write!(f, "Direct NP↔FP swaps are blocked; use SOV as intermediary"),
+            SwapError::DirectNpFpSwapBlocked => {
+                write!(f, "Direct NP↔FP swaps are blocked; use SOV as intermediary")
+            }
             SwapError::GovernanceOnly => write!(f, "Only governance can perform this action"),
             SwapError::FeeTooHigh => write!(f, "Fee exceeds maximum allowed (10%)"),
             SwapError::InsufficientInitialLiquidity => write!(f, "Initial liquidity below minimum"),
@@ -147,7 +149,7 @@ pub struct SovSwapPool {
     k: u128,
     /// Fee in basis points (1 bps = 0.01%)
     fee_bps: u16,
-    
+
     // === Fee accounting ===
     /// Accumulated fees pending transfer to treasury (in SOV)
     pending_sov_fees: u64,
@@ -253,11 +255,8 @@ impl SovSwapPool {
 
         // Calculate output using constant product formula
         // amount_out = (reserve_out * amount_in) / (reserve_in + amount_in)
-        let token_out = self.calculate_output(
-            sov_amount_after_fee,
-            self.sov_reserve,
-            self.token_reserve,
-        )?;
+        let token_out =
+            self.calculate_output(sov_amount_after_fee, self.sov_reserve, self.token_reserve)?;
 
         if token_out == 0 {
             return Err(SwapError::ZeroOutputAmount);
@@ -276,10 +275,12 @@ impl SovSwapPool {
         }
 
         // Update reserves
-        let new_sov_reserve = self.sov_reserve
+        let new_sov_reserve = self
+            .sov_reserve
             .checked_add(sov_amount_after_fee)
             .ok_or(SwapError::Overflow)?;
-        let new_token_reserve = self.token_reserve
+        let new_token_reserve = self
+            .token_reserve
             .checked_sub(token_out)
             .ok_or(SwapError::Overflow)?;
 
@@ -287,7 +288,7 @@ impl SovSwapPool {
         let new_k = (new_sov_reserve as u128)
             .checked_mul(new_token_reserve as u128)
             .ok_or(SwapError::Overflow)?;
-        
+
         if new_k < self.k {
             return Err(SwapError::KInvariantViolation);
         }
@@ -296,9 +297,10 @@ impl SovSwapPool {
         self.sov_reserve = new_sov_reserve;
         self.token_reserve = new_token_reserve;
         self.k = new_k;
-        
+
         // Accumulate fee for treasury
-        self.pending_sov_fees = self.pending_sov_fees
+        self.pending_sov_fees = self
+            .pending_sov_fees
             .checked_add(fee_amount)
             .ok_or(SwapError::Overflow)?;
 
@@ -346,11 +348,8 @@ impl SovSwapPool {
             .ok_or(SwapError::Overflow)?;
 
         // Calculate output using constant product formula
-        let sov_out = self.calculate_output(
-            token_amount_after_fee,
-            self.token_reserve,
-            self.sov_reserve,
-        )?;
+        let sov_out =
+            self.calculate_output(token_amount_after_fee, self.token_reserve, self.sov_reserve)?;
 
         if sov_out == 0 {
             return Err(SwapError::ZeroOutputAmount);
@@ -369,10 +368,12 @@ impl SovSwapPool {
         }
 
         // Update reserves
-        let new_token_reserve = self.token_reserve
+        let new_token_reserve = self
+            .token_reserve
             .checked_add(token_amount_after_fee)
             .ok_or(SwapError::Overflow)?;
-        let new_sov_reserve = self.sov_reserve
+        let new_sov_reserve = self
+            .sov_reserve
             .checked_sub(sov_out)
             .ok_or(SwapError::Overflow)?;
 
@@ -380,7 +381,7 @@ impl SovSwapPool {
         let new_k = (new_sov_reserve as u128)
             .checked_mul(new_token_reserve as u128)
             .ok_or(SwapError::Overflow)?;
-        
+
         if new_k < self.k {
             return Err(SwapError::KInvariantViolation);
         }
@@ -389,9 +390,10 @@ impl SovSwapPool {
         self.sov_reserve = new_sov_reserve;
         self.token_reserve = new_token_reserve;
         self.k = new_k;
-        
+
         // Accumulate fee for treasury
-        self.pending_token_fees = self.pending_token_fees
+        self.pending_token_fees = self
+            .pending_token_fees
             .checked_add(fee_amount)
             .ok_or(SwapError::Overflow)?;
 
@@ -447,11 +449,7 @@ impl SovSwapPool {
     /// # Errors
     /// - `GovernanceOnly`: Caller is not governance
     /// - `FeeTooHigh`: Fee exceeds maximum
-    pub fn set_fee_bps(
-        &mut self,
-        caller: &PublicKey,
-        new_fee_bps: u16,
-    ) -> Result<u16, SwapError> {
+    pub fn set_fee_bps(&mut self, caller: &PublicKey, new_fee_bps: u16) -> Result<u16, SwapError> {
         self.require_governance(caller)?;
 
         if new_fee_bps > MAX_FEE_BPS {
@@ -471,10 +469,10 @@ impl SovSwapPool {
     pub fn collect_fees(&mut self) -> (u64, u64) {
         let sov_fees = self.pending_sov_fees;
         let token_fees = self.pending_token_fees;
-        
+
         self.pending_sov_fees = 0;
         self.pending_token_fees = 0;
-        
+
         (sov_fees, token_fees)
     }
 
@@ -498,8 +496,7 @@ impl SovSwapPool {
             // Token → SOV: Always allowed
             (Some(_), None) => Ok(()),
             // NP ↔ FP: Blocked
-            (Some(DAOType::NP), Some(DAOType::FP)) |
-            (Some(DAOType::FP), Some(DAOType::NP)) => {
+            (Some(DAOType::NP), Some(DAOType::FP)) | (Some(DAOType::FP), Some(DAOType::NP)) => {
                 Err(SwapError::DirectNpFpSwapBlocked)
             }
             // Same type swap (shouldn't happen but allow)
@@ -590,7 +587,7 @@ impl SovSwapPool {
     }
 
     /// Calculate swap output using constant product formula
-    /// 
+    ///
     /// Formula: amount_out = (reserve_out * amount_in) / (reserve_in + amount_in)
     fn calculate_output(
         &self,
@@ -643,11 +640,8 @@ impl SovSwapPool {
             .ok_or(SwapError::Overflow)?;
 
         // Calculate output using constant product formula
-        let token_out = self.calculate_output(
-            sov_amount_after_fee,
-            self.sov_reserve,
-            self.token_reserve,
-        )?;
+        let token_out =
+            self.calculate_output(sov_amount_after_fee, self.sov_reserve, self.token_reserve)?;
 
         if token_out == 0 {
             return Err(SwapError::ZeroOutputAmount);
@@ -701,11 +695,8 @@ impl SovSwapPool {
             .ok_or(SwapError::Overflow)?;
 
         // Calculate output using constant product formula
-        let sov_out = self.calculate_output(
-            token_amount_after_fee,
-            self.token_reserve,
-            self.sov_reserve,
-        )?;
+        let sov_out =
+            self.calculate_output(token_amount_after_fee, self.token_reserve, self.sov_reserve)?;
 
         if sov_out == 0 {
             return Err(SwapError::ZeroOutputAmount);
@@ -754,11 +745,11 @@ pub struct SimulationResult {
 /// Pool ID = Blake3(POOL_ID_DOMAIN || token_id)
 fn derive_pool_id(token_id: &[u8; 32]) -> [u8; 32] {
     use blake3::Hasher;
-    
+
     let mut hasher = Hasher::new();
     hasher.update(POOL_ID_DOMAIN);
     hasher.update(token_id);
-    
+
     let hash = hasher.finalize();
     let mut pool_id = [0u8; 32];
     pool_id.copy_from_slice(hash.as_bytes());
@@ -794,7 +785,8 @@ mod tests {
             10_000,
             governance.clone(),
             treasury.clone(),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(pool.is_initialized());
         assert_eq!(pool.sov_reserve, 10_000);
@@ -847,14 +839,8 @@ mod tests {
         let governance = PublicKey::new(vec![0; 1312]);
         let treasury = create_test_public_key(2);
 
-        let result = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        );
+        let result =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury);
 
         assert_eq!(result.unwrap_err(), SwapError::InvalidTokenAddress);
     }
@@ -865,14 +851,8 @@ mod tests {
         let governance = create_test_public_key(1);
         let treasury = PublicKey::new(vec![0; 1312]);
 
-        let result = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        );
+        let result =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury);
 
         assert_eq!(result.unwrap_err(), SwapError::InvalidTokenAddress);
     }
@@ -888,14 +868,9 @@ mod tests {
         let treasury = create_test_public_key(2);
         let user = create_test_public_key(3);
 
-        let mut pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let mut pool =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury)
+                .unwrap();
 
         let result = pool.swap_sov_to_token(&user, 1000, None).unwrap();
 
@@ -905,11 +880,11 @@ mod tests {
         assert_eq!(result.fee_amount, 10); // 1% of 1000
         assert!(result.amount_out > 0);
         assert!(result.amount_out < 1000); // Should get less due to slippage
-        
+
         // Verify reserves updated
         assert!(pool.sov_reserve > 10_000);
         assert!(pool.token_reserve < 10_000);
-        
+
         // Verify fee accumulated
         assert_eq!(pool.pending_sov_fees, 10);
     }
@@ -921,14 +896,9 @@ mod tests {
         let treasury = create_test_public_key(2);
         let user = create_test_public_key(3);
 
-        let mut pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let mut pool =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury)
+                .unwrap();
 
         let result = pool.swap_sov_to_token(&user, 0, None);
         assert_eq!(result.unwrap_err(), SwapError::ZeroInputAmount);
@@ -941,14 +911,9 @@ mod tests {
         let treasury = create_test_public_key(2);
         let user = create_test_public_key(3);
 
-        let mut pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let mut pool =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury)
+                .unwrap();
 
         // Request minimum output higher than possible
         let result = pool.swap_sov_to_token(&user, 1000, Some(999));
@@ -962,14 +927,9 @@ mod tests {
         let treasury = create_test_public_key(2);
         let user = create_test_public_key(3);
 
-        let mut pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let mut pool =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury)
+                .unwrap();
 
         // Try to swap enormous amount to drain pool
         let result = pool.swap_sov_to_token(&user, u64::MAX / 2, None);
@@ -991,14 +951,9 @@ mod tests {
         let treasury = create_test_public_key(2);
         let user = create_test_public_key(3);
 
-        let mut pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::FP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let mut pool =
+            SovSwapPool::init_pool(token_id, DAOType::FP, 10_000, 10_000, governance, treasury)
+                .unwrap();
 
         let result = pool.swap_token_to_sov(&user, 1000, None).unwrap();
 
@@ -1006,11 +961,11 @@ mod tests {
         assert_eq!(result.fee_amount, 10); // 1% of 1000
         assert!(result.amount_out > 0);
         assert!(result.amount_out < 1000);
-        
+
         // Verify reserves updated
         assert!(pool.token_reserve > 10_000);
         assert!(pool.sov_reserve < 10_000);
-        
+
         // Verify fee accumulated (in tokens this time)
         assert_eq!(pool.pending_token_fees, 10);
     }
@@ -1022,14 +977,9 @@ mod tests {
         let treasury = create_test_public_key(2);
         let user = create_test_public_key(3);
 
-        let mut pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::FP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let mut pool =
+            SovSwapPool::init_pool(token_id, DAOType::FP, 10_000, 10_000, governance, treasury)
+                .unwrap();
 
         let result = pool.swap_token_to_sov(&user, 0, None);
         assert_eq!(result.unwrap_err(), SwapError::ZeroInputAmount);
@@ -1045,14 +995,9 @@ mod tests {
         let governance = create_test_public_key(1);
         let treasury = create_test_public_key(2);
 
-        let pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let pool =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury)
+                .unwrap();
 
         let (sov_per_token, token_per_sov) = pool.get_price().unwrap();
 
@@ -1074,7 +1019,8 @@ mod tests {
             10_000,
             governance,
             treasury,
-        ).unwrap();
+        )
+        .unwrap();
 
         let (sov_per_token, token_per_sov) = pool.get_price().unwrap();
 
@@ -1091,14 +1037,9 @@ mod tests {
         let treasury = create_test_public_key(2);
         let user = create_test_public_key(3);
 
-        let mut pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let mut pool =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury)
+                .unwrap();
 
         let initial_k = pool.k;
 
@@ -1115,14 +1056,9 @@ mod tests {
         let treasury = create_test_public_key(2);
         let user = create_test_public_key(3);
 
-        let mut pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let mut pool =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury)
+                .unwrap();
 
         let initial_k = pool.k;
 
@@ -1146,17 +1082,12 @@ mod tests {
         let treasury = create_test_public_key(2);
         let user = create_test_public_key(3);
 
-        let mut pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let mut pool =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury)
+                .unwrap();
 
         let result = pool.swap_sov_to_token(&user, 10_000, None).unwrap();
-        
+
         // 1% of 10_000 = 100
         assert_eq!(result.fee_amount, 100);
     }
@@ -1175,7 +1106,8 @@ mod tests {
             10_000,
             governance.clone(),
             treasury,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Non-governance should fail
         let result = pool.set_fee_bps(&non_governance, 200);
@@ -1200,7 +1132,8 @@ mod tests {
             10_000,
             governance.clone(),
             treasury,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Try to set fee above max
         let result = pool.set_fee_bps(&governance, 1001);
@@ -1218,21 +1151,16 @@ mod tests {
         let treasury = create_test_public_key(2);
         let user = create_test_public_key(3);
 
-        let mut pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            10_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let mut pool =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 10_000, governance, treasury)
+                .unwrap();
 
         // Generate some fees
         pool.swap_sov_to_token(&user, 1000, None).unwrap();
         pool.swap_token_to_sov(&user, 500, None).unwrap();
 
         let (sov_fees, token_fees) = pool.collect_fees();
-        
+
         assert_eq!(sov_fees, 10); // 1% of 1000
         assert_eq!(token_fees, 5); // 1% of 500
 
@@ -1291,14 +1219,9 @@ mod tests {
         let governance = create_test_public_key(1);
         let treasury = create_test_public_key(2);
 
-        let pool = SovSwapPool::init_pool(
-            token_id,
-            DAOType::NP,
-            10_000,
-            20_000,
-            governance,
-            treasury,
-        ).unwrap();
+        let pool =
+            SovSwapPool::init_pool(token_id, DAOType::NP, 10_000, 20_000, governance, treasury)
+                .unwrap();
 
         let state = pool.state();
         assert_eq!(state.sov_reserve, 10_000);
@@ -1311,10 +1234,10 @@ mod tests {
     #[test]
     fn test_pool_id_deterministic() {
         let token_id = create_test_token_id(42);
-        
+
         let pool_id_1 = derive_pool_id(&token_id);
         let pool_id_2 = derive_pool_id(&token_id);
-        
+
         assert_eq!(pool_id_1, pool_id_2);
     }
 
@@ -1322,10 +1245,10 @@ mod tests {
     fn test_pool_id_unique_per_token() {
         let token_id_1 = create_test_token_id(1);
         let token_id_2 = create_test_token_id(2);
-        
+
         let pool_id_1 = derive_pool_id(&token_id_1);
         let pool_id_2 = derive_pool_id(&token_id_2);
-        
+
         assert_ne!(pool_id_1, pool_id_2);
     }
 }

@@ -4,8 +4,8 @@
 //! No side effects - all functions are pure.
 
 use crate::error::{CliError, CliResult};
-use regex::Regex;
 use lib_identity::IdentityType;
+use regex::Regex;
 
 /// Identity key material (public view only)
 #[derive(Debug, Clone, PartialEq)]
@@ -146,7 +146,9 @@ pub fn validate_dilithium_public_key(key: &[u8]) -> CliResult<()> {
     if key.len() != DILITHIUM2_PK_BYTES && key.len() != DILITHIUM5_PK_BYTES {
         return Err(CliError::IdentityError(format!(
             "Invalid Dilithium public key size: expected {} (D2) or {} (D5) bytes, got {}",
-            DILITHIUM2_PK_BYTES, DILITHIUM5_PK_BYTES, key.len()
+            DILITHIUM2_PK_BYTES,
+            DILITHIUM5_PK_BYTES,
+            key.len()
         )));
     }
     Ok(())
@@ -160,7 +162,8 @@ pub fn validate_kyber_public_key(key: &[u8]) -> CliResult<()> {
     if key.len() != KYBER1024_PK_BYTES {
         return Err(CliError::IdentityError(format!(
             "Invalid Kyber public key size: expected {} bytes (Kyber1024), got {}",
-            KYBER1024_PK_BYTES, key.len()
+            KYBER1024_PK_BYTES,
+            key.len()
         )));
     }
     Ok(())
@@ -298,18 +301,42 @@ mod tests {
 
     #[test]
     fn test_parse_identity_type_valid() {
-        assert!(matches!(parse_identity_type("human"), Ok(IdentityType::Human)));
-        assert!(matches!(parse_identity_type("agent"), Ok(IdentityType::Agent)));
-        assert!(matches!(parse_identity_type("contract"), Ok(IdentityType::Contract)));
-        assert!(matches!(parse_identity_type("organization"), Ok(IdentityType::Organization)));
-        assert!(matches!(parse_identity_type("device"), Ok(IdentityType::Device)));
+        assert!(matches!(
+            parse_identity_type("human"),
+            Ok(IdentityType::Human)
+        ));
+        assert!(matches!(
+            parse_identity_type("agent"),
+            Ok(IdentityType::Agent)
+        ));
+        assert!(matches!(
+            parse_identity_type("contract"),
+            Ok(IdentityType::Contract)
+        ));
+        assert!(matches!(
+            parse_identity_type("organization"),
+            Ok(IdentityType::Organization)
+        ));
+        assert!(matches!(
+            parse_identity_type("device"),
+            Ok(IdentityType::Device)
+        ));
     }
 
     #[test]
     fn test_parse_identity_type_case_insensitive() {
-        assert!(matches!(parse_identity_type("HUMAN"), Ok(IdentityType::Human)));
-        assert!(matches!(parse_identity_type("Agent"), Ok(IdentityType::Agent)));
-        assert!(matches!(parse_identity_type("CoNtRaCt"), Ok(IdentityType::Contract)));
+        assert!(matches!(
+            parse_identity_type("HUMAN"),
+            Ok(IdentityType::Human)
+        ));
+        assert!(matches!(
+            parse_identity_type("Agent"),
+            Ok(IdentityType::Agent)
+        ));
+        assert!(matches!(
+            parse_identity_type("CoNtRaCt"),
+            Ok(IdentityType::Contract)
+        ));
     }
 
     #[test]

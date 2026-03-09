@@ -24,11 +24,7 @@ mod benchmarks {
     }
 
     impl BenchResult {
-        fn new(
-            operation: &str,
-            num_operations: u64,
-            duration_ms: f64,
-        ) -> Self {
+        fn new(operation: &str, num_operations: u64, duration_ms: f64) -> Self {
             let ops_per_sec = num_operations as f64 / (duration_ms / 1000.0);
             let latency_us = (duration_ms * 1000.0) / num_operations as f64;
 
@@ -84,7 +80,11 @@ mod benchmarks {
         }
 
         let elapsed = start.elapsed();
-        let result = BenchResult::new("Cache Hit (1M ops)", num_ops, elapsed.as_secs_f64() * 1000.0);
+        let result = BenchResult::new(
+            "Cache Hit (1M ops)",
+            num_ops,
+            elapsed.as_secs_f64() * 1000.0,
+        );
 
         println!("\n=== Cache Hit Benchmark ===");
         result.print();
@@ -97,7 +97,10 @@ mod benchmarks {
             stats.hit_rate()
         );
 
-        assert!(result.ops_per_sec > 500_000.0, "Cache hit throughput too low");
+        assert!(
+            result.ops_per_sec > 500_000.0,
+            "Cache hit throughput too low"
+        );
     }
 
     /// Benchmark cache miss performance (disk reads)
@@ -129,7 +132,11 @@ mod benchmarks {
         }
 
         let elapsed = start.elapsed();
-        let result = BenchResult::new("Cache Miss (10k ops)", num_ops as u64, elapsed.as_secs_f64() * 1000.0);
+        let result = BenchResult::new(
+            "Cache Miss (10k ops)",
+            num_ops as u64,
+            elapsed.as_secs_f64() * 1000.0,
+        );
 
         println!("\n=== Cache Miss Benchmark ===");
         result.print();
@@ -161,7 +168,11 @@ mod benchmarks {
         }
 
         let elapsed = start.elapsed();
-        let result = BenchResult::new("Writes (100k ops)", num_ops as u64, elapsed.as_secs_f64() * 1000.0);
+        let result = BenchResult::new(
+            "Writes (100k ops)",
+            num_ops as u64,
+            elapsed.as_secs_f64() * 1000.0,
+        );
 
         println!("\n=== Write Performance Benchmark ===");
         result.print();
@@ -191,7 +202,11 @@ mod benchmarks {
         }
 
         let elapsed = start.elapsed();
-        let result = BenchResult::new("Deletes (50k ops)", num_ops as u64, elapsed.as_secs_f64() * 1000.0);
+        let result = BenchResult::new(
+            "Deletes (50k ops)",
+            num_ops as u64,
+            elapsed.as_secs_f64() * 1000.0,
+        );
 
         println!("\n=== Delete Performance Benchmark ===");
         result.print();
@@ -208,7 +223,10 @@ mod benchmarks {
         let test_sizes = vec![1_000, 10_000, 100_000];
 
         println!("\n=== State Root Computation Benchmark ===");
-        println!("{:<20} | {:<15} | {:<15}", "State Size", "Time (ms)", "Per 1k entries");
+        println!(
+            "{:<20} | {:<15} | {:<15}",
+            "State Size", "Time (ms)", "Per 1k entries"
+        );
 
         for size in test_sizes {
             // Add entries
@@ -248,7 +266,10 @@ mod benchmarks {
         let test_sizes = vec![100, 1_000, 10_000];
 
         println!("\n=== WAL Recovery Benchmark ===");
-        println!("{:<20} | {:<15} | {:<15}", "WAL Entries", "Time (ms)", "Per entry (μs)");
+        println!(
+            "{:<20} | {:<15} | {:<15}",
+            "WAL Entries", "Time (ms)", "Per entry (μs)"
+        );
 
         for size in test_sizes {
             // Create fresh storage for each test
@@ -277,7 +298,10 @@ mod benchmarks {
                 per_entry
             );
 
-            println!("  -> Recovered: {}, Discarded: {}", stats.entries_recovered, stats.entries_discarded);
+            println!(
+                "  -> Recovered: {}, Discarded: {}",
+                stats.entries_recovered, stats.entries_discarded
+            );
         }
 
         println!();
@@ -306,7 +330,11 @@ mod benchmarks {
         }
 
         let elapsed = start.elapsed();
-        let result = BenchResult::new("Versioned Writes (10k ops)", num_writes, elapsed.as_secs_f64() * 1000.0);
+        let result = BenchResult::new(
+            "Versioned Writes (10k ops)",
+            num_writes,
+            elapsed.as_secs_f64() * 1000.0,
+        );
         result.print();
 
         // Benchmark get_versioned
@@ -321,7 +349,11 @@ mod benchmarks {
         }
 
         let elapsed = start.elapsed();
-        let result = BenchResult::new("Versioned Reads (10k ops)", num_reads as u64, elapsed.as_secs_f64() * 1000.0);
+        let result = BenchResult::new(
+            "Versioned Reads (10k ops)",
+            num_reads as u64,
+            elapsed.as_secs_f64() * 1000.0,
+        );
         result.print();
 
         println!();
@@ -385,9 +417,8 @@ mod benchmarks {
         use std::thread;
 
         let temp_dir = Arc::new(TempDir::new().unwrap());
-        let storage = Arc::new(
-            PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap(),
-        );
+        let storage =
+            Arc::new(PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap());
         let mut cached = CachedPersistentStorage::new((*storage).clone()).unwrap();
 
         // Pre-populate
@@ -411,7 +442,8 @@ mod benchmarks {
                 let cached_clone = Arc::clone(&cached);
                 let handle = thread::spawn(move || {
                     for i in 0..ops_per_thread {
-                        let key = format!("key_{}", (thread_id * ops_per_thread + i) % 1000).into_bytes();
+                        let key =
+                            format!("key_{}", (thread_id * ops_per_thread + i) % 1000).into_bytes();
                         let _ = cached_clone.get(&key).unwrap();
                     }
                 });

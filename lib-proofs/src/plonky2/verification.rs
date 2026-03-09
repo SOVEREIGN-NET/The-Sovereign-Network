@@ -1,13 +1,13 @@
 //! Plonky2 Verification Module for ZHTP
-//! 
+//!
 //! Production-ready verification system based on the original implementation
 //! No placeholders or simplifications
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
-use crate::plonky2::{Plonky2Proof, ZkProofSystem, ZkProofStats};
+use crate::plonky2::{Plonky2Proof, ZkProofStats, ZkProofSystem};
 use crate::types::VerificationResult;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Circuit statistics for verification performance
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,7 +100,10 @@ impl Plonky2Verifier {
 
         // Basic proof structure validation
         if let Err(e) = self.validate_proof_structure(proof) {
-            return Ok(VerificationResult::Invalid(format!("Structure validation failed: {}", e)));
+            return Ok(VerificationResult::Invalid(format!(
+                "Structure validation failed: {}",
+                e
+            )));
         }
 
         // Circuit-specific verification
@@ -108,33 +111,22 @@ impl Plonky2Verifier {
             id if id.starts_with("optimized-transaction") => {
                 self.system.verify_transaction(proof)?
             }
-            id if id.starts_with("identity_v") => {
-                self.system.verify_identity(proof)?
-            }
-            id if id.starts_with("range_v") => {
-                self.system.verify_range(proof)?
-            }
-            id if id.starts_with("storage_access_v") => {
-                self.system.verify_storage_access(proof)?
-            }
-            id if id.starts_with("routing_privacy_v") => {
-                self.system.verify_routing(proof)?
-            }
-            id if id.starts_with("data_integrity_v") => {
-                self.system.verify_data_integrity(proof)?
-            }
-            id if id.starts_with("recursive_") => {
-                self.verify_recursive_proof(proof)?
-            }
+            id if id.starts_with("identity_v") => self.system.verify_identity(proof)?,
+            id if id.starts_with("range_v") => self.system.verify_range(proof)?,
+            id if id.starts_with("storage_access_v") => self.system.verify_storage_access(proof)?,
+            id if id.starts_with("routing_privacy_v") => self.system.verify_routing(proof)?,
+            id if id.starts_with("data_integrity_v") => self.system.verify_data_integrity(proof)?,
+            id if id.starts_with("recursive_") => self.verify_recursive_proof(proof)?,
             _ => {
-                return Ok(VerificationResult::Invalid(
-                    format!("Unsupported circuit type: {}", proof.circuit_id)
-                ));
+                return Ok(VerificationResult::Invalid(format!(
+                    "Unsupported circuit type: {}",
+                    proof.circuit_id
+                )));
             }
         };
 
         let verification_time = start_time.elapsed();
-        
+
         // Update statistics
         self.update_verification_stats(&proof.circuit_id, verification_time, verification_result);
 
@@ -145,7 +137,9 @@ impl Plonky2Verifier {
                 public_inputs: proof.public_inputs.clone(),
             })
         } else {
-            Ok(VerificationResult::Invalid("Cryptographic verification failed".to_string()))
+            Ok(VerificationResult::Invalid(
+                "Cryptographic verification failed".to_string(),
+            ))
         }
     }
 
@@ -160,7 +154,7 @@ impl Plonky2Verifier {
         if self.optimizations_enabled && proofs.len() > 1 {
             // Group proofs by circuit type for optimized batch verification
             let mut circuit_groups: HashMap<String, Vec<&Plonky2Proof>> = HashMap::new();
-            
+
             for proof in proofs {
                 circuit_groups
                     .entry(proof.circuit_id.clone())
@@ -199,7 +193,11 @@ impl Plonky2Verifier {
         };
 
         if proof.proof.len() < min_size {
-            return Err(anyhow::anyhow!("Proof data too small: {} < {}", proof.proof.len(), min_size));
+            return Err(anyhow::anyhow!(
+                "Proof data too small: {} < {}",
+                proof.proof.len(),
+                min_size
+            ));
         }
 
         // Verify public inputs count
@@ -215,8 +213,8 @@ impl Plonky2Verifier {
 
         if expected_inputs > 0 && proof.public_inputs.len() != expected_inputs {
             return Err(anyhow::anyhow!(
-                "Invalid public input count: {} != {}", 
-                proof.public_inputs.len(), 
+                "Invalid public input count: {} != {}",
+                proof.public_inputs.len(),
                 expected_inputs
             ));
         }
@@ -231,8 +229,9 @@ impl Plonky2Verifier {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
-        if proof.generated_at > current_time + 300 { // 5 minute tolerance
+
+        if proof.generated_at > current_time + 300 {
+            // 5 minute tolerance
             return Err(anyhow::anyhow!("Proof timestamp from future"));
         }
 
@@ -275,27 +274,29 @@ impl Plonky2Verifier {
 
         // Perform batch cryptographic verification
         let batch_valid = self.batch_verify_cryptographic(circuit_id, proofs)?;
-        
+
         // Generate individual results based on validation and batch verification
         for (i, proof) in proofs.iter().enumerate() {
             // First check structure validation
             if let Err(e) = self.validate_proof_structure(proof) {
-                results.push(VerificationResult::Invalid(
-                    format!("Batch validation failed: {}", e)
-                ));
+                results.push(VerificationResult::Invalid(format!(
+                    "Batch validation failed: {}",
+                    e
+                )));
                 continue;
             }
-            
+
             // Then check cryptographic verification
             if i < batch_valid.len() && batch_valid[i] {
                 results.push(VerificationResult::Valid {
                     circuit_id: proof.circuit_id.clone(),
-                    verification_time_ms: start_time.elapsed().as_millis() as u64 / proofs.len() as u64,
+                    verification_time_ms: start_time.elapsed().as_millis() as u64
+                        / proofs.len() as u64,
                     public_inputs: proof.public_inputs.clone(),
                 });
             } else {
                 results.push(VerificationResult::Invalid(
-                    "Batch cryptographic verification failed".to_string()
+                    "Batch cryptographic verification failed".to_string(),
                 ));
             }
         }
@@ -304,7 +305,11 @@ impl Plonky2Verifier {
     }
 
     /// Perform cryptographic verification for a batch of proofs
-    fn batch_verify_cryptographic(&self, circuit_id: &str, proofs: &[&Plonky2Proof]) -> Result<Vec<bool>> {
+    fn batch_verify_cryptographic(
+        &self,
+        circuit_id: &str,
+        proofs: &[&Plonky2Proof],
+    ) -> Result<Vec<bool>> {
         let mut results = Vec::with_capacity(proofs.len());
 
         // Circuit-specific batch verification
@@ -372,17 +377,19 @@ impl Plonky2Verifier {
         let time_ms = verification_time.as_millis() as u64;
         let current_avg = self.context.verification_stats.avg_verification_time_ms;
         let total_verified = self.context.verification_stats.total_proofs_verified;
-        
+
         if total_verified > 0 {
-            self.context.verification_stats.avg_verification_time_ms = 
+            self.context.verification_stats.avg_verification_time_ms =
                 (current_avg * (total_verified - 1) + time_ms) / total_verified;
         }
 
         // Update circuit-specific stats
-        let circuit_stats = self.context.circuit_stats
+        let circuit_stats = self
+            .context
+            .circuit_stats
             .entry(circuit_id.to_string())
             .or_insert_with(CircuitStats::default);
-        
+
         circuit_stats.avg_verification_time_ms = time_ms;
     }
 
@@ -429,13 +436,13 @@ mod tests {
     fn test_proof_structure_validation() -> Result<()> {
         let verifier = Plonky2Verifier::new()?;
         let system = ZkProofSystem::new()?;
-        
+
         // Create a valid proof
         let proof = system.prove_transaction(1000, 100, 10, 12345, 67890)?;
-        
+
         // Should validate successfully
         assert!(verifier.validate_proof_structure(&proof).is_ok());
-        
+
         Ok(())
     }
 
@@ -443,12 +450,12 @@ mod tests {
     fn test_single_proof_verification() -> Result<()> {
         let mut verifier = Plonky2Verifier::new()?;
         let system = ZkProofSystem::new()?;
-        
+
         let proof = system.prove_transaction(1000, 100, 10, 12345, 67890)?;
         let result = verifier.verify_proof(&proof)?;
-        
+
         assert!(matches!(result, VerificationResult::Valid { .. }));
-        
+
         Ok(())
     }
 
@@ -456,25 +463,29 @@ mod tests {
     fn test_batch_verification() -> Result<()> {
         let mut verifier = Plonky2Verifier::new()?;
         let system = ZkProofSystem::new()?;
-        
+
         let proofs = vec![
             system.prove_transaction(1000, 100, 10, 12345, 67890)?,
             system.prove_transaction(2000, 200, 20, 54321, 98765)?,
             system.prove_identity(12345, 25, 840, 9999, 18, 840, 1)?,
         ];
-        
+
         let results = verifier.batch_verify(&proofs)?;
         assert_eq!(results.len(), 3);
-        
+
         // All should be valid - debug any failures
         for (i, result) in results.iter().enumerate() {
             if !matches!(result, VerificationResult::Valid { .. }) {
                 eprintln!("Proof {} failed: {:?}", i, result);
             }
-            assert!(matches!(result, VerificationResult::Valid { .. }), 
-                "Proof {} should be valid but got: {:?}", i, result);
+            assert!(
+                matches!(result, VerificationResult::Valid { .. }),
+                "Proof {} should be valid but got: {:?}",
+                i,
+                result
+            );
         }
-        
+
         Ok(())
     }
 
@@ -482,14 +493,14 @@ mod tests {
     fn test_circuit_stats() -> Result<()> {
         let mut verifier = Plonky2Verifier::new()?;
         let system = ZkProofSystem::new()?;
-        
+
         let proof = system.prove_transaction(1000, 100, 10, 12345, 67890)?;
         let _result = verifier.verify_proof(&proof)?;
-        
+
         // Check that stats were updated
         let stats = verifier.get_stats();
         assert!(stats.total_proofs_verified > 0);
-        
+
         Ok(())
     }
 
@@ -497,17 +508,17 @@ mod tests {
     fn test_convenience_functions() -> Result<()> {
         let system = ZkProofSystem::new()?;
         let proof = system.prove_transaction(1000, 100, 10, 12345, 67890)?;
-        
+
         // Test single proof verification
         let result = verify_plonky2_proof(&proof)?;
         assert!(matches!(result, VerificationResult::Valid { .. }));
-        
+
         // Test batch verification
         let proofs = vec![proof];
         let results = batch_verify_plonky2_proofs(&proofs)?;
         assert_eq!(results.len(), 1);
         assert!(matches!(results[0], VerificationResult::Valid { .. }));
-        
+
         Ok(())
     }
 }

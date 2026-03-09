@@ -125,8 +125,7 @@ pub fn load_config(path: Option<&str>) -> CliResult<CliConfig> {
     let raw = fs::read_to_string(&config_path)
         .map_err(|e| CliError::ConfigError(format!("Failed to read config: {}", e)))?;
 
-    toml::from_str(&raw)
-        .map_err(|e| CliError::ConfigError(format!("Invalid CLI config: {}", e)))
+    toml::from_str(&raw).map_err(|e| CliError::ConfigError(format!("Invalid CLI config: {}", e)))
 }
 
 pub fn load_config_strict(path: &Path) -> CliResult<CliConfig> {
@@ -140,28 +139,18 @@ pub fn load_config_strict(path: &Path) -> CliResult<CliConfig> {
     let raw = fs::read_to_string(path)
         .map_err(|e| CliError::ConfigError(format!("Failed to read config: {}", e)))?;
 
-    toml::from_str(&raw)
-        .map_err(|e| CliError::ConfigError(format!("Invalid CLI config: {}", e)))
+    toml::from_str(&raw).map_err(|e| CliError::ConfigError(format!("Invalid CLI config: {}", e)))
 }
 
-pub fn resolve_server_alias<'a>(
-    config: &'a CliConfig,
-    name: &str,
-) -> Option<&'a ServerSpec> {
+pub fn resolve_server_alias<'a>(config: &'a CliConfig, name: &str) -> Option<&'a ServerSpec> {
     config.servers.get(name)
 }
 
-pub fn resolve_profile<'a>(
-    config: &'a CliConfig,
-    name: &str,
-) -> Option<&'a ProfileConfig> {
+pub fn resolve_profile<'a>(config: &'a CliConfig, name: &str) -> Option<&'a ProfileConfig> {
     config.profiles.get(name)
 }
 
-pub fn merge_defaults(
-    base: RuntimeDefaults,
-    overrides: &CliDefaults,
-) -> RuntimeDefaults {
+pub fn merge_defaults(base: RuntimeDefaults, overrides: &CliDefaults) -> RuntimeDefaults {
     RuntimeDefaults {
         keystore: overrides.keystore.clone().or(base.keystore),
         identity: overrides.identity.clone().or(base.identity),
@@ -171,10 +160,7 @@ pub fn merge_defaults(
     }
 }
 
-pub fn merge_profile_defaults(
-    base: RuntimeDefaults,
-    profile: &ServerProfile,
-) -> RuntimeDefaults {
+pub fn merge_profile_defaults(base: RuntimeDefaults, profile: &ServerProfile) -> RuntimeDefaults {
     RuntimeDefaults {
         keystore: profile.keystore.clone().or(base.keystore),
         identity: profile.identity.clone().or(base.identity),
@@ -184,10 +170,7 @@ pub fn merge_profile_defaults(
     }
 }
 
-pub fn merge_profile_config(
-    base: RuntimeDefaults,
-    profile: &ProfileConfig,
-) -> RuntimeDefaults {
+pub fn merge_profile_config(base: RuntimeDefaults, profile: &ProfileConfig) -> RuntimeDefaults {
     RuntimeDefaults {
         keystore: profile.keystore.clone().or(base.keystore),
         identity: profile.identity.clone().or(base.identity),
@@ -198,8 +181,7 @@ pub fn merge_profile_config(
 }
 
 pub fn config_path(path: Option<&str>) -> CliResult<PathBuf> {
-    path
-        .map(crate::logic::paths::expand_home_directory)
+    path.map(crate::logic::paths::expand_home_directory)
         .transpose()
         .map(|p| p.unwrap_or_else(default_config_path))
 }

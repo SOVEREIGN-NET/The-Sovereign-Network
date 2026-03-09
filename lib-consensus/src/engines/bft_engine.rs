@@ -7,12 +7,12 @@ use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 
 use crate::byzantine::ByzantineFaultDetector;
+use crate::engines::TransactionExecutor;
 use crate::types::{
     ConsensusConfig, ConsensusEvent, ConsensusProposal, ConsensusRound, ConsensusStep,
     ConsensusVote, VoteType,
 };
 use crate::validators::ValidatorManager;
-use crate::engines::TransactionExecutor;
 use crate::{ConsensusError, ConsensusResult};
 
 /// Byzantine Fault Tolerance consensus engine
@@ -68,10 +68,10 @@ impl BftEngine {
             byzantine_detector: ByzantineFaultDetector::new(),
             validator_identity: None,
             transaction_executor: TransactionExecutor::new(
-                256,                    // max_transactions_per_block
-                5_000_000,              // max_block_size_bytes (5MB)
-                10_000,                 // mempool_max_size
-                10_000,                 // mempool_max_age (blocks)
+                256,       // max_transactions_per_block
+                5_000_000, // max_block_size_bytes (5MB)
+                10_000,    // mempool_max_size
+                10_000,    // mempool_max_age (blocks)
             ),
         }
     }
@@ -291,7 +291,10 @@ impl BftEngine {
     /// Note: This method requires `&mut self` because it collects transactions
     /// from the mempool via `collect_block_transactions`, which internally
     /// calls `prepare_block_transactions` and mutates the mempool state.
-    async fn create_bft_proposal(&mut self, previous_hash: Hash) -> ConsensusResult<ConsensusProposal> {
+    async fn create_bft_proposal(
+        &mut self,
+        previous_hash: Hash,
+    ) -> ConsensusResult<ConsensusProposal> {
         // Extract validator_id early to avoid borrow conflicts.
         // Clone is acceptable here: IdentityId is Hash (32 bytes), and we need
         // owned value for use after mutable borrow in collect_block_transactions.
@@ -534,8 +537,9 @@ impl BftEngine {
     /// Collect transactions for block from mempool
     async fn collect_block_transactions(&mut self) -> ConsensusResult<Vec<u8>> {
         // Prepare transactions from mempool
-        let (tx_hashes, total_fees, total_size) =
-            self.transaction_executor.prepare_block_transactions(self.current_round.height);
+        let (tx_hashes, total_fees, total_size) = self
+            .transaction_executor
+            .prepare_block_transactions(self.current_round.height);
 
         // Create block metadata with transaction data
         #[derive(serde::Serialize)]
@@ -567,8 +571,9 @@ impl BftEngine {
         };
 
         // Serialize block data using bincode
-        bincode::serialize(&block_data)
-            .map_err(|e| ConsensusError::CryptoError(anyhow::anyhow!("Block serialization failed: {}", e)))
+        bincode::serialize(&block_data).map_err(|e| {
+            ConsensusError::CryptoError(anyhow::anyhow!("Block serialization failed: {}", e))
+        })
     }
 
     /// Create BFT consensus proof

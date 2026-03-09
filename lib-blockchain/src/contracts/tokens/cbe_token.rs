@@ -28,10 +28,10 @@
 //! - **C3**: Vesting-aware transfers (restricted until vested)
 //! - **C4**: Distribution locked at 40/30/20/10 split
 
+use crate::contracts::executor::{CallOrigin, ExecutionContext};
+use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::integration::crypto_integration::PublicKey;
-use crate::contracts::executor::{ExecutionContext, CallOrigin};
 
 // ============================================================================
 // CRITICAL CONSTANTS - NEVER CHANGE
@@ -178,7 +178,8 @@ impl VestingSchedule {
 
     /// Get transferable (vested - already released) amount
     pub fn transferable(&self, current_block: u64) -> u64 {
-        self.calculate_vested(current_block).saturating_sub(self.vested_amount)
+        self.calculate_vested(current_block)
+            .saturating_sub(self.vested_amount)
     }
 }
 
@@ -232,32 +233,21 @@ pub enum CbeTokenError {
 impl std::fmt::Display for CbeTokenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CbeTokenError::AlreadyInitialized =>
-                write!(f, "CBE token already initialized"),
-            CbeTokenError::NotInitialized =>
-                write!(f, "CBE token not initialized"),
-            CbeTokenError::Unauthorized =>
-                write!(f, "Unauthorized operation"),
-            CbeTokenError::InsufficientBalance =>
-                write!(f, "Insufficient balance"),
-            CbeTokenError::InsufficientVestedBalance =>
-                write!(f, "Insufficient vested balance"),
-            CbeTokenError::InsufficientAllowance =>
-                write!(f, "Insufficient allowance"),
-            CbeTokenError::MintingDisabled =>
-                write!(f, "Minting is disabled after initialization"),
-            CbeTokenError::ZeroAmount =>
-                write!(f, "Transfer amount cannot be zero"),
-            CbeTokenError::Overflow =>
-                write!(f, "Arithmetic overflow"),
-            CbeTokenError::ZeroRecipient =>
-                write!(f, "Recipient cannot be zero address"),
-            CbeTokenError::InvalidAllocation =>
-                write!(f, "Distribution allocation must sum to 100 billion"),
-            CbeTokenError::VestingNotFound =>
-                write!(f, "Vesting schedule not found"),
-            CbeTokenError::TokensNotVested =>
-                write!(f, "Cannot transfer unvested tokens"),
+            CbeTokenError::AlreadyInitialized => write!(f, "CBE token already initialized"),
+            CbeTokenError::NotInitialized => write!(f, "CBE token not initialized"),
+            CbeTokenError::Unauthorized => write!(f, "Unauthorized operation"),
+            CbeTokenError::InsufficientBalance => write!(f, "Insufficient balance"),
+            CbeTokenError::InsufficientVestedBalance => write!(f, "Insufficient vested balance"),
+            CbeTokenError::InsufficientAllowance => write!(f, "Insufficient allowance"),
+            CbeTokenError::MintingDisabled => write!(f, "Minting is disabled after initialization"),
+            CbeTokenError::ZeroAmount => write!(f, "Transfer amount cannot be zero"),
+            CbeTokenError::Overflow => write!(f, "Arithmetic overflow"),
+            CbeTokenError::ZeroRecipient => write!(f, "Recipient cannot be zero address"),
+            CbeTokenError::InvalidAllocation => {
+                write!(f, "Distribution allocation must sum to 100 billion")
+            }
+            CbeTokenError::VestingNotFound => write!(f, "Vesting schedule not found"),
+            CbeTokenError::TokensNotVested => write!(f, "Cannot transfer unvested tokens"),
         }
     }
 }
@@ -388,10 +378,14 @@ impl CbeToken {
         };
 
         // Distribute tokens to pools
-        self.balances.insert(compensation_address.key_id, CBE_COMPENSATION_POOL);
-        self.balances.insert(operational_address.key_id, CBE_OPERATIONAL_TREASURY);
-        self.balances.insert(performance_address.key_id, CBE_PERFORMANCE_INCENTIVES);
-        self.balances.insert(strategic_address.key_id, CBE_STRATEGIC_RESERVES);
+        self.balances
+            .insert(compensation_address.key_id, CBE_COMPENSATION_POOL);
+        self.balances
+            .insert(operational_address.key_id, CBE_OPERATIONAL_TREASURY);
+        self.balances
+            .insert(performance_address.key_id, CBE_PERFORMANCE_INCENTIVES);
+        self.balances
+            .insert(strategic_address.key_id, CBE_STRATEGIC_RESERVES);
 
         self.total_supply = CBE_TOTAL_SUPPLY;
         self.initialized = true;
@@ -454,7 +448,9 @@ impl CbeToken {
             return total_balance;
         }
 
-        let unvested: u64 = schedules.unwrap().iter()
+        let unvested: u64 = schedules
+            .unwrap()
+            .iter()
             .map(|s| {
                 let vested = s.calculate_vested(current_block);
                 s.total_amount.saturating_sub(vested)
@@ -599,7 +595,9 @@ impl CbeToken {
         let to_balance = self.balances.get(&to.key_id).copied().unwrap_or(0);
         self.balances.insert(
             to.key_id,
-            to_balance.checked_add(amount).ok_or(CbeTokenError::Overflow)?,
+            to_balance
+                .checked_add(amount)
+                .ok_or(CbeTokenError::Overflow)?,
         );
 
         Ok(())
@@ -648,14 +646,7 @@ mod tests {
     }
 
     fn create_test_execution_context(caller: &PublicKey) -> ExecutionContext {
-        ExecutionContext::with_contract(
-            caller.clone(),
-            caller.clone(),
-            1,
-            1000,
-            100000,
-            [1u8; 32],
-        )
+        ExecutionContext::with_contract(caller.clone(), caller.clone(), 1, 1000, 100000, [1u8; 32])
     }
 
     // ========================================================================
@@ -740,7 +731,9 @@ mod tests {
         let performance = create_test_public_key(3);
         let strategic = create_test_public_key(4);
 
-        token.init(&compensation, &operational, &performance, &strategic).unwrap();
+        token
+            .init(&compensation, &operational, &performance, &strategic)
+            .unwrap();
         let result = token.init(&compensation, &operational, &performance, &strategic);
 
         assert_eq!(result, Err(CbeTokenError::AlreadyInitialized));
@@ -831,9 +824,9 @@ mod tests {
         };
 
         // Linear vesting
-        assert_eq!(schedule.calculate_vested(100), 100);  // 10%
-        assert_eq!(schedule.calculate_vested(500), 500);  // 50%
-        assert_eq!(schedule.calculate_vested(750), 750);  // 75%
+        assert_eq!(schedule.calculate_vested(100), 100); // 10%
+        assert_eq!(schedule.calculate_vested(500), 500); // 50%
+        assert_eq!(schedule.calculate_vested(750), 750); // 75%
     }
 
     // ========================================================================
@@ -849,13 +842,18 @@ mod tests {
         let strategic = create_test_public_key(4);
         let recipient = create_test_public_key(5);
 
-        token.init(&compensation, &operational, &performance, &strategic).unwrap();
+        token
+            .init(&compensation, &operational, &performance, &strategic)
+            .unwrap();
 
         let ctx = create_test_execution_context(&compensation);
         let result = token.transfer(&ctx, &recipient, 1_000_000_000, 0);
 
         assert!(result.is_ok());
-        assert_eq!(token.balance_of(&compensation), CBE_COMPENSATION_POOL - 1_000_000_000);
+        assert_eq!(
+            token.balance_of(&compensation),
+            CBE_COMPENSATION_POOL - 1_000_000_000
+        );
         assert_eq!(token.balance_of(&recipient), 1_000_000_000);
     }
 
@@ -871,7 +869,9 @@ mod tests {
         let performance = create_test_public_key(3);
         let strategic = create_test_public_key(4);
 
-        token.init(&compensation, &operational, &performance, &strategic).unwrap();
+        token
+            .init(&compensation, &operational, &performance, &strategic)
+            .unwrap();
 
         let result = token.mint(&compensation, 1000);
         assert_eq!(result, Err(CbeTokenError::MintingDisabled));

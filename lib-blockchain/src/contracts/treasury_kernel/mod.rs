@@ -60,73 +60,72 @@
 //! - **Paid Ledger**: Double-payment prevention
 //! - **Governance Executor**: Proposal lifecycle and execution
 
-pub mod types;
-pub mod state;
-pub mod validation;
 pub mod authority;
+pub mod cap_ledger;
+pub mod cap_types;
+pub mod compensation_engine;
 pub mod events;
-pub mod ubi_engine;
+pub mod governance_executor;
+pub mod governance_types;
 pub mod interface;
 pub mod kernel_ops;
-pub mod srv_types;
-pub mod srv_ops;
-pub mod vesting_types;
-pub mod vesting;
-pub mod role_types;
-pub mod role_registry;
-pub mod cap_types;
-pub mod cap_ledger;
-pub mod metric_types;
 pub mod metric_book;
-pub mod payout_types;
-pub mod compensation_engine;
+pub mod metric_types;
 pub mod paid_ledger;
-pub mod governance_types;
-pub mod governance_executor;
+pub mod payout_types;
+pub mod role_registry;
+pub mod role_types;
+pub mod srv_ops;
+pub mod srv_types;
+pub mod state;
+pub mod types;
+pub mod ubi_engine;
+pub mod validation;
+pub mod vesting;
+pub mod vesting_types;
 
-pub use types::{KernelState, RejectionReason, KernelStats};
-pub use interface::{
-    KernelOpError, CreditReason, DebitReason, LockReason, ReleaseReason,
-    MintAuthorization, BurnAuthorization, MintReason,
-};
-pub use srv_types::{SRVState, SRVGenesisConfig, SRVUpdateRecord, SRVError};
-pub use vesting_types::{VestingId, VestingSchedule, VestingLock, VestingStatus};
-pub use vesting::VestingState;
-pub use role_types::{
-    RoleId, AssignmentId, IdentityId, RoleDefinition, Assignment,
-    AssignmentStatus, AssignmentError, RoleRegistryError,
-};
-pub use role_registry::RoleRegistry;
-pub use cap_types::{
-    ReservationId, RoleCap, AssignmentConsumption, PeriodConsumption,
-    CapReservation, CapError,
-};
 pub use cap_ledger::CapLedger;
-pub use metric_types::{
-    MetricKey, MetricType, MetricUnit, MetricRecord, AttesterRole,
-    Attestation, AttestationPolicy, EpochStatus, EpochState,
-    MetricError, EpochError,
-};
-pub use metric_book::{MetricBook, EpochClock};
-pub use payout_types::{
-    PayoutCalculation, PaymentRecord, CompensationConfig, EconomicConstants,
-    CompensationError, PaymentError, PayoutBreakdown, CapApplication, CapType,
-    ComputationHash, TransactionId,
+pub use cap_types::{
+    AssignmentConsumption, CapError, CapReservation, PeriodConsumption, ReservationId, RoleCap,
 };
 pub use compensation_engine::CompensationEngine;
-pub use paid_ledger::PaidLedger;
-pub use governance_types::{
-    ProposalId, TreasuryProposal, TreasuryAction, ProposalStatus,
-    TreasuryParameter, GovernanceError, ExecutionResult,
-    MintReason as GovMintReason, BurnReason as GovBurnReason,
-};
 pub use governance_executor::GovernanceExecutor;
+pub use governance_types::{
+    BurnReason as GovBurnReason, ExecutionResult, GovernanceError, MintReason as GovMintReason,
+    ProposalId, ProposalStatus, TreasuryAction, TreasuryParameter, TreasuryProposal,
+};
+pub use interface::{
+    BurnAuthorization, CreditReason, DebitReason, KernelOpError, LockReason, MintAuthorization,
+    MintReason, ReleaseReason,
+};
+pub use metric_book::{EpochClock, MetricBook};
+pub use metric_types::{
+    Attestation, AttestationPolicy, AttesterRole, EpochError, EpochState, EpochStatus, MetricError,
+    MetricKey, MetricRecord, MetricType, MetricUnit,
+};
+pub use paid_ledger::PaidLedger;
+pub use payout_types::{
+    CapApplication, CapType, CompensationConfig, CompensationError, ComputationHash,
+    EconomicConstants, PaymentError, PaymentRecord, PayoutBreakdown, PayoutCalculation,
+    TransactionId,
+};
+pub use role_registry::RoleRegistry;
+pub use role_types::{
+    Assignment, AssignmentError, AssignmentId, AssignmentStatus, IdentityId, RoleDefinition,
+    RoleId, RoleRegistryError,
+};
+pub use srv_types::{SRVError, SRVGenesisConfig, SRVState, SRVUpdateRecord};
+pub use types::{KernelState, KernelStats, RejectionReason};
+pub use vesting::VestingState;
+pub use vesting_types::{VestingId, VestingLock, VestingSchedule, VestingStatus};
 
-use serde::{Serialize, Deserialize};
-use std::collections::{BTreeMap, BTreeSet};
 use crate::integration::crypto_integration::PublicKey;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
-fn default_mint_delay_epochs() -> u64 { 1 }
+fn default_mint_delay_epochs() -> u64 {
+    1
+}
 
 /// Treasury Kernel - Exclusive enforcement for economic operations
 ///
@@ -260,7 +259,7 @@ impl TreasuryKernel {
     }
 
     /// Resume after crash (for crash recovery)
-    /// 
+    ///
     /// # Arguments
     /// * `block_height` - Current block height
     ///
@@ -269,14 +268,14 @@ impl TreasuryKernel {
     /// Err if state is corrupted
     pub fn resume_after_crash(&mut self, block_height: u64) -> Result<(), String> {
         let current_epoch = self.current_epoch(block_height);
-        
+
         // If already processed this epoch, nothing to do
         if let Some(last_epoch) = self.state.last_processed_epoch {
             if last_epoch >= current_epoch {
                 return Ok(());
             }
         }
-        
+
         Ok(())
     }
 }
@@ -314,11 +313,7 @@ mod tests {
 
     #[test]
     fn test_current_epoch_calculation() {
-        let kernel = TreasuryKernel::new(
-            test_governance(),
-            test_kernel_address(),
-            60_480,
-        );
+        let kernel = TreasuryKernel::new(test_governance(), test_kernel_address(), 60_480);
 
         assert_eq!(kernel.current_epoch(0), 0);
         assert_eq!(kernel.current_epoch(60_479), 0);
@@ -328,11 +323,7 @@ mod tests {
 
     #[test]
     fn test_state_accessors() {
-        let mut kernel = TreasuryKernel::new(
-            test_governance(),
-            test_kernel_address(),
-            60_480,
-        );
+        let mut kernel = TreasuryKernel::new(test_governance(), test_kernel_address(), 60_480);
 
         // Test immutable state accessor
         assert_eq!(kernel.state().stats.total_claims_processed, 0);
@@ -344,14 +335,12 @@ mod tests {
 
     #[test]
     fn test_get_stats() {
-        let mut kernel = TreasuryKernel::new(
-            test_governance(),
-            test_kernel_address(),
-            60_480,
-        );
+        let mut kernel = TreasuryKernel::new(test_governance(), test_kernel_address(), 60_480);
 
         kernel.state_mut().record_success();
-        kernel.state_mut().record_rejection(RejectionReason::NotACitizen);
+        kernel
+            .state_mut()
+            .record_rejection(RejectionReason::NotACitizen);
 
         let stats = kernel.get_stats();
         assert_eq!(stats.total_claims_processed, 1);
@@ -360,11 +349,7 @@ mod tests {
 
     #[test]
     fn test_resume_after_crash_no_prior_state() {
-        let mut kernel = TreasuryKernel::new(
-            test_governance(),
-            test_kernel_address(),
-            60_480,
-        );
+        let mut kernel = TreasuryKernel::new(test_governance(), test_kernel_address(), 60_480);
 
         let result = kernel.resume_after_crash(60_480);
         assert!(result.is_ok());
@@ -372,11 +357,7 @@ mod tests {
 
     #[test]
     fn test_resume_after_crash_skip_if_already_processed() {
-        let mut kernel = TreasuryKernel::new(
-            test_governance(),
-            test_kernel_address(),
-            60_480,
-        );
+        let mut kernel = TreasuryKernel::new(test_governance(), test_kernel_address(), 60_480);
 
         kernel.state_mut().last_processed_epoch = Some(1);
 

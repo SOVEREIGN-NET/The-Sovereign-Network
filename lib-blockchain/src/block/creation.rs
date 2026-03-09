@@ -1,11 +1,11 @@
 //! Block creation utilities
-//! 
+//!
 //! Functions for creating new blocks from transactions.
 
-use anyhow::Result;
 use crate::block::{Block, BlockHeader};
 use crate::transaction::Transaction;
 use crate::types::{Difficulty, Hash, MiningConfig};
+use anyhow::Result;
 
 /// Block builder for constructing new blocks
 #[derive(Debug)]
@@ -20,11 +20,7 @@ pub struct BlockBuilder {
 
 impl BlockBuilder {
     /// Create a new block builder
-    pub fn new(
-        previous_block_hash: Hash,
-        height: u64,
-        difficulty: Difficulty,
-    ) -> Self {
+    pub fn new(previous_block_hash: Hash, height: u64, difficulty: Difficulty) -> Self {
         Self {
             version: 1,
             previous_block_hash,
@@ -68,7 +64,8 @@ impl BlockBuilder {
     /// Build the block
     pub fn build(self) -> Result<Block> {
         // Calculate merkle root
-        let merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);
+        let merkle_root =
+            crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);
 
         // Calculate block size
         let transaction_count = self.transactions.len() as u32;
@@ -93,7 +90,8 @@ impl BlockBuilder {
     /// Calculate the size of the block being built
     fn calculate_block_size(&self) -> u32 {
         let header_size = 200; // Approximate header size
-        let transactions_size: usize = self.transactions
+        let transactions_size: usize = self
+            .transactions
             .iter()
             .map(|tx| crate::utils::size::transaction_size(tx))
             .sum();
@@ -162,7 +160,6 @@ pub fn estimate_block_time(difficulty: Difficulty, hash_rate_hps: f64) -> f64 {
     (difficulty.bits() as f64).max(1.0) / hash_rate_hps
 }
 
-
 /// Select transactions for block creation
 pub fn select_transactions_for_block(
     available_transactions: &[Transaction],
@@ -171,44 +168,47 @@ pub fn select_transactions_for_block(
 ) -> Vec<Transaction> {
     let mut selected = Vec::new();
     let mut total_size = 0;
-    
+
     // Sort by fee rate (highest first)
     let mut tx_refs: Vec<_> = available_transactions.iter().collect();
     tx_refs.sort_by(|a, b| {
         let fee_rate_a = crate::utils::fees::calculate_fee_rate(a);
         let fee_rate_b = crate::utils::fees::calculate_fee_rate(b);
-        fee_rate_b.partial_cmp(&fee_rate_a).unwrap_or(std::cmp::Ordering::Equal)
+        fee_rate_b
+            .partial_cmp(&fee_rate_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
-    
+
     for tx in tx_refs {
         if selected.len() >= max_transactions {
             break;
         }
-        
+
         let tx_size = crate::utils::size::transaction_size(tx);
         if total_size + tx_size > max_block_size {
             continue;
         }
-        
+
         selected.push(tx.clone());
         total_size += tx_size;
     }
-    
+
     selected
 }
 
 /// Block creation utilities
 pub mod utils {
     use super::*;
-    
+
     /// Calculate optimal block size for given transactions
     pub fn calculate_optimal_block_size(transactions: &[Transaction]) -> usize {
         transactions
             .iter()
             .map(|tx| crate::utils::size::transaction_size(tx))
-            .sum::<usize>() + 200 // Add header size
+            .sum::<usize>()
+            + 200 // Add header size
     }
-    
+
     /// Validate transactions for block inclusion
     pub fn validate_transactions_for_block(transactions: &[Transaction]) -> Result<()> {
         for transaction in transactions {
@@ -218,18 +218,18 @@ pub mod utils {
         }
         Ok(())
     }
-    
+
     /// Check if block would exceed limits
     pub fn check_block_limits(transactions: &[Transaction]) -> Result<()> {
         if transactions.len() > crate::MAX_TRANSACTIONS_PER_BLOCK {
             return Err(anyhow::anyhow!("Too many transactions for block"));
         }
-        
+
         let total_size = calculate_optimal_block_size(transactions);
         if total_size > crate::MAX_BLOCK_SIZE {
             return Err(anyhow::anyhow!("Block size exceeds limit"));
         }
-        
+
         Ok(())
     }
 }

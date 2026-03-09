@@ -65,11 +65,7 @@ pub fn capture_version_info() -> VersionInfo {
         git_dirty: env!("GIT_DIRTY") == "true",
         build_timestamp: env!("BUILD_TIMESTAMP").to_string(),
         build_profile: env!("BUILD_PROFILE").to_string(),
-        platform: format!(
-            "{}-{}",
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        ),
+        platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
     }
 }
 
@@ -86,10 +82,7 @@ pub async fn handle_version_command(args: VersionArgs) -> CliResult<()> {
 }
 
 /// Internal implementation with dependency injection
-async fn handle_version_command_impl(
-    args: VersionArgs,
-    output: &dyn Output,
-) -> CliResult<()> {
+async fn handle_version_command_impl(args: VersionArgs, output: &dyn Output) -> CliResult<()> {
     let info = capture_version_info();
 
     if args.full {

@@ -32,16 +32,22 @@ pub fn from_octal(input: &str) -> io::Result<u16> {
     }
 
     if s.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty octal string"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "empty octal string",
+        ));
     }
 
     let mut val: u16 = 0;
     for &c in s.as_bytes() {
-        let d = oct_val(c).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid octal digit"))?;
+        let d = oct_val(c)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid octal digit"))?;
         val = val
             .checked_mul(8)
             .and_then(|v| v.checked_add(d as u16))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "octal value out of u16 range"))?;
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "octal value out of u16 range")
+            })?;
     }
 
     Ok(val)

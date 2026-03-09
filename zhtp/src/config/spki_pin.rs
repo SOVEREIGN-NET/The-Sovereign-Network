@@ -20,9 +20,8 @@ pub fn parse_spki_hex(hex_str: &str) -> Result<[u8; 32]> {
         ));
     }
 
-    let bytes = hex::decode(hex_str).map_err(|e| {
-        anyhow!("SPKI pin contains invalid hex characters: {}", e)
-    })?;
+    let bytes = hex::decode(hex_str)
+        .map_err(|e| anyhow!("SPKI pin contains invalid hex characters: {}", e))?;
 
     let mut result = [0u8; 32];
     result.copy_from_slice(&bytes);
@@ -49,7 +48,10 @@ mod tests {
         let hex = "a1b2c3d4";
         let result = parse_spki_hex(hex);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("64 hex characters"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("64 hex characters"));
     }
 
     #[test]
@@ -57,7 +59,10 @@ mod tests {
         let hex = "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8ff";
         let result = parse_spki_hex(hex);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("64 hex characters"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("64 hex characters"));
     }
 
     #[test]

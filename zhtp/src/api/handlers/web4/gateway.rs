@@ -16,17 +16,17 @@
 //! - Domain validation prevents injection attacks
 //! - Host header sanitization prevents header injection
 
-use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
-use lib_protocols::zhtp::ZhtpResult;
-use lib_protocols::zhtp::ZhtpRequestHandler;
-use lib_network::web4::DomainRegistry;
-use crate::web4_stub::{Web4ContentService, ZdnsResolver};
-use crate::pouw::validation::{ReceiptValidator, ValidatedReceipt};
 use crate::pouw::types::ProofType;
+use crate::pouw::validation::{ReceiptValidator, ValidatedReceipt};
+use crate::web4_stub::{Web4ContentService, ZdnsResolver};
+use lib_network::web4::DomainRegistry;
+use lib_protocols::zhtp::ZhtpRequestHandler;
+use lib_protocols::zhtp::ZhtpResult;
+use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 /// Configuration for the Web4 gateway
 #[derive(Debug, Clone)]
@@ -223,9 +223,14 @@ impl Web4GatewayHandler {
         manifest_cid: Option<String>,
         bytes_verified: u64,
     ) {
-        let Some(validator_lock) = &self.pouw_validator else { return };
+        let Some(validator_lock) = &self.pouw_validator else {
+            return;
+        };
         let node_did = self.node_did.as_deref().unwrap_or("did:zhtp:node");
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let mut nonce = vec![0u8; 16];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
 
@@ -282,15 +287,13 @@ impl Web4GatewayHandler {
                 // Emit Web4ContentServed POUW receipt for served content (fire-and-forget)
                 let bytes = result.content.len() as u64;
                 let domain_owned = domain.to_string();
-                self.emit_content_served_receipt(&domain_owned, None, bytes).await;
+                self.emit_content_served_receipt(&domain_owned, None, bytes)
+                    .await;
 
                 // Build response with headers
-                let mut response = ZhtpResponse::success_with_content_type(
-                    result.content,
-                    result.mime_type,
-                    None,
-                )
-                .with_cache_control(result.cache_control);
+                let mut response =
+                    ZhtpResponse::success_with_content_type(result.content, result.mime_type, None)
+                        .with_cache_control(result.cache_control);
 
                 // Add ETag if present
                 if let Some(etag) = result.etag {
@@ -303,16 +306,12 @@ impl Web4GatewayHandler {
                 }
 
                 // Add gateway-specific headers
-                response = response.with_custom_header(
-                    "X-Web4-Domain".to_string(),
-                    domain.to_string(),
-                );
+                response =
+                    response.with_custom_header("X-Web4-Domain".to_string(), domain.to_string());
 
                 if result.is_fallback {
-                    response = response.with_custom_header(
-                        "X-Web4-Fallback".to_string(),
-                        "true".to_string(),
-                    );
+                    response = response
+                        .with_custom_header("X-Web4-Fallback".to_string(), "true".to_string());
                 }
 
                 Ok(response)
@@ -636,7 +635,8 @@ mod tests {
         let extractor = TestExtractor::new(config);
 
         assert!(extractor.validate_domain("short.zhtp")); // 10 chars
-        assert!(!extractor.validate_domain("this-is-a-very-long-domain-name.zhtp")); // > 20 chars
+        assert!(!extractor.validate_domain("this-is-a-very-long-domain-name.zhtp"));
+        // > 20 chars
     }
 
     // ========================================
@@ -680,13 +680,13 @@ mod tests {
         fn _compile_check() {
             // This function is never called, just checks compilation
             async fn _inner() {
-                let _storage = std::sync::Arc::new(
-                    tokio::sync::RwLock::new(
-                        lib_storage::UnifiedStorageSystem::new(
-                            lib_storage::UnifiedStorageConfig::default()
-                        ).await.unwrap()
+                let _storage = std::sync::Arc::new(tokio::sync::RwLock::new(
+                    lib_storage::UnifiedStorageSystem::new(
+                        lib_storage::UnifiedStorageConfig::default(),
                     )
-                );
+                    .await
+                    .unwrap(),
+                ));
                 // Note: StubDomainRegistry cannot be used here - needs real DomainRegistry type
                 // let registry = std::sync::Arc::new(
                 //     crate::web4_stub::StubDomainRegistry::new_with_storage(storage).await.unwrap()

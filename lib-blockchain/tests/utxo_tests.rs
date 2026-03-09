@@ -2,21 +2,21 @@
 //!
 //! Tests the UTXO management, nullifier tracking, and double-spend prevention.
 
-use lib_blockchain::*;
-use lib_blockchain::transaction::core::IdentityTransactionData;
-use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use anyhow::Result;
+use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+use lib_blockchain::transaction::core::IdentityTransactionData;
+use lib_blockchain::*;
 use std::collections::HashSet;
 
 // Import ZK types for creating valid test proofs
-use lib_proofs::{ZkTransactionProof, ZkProof};
+use lib_proofs::{ZkProof, ZkTransactionProof};
 
 // Helper function to create valid test ZK proofs
 fn create_valid_test_zk_proof() -> ZkProof {
     ZkProof::new(
         "Plonky2".to_string(),
-        vec![1, 2, 3, 4], // Mock proof data
-        vec![42], // Mock public inputs (non-empty)
+        vec![1, 2, 3, 4],       // Mock proof data
+        vec![42],               // Mock public inputs (non-empty)
         vec![0x01, 0x02, 0x03], // Mock verification key (non-empty)
         None,
     )
@@ -25,11 +25,7 @@ fn create_valid_test_zk_proof() -> ZkProof {
 // Helper function to create valid test transaction proof
 fn create_valid_test_transaction_proof() -> ZkTransactionProof {
     let valid_proof = create_valid_test_zk_proof();
-    ZkTransactionProof::new(
-        valid_proof.clone(),
-        valid_proof.clone(), 
-        valid_proof,
-    )
+    ZkTransactionProof::new(valid_proof.clone(), valid_proof.clone(), valid_proof)
 }
 
 // Helper function to create a mined block that meets difficulty
@@ -69,9 +65,11 @@ async fn test_utxo_creation_and_tracking() -> Result<()> {
         public_key: vec![1, 2, 3, 4],
         ownership_proof: vec![5, 6, 7, 8],
         identity_type: "human".to_string(),
-        did_document_hash: Hash::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?,
+        did_document_hash: Hash::from_hex(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )?,
         created_at: 12345,
-        registration_fee: 5000,  // Increase fee to be safe
+        registration_fee: 5000, // Increase fee to be safe
         dao_fee: 1000,          // Increase DAO fee too
         controlled_nodes: Vec::new(),
         owned_wallets: Vec::new(),
@@ -94,9 +92,9 @@ async fn test_utxo_creation_and_tracking() -> Result<()> {
 
     // Add the block and verify UTXOs were created
     blockchain.add_block(block).await?;
-    
+
     assert_eq!(blockchain.utxo_set.len(), 2);
-    
+
     // Verify we can calculate output IDs correctly
     let tx_hash = transaction.hash();
     let expected_output_id_0 = {
@@ -105,9 +103,9 @@ async fn test_utxo_creation_and_tracking() -> Result<()> {
         data.extend_from_slice(&0usize.to_le_bytes());
         lib_blockchain::types::hash::blake3_hash(&data)
     };
-    
+
     assert!(blockchain.utxo_set.contains_key(&expected_output_id_0));
-    
+
     Ok(())
 }
 
@@ -115,25 +113,27 @@ async fn test_utxo_creation_and_tracking() -> Result<()> {
 #[ignore] // Requires integration test infrastructure: valid Dilithium signatures and ZK proofs
 async fn test_nullifier_tracking() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
-    
+
     // Create a transaction with nullifiers
-    let nullifier1 = Hash::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?;
-    let nullifier2 = Hash::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")?;
-    
+    let nullifier1 =
+        Hash::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?;
+    let nullifier2 =
+        Hash::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")?;
+
     let input1 = TransactionInput::new(
         Hash::from_hex("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")?,
         0,
         nullifier1,
         create_valid_test_transaction_proof(),
     );
-    
+
     let input2 = TransactionInput::new(
         Hash::from_hex("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")?,
         1,
         nullifier2,
         create_valid_test_transaction_proof(),
     );
-    
+
     let transaction = Transaction::new(
         vec![input1, input2],
         vec![TransactionOutput::new(
@@ -150,20 +150,21 @@ async fn test_nullifier_tracking() -> Result<()> {
         },
         "Nullifier test".as_bytes().to_vec(),
     );
-    
+
     // Create and add block using helper function
     let block = create_mined_block(&blockchain, vec![transaction])?;
     blockchain.add_block(block).await?;
-    
+
     // Verify nullifiers were tracked
     assert_eq!(blockchain.nullifier_set.len(), 2);
     assert!(blockchain.is_nullifier_used(&nullifier1));
     assert!(blockchain.is_nullifier_used(&nullifier2));
-    
+
     // Test that unused nullifier returns false
-    let unused_nullifier = Hash::from_hex("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")?;
+    let unused_nullifier =
+        Hash::from_hex("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")?;
     assert!(!blockchain.is_nullifier_used(&unused_nullifier));
-    
+
     Ok(())
 }
 
@@ -171,9 +172,10 @@ async fn test_nullifier_tracking() -> Result<()> {
 #[ignore] // Requires integration test infrastructure: valid Dilithium signatures and ZK proofs
 async fn test_double_spend_prevention() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
-    
-    let shared_nullifier = Hash::from_hex("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")?;
-    
+
+    let shared_nullifier =
+        Hash::from_hex("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")?;
+
     // Create first transaction using the nullifier
     let input1 = TransactionInput::new(
         Hash::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?,
@@ -181,7 +183,7 @@ async fn test_double_spend_prevention() -> Result<()> {
         shared_nullifier,
         create_valid_test_transaction_proof(),
     );
-    
+
     let transaction1 = Transaction::new(
         vec![input1],
         vec![TransactionOutput::new(
@@ -198,14 +200,14 @@ async fn test_double_spend_prevention() -> Result<()> {
         },
         "First transaction".as_bytes().to_vec(),
     );
-    
+
     // Add first transaction to blockchain
     let block1 = create_mined_block(&blockchain, vec![transaction1])?;
     blockchain.add_block(block1).await?;
-    
+
     // Verify nullifier is now used
     assert!(blockchain.is_nullifier_used(&shared_nullifier));
-    
+
     // Create second transaction trying to use the same nullifier (double spend)
     let input2 = TransactionInput::new(
         Hash::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")?,
@@ -213,7 +215,7 @@ async fn test_double_spend_prevention() -> Result<()> {
         shared_nullifier, // Same nullifier = double spend attempt
         create_valid_test_transaction_proof(),
     );
-    
+
     let transaction2 = Transaction::new(
         vec![input2],
         vec![TransactionOutput::new(
@@ -230,17 +232,17 @@ async fn test_double_spend_prevention() -> Result<()> {
         },
         "Double spend attempt".as_bytes().to_vec(),
     );
-    
+
     // Try to add second transaction - should fail due to double spend
     let block2 = create_mined_block(&blockchain, vec![transaction2])?;
-    
+
     // This should fail due to double spend detection
     let add_result = blockchain.add_block(block2).await;
     assert!(add_result.is_err());
-    
+
     // Blockchain should still be at height 1
     assert_eq!(blockchain.height, 1);
-    
+
     Ok(())
 }
 
@@ -248,21 +250,23 @@ async fn test_double_spend_prevention() -> Result<()> {
 #[ignore] // Requires integration test infrastructure: valid Dilithium signatures and ZK proofs
 async fn test_utxo_spending() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
-    
+
     // Step 1: Create a UTXO
     let output = TransactionOutput::new(
         Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?,
         Hash::from_hex("2222222222222222222222222222222222222222222222222222222222222222")?,
         PublicKey::new(vec![1, 2, 3, 4]),
     );
-    
+
     let identity_data = IdentityTransactionData {
         did: "did:zhtp:test456".to_string(),
         display_name: "Test Creation".to_string(),
         public_key: vec![1, 2, 3, 4],
         ownership_proof: vec![5, 6, 7, 8],
         identity_type: "human".to_string(),
-        did_document_hash: Hash::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?,
+        did_document_hash: Hash::from_hex(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )?,
         created_at: 12345,
         registration_fee: 5000,
         dao_fee: 1000,
@@ -281,31 +285,32 @@ async fn test_utxo_spending() -> Result<()> {
         },
         "UTXO creation".as_bytes().to_vec(),
     );
-    
+
     // Add creation transaction
     let block1 = create_mined_block(&blockchain, vec![creation_tx.clone()])?;
     blockchain.add_block(block1).await?;
-    
+
     // Verify UTXO was created
     assert_eq!(blockchain.utxo_set.len(), 1);
     let initial_utxo_count = blockchain.utxo_set.len();
-    
+
     // Step 2: Spend the UTXO
-    let spending_nullifier = Hash::from_hex("3333333333333333333333333333333333333333333333333333333333333333")?;
-    
+    let spending_nullifier =
+        Hash::from_hex("3333333333333333333333333333333333333333333333333333333333333333")?;
+
     let spending_input = TransactionInput::new(
         creation_tx.hash(), // Reference the creation transaction
-        0, // First (and only) output
+        0,                  // First (and only) output
         spending_nullifier,
         create_valid_test_transaction_proof(),
     );
-    
+
     let new_output = TransactionOutput::new(
         Hash::from_hex("4444444444444444444444444444444444444444444444444444444444444444")?,
         Hash::from_hex("5555555555555555555555555555555555555555555555555555555555555555")?,
         PublicKey::new(vec![7, 8, 9, 10]),
     );
-    
+
     let spending_tx = Transaction::new(
         vec![spending_input],
         vec![new_output],
@@ -318,16 +323,16 @@ async fn test_utxo_spending() -> Result<()> {
         },
         "UTXO spending".as_bytes().to_vec(),
     );
-    
+
     // Add spending transaction
     let block2 = create_mined_block(&blockchain, vec![spending_tx])?;
     blockchain.add_block(block2).await?;
-    
+
     // Verify UTXO set was updated
     // We still have UTXOs (the new one), and nullifier was added
     assert!(blockchain.utxo_set.len() >= 1);
     assert!(blockchain.is_nullifier_used(&spending_nullifier));
-    
+
     Ok(())
 }
 
@@ -336,7 +341,7 @@ async fn test_utxo_spending() -> Result<()> {
 async fn test_utxo_set_consistency() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     let mut expected_utxos = HashSet::new();
-    
+
     // Create multiple transactions and track expected UTXO state
     for i in 0..5 {
         let output = TransactionOutput::new(
@@ -344,7 +349,7 @@ async fn test_utxo_set_consistency() -> Result<()> {
             Hash::from_hex(&format!("{:064x}", i + 1000))?,
             PublicKey::new(vec![(i as u8), (i as u8) + 1, (i as u8) + 2]),
         );
-        
+
         let identity_data = IdentityTransactionData {
             did: format!("did:zhtp:test{}", i),
             display_name: format!("Test Identity {}", i),
@@ -358,7 +363,7 @@ async fn test_utxo_set_consistency() -> Result<()> {
             controlled_nodes: Vec::new(),
             owned_wallets: Vec::new(),
         };
-        
+
         let transaction = Transaction::new_identity_registration(
             identity_data,
             vec![output],
@@ -370,7 +375,7 @@ async fn test_utxo_set_consistency() -> Result<()> {
             },
             format!("Transaction {}", i).as_bytes().to_vec(),
         );
-        
+
         // Calculate expected output ID
         let tx_hash = transaction.hash();
         let mut output_id_data = Vec::new();
@@ -378,19 +383,19 @@ async fn test_utxo_set_consistency() -> Result<()> {
         output_id_data.extend_from_slice(&0usize.to_le_bytes());
         let expected_output_id = lib_blockchain::types::hash::blake3_hash(&output_id_data);
         expected_utxos.insert(expected_output_id);
-        
+
         // Add to blockchain
         let block = create_mined_block(&blockchain, vec![transaction])?;
         blockchain.add_block(block).await?;
     }
-    
+
     // Verify UTXO set matches expectations
     assert_eq!(blockchain.utxo_set.len(), expected_utxos.len());
-    
+
     for expected_utxo in &expected_utxos {
         assert!(blockchain.utxo_set.contains_key(expected_utxo));
     }
-    
+
     Ok(())
 }
 
@@ -399,25 +404,25 @@ async fn test_utxo_set_consistency() -> Result<()> {
 async fn test_large_nullifier_set() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
     let nullifier_count = 2; // Further reduced to narrow down the issue
-    
+
     // Create transaction with many inputs (nullifiers)
     let mut inputs = Vec::new();
     let mut expected_nullifiers = HashSet::new();
-    
+
     for i in 1..=nullifier_count {
         let nullifier = Hash::from_hex(&format!("{:064x}", i * 12345))?;
         expected_nullifiers.insert(nullifier);
-        
+
         let input = TransactionInput::new(
             Hash::from_hex(&format!("{:064x}", i * 54321))?,
             i as u32,
             nullifier,
             create_valid_test_transaction_proof(),
         );
-        
+
         inputs.push(input);
     }
-    
+
     let transaction = Transaction::new(
         inputs,
         vec![TransactionOutput::new(
@@ -434,18 +439,18 @@ async fn test_large_nullifier_set() -> Result<()> {
         },
         "Large nullifier test".as_bytes().to_vec(),
     );
-    
+
     // Add to blockchain
     let block = create_mined_block(&blockchain, vec![transaction])?;
     blockchain.add_block(block).await?;
-    
+
     // Verify all nullifiers were tracked
     assert_eq!(blockchain.nullifier_set.len(), nullifier_count);
-    
+
     for expected_nullifier in &expected_nullifiers {
         assert!(blockchain.is_nullifier_used(expected_nullifier));
     }
-    
+
     Ok(())
 }
 
@@ -453,23 +458,25 @@ async fn test_large_nullifier_set() -> Result<()> {
 #[ignore] // Requires integration test infrastructure: valid Dilithium signatures and ZK proofs
 async fn test_mixed_transaction_block() -> Result<()> {
     let mut blockchain = Blockchain::new()?;
-    
+
     // Create a block with mixed transaction types
-    
+
     // 1. UTXO creation transaction
     let creation_output = TransactionOutput::new(
         Hash::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?,
         Hash::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")?,
         PublicKey::new(vec![1, 2, 3]),
     );
-    
+
     let identity_data = IdentityTransactionData {
         did: "did:zhtp:mixed1".to_string(),
         display_name: "Mixed Test Creation".to_string(),
         public_key: vec![1, 2, 3],
         ownership_proof: vec![4, 5, 6],
         identity_type: "human".to_string(),
-        did_document_hash: Hash::from_hex("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")?,
+        did_document_hash: Hash::from_hex(
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        )?,
         created_at: 12345,
         registration_fee: 5000,
         dao_fee: 1000,
@@ -488,7 +495,7 @@ async fn test_mixed_transaction_block() -> Result<()> {
         },
         "Creation".as_bytes().to_vec(),
     );
-    
+
     // 2. UTXO spending transaction
     let spending_input = TransactionInput::new(
         Hash::from_hex("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")?,
@@ -496,13 +503,13 @@ async fn test_mixed_transaction_block() -> Result<()> {
         Hash::from_hex("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")?,
         create_valid_test_transaction_proof(),
     );
-    
+
     let spending_output = TransactionOutput::new(
         Hash::from_hex("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")?,
         Hash::from_hex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")?,
         PublicKey::new(vec![7, 8, 9]),
     );
-    
+
     let spending_tx = Transaction::new(
         vec![spending_input],
         vec![spending_output],
@@ -515,15 +522,15 @@ async fn test_mixed_transaction_block() -> Result<()> {
         },
         "Spending".as_bytes().to_vec(),
     );
-    
+
     // Create block with both transactions
     let transactions = vec![creation_tx, spending_tx];
     let block = create_mined_block(&blockchain, transactions)?;
     blockchain.add_block(block).await?;
-    
+
     // Verify mixed state updates
     assert_eq!(blockchain.utxo_set.len(), 2); // Two outputs created
     assert_eq!(blockchain.nullifier_set.len(), 1); // One nullifier used
-    
+
     Ok(())
 }

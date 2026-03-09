@@ -6,10 +6,10 @@
 //! This module provides the admission logic while the data types
 //! (AdmitResult, AdmitTx, etc.) live in lib-types.
 
-use lib_types::{Amount, BlockHeight};
-use lib_types::mempool::{AdmitResult, AdmitTx, AdmitErrorKind};
-use lib_fees::{FeeParams, FeeInput, compute_fee_v2};
 use lib_fees::model_v2::TxKindExt;
+use lib_fees::{compute_fee_v2, FeeInput, FeeParams};
+use lib_types::mempool::{AdmitErrorKind, AdmitResult, AdmitTx};
+use lib_types::{Amount, BlockHeight};
 
 use crate::config::{MempoolConfig, MempoolConfigExt};
 use crate::state::{MempoolState, MempoolStateExt};
@@ -58,9 +58,7 @@ pub fn admit(
     }
 
     // Check byte capacity, accounting for the incoming transaction size
-    let prospective_bytes = state
-        .total_bytes
-        .saturating_add(tx.tx_bytes as u64);
+    let prospective_bytes = state.total_bytes.saturating_add(tx.tx_bytes as u64);
 
     if prospective_bytes > config.max_mempool_bytes {
         return AdmitResult::Rejected(AdmitErrorKind::MempoolBytesFull {
@@ -129,7 +127,8 @@ pub fn admit(
     }
 
     // Check rate limiting
-    let period_count = state.sender_period_count(&tx.sender, current_block, config.rate_limit_period_blocks);
+    let period_count =
+        state.sender_period_count(&tx.sender, current_block, config.rate_limit_period_blocks);
     if period_count >= config.max_per_sender_per_period {
         return AdmitResult::Rejected(AdmitErrorKind::RateLimited {
             sender: tx.sender,
@@ -170,7 +169,7 @@ pub fn admit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_fees::{TxKind, SigScheme};
+    use lib_fees::{SigScheme, TxKind};
     use lib_types::Address;
 
     fn create_test_tx(fee: u64) -> AdmitTx {
@@ -222,7 +221,10 @@ mod tests {
         let state = MempoolState::default();
 
         let result = admit(&tx, &fee_params, &config, &state, 100);
-        assert!(matches!(result, AdmitResult::Rejected(AdmitErrorKind::TxTooLarge { .. })));
+        assert!(matches!(
+            result,
+            AdmitResult::Rejected(AdmitErrorKind::TxTooLarge { .. })
+        ));
     }
 
     #[test]
@@ -234,7 +236,10 @@ mod tests {
         let state = MempoolState::default();
 
         let result = admit(&tx, &fee_params, &config, &state, 100);
-        assert!(matches!(result, AdmitResult::Rejected(AdmitErrorKind::InsufficientFee { .. })));
+        assert!(matches!(
+            result,
+            AdmitResult::Rejected(AdmitErrorKind::InsufficientFee { .. })
+        ));
     }
 
     #[test]
@@ -250,7 +255,10 @@ mod tests {
         let state = MempoolState::default();
 
         let result = admit(&tx, &fee_params, &config, &state, 100);
-        assert!(matches!(result, AdmitResult::Rejected(AdmitErrorKind::WitnessTooLarge { .. })));
+        assert!(matches!(
+            result,
+            AdmitResult::Rejected(AdmitErrorKind::WitnessTooLarge { .. })
+        ));
     }
 
     #[test]
@@ -267,6 +275,9 @@ mod tests {
         let result = admit(&tx, &fee_params, &config, &state, 100);
         // Should be accepted (fee is sufficient, within all limits)
         // Note: fee might not be sufficient for this tx, so we just check it doesn't fail on witness
-        assert!(!matches!(result, AdmitResult::Rejected(AdmitErrorKind::WitnessTooLarge { .. })));
+        assert!(!matches!(
+            result,
+            AdmitResult::Rejected(AdmitErrorKind::WitnessTooLarge { .. })
+        ));
     }
 }

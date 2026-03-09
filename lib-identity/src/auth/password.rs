@@ -1,11 +1,11 @@
 //! Password management using lib-crypto hashing and key derivation
-//! 
+//!
 //! Only allows password authentication for identities that have been imported
 //! using 20-word seed phrases. Passwords are derived from identity seeds.
 
-use anyhow::Result;
-use lib_crypto::{hash_blake3, derive_keys};
 use crate::types::IdentityId;
+use anyhow::Result;
+use lib_crypto::{derive_keys, hash_blake3};
 use std::collections::HashMap;
 use zeroize::Zeroize;
 
@@ -59,7 +59,7 @@ pub struct PasswordValidation {
 /// Password strength score (0-100)
 #[derive(Debug, Clone)]
 pub struct PasswordStrength {
-    pub score: u8,  // 0-100
+    pub score: u8, // 0-100
     pub has_uppercase: bool,
     pub has_lowercase: bool,
     pub has_digit: bool,
@@ -72,13 +72,13 @@ pub struct PasswordStrength {
 impl PasswordStrength {
     /// Check if password meets minimum requirements
     pub fn meets_requirements(&self) -> bool {
-        self.score >= 60 && 
-        self.has_uppercase && 
-        self.has_lowercase && 
-        self.has_digit && 
-        self.has_special && 
-        self.length >= 8 &&
-        !self.is_common
+        self.score >= 60
+            && self.has_uppercase
+            && self.has_lowercase
+            && self.has_digit
+            && self.has_special
+            && self.length >= 8
+            && !self.is_common
     }
 
     /// Get strength level description
@@ -123,7 +123,7 @@ impl PasswordManager {
     /// Validate password strength and requirements
     pub fn validate_password_strength(password: &str) -> Result<PasswordStrength, PasswordError> {
         let length = password.len();
-        
+
         // Check length constraints
         if length < 8 {
             return Err(PasswordError::TooShort);
@@ -131,20 +131,20 @@ impl PasswordManager {
         if length > 128 {
             return Err(PasswordError::TooLong);
         }
-        
+
         // Check for spaces
         if password.contains(' ') {
             return Err(PasswordError::ContainsSpaces);
         }
-        
+
         // Check character requirements
         let has_uppercase = password.chars().any(|c| c.is_uppercase());
         let has_lowercase = password.chars().any(|c| c.is_lowercase());
         let has_digit = password.chars().any(|c| c.is_numeric());
-        let has_special = password.chars().any(|c| {
-            "!@#$%^&*()_+-=[]{}|;:,.<>?/~`".contains(c)
-        });
-        
+        let has_special = password
+            .chars()
+            .any(|c| "!@#$%^&*()_+-=[]{}|;:,.<>?/~`".contains(c));
+
         if !has_uppercase {
             return Err(PasswordError::NoUppercase);
         }
@@ -157,25 +157,24 @@ impl PasswordManager {
         if !has_special {
             return Err(PasswordError::NoSpecialChar);
         }
-        
+
         // Check against common passwords
         let is_common = Self::is_common_password(password);
         if is_common {
             return Err(PasswordError::CommonPassword);
         }
-        
+
         // Calculate entropy (bits)
-        let charset_size = 
-            (if has_uppercase { 26 } else { 0 }) +
-            (if has_lowercase { 26 } else { 0 }) +
-            (if has_digit { 10 } else { 0 }) +
-            (if has_special { 32 } else { 0 });
-        
+        let charset_size = (if has_uppercase { 26 } else { 0 })
+            + (if has_lowercase { 26 } else { 0 })
+            + (if has_digit { 10 } else { 0 })
+            + (if has_special { 32 } else { 0 });
+
         let entropy = (length as f64) * (charset_size as f64).log2();
-        
+
         // Calculate score (0-100)
         let mut score = 0u8;
-        
+
         // Length score (0-30 points)
         score += match length {
             8..=11 => 10,
@@ -183,30 +182,38 @@ impl PasswordManager {
             16.. => 30,
             _ => 0,
         };
-        
+
         // Character diversity score (40 points total)
-        if has_uppercase { score += 10; }
-        if has_lowercase { score += 10; }
-        if has_digit { score += 10; }
-        if has_special { score += 10; }
-        
+        if has_uppercase {
+            score += 10;
+        }
+        if has_lowercase {
+            score += 10;
+        }
+        if has_digit {
+            score += 10;
+        }
+        if has_special {
+            score += 10;
+        }
+
         // Entropy bonus (0-20 points)
         score += match entropy as u32 {
             0..=40 => 0,
             41..=60 => 10,
             61.. => 20,
         };
-        
+
         // Pattern detection penalty
         if Self::has_common_patterns(password) {
             score = score.saturating_sub(20);
         }
-        
+
         // Sequential characters penalty
         if Self::has_sequential_chars(password) {
             score = score.saturating_sub(10);
         }
-        
+
         Ok(PasswordStrength {
             score,
             has_uppercase,
@@ -223,18 +230,43 @@ impl PasswordManager {
     fn is_common_password(password: &str) -> bool {
         // List of most common passwords to reject
         const COMMON_PASSWORDS: &[&str] = &[
-            "password", "Password1", "Password123", "12345678", "password1",
-            "123456789", "12345678910", "qwerty", "Qwerty123", "abc123",
-            "password!", "Password!", "letmein", "welcome", "Welcome1",
-            "admin", "Admin123", "root", "toor", "pass", "Pass123",
-            "test", "Test123", "user", "User123", "guest", "Guest123",
-            "changeme", "Changeme1", "default", "Default1",
+            "password",
+            "Password1",
+            "Password123",
+            "12345678",
+            "password1",
+            "123456789",
+            "12345678910",
+            "qwerty",
+            "Qwerty123",
+            "abc123",
+            "password!",
+            "Password!",
+            "letmein",
+            "welcome",
+            "Welcome1",
+            "admin",
+            "Admin123",
+            "root",
+            "toor",
+            "pass",
+            "Pass123",
+            "test",
+            "Test123",
+            "user",
+            "User123",
+            "guest",
+            "Guest123",
+            "changeme",
+            "Changeme1",
+            "default",
+            "Default1",
         ];
-        
+
         let lower = password.to_lowercase();
-        COMMON_PASSWORDS.iter().any(|&common| {
-            password == common || lower == common.to_lowercase()
-        })
+        COMMON_PASSWORDS
+            .iter()
+            .any(|&common| password == common || lower == common.to_lowercase())
     }
 
     /// Check for common patterns
@@ -242,8 +274,10 @@ impl PasswordManager {
         // Check for keyboard patterns
         let keyboard_patterns = ["qwerty", "asdfgh", "zxcvbn", "123456", "abcdef"];
         let lower = password.to_lowercase();
-        
-        keyboard_patterns.iter().any(|&pattern| lower.contains(pattern))
+
+        keyboard_patterns
+            .iter()
+            .any(|&pattern| lower.contains(pattern))
     }
 
     /// Check for sequential characters
@@ -252,7 +286,7 @@ impl PasswordManager {
         if chars.len() < 3 {
             return false;
         }
-        
+
         for window in chars.windows(3) {
             // Check for sequential ascending
             if let (Some(a), Some(b), Some(c)) = (
@@ -268,7 +302,7 @@ impl PasswordManager {
                 }
             }
         }
-        
+
         false
     }
 
@@ -278,9 +312,10 @@ impl PasswordManager {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
-        self.imported_identities.insert(identity_id.clone(), timestamp);
-        
+
+        self.imported_identities
+            .insert(identity_id.clone(), timestamp);
+
         tracing::info!(
             " Identity {} marked as imported - can now set password",
             hex::encode(&identity_id.0[..8])
@@ -293,7 +328,12 @@ impl PasswordManager {
     }
 
     /// Set password for an imported identity
-    pub fn set_password(&mut self, identity_id: &IdentityId, password: &str, identity_seed: &[u8]) -> Result<(), PasswordError> {
+    pub fn set_password(
+        &mut self,
+        identity_id: &IdentityId,
+        password: &str,
+        identity_seed: &[u8],
+    ) -> Result<(), PasswordError> {
         // Check if identity is imported
         if !self.is_identity_imported(identity_id) {
             return Err(PasswordError::IdentityNotImported);
@@ -301,17 +341,13 @@ impl PasswordManager {
 
         // Validate password strength
         let strength = Self::validate_password_strength(password)?;
-        
+
         if !strength.meets_requirements() {
             return Err(PasswordError::WeakPassword);
         }
 
         // Generate salt using identity seed for consistency
-        let salt_material = [
-            identity_seed,
-            identity_id.0.as_slice(),
-            b"password_salt"
-        ].concat();
+        let salt_material = [identity_seed, identity_id.0.as_slice(), b"password_salt"].concat();
         let salt = hash_blake3(&salt_material);
 
         // Derive password hash using HKDF with salt and identity context
@@ -319,15 +355,13 @@ impl PasswordManager {
             password.as_bytes(),
             &salt,
             identity_seed,
-            identity_id.0.as_slice()
-        ].concat();
-        
+            identity_id.0.as_slice(),
+        ]
+        .concat();
+
         // Use HKDF to derive secure password hash
-        let derived_key = derive_keys(
-            &password_key_material,
-            b"ZHTP_password_derivation_v1",
-            32
-        ).map_err(|_| PasswordError::WeakPassword)?;
+        let derived_key = derive_keys(&password_key_material, b"ZHTP_password_derivation_v1", 32)
+            .map_err(|_| PasswordError::WeakPassword)?;
 
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&derived_key[..32]);
@@ -341,7 +375,8 @@ impl PasswordManager {
                 .as_secs(),
         };
 
-        self.password_hashes.insert(identity_id.clone(), password_hash);
+        self.password_hashes
+            .insert(identity_id.clone(), password_hash);
 
         tracing::info!(
             "🔐 Password set for identity {} (strength: {} - {})",
@@ -354,14 +389,21 @@ impl PasswordManager {
     }
 
     /// Validate password for an identity
-    pub fn validate_password(&self, identity_id: &IdentityId, password: &str, identity_seed: &[u8]) -> Result<PasswordValidation, PasswordError> {
+    pub fn validate_password(
+        &self,
+        identity_id: &IdentityId,
+        password: &str,
+        identity_seed: &[u8],
+    ) -> Result<PasswordValidation, PasswordError> {
         // Check if identity is imported
         if !self.is_identity_imported(identity_id) {
             return Err(PasswordError::IdentityNotImported);
         }
 
         // Get stored password hash
-        let stored_hash = self.password_hashes.get(identity_id)
+        let stored_hash = self
+            .password_hashes
+            .get(identity_id)
             .ok_or(PasswordError::PasswordNotSet)?;
 
         // Recreate password hash using same process
@@ -369,15 +411,13 @@ impl PasswordManager {
             password.as_bytes(),
             &stored_hash.salt,
             identity_seed,
-            identity_id.0.as_slice()
-        ].concat();
+            identity_id.0.as_slice(),
+        ]
+        .concat();
 
         // Derive hash using same method
-        let derived_key = derive_keys(
-            &password_key_material,
-            b"ZHTP_password_derivation_v1",
-            32
-        ).map_err(|_| PasswordError::InvalidPassword)?;
+        let derived_key = derive_keys(&password_key_material, b"ZHTP_password_derivation_v1", 32)
+            .map_err(|_| PasswordError::InvalidPassword)?;
 
         let mut test_hash = [0u8; 32];
         test_hash.copy_from_slice(&derived_key[..32]);
@@ -418,7 +458,7 @@ impl PasswordManager {
         identity_id: &IdentityId,
         old_password: &str,
         new_password: &str,
-        identity_seed: &[u8]
+        identity_seed: &[u8],
     ) -> Result<(), PasswordError> {
         // Verify old password first
         let validation = self.validate_password(identity_id, old_password, identity_seed)?;
@@ -472,7 +512,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    
+
     let mut result = 0u8;
     for i in 0..a.len() {
         result |= a[i] ^ b[i];
@@ -499,13 +539,17 @@ mod tests {
         let strong_password = "StrongPass123!";
 
         // Should fail before import
-        assert!(pm.set_password(&identity_id, strong_password, &seed).is_err());
+        assert!(pm
+            .set_password(&identity_id, strong_password, &seed)
+            .is_err());
 
         // Mark as imported
         pm.mark_identity_imported(&identity_id);
 
         // Should work after import
-        assert!(pm.set_password(&identity_id, strong_password, &seed).is_ok());
+        assert!(pm
+            .set_password(&identity_id, strong_password, &seed)
+            .is_ok());
     }
 
     #[test]
@@ -514,14 +558,14 @@ mod tests {
         let identity_id = Hash::from_bytes(&[2u8; 32]);
         let seed = [84u8; 32];
         let password = "Valid_Pass123!";
-        
+
         pm.mark_identity_imported(&identity_id);
         pm.set_password(&identity_id, password, &seed).unwrap();
-        
+
         // Correct password
         let validation = pm.validate_password(&identity_id, password, &seed).unwrap();
         assert!(validation.valid);
-        
+
         // Wrong password
         let validation = pm.validate_password(&identity_id, "wrong", &seed).unwrap();
         assert!(!validation.valid);

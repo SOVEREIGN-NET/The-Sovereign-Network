@@ -1,24 +1,26 @@
 //! ZHTP v1.0 Protocol Core - HTTP Replacement
-//! 
+//!
 //! Complete implementation of the Zero Knowledge Hypertext Transfer Protocol,
 //! designed as a replacement for HTTP with built-in economic
 //! incentives, zero-knowledge privacy, and post-quantum security.
 
-pub mod server;
-pub mod config;
 pub mod access_control;
-pub mod routing;
+pub mod config;
 pub mod content;
 pub mod middleware;
+pub mod routing;
+pub mod server;
 pub mod session;
 
 // Re-export commonly used types
-pub use server::{ZhtpServer, ServerState};
-pub use config::ServerConfig;
 pub use access_control::AccessController;
-pub use routing::{Router, Route, RouteHandler};
-pub use content::{ZhtpContentManager, ContentConfig, StorageBackend, CompressionType, EncryptionType};
-pub use session::{ZhtpSessionManager, SessionConfig, SessionInfo, AuthMethod, SecurityLevel};
+pub use config::ServerConfig;
+pub use content::{
+    CompressionType, ContentConfig, EncryptionType, StorageBackend, ZhtpContentManager,
+};
+pub use routing::{Route, RouteHandler, Router};
+pub use server::{ServerState, ZhtpServer};
+pub use session::{AuthMethod, SecurityLevel, SessionConfig, SessionInfo, ZhtpSessionManager};
 
 use crate::types::{ZhtpRequest, ZhtpResponse};
 
@@ -42,10 +44,10 @@ pub type ZhtpResult<T> = anyhow::Result<T>;
 pub trait ZhtpRequestHandler: Send + Sync {
     /// Handle ZHTP request
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse>;
-    
+
     /// Check if handler can process the request
     fn can_handle(&self, request: &ZhtpRequest) -> bool;
-    
+
     /// Get handler priority (higher priority handlers are checked first)
     fn priority(&self) -> u32 {
         100
@@ -57,10 +59,10 @@ pub trait ZhtpRequestHandler: Send + Sync {
 pub trait ZhtpMiddleware: Send + Sync {
     /// Process request before handling
     async fn before_request(&self, request: &mut ZhtpRequest) -> ZhtpResult<()>;
-    
+
     /// Process response after handling
     async fn after_response(&self, response: &mut ZhtpResponse) -> ZhtpResult<()>;
-    
+
     /// Handle errors
     async fn on_error(&self, _error: &anyhow::Error) -> ZhtpResult<Option<ZhtpResponse>> {
         Ok(None)
@@ -74,22 +76,22 @@ pub trait ZhtpServerEvents: Send + Sync {
     async fn on_start(&self) -> ZhtpResult<()> {
         Ok(())
     }
-    
+
     /// Called when server stops
     async fn on_stop(&self) -> ZhtpResult<()> {
         Ok(())
     }
-    
+
     /// Called when request is received
     async fn on_request(&self, _request: &ZhtpRequest) -> ZhtpResult<()> {
         Ok(())
     }
-    
+
     /// Called when response is sent
     async fn on_response(&self, _response: &ZhtpResponse) -> ZhtpResult<()> {
         Ok(())
     }
-    
+
     /// Called when error occurs
     async fn on_error(&self, _error: &anyhow::Error) -> ZhtpResult<()> {
         Ok(())
@@ -164,19 +166,21 @@ impl Default for ServerCapabilities {
 impl ServerCapabilities {
     /// Check if server supports given content type
     pub fn supports_content_type(&self, content_type: &str) -> bool {
-        self.supported_content_types.iter().any(|ct| ct == content_type)
+        self.supported_content_types
+            .iter()
+            .any(|ct| ct == content_type)
     }
-    
+
     /// Check if server supports given encoding
     pub fn supports_encoding(&self, encoding: &str) -> bool {
         self.supported_encodings.iter().any(|enc| enc == encoding)
     }
-    
+
     /// Add custom capability
     pub fn add_capability(&mut self, name: String, value: String) {
         self.custom_capabilities.insert(name, value);
     }
-    
+
     /// Get capabilities as ZHTP response
     pub fn to_response(&self) -> ZhtpResult<ZhtpResponse> {
         let capabilities_json = serde_json::to_vec(self)?;
@@ -220,9 +224,12 @@ mod tests {
         assert!(caps.supports_encoding("gzip"));
         assert!(caps.zk_proof_support);
         assert!(caps.post_quantum_support);
-        
+
         caps.add_capability("custom".to_string(), "value".to_string());
-        assert_eq!(caps.custom_capabilities.get("custom"), Some(&"value".to_string()));
+        assert_eq!(
+            caps.custom_capabilities.get("custom"),
+            Some(&"value".to_string())
+        );
     }
 
     #[test]

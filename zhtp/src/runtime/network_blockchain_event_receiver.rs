@@ -10,7 +10,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use lib_network::blockchain_sync::BlockchainEventReceiver;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 use super::blockchain_provider::get_global_blockchain;
 
@@ -53,19 +53,29 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
         }
 
         if height != local_height + 1 {
-            info!("Block {} is non-consecutive (local height {}), cannot apply", height, local_height);
+            info!(
+                "Block {} is non-consecutive (local height {}), cannot apply",
+                height, local_height
+            );
             // Kick the catch-up sync task so it downloads the missing blocks.
             crate::runtime::blockchain_provider::trigger_global_catchup(local_height);
             return Ok(());
         }
 
         let block_hash = hex::encode(&block.header.hash().as_bytes()[..8]);
-        info!("⛓️ Applying network block {} (hash {}) from mesh peer", height, block_hash);
+        info!(
+            "⛓️ Applying network block {} (hash {}) from mesh peer",
+            height, block_hash
+        );
 
         let mut bc = blockchain.write().await;
         match bc.add_block_from_network_with_persistence(block).await {
             Ok(()) => {
-                info!("✅ Network block {} applied, chain height now {}", height, bc.get_height());
+                info!(
+                    "✅ Network block {} applied, chain height now {}",
+                    height,
+                    bc.get_height()
+                );
                 Ok(())
             }
             Err(e) => {
@@ -89,13 +99,18 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
         let mut bc = blockchain.write().await;
         match bc.add_pending_transaction_from_network(tx) {
             Ok(()) => {
-                info!("Added transaction {} to mempool from mesh peer",
-                      hex::encode(&tx_hash[..8]));
+                info!(
+                    "Added transaction {} to mempool from mesh peer",
+                    hex::encode(&tx_hash[..8])
+                );
                 Ok(())
             }
             Err(e) => {
-                debug!("Rejected transaction {} from mesh peer: {}",
-                       hex::encode(&tx_hash[..8]), e);
+                debug!(
+                    "Rejected transaction {} from mesh peer: {}",
+                    hex::encode(&tx_hash[..8]),
+                    e
+                );
                 Err(e)
             }
         }
@@ -109,8 +124,8 @@ mod tests {
     /// Helper: ensure the global blockchain provider is initialized with a
     /// fresh blockchain. Safe to call multiple times (OnceLock + Option swap).
     async fn ensure_global_blockchain() {
-        let blockchain = lib_blockchain::Blockchain::new()
-            .expect("Failed to create test blockchain");
+        let blockchain =
+            lib_blockchain::Blockchain::new().expect("Failed to create test blockchain");
         let bc_arc = std::sync::Arc::new(tokio::sync::RwLock::new(blockchain));
         let _ = super::super::blockchain_provider::set_global_blockchain(bc_arc).await;
     }
@@ -147,9 +162,7 @@ mod tests {
         // Local blockchain has height 0.
         // Sending a valid block at height 0 (== local) → silently ignored.
         let block_bytes = make_serialized_block(0);
-        let result = receiver
-            .on_block_received(block_bytes, 0, 0, vec![])
-            .await;
+        let result = receiver.on_block_received(block_bytes, 0, 0, vec![]).await;
         assert!(result.is_ok(), "Stale block should be silently ignored");
     }
 
@@ -175,9 +188,7 @@ mod tests {
         let receiver = ZhtpBlockchainEventReceiver::new();
 
         // Empty bytes fail deserialization (before any lock).
-        let result = receiver
-            .on_block_received(vec![], 999, 0, vec![])
-            .await;
+        let result = receiver.on_block_received(vec![], 999, 0, vec![]).await;
         assert!(result.is_err(), "Empty bytes should fail deserialization");
     }
 

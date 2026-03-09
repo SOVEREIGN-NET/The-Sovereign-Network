@@ -5,21 +5,10 @@ pub mod phases;
 pub mod treasury;
 pub mod voting;
 
-pub use council::{
-    GovernancePhase,
-    CouncilMember,
-    CouncilBootstrapConfig,
-    CouncilBootstrapEntry,
-};
+pub use council::{CouncilBootstrapConfig, CouncilBootstrapEntry, CouncilMember, GovernancePhase};
 
-pub use phases::{
-    DecentralizationSnapshot,
-    PhaseTransitionConfig,
-};
+pub use phases::{DecentralizationSnapshot, PhaseTransitionConfig};
 
-pub use treasury::{
-    TreasurySpendingCategory,
-    TreasuryExecutionParams,
-};
+pub use treasury::{TreasuryExecutionParams, TreasurySpendingCategory};
 
 pub use voting::VotingPowerMode;

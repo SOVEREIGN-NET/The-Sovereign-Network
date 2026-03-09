@@ -1,7 +1,7 @@
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum AddressTypes {
     Ipv4,
-    Ipv6
+    Ipv6,
 }
 
 pub const IPV4_LENGTH: usize = 4;

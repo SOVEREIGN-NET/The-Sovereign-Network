@@ -25,12 +25,12 @@
 //! - Standard domains → Gateway landing page or error
 
 mod config;
-mod server;
 mod handlers;
+mod server;
 
 pub use config::{GatewayTlsConfig, TlsMode};
-pub use server::HttpsGateway;
 pub use handlers::gateway_handler;
+pub use server::HttpsGateway;
 
 #[cfg(test)]
 mod tests;

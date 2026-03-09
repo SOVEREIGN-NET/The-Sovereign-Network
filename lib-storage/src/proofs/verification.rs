@@ -1,10 +1,10 @@
 //! Proof verification module
 
-use anyhow::{Result};
-use serde::{Deserialize, Serialize};
+use crate::proofs::challenge::{ChallengeType, StorageChallenge};
+use crate::proofs::{RetrievalProof, StorageProof};
+use anyhow::Result;
 use lib_proofs::merkle::tree::hash_merkle_pair;
-use crate::proofs::{StorageProof, RetrievalProof};
-use crate::proofs::challenge::{StorageChallenge, ChallengeType};
+use serde::{Deserialize, Serialize};
 
 /// Result of proof verification
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,39 +61,31 @@ impl ProofVerifier {
 
         // Verify content hash matches
         if proof.content_hash != challenge.content_hash {
-            return VerificationResult::Invalid(
-                "Content hash mismatch".to_string()
-            );
+            return VerificationResult::Invalid("Content hash mismatch".to_string());
         }
 
         // Verify nonce matches
         if proof.challenge_nonce != challenge.nonce {
-            return VerificationResult::Invalid(
-                "Challenge nonce mismatch".to_string()
-            );
+            return VerificationResult::Invalid("Challenge nonce mismatch".to_string());
         }
 
         // Verify block index matches
         if let Some(expected_index) = challenge.block_index {
             if proof.block_index != expected_index {
-                return VerificationResult::Invalid(
-                    format!(
-                        "Block index mismatch: expected {}, got {}",
-                        expected_index, proof.block_index
-                    )
-                );
+                return VerificationResult::Invalid(format!(
+                    "Block index mismatch: expected {}, got {}",
+                    expected_index, proof.block_index
+                ));
             }
         }
 
         // Verify Merkle proof
         match self.verify_merkle_proof(proof) {
             Ok(true) => VerificationResult::Valid,
-            Ok(false) => VerificationResult::Invalid(
-                "Merkle proof verification failed".to_string()
-            ),
-            Err(e) => VerificationResult::Invalid(
-                format!("Merkle proof error: {}", e)
-            ),
+            Ok(false) => {
+                VerificationResult::Invalid("Merkle proof verification failed".to_string())
+            }
+            Err(e) => VerificationResult::Invalid(format!("Merkle proof error: {}", e)),
         }
     }
 
@@ -120,28 +112,23 @@ impl ProofVerifier {
 
         // Verify content hash matches
         if proof.content_hash != challenge.content_hash {
-            return VerificationResult::Invalid(
-                "Content hash mismatch".to_string()
-            );
+            return VerificationResult::Invalid("Content hash mismatch".to_string());
         }
 
         // Verify sample count matches
         if let Some(expected_samples) = challenge.sample_count {
             if proof.sample_indices.len() != expected_samples {
-                return VerificationResult::Invalid(
-                    format!(
-                        "Sample count mismatch: expected {}, got {}",
-                        expected_samples, proof.sample_indices.len()
-                    )
-                );
+                return VerificationResult::Invalid(format!(
+                    "Sample count mismatch: expected {}, got {}",
+                    expected_samples,
+                    proof.sample_indices.len()
+                ));
             }
         }
 
         // Verify combined hash
         if !proof.verify_combined_hash() {
-            return VerificationResult::Invalid(
-                "Combined hash verification failed".to_string()
-            );
+            return VerificationResult::Invalid("Combined hash verification failed".to_string());
         }
 
         VerificationResult::Valid
@@ -267,11 +254,11 @@ mod tests {
     #[test]
     fn test_verification_stats() {
         let mut stats = VerificationStats::new();
-        
+
         stats.record_result(&VerificationResult::Valid);
         stats.record_result(&VerificationResult::Valid);
         stats.record_result(&VerificationResult::Invalid("test".to_string()));
-        
+
         assert_eq!(stats.total_verified, 3);
         assert_eq!(stats.valid_proofs, 2);
         assert_eq!(stats.invalid_proofs, 1);
@@ -290,10 +277,10 @@ mod tests {
     #[test]
     fn test_storage_proof_verification_content_mismatch() {
         let verifier = ProofVerifier::default();
-        
+
         let content_hash1 = content_hash("content1");
         let content_hash2 = content_hash("content2");
-        
+
         let proof = StorageProof::new(
             content_hash1,
             [0u8; 32],
@@ -303,14 +290,14 @@ mod tests {
             0,
             "node1".to_string(),
         );
-        
+
         let challenge = StorageChallenge::new_storage_challenge(
             content_hash2,
             0,
             "challenger".to_string(),
             300,
         );
-        
+
         let result = verifier.verify_storage_proof(&proof, &challenge);
         assert!(result.is_invalid());
         match result {
@@ -324,18 +311,11 @@ mod tests {
     #[test]
     fn test_retrieval_proof_combined_hash() {
         let content_hash = content_hash("test");
-        let sample_blocks = vec![
-            vec![1, 2, 3],
-            vec![4, 5, 6],
-        ];
-        
-        let proof = RetrievalProof::new(
-            content_hash,
-            vec![0, 1],
-            sample_blocks,
-            "node1".to_string(),
-        );
-        
+        let sample_blocks = vec![vec![1, 2, 3], vec![4, 5, 6]];
+
+        let proof =
+            RetrievalProof::new(content_hash, vec![0, 1], sample_blocks, "node1".to_string());
+
         assert!(proof.verify_combined_hash());
     }
 }

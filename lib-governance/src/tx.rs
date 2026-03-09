@@ -2,11 +2,11 @@
 //!
 //! Defines the canonical governance transaction for configuration updates.
 
-use serde::{Deserialize, Serialize};
 use lib_types::{BlockHeight, TokenId};
+use serde::{Deserialize, Serialize};
 
-use crate::fields::ConfigField;
 use crate::errors::{GovernanceError, GovernanceResult};
+use crate::fields::ConfigField;
 
 /// Governance configuration transaction
 ///
@@ -59,7 +59,11 @@ impl GovernanceConfigTx {
     ///
     /// - `activates_at > current_height` (no immediate activation)
     /// - `activates_at <= current_height + max_delay` (bounded future)
-    pub fn validate(&self, current_height: BlockHeight, max_delay: BlockHeight) -> GovernanceResult<()> {
+    pub fn validate(
+        &self,
+        current_height: BlockHeight,
+        max_delay: BlockHeight,
+    ) -> GovernanceResult<()> {
         // Rule 1: No immediate activation
         if self.activates_at <= current_height {
             return Err(GovernanceError::ImmediateActivation {
@@ -100,8 +104,8 @@ impl GovernanceConfigTx {
         hasher.update(self.target.as_bytes());
 
         // Serialize ConfigField deterministically
-        let field_bytes = bincode::serialize(&self.field)
-            .expect("ConfigField must be serializable");
+        let field_bytes =
+            bincode::serialize(&self.field).expect("ConfigField must be serializable");
         hasher.update(&field_bytes);
 
         *hasher.finalize().as_bytes()
@@ -131,10 +135,16 @@ mod tests {
     fn test_validate_immediate_activation_rejected() {
         let tx = create_test_tx(100);
         let result = tx.validate(100, DEFAULT_MAX_DELAY);
-        assert!(matches!(result, Err(GovernanceError::ImmediateActivation { .. })));
+        assert!(matches!(
+            result,
+            Err(GovernanceError::ImmediateActivation { .. })
+        ));
 
         let result = tx.validate(150, DEFAULT_MAX_DELAY);
-        assert!(matches!(result, Err(GovernanceError::ImmediateActivation { .. })));
+        assert!(matches!(
+            result,
+            Err(GovernanceError::ImmediateActivation { .. })
+        ));
     }
 
     #[test]
@@ -148,7 +158,10 @@ mod tests {
     fn test_validate_activation_too_far() {
         let tx = create_test_tx(1_000_000);
         let result = tx.validate(100, 1000);
-        assert!(matches!(result, Err(GovernanceError::ActivationTooFar { .. })));
+        assert!(matches!(
+            result,
+            Err(GovernanceError::ActivationTooFar { .. })
+        ));
     }
 
     #[test]

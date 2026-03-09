@@ -1,32 +1,30 @@
 //! DAO Handler Module
-//! 
+//!
 //! DAO governance handler backed by canonical blockchain state
 
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
 
 // ZHTP protocol imports
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 // Import actual DAO system components
-use lib_consensus::{
-    DaoProposalType, DaoVoteChoice,
-};
-use lib_blockchain::contracts::{DAORegistry, DAOEntry, TokenContract, derive_dao_id};
+use lib_blockchain::contracts::{derive_dao_id, DAOEntry, DAORegistry, TokenContract};
+use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::transaction::{
     DaoExecutionData, DaoProposalData, DaoVoteData, OracleCommitteeUpdateData,
     OracleConfigUpdateData, Transaction,
 };
-use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
-use lib_blockchain::types::Hash as BcHash;
 use lib_blockchain::types::dao::DAOType;
-use lib_identity::IdentityManager;
+use lib_blockchain::types::Hash as BcHash;
+use lib_consensus::{DaoProposalType, DaoVoteChoice};
 use lib_crypto::Hash as CryptoHash;
+use lib_identity::IdentityManager;
 
 use crate::session_manager::SessionManager;
 
@@ -49,7 +47,12 @@ fn extract_client_ip(request: &ZhtpRequest) -> String {
     request
         .headers
         .get("X-Real-IP")
-        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| f.split(',').next().map(|s| s.trim().to_string())))
+        .or_else(|| {
+            request
+                .headers
+                .get("X-Forwarded-For")
+                .and_then(|f| f.split(',').next().map(|s| s.trim().to_string()))
+        })
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -66,7 +69,9 @@ fn validate_did_format(did: &str) -> Result<()> {
         return Err(anyhow::anyhow!("Invalid DID format"));
     }
     if did.len() < 10 || did.len() > 200 {
-        return Err(anyhow::anyhow!("DID length must be between 10 and 200 characters"));
+        return Err(anyhow::anyhow!(
+            "DID length must be between 10 and 200 characters"
+        ));
     }
     Ok(())
 }
@@ -78,7 +83,9 @@ fn validate_delegate_name(name: &str) -> Result<()> {
     if name.len() > 100 {
         return Err(anyhow::anyhow!("Name must be 100 characters or less"));
     }
-    if !name.chars().all(|c| c.is_alphanumeric() || c.is_whitespace() || c == '-' || c == '_' || c == '.' || c == '\'') {
+    if !name.chars().all(|c| {
+        c.is_alphanumeric() || c.is_whitespace() || c == '-' || c == '_' || c == '.' || c == '\''
+    }) {
         return Err(anyhow::anyhow!("Name contains invalid characters"));
     }
     Ok(())
@@ -91,7 +98,12 @@ fn validate_delegate_bio(bio: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_spending_proposal(title: &str, description: &str, recipient: &str, amount: u64) -> Result<()> {
+fn validate_spending_proposal(
+    title: &str,
+    description: &str,
+    recipient: &str,
+    amount: u64,
+) -> Result<()> {
     if title.is_empty() || title.len() > 200 {
         return Err(anyhow::anyhow!("Title must be 1-200 characters"));
     }
@@ -250,7 +262,8 @@ impl DaoHandler {
     }
 
     async fn get_blockchain(&self) -> Result<Arc<RwLock<lib_blockchain::Blockchain>>> {
-        crate::runtime::blockchain_provider::get_global_blockchain().await
+        crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to access blockchain: {}", e))
     }
 
@@ -271,9 +284,7 @@ impl DaoHandler {
             "update_oracle_committee" | "oracle_committee_update" => {
                 Ok(DaoProposalType::GovernanceRules)
             }
-            "update_oracle_config" | "oracle_config_update" => {
-                Ok(DaoProposalType::GovernanceRules)
-            }
+            "update_oracle_config" | "oracle_config_update" => Ok(DaoProposalType::GovernanceRules),
             _ => Err(anyhow::anyhow!("Invalid proposal type: {}", type_str)),
         }
     }
@@ -309,14 +320,13 @@ impl DaoHandler {
 
     /// Parse hex string to blockchain Hash
     fn string_to_bc_hash(hash_str: &str) -> Result<BcHash> {
-        BcHash::from_hex(hash_str)
-            .map_err(|e| anyhow::anyhow!("Invalid hash: {}", e))
+        BcHash::from_hex(hash_str).map_err(|e| anyhow::anyhow!("Invalid hash: {}", e))
     }
 
     /// Parse hex string to identity hash (lib-crypto)
     fn string_to_identity_hash(hash_str: &str) -> Result<CryptoHash> {
-        let bytes = hex::decode(hash_str)
-            .map_err(|e| anyhow::anyhow!("Invalid identity ID hex: {}", e))?;
+        let bytes =
+            hex::decode(hash_str).map_err(|e| anyhow::anyhow!("Invalid identity ID hex: {}", e))?;
         Ok(CryptoHash::from_bytes(&bytes))
     }
 
@@ -326,7 +336,7 @@ impl DaoHandler {
         if query_string.is_empty() {
             return params;
         }
-        
+
         for pair in query_string.split('&') {
             if let Some((key, value)) = pair.split_once('=') {
                 params.insert(
@@ -353,10 +363,7 @@ impl DaoHandler {
         Ok(out)
     }
 
-    fn parse_optional_hex_32(
-        value: Option<&str>,
-        field_name: &str,
-    ) -> Result<Option<[u8; 32]>> {
+    fn parse_optional_hex_32(value: Option<&str>, field_name: &str) -> Result<Option<[u8; 32]>> {
         value.map(|v| Self::parse_hex_32(v, field_name)).transpose()
     }
 
@@ -399,7 +406,8 @@ impl DaoHandler {
     ) -> Option<(String, String, String, String, Option<String>)> {
         match execution_type {
             Self::DAO_REGISTRY_REGISTER_EXEC => {
-                let Ok(event) = serde_json::from_slice::<DaoRegistryRegisterEvent>(event_bytes) else {
+                let Ok(event) = serde_json::from_slice::<DaoRegistryRegisterEvent>(event_bytes)
+                else {
                     tracing::warn!(
                         "DAO registry replay: failed to deserialize legacy registry event payload at height {}",
                         block_height
@@ -415,7 +423,8 @@ impl DaoHandler {
                 ))
             }
             Self::DAO_FACTORY_CREATE_EXEC => {
-                let Ok(event) = serde_json::from_slice::<DaoFactoryCreateEventV1>(event_bytes) else {
+                let Ok(event) = serde_json::from_slice::<DaoFactoryCreateEventV1>(event_bytes)
+                else {
                     tracing::warn!(
                         "DAO registry replay: failed to deserialize factory event payload at height {}",
                         block_height
@@ -447,7 +456,9 @@ impl DaoHandler {
         tx: &Transaction,
         block_height: u64,
     ) {
-        if tx.transaction_type != lib_blockchain::types::transaction_type::TransactionType::DaoExecution {
+        if tx.transaction_type
+            != lib_blockchain::types::transaction_type::TransactionType::DaoExecution
+        {
             return;
         }
         let Some(exec) = tx.dao_execution_data.as_ref() else {
@@ -459,39 +470,63 @@ impl DaoHandler {
             return;
         }
         let Some(event_bytes) = exec.multisig_signatures.first() else {
-            tracing::warn!("DAO registry replay: DaoExecution at height {} missing event payload", block_height);
+            tracing::warn!(
+                "DAO registry replay: DaoExecution at height {} missing event payload",
+                block_height
+            );
             return;
         };
-        let Some((token_id_hex, class_str, metadata_hash_hex, treasury_key_id_hex, event_dao_id_hex)) =
-            Self::decode_registry_event_payload(&exec.execution_type, event_bytes, block_height)
+        let Some((
+            token_id_hex,
+            class_str,
+            metadata_hash_hex,
+            treasury_key_id_hex,
+            event_dao_id_hex,
+        )) = Self::decode_registry_event_payload(&exec.execution_type, event_bytes, block_height)
         else {
             return;
         };
         let token_id = match Self::parse_hex_32(&token_id_hex, "token_id") {
             Ok(v) => v,
             Err(e) => {
-                tracing::warn!("DAO registry replay: invalid token_id at height {}: {}", block_height, e);
+                tracing::warn!(
+                    "DAO registry replay: invalid token_id at height {}: {}",
+                    block_height,
+                    e
+                );
                 return;
             }
         };
         let metadata_hash = match Self::parse_hex_32(&metadata_hash_hex, "metadata_hash") {
             Ok(v) => v,
             Err(e) => {
-                tracing::warn!("DAO registry replay: invalid metadata_hash at height {}: {}", block_height, e);
+                tracing::warn!(
+                    "DAO registry replay: invalid metadata_hash at height {}: {}",
+                    block_height,
+                    e
+                );
                 return;
             }
         };
         let treasury_key_id = match Self::parse_hex_32(&treasury_key_id_hex, "treasury_key_id") {
             Ok(v) => v,
             Err(e) => {
-                tracing::warn!("DAO registry replay: invalid treasury_key_id at height {}: {}", block_height, e);
+                tracing::warn!(
+                    "DAO registry replay: invalid treasury_key_id at height {}: {}",
+                    block_height,
+                    e
+                );
                 return;
             }
         };
         let class = match Self::parse_dao_class(&class_str) {
             Ok(v) => v,
             Err(e) => {
-                tracing::warn!("DAO registry replay: invalid class at height {}: {}", block_height, e);
+                tracing::warn!(
+                    "DAO registry replay: invalid class at height {}: {}",
+                    block_height,
+                    e
+                );
                 return;
             }
         };
@@ -582,7 +617,11 @@ impl DaoHandler {
     }
 
     /// Handle treasury transactions endpoint
-    async fn handle_treasury_transactions(&self, limit: Option<usize>, offset: Option<usize>) -> Result<ZhtpResponse> {
+    async fn handle_treasury_transactions(
+        &self,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<ZhtpResponse> {
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
         let executions = blockchain.get_dao_executions();
@@ -662,7 +701,10 @@ impl DaoHandler {
         }
     }
 
-    fn proposal_type_storage_string(proposal_type_raw: &str, proposal_type: &DaoProposalType) -> String {
+    fn proposal_type_storage_string(
+        proposal_type_raw: &str,
+        proposal_type: &DaoProposalType,
+    ) -> String {
         if Self::is_oracle_committee_proposal_type(proposal_type_raw) {
             return "update_oracle_committee".to_string();
         }
@@ -696,14 +738,17 @@ impl DaoHandler {
         blockchain: &lib_blockchain::Blockchain,
     ) -> Result<Option<Vec<u8>>> {
         if Self::is_oracle_committee_proposal_type(proposal_type_raw) {
-            let activate_at_epoch = request_data
-                .activate_at_epoch
-                .ok_or_else(|| anyhow::anyhow!("activate_at_epoch is required for oracle committee updates"))?;
-            let members_raw = request_data.oracle_committee_members.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "oracle_committee_members is required for oracle committee updates"
-                )
+            let activate_at_epoch = request_data.activate_at_epoch.ok_or_else(|| {
+                anyhow::anyhow!("activate_at_epoch is required for oracle committee updates")
             })?;
+            let members_raw = request_data
+                .oracle_committee_members
+                .as_ref()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "oracle_committee_members is required for oracle committee updates"
+                    )
+                })?;
             let new_members = Self::parse_oracle_members(members_raw)?;
             let reason = request_data
                 .reason
@@ -742,9 +787,9 @@ impl DaoHandler {
         }
 
         if Self::is_oracle_config_proposal_type(proposal_type_raw) {
-            let activate_at_epoch = request_data
-                .activate_at_epoch
-                .ok_or_else(|| anyhow::anyhow!("activate_at_epoch is required for oracle config updates"))?;
+            let activate_at_epoch = request_data.activate_at_epoch.ok_or_else(|| {
+                anyhow::anyhow!("activate_at_epoch is required for oracle config updates")
+            })?;
             let reason = request_data
                 .reason
                 .clone()
@@ -762,7 +807,9 @@ impl DaoHandler {
                     .ok_or_else(|| anyhow::anyhow!("oracle_max_deviation_bps is required"))?,
                 max_price_staleness_epochs: request_data
                     .oracle_max_price_staleness_epochs
-                    .ok_or_else(|| anyhow::anyhow!("oracle_max_price_staleness_epochs is required"))?,
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("oracle_max_price_staleness_epochs is required")
+                    })?,
                 activate_at_epoch,
                 reason,
             };
@@ -819,7 +866,10 @@ impl DaoHandler {
         };
 
         let identity_manager = self.identity_manager.read().await;
-        let proposer_identity = match identity_manager.get_identity(&authenticated_identity_id).cloned() {
+        let proposer_identity = match identity_manager
+            .get_identity(&authenticated_identity_id)
+            .cloned()
+        {
             Some(i) => i,
             None => {
                 return Ok(create_error_response(
@@ -845,21 +895,19 @@ impl DaoHandler {
             &blockchain,
         ) {
             Ok(v) => v,
-            Err(e) => {
-                return Ok(create_error_response(
-                    ZhtpStatus::BadRequest,
-                    e.to_string(),
-                ))
-            }
+            Err(e) => return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string())),
         };
 
-        let proposal_id = BcHash::from_slice(&lib_crypto::hash_blake3(&[
-            authenticated_identity_id.as_bytes(),
-            request_data.title.as_bytes(),
-            request_data.description.as_bytes(),
-            proposal_type_storage.as_bytes(),
-            &now.to_le_bytes(),
-        ].concat()));
+        let proposal_id = BcHash::from_slice(&lib_crypto::hash_blake3(
+            &[
+                authenticated_identity_id.as_bytes(),
+                request_data.title.as_bytes(),
+                request_data.description.as_bytes(),
+                proposal_type_storage.as_bytes(),
+                &now.to_le_bytes(),
+            ]
+            .concat(),
+        ));
 
         let proposal_data = DaoProposalData {
             proposal_id,
@@ -867,8 +915,12 @@ impl DaoHandler {
             title: request_data.title.clone(),
             description: request_data.description.clone(),
             proposal_type: proposal_type_storage,
-            voting_period_blocks: (request_data.voting_period_days.unwrap_or(7) as u64).saturating_mul(14_400),
-            quorum_required: Self::proposal_quorum_required_for_request(proposal_type_raw, &proposal_type),
+            voting_period_blocks: (request_data.voting_period_days.unwrap_or(7) as u64)
+                .saturating_mul(14_400),
+            quorum_required: Self::proposal_quorum_required_for_request(
+                proposal_type_raw,
+                &proposal_type,
+            ),
             execution_params,
             created_at: now,
             created_at_height: current_height,
@@ -903,7 +955,8 @@ impl DaoHandler {
             ));
         }
 
-        blockchain.add_pending_transaction(proposal_tx)
+        blockchain
+            .add_pending_transaction(proposal_tx)
             .map_err(|e| anyhow::anyhow!("Failed to submit proposal transaction: {}", e))?;
 
         let response = json!({
@@ -925,7 +978,10 @@ impl DaoHandler {
         metadata: serde_json::Value,
     ) -> Result<ZhtpResponse> {
         let identity_manager = self.identity_manager.read().await;
-        let identity = match identity_manager.get_identity(&authenticated_identity_id).cloned() {
+        let identity = match identity_manager
+            .get_identity(&authenticated_identity_id)
+            .cloned()
+        {
             Some(i) => i,
             None => {
                 return Ok(create_error_response(
@@ -997,8 +1053,9 @@ impl DaoHandler {
             ));
         }
 
-        blockchain.add_pending_transaction(tx)
-            .map_err(|e| anyhow::anyhow!("Failed to submit delegate execution transaction: {}", e))?;
+        blockchain.add_pending_transaction(tx).map_err(|e| {
+            anyhow::anyhow!("Failed to submit delegate execution transaction: {}", e)
+        })?;
 
         create_json_response(json!({
             "status": "success",
@@ -1011,8 +1068,11 @@ impl DaoHandler {
 
     /// Handle create proposal endpoint
     async fn handle_create_proposal(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        let session_token = match request.headers.get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+        let session_token = match request
+            .headers
+            .get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        {
             Some(token) => token,
             None => {
                 return Ok(create_error_response(
@@ -1024,14 +1084,16 @@ impl DaoHandler {
 
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);
-        let session = self.session_manager
+        let session = self
+            .session_manager
             .validate_session(&session_token, &client_ip, &user_agent)
             .await
             .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
 
         let request_data: CreateProposalRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-        self.handle_create_proposal_from_identity(session.identity_id, request_data).await
+        self.handle_create_proposal_from_identity(session.identity_id, request_data)
+            .await
     }
 
     /// Handle list proposals endpoint
@@ -1061,9 +1123,19 @@ impl DaoHandler {
                 ));
             }
             filtered_proposals.retain(|p| {
-                let executed = all_executions.iter().any(|e| e.proposal_id == p.proposal_id);
-                let passed = blockchain.has_proposal_passed(&p.proposal_id, p.quorum_required as u32).unwrap_or(false);
-                let status = if executed { "executed" } else if passed { "passed" } else { "active" };
+                let executed = all_executions
+                    .iter()
+                    .any(|e| e.proposal_id == p.proposal_id);
+                let passed = blockchain
+                    .has_proposal_passed(&p.proposal_id, p.quorum_required as u32)
+                    .unwrap_or(false);
+                let status = if executed {
+                    "executed"
+                } else if passed {
+                    "passed"
+                } else {
+                    "active"
+                };
                 status == wanted
             });
         }
@@ -1152,11 +1224,19 @@ impl DaoHandler {
                     0.0
                 };
                 let executions = blockchain.get_dao_executions();
-                let executed = executions.iter().any(|e| e.proposal_id == proposal.proposal_id);
+                let executed = executions
+                    .iter()
+                    .any(|e| e.proposal_id == proposal.proposal_id);
                 let passed = blockchain
                     .has_proposal_passed(&proposal.proposal_id, proposal.quorum_required as u32)
                     .unwrap_or(false);
-                let status = if executed { "executed" } else if passed { "passed" } else { "active" };
+                let status = if executed {
+                    "executed"
+                } else if passed {
+                    "passed"
+                } else {
+                    "active"
+                };
 
                 let response = json!({
                     "status": "success",
@@ -1198,8 +1278,11 @@ impl DaoHandler {
 
     /// Handle cast vote endpoint
     async fn handle_cast_vote(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        let session_token = match request.headers.get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+        let session_token = match request
+            .headers
+            .get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        {
             Some(token) => token,
             None => {
                 return Ok(create_error_response(
@@ -1211,7 +1294,8 @@ impl DaoHandler {
 
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);
-        let session = self.session_manager
+        let session = self
+            .session_manager
             .validate_session(&session_token, &client_ip, &user_agent)
             .await
             .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
@@ -1256,7 +1340,10 @@ impl DaoHandler {
         };
 
         let identity_manager = self.identity_manager.read().await;
-        let voter_identity = match identity_manager.get_identity(&authenticated_identity_id).cloned() {
+        let voter_identity = match identity_manager
+            .get_identity(&authenticated_identity_id)
+            .cloned()
+        {
             Some(i) => i,
             None => {
                 return Ok(create_error_response(
@@ -1295,7 +1382,9 @@ impl DaoHandler {
             DaoVoteChoice::Yes => "Yes".to_string(),
             DaoVoteChoice::No => "No".to_string(),
             DaoVoteChoice::Abstain => "Abstain".to_string(),
-            DaoVoteChoice::Delegate(delegate) => format!("Delegate({})", hex::encode(delegate.as_bytes())),
+            DaoVoteChoice::Delegate(delegate) => {
+                format!("Delegate({})", hex::encode(delegate.as_bytes()))
+            }
         };
 
         let already_voted_confirmed = blockchain
@@ -1304,7 +1393,11 @@ impl DaoHandler {
             .any(|v| v.voter == voter_identity.did);
         let already_voted_pending = blockchain.pending_transactions.iter().any(|tx| {
             tx.transaction_type == lib_blockchain::TransactionType::DaoVote
-                && tx.dao_vote_data.as_ref().map(|v| v.proposal_id == proposal_id && v.voter == voter_identity.did).unwrap_or(false)
+                && tx
+                    .dao_vote_data
+                    .as_ref()
+                    .map(|v| v.proposal_id == proposal_id && v.voter == voter_identity.did)
+                    .unwrap_or(false)
         });
         if already_voted_confirmed || already_voted_pending {
             return Ok(create_error_response(
@@ -1313,12 +1406,15 @@ impl DaoHandler {
             ));
         }
 
-        let vote_id = BcHash::from_slice(&lib_crypto::hash_blake3(&[
-            proposal_id.as_bytes(),
-            authenticated_identity_id.as_bytes(),
-            vote_choice_str.as_bytes(),
-            &now.to_le_bytes(),
-        ].concat()));
+        let vote_id = BcHash::from_slice(&lib_crypto::hash_blake3(
+            &[
+                proposal_id.as_bytes(),
+                authenticated_identity_id.as_bytes(),
+                vote_choice_str.as_bytes(),
+                &now.to_le_bytes(),
+            ]
+            .concat(),
+        ));
 
         let vote_data = DaoVoteData {
             vote_id,
@@ -1328,9 +1424,11 @@ impl DaoHandler {
             voting_power: {
                 let raw = blockchain.calculate_user_voting_power(&authenticated_identity_id);
                 match blockchain.voting_power_mode {
-                    lib_blockchain::dao::VotingPowerMode::Identity  => 1,
-                    lib_blockchain::dao::VotingPowerMode::Linear    => raw.max(1),
-                    lib_blockchain::dao::VotingPowerMode::Quadratic => ((raw as f64).sqrt() as u64).max(1),
+                    lib_blockchain::dao::VotingPowerMode::Identity => 1,
+                    lib_blockchain::dao::VotingPowerMode::Linear => raw.max(1),
+                    lib_blockchain::dao::VotingPowerMode::Quadratic => {
+                        ((raw as f64).sqrt() as u64).max(1)
+                    }
                 }
             },
             justification: request_data.justification.clone(),
@@ -1366,7 +1464,8 @@ impl DaoHandler {
             ));
         }
 
-        blockchain.add_pending_transaction(vote_tx)
+        blockchain
+            .add_pending_transaction(vote_tx)
             .map_err(|e| anyhow::anyhow!("Failed to submit vote transaction: {}", e))?;
 
         let response = json!({
@@ -1384,18 +1483,20 @@ impl DaoHandler {
     async fn handle_get_voting_power(&self, identity_id_str: &str) -> Result<ZhtpResponse> {
         let identity_id = match Self::string_to_identity_hash(identity_id_str) {
             Ok(id) => id,
-            Err(_) => return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Invalid identity ID format".to_string()
-            )),
+            Err(_) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    "Invalid identity ID format".to_string(),
+                ))
+            }
         };
 
         // Validate identity exists
         let identity_manager = self.identity_manager.read().await;
         if identity_manager.get_identity(&identity_id).is_none() {
             return Ok(create_error_response(
-                ZhtpStatus::BadRequest, 
-                "Identity not found".to_string()
+                ZhtpStatus::BadRequest,
+                "Identity not found".to_string(),
             ));
         }
 
@@ -1422,10 +1523,12 @@ impl DaoHandler {
     async fn handle_get_proposal_votes(&self, proposal_id_str: &str) -> Result<ZhtpResponse> {
         let proposal_id = match Self::string_to_bc_hash(proposal_id_str) {
             Ok(id) => id,
-            Err(_) => return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Invalid proposal ID format".to_string()
-            )),
+            Err(_) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    "Invalid proposal ID format".to_string(),
+                ))
+            }
         };
 
         let blockchain_arc = self.get_blockchain().await?;
@@ -1433,25 +1536,31 @@ impl DaoHandler {
         if blockchain.get_dao_proposal(&proposal_id).is_none() {
             return Ok(create_error_response(
                 ZhtpStatus::NotFound,
-                "Proposal not found".to_string()
+                "Proposal not found".to_string(),
             ));
         }
 
         let votes = blockchain.get_dao_votes_for_proposal(&proposal_id);
-        let (yes_votes, no_votes, abstain_votes, total_votes) = blockchain.tally_dao_votes(&proposal_id);
+        let (yes_votes, no_votes, abstain_votes, total_votes) =
+            blockchain.tally_dao_votes(&proposal_id);
         let approval_percentage = if total_votes > 0 {
             (yes_votes as f64 * 100.0) / total_votes as f64
         } else {
             0.0
         };
-        let vote_details: Vec<_> = votes.iter().map(|v| json!({
-            "vote_id": Self::hash_to_string(&v.vote_id),
-            "voter": v.voter,
-            "vote_choice": v.vote_choice,
-            "voting_power": v.voting_power,
-            "justification": v.justification,
-            "timestamp": v.timestamp
-        })).collect();
+        let vote_details: Vec<_> = votes
+            .iter()
+            .map(|v| {
+                json!({
+                    "vote_id": Self::hash_to_string(&v.vote_id),
+                    "voter": v.voter,
+                    "vote_choice": v.vote_choice,
+                    "voting_power": v.voting_power,
+                    "justification": v.justification,
+                    "timestamp": v.timestamp
+                })
+            })
+            .collect();
 
         let response = json!({
             "status": "success",
@@ -1473,8 +1582,11 @@ impl DaoHandler {
 
     /// Handle process expired proposals endpoint
     async fn handle_process_expired(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        let session_token = match request.headers.get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+        let session_token = match request
+            .headers
+            .get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        {
             Some(token) => token,
             None => {
                 return Ok(create_error_response(
@@ -1507,8 +1619,11 @@ impl DaoHandler {
     /// Handle GET /api/v1/dao/data - DAO general data/statistics
     async fn handle_dao_data(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         // Security: Extract and validate session token
-        let session_token = match request.headers.get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+        let session_token = match request
+            .headers
+            .get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        {
             Some(token) => token,
             None => {
                 return Ok(create_error_response(
@@ -1538,7 +1653,9 @@ impl DaoHandler {
             .iter()
             .filter(|p| {
                 let executed = executions.iter().any(|e| e.proposal_id == p.proposal_id);
-                let passed = blockchain.has_proposal_passed(&p.proposal_id, p.quorum_required as u32).unwrap_or(false);
+                let passed = blockchain
+                    .has_proposal_passed(&p.proposal_id, p.quorum_required as u32)
+                    .unwrap_or(false);
                 !executed && !passed
             })
             .count();
@@ -1559,18 +1676,25 @@ impl DaoHandler {
         let blockchain = blockchain_arc.read().await;
         let executions = blockchain.get_dao_executions();
 
-        let mut delegates: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+        let mut delegates: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
         for exec in executions {
             let Some(did) = exec.recipient.clone() else {
                 continue;
             };
             if exec.execution_type == Self::DAO_DELEGATE_REGISTER_EXEC {
-                let metadata = exec.multisig_signatures.first()
+                let metadata = exec
+                    .multisig_signatures
+                    .first()
                     .and_then(|raw| serde_json::from_slice::<serde_json::Value>(raw).ok())
                     .unwrap_or_else(|| json!({}));
-                let name = metadata.get("name").and_then(|v| v.as_str()).unwrap_or("Unnamed");
+                let name = metadata
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unnamed");
                 let bio = metadata.get("bio").and_then(|v| v.as_str()).unwrap_or("");
-                let delegate_id = metadata.get("delegate_id")
+                let delegate_id = metadata
+                    .get("delegate_id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| Self::hash_to_string(&exec.proposal_id));
@@ -1583,15 +1707,18 @@ impl DaoHandler {
                     .map(|id| blockchain.calculate_user_voting_power(&id))
                     .unwrap_or(0);
 
-                delegates.insert(did.clone(), json!({
-                    "delegate_id": delegate_id,
-                    "user_did": did,
-                    "name": name,
-                    "bio": bio,
-                    "voting_power": voting_power,
-                    "registered_at": exec.executed_at,
-                    "status": "active",
-                }));
+                delegates.insert(
+                    did.clone(),
+                    json!({
+                        "delegate_id": delegate_id,
+                        "user_did": did,
+                        "name": name,
+                        "bio": bio,
+                        "voting_power": voting_power,
+                        "registered_at": exec.executed_at,
+                        "status": "active",
+                    }),
+                );
             } else if exec.execution_type == Self::DAO_DELEGATE_REVOKE_EXEC {
                 delegates.remove(&did);
             }
@@ -1607,8 +1734,11 @@ impl DaoHandler {
 
     /// Handle POST /api/v1/dao/delegates/register - Register as delegate
     async fn handle_register_delegate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        let session_token = match request.headers.get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+        let session_token = match request
+            .headers
+            .get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        {
             Some(token) => token,
             None => {
                 return Ok(create_error_response(
@@ -1620,7 +1750,8 @@ impl DaoHandler {
 
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);
-        let session = self.session_manager
+        let session = self
+            .session_manager
             .validate_session(&session_token, &client_ip, &user_agent)
             .await
             .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
@@ -1636,7 +1767,11 @@ impl DaoHandler {
             .map_err(|e| anyhow::anyhow!("System time error: {}", e))?
             .as_secs();
         let delegate_id = hex::encode(lib_crypto::hash_blake3(
-            format!("delegate:{}:{}:{}", request_data.user_did, request_data.delegate_info.name, now).as_bytes(),
+            format!(
+                "delegate:{}:{}:{}",
+                request_data.user_did, request_data.delegate_info.name, now
+            )
+            .as_bytes(),
         ));
 
         self.submit_delegate_execution(
@@ -1649,13 +1784,17 @@ impl DaoHandler {
                 "name": request_data.delegate_info.name,
                 "bio": request_data.delegate_info.bio,
             }),
-        ).await
+        )
+        .await
     }
 
     /// Handle POST /api/v1/dao/delegates/revoke - Revoke delegate status
     async fn handle_revoke_delegate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        let session_token = match request.headers.get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+        let session_token = match request
+            .headers
+            .get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        {
             Some(token) => token,
             None => {
                 return Ok(create_error_response(
@@ -1667,7 +1806,8 @@ impl DaoHandler {
 
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);
-        let session = self.session_manager
+        let session = self
+            .session_manager
             .validate_session(&session_token, &client_ip, &user_agent)
             .await
             .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
@@ -1684,15 +1824,19 @@ impl DaoHandler {
                 "version": 1,
                 "reason": "user_requested",
             }),
-        ).await
+        )
+        .await
     }
 
     /// Handle POST /api/v1/dao/proposals/spending - Create spending proposal (Issue #118)
     /// Convenience wrapper around create_proposal for TreasuryAllocation type
     async fn handle_spending_proposal(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         // Security: Extract and validate session token
-        let session_token = match request.headers.get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+        let session_token = match request
+            .headers
+            .get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        {
             Some(token) => token,
             None => {
                 return Ok(create_error_response(
@@ -1706,7 +1850,8 @@ impl DaoHandler {
         let user_agent = extract_user_agent(request);
 
         // Security: Validate session
-        let session_token_obj = self.session_manager
+        let session_token_obj = self
+            .session_manager
             .validate_session(&session_token, &client_ip, &user_agent)
             .await
             .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
@@ -1734,9 +1879,7 @@ impl DaoHandler {
             title: request_data.title.clone(),
             description: format!(
                 "{}\n\nAmount: {}\nRecipient: {}",
-                request_data.description,
-                request_data.amount,
-                request_data.recipient
+                request_data.description, request_data.amount, request_data.recipient
             ),
             proposal_type: Some("treasury_allocation".to_string()),
             voting_period_days: Some(7),
@@ -1749,7 +1892,8 @@ impl DaoHandler {
             oracle_max_price_staleness_epochs: None,
         };
 
-        self.handle_create_proposal_from_identity(authenticated_identity_id, create_request).await
+        self.handle_create_proposal_from_identity(authenticated_identity_id, create_request)
+            .await
     }
 
     /// Handle DAO statistics endpoint
@@ -1770,10 +1914,13 @@ impl DaoHandler {
             .iter()
             .filter(|p| {
                 !executions.iter().any(|e| e.proposal_id == p.proposal_id)
-                    && blockchain.has_proposal_passed(&p.proposal_id, p.quorum_required as u32).unwrap_or(false)
+                    && blockchain
+                        .has_proposal_passed(&p.proposal_id, p.quorum_required as u32)
+                        .unwrap_or(false)
             })
             .count();
-        let active_proposals = total_proposals.saturating_sub(passed_proposals + executed_proposals);
+        let active_proposals =
+            total_proposals.saturating_sub(passed_proposals + executed_proposals);
 
         let total_votes: u64 = proposals
             .iter()
@@ -1824,14 +1971,18 @@ impl DaoHandler {
             lib_blockchain::dao::GovernancePhase::FullDao => "full_dao",
         };
 
-        let members: Vec<serde_json::Value> = blockchain.get_council_members().iter().map(|m| {
-            json!({
-                "identity_id": m.identity_id,
-                "wallet_id": m.wallet_id,
-                "stake_amount": m.stake_amount,
-                "joined_at_height": m.joined_at_height,
+        let members: Vec<serde_json::Value> = blockchain
+            .get_council_members()
+            .iter()
+            .map(|m| {
+                json!({
+                    "identity_id": m.identity_id,
+                    "wallet_id": m.wallet_id,
+                    "stake_amount": m.stake_amount,
+                    "joined_at_height": m.joined_at_height,
+                })
             })
-        }).collect();
+            .collect();
 
         create_json_response(json!({
             "status": "success",
@@ -1869,12 +2020,14 @@ impl DaoHandler {
 
         // First bootstrap: accept without signatures
         if blockchain.council_members.is_empty() {
-            blockchain.council_members.push(lib_blockchain::dao::CouncilMember {
-                identity_id: req.identity_id.clone(),
-                wallet_id: req.wallet_id.clone(),
-                stake_amount: req.stake_amount,
-                joined_at_height: current_height,
-            });
+            blockchain
+                .council_members
+                .push(lib_blockchain::dao::CouncilMember {
+                    identity_id: req.identity_id.clone(),
+                    wallet_id: req.wallet_id.clone(),
+                    stake_amount: req.stake_amount,
+                    joined_at_height: current_height,
+                });
 
             return create_json_response(json!({
                 "status": "success",
@@ -1885,7 +2038,9 @@ impl DaoHandler {
 
         // Subsequent registrations require threshold council signatures
         let threshold = blockchain.council_threshold as usize;
-        let valid_sig_count = req.council_signatures.iter()
+        let valid_sig_count = req
+            .council_signatures
+            .iter()
             .filter(|did| blockchain.is_council_member(did.as_str()))
             .count();
 
@@ -1894,18 +2049,19 @@ impl DaoHandler {
                 ZhtpStatus::Forbidden,
                 format!(
                     "Council registration requires {} council co-signers, got {}",
-                    threshold,
-                    valid_sig_count
+                    threshold, valid_sig_count
                 ),
             ));
         }
 
-        blockchain.council_members.push(lib_blockchain::dao::CouncilMember {
-            identity_id: req.identity_id.clone(),
-            wallet_id: req.wallet_id.clone(),
-            stake_amount: req.stake_amount,
-            joined_at_height: current_height,
-        });
+        blockchain
+            .council_members
+            .push(lib_blockchain::dao::CouncilMember {
+                identity_id: req.identity_id.clone(),
+                wallet_id: req.wallet_id.clone(),
+                stake_amount: req.stake_amount,
+                joined_at_height: current_height,
+            });
         let new_size = blockchain.council_members.len();
 
         create_json_response(json!({
@@ -1935,7 +2091,8 @@ impl DaoHandler {
             ));
         }
 
-        blockchain.activate_emergency_state(&req.council_signatures, req.activated_by.clone())
+        blockchain
+            .activate_emergency_state(&req.council_signatures, req.activated_by.clone())
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         create_json_response(json!({
@@ -2014,16 +2171,24 @@ impl DaoHandler {
 
     /// POST /api/v1/dao/voting/delegate — store a vote delegation for the authenticated identity.
     async fn handle_vote_delegate(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
-        let session_token = match request.headers.get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+        let session_token = match request
+            .headers
+            .get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        {
             Some(token) => token,
-            None => return Ok(create_error_response(ZhtpStatus::Unauthorized,
-                "Missing or invalid Authorization header".to_string())),
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Missing or invalid Authorization header".to_string(),
+                ))
+            }
         };
 
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);
-        let session = self.session_manager
+        let session = self
+            .session_manager
             .validate_session(&session_token, &client_ip, &user_agent)
             .await
             .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
@@ -2039,7 +2204,9 @@ impl DaoHandler {
 
         let blockchain_arc = self.get_blockchain().await?;
         let mut blockchain = blockchain_arc.write().await;
-        blockchain.vote_delegations.insert(delegator_hex.clone(), req.delegate_did.clone());
+        blockchain
+            .vote_delegations
+            .insert(delegator_hex.clone(), req.delegate_did.clone());
 
         create_json_response(json!({
             "status": "success",
@@ -2051,7 +2218,11 @@ impl DaoHandler {
     // ── Hybrid Governance endpoints (dao-4) ───────────────────────────────────
 
     /// POST /api/v1/dao/proposals/{id}/council-cosign
-    async fn handle_council_cosign(&self, request: &ZhtpRequest, proposal_id_hex: &str) -> Result<ZhtpResponse> {
+    async fn handle_council_cosign(
+        &self,
+        request: &ZhtpRequest,
+        proposal_id_hex: &str,
+    ) -> Result<ZhtpResponse> {
         #[derive(serde::Deserialize)]
         struct CosignRequest {
             signer_did: String,
@@ -2067,11 +2238,15 @@ impl DaoHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let mut blockchain = blockchain_arc.write().await;
 
-        blockchain.council_cosign_proposal(&proposal_id, req.signer_did.clone(), req.signature)
+        blockchain
+            .council_cosign_proposal(&proposal_id, req.signer_did.clone(), req.signature)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let cosign_count = blockchain.pending_cosigns
-            .get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
+        let cosign_count = blockchain
+            .pending_cosigns
+            .get(&proposal_id.as_array())
+            .map(|v| v.len())
+            .unwrap_or(0);
 
         create_json_response(json!({
             "status": "success",
@@ -2082,7 +2257,11 @@ impl DaoHandler {
     }
 
     /// POST /api/v1/dao/proposals/{id}/council-veto
-    async fn handle_council_veto(&self, request: &ZhtpRequest, proposal_id_hex: &str) -> Result<ZhtpResponse> {
+    async fn handle_council_veto(
+        &self,
+        request: &ZhtpRequest,
+        proposal_id_hex: &str,
+    ) -> Result<ZhtpResponse> {
         #[derive(serde::Deserialize)]
         struct VetoRequest {
             signer_did: String,
@@ -2097,11 +2276,15 @@ impl DaoHandler {
         let blockchain_arc = self.get_blockchain().await?;
         let mut blockchain = blockchain_arc.write().await;
 
-        blockchain.council_veto_proposal(&proposal_id, req.signer_did.clone(), req.reason.clone())
+        blockchain
+            .council_veto_proposal(&proposal_id, req.signer_did.clone(), req.reason.clone())
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let veto_count = blockchain.pending_vetoes
-            .get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
+        let veto_count = blockchain
+            .pending_vetoes
+            .get(&proposal_id.as_array())
+            .map(|v| v.len())
+            .unwrap_or(0);
 
         create_json_response(json!({
             "status": "success",
@@ -2123,8 +2306,11 @@ impl DaoHandler {
         memo: &'static [u8],
         success_message: &'static str,
     ) -> Result<ZhtpResponse> {
-        let session_token = match request.headers.get("Authorization")
-            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+        let session_token = match request
+            .headers
+            .get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        {
             Some(token) => token,
             None => {
                 return Ok(create_error_response(
@@ -2136,7 +2322,8 @@ impl DaoHandler {
 
         let client_ip = extract_client_ip(request);
         let user_agent = extract_user_agent(request);
-        let session = self.session_manager
+        let session = self
+            .session_manager
             .validate_session(&session_token, &client_ip, &user_agent)
             .await
             .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
@@ -2184,9 +2371,9 @@ impl DaoHandler {
             .as_secs();
         let blockchain_arc = self.get_blockchain().await?;
         let mut blockchain = blockchain_arc.write().await;
-        let token_contract = blockchain.get_token_contract(&token_id).ok_or_else(|| {
-            anyhow::anyhow!("token_id does not match a deployed token contract")
-        })?;
+        let token_contract = blockchain
+            .get_token_contract(&token_id)
+            .ok_or_else(|| anyhow::anyhow!("token_id does not match a deployed token contract"))?;
         if !Self::is_registry_registration_authorized(
             &token_contract,
             &identity.did,
@@ -2207,12 +2394,15 @@ impl DaoHandler {
         let height = blockchain.get_height();
 
         let execution_data = DaoExecutionData {
-            proposal_id: BcHash::from_slice(&lib_crypto::hash_blake3(&[
-                execution_type.as_bytes(),
-                session.identity_id.as_bytes(),
-                &now.to_le_bytes(),
-                &token_id,
-            ].concat())),
+            proposal_id: BcHash::from_slice(&lib_crypto::hash_blake3(
+                &[
+                    execution_type.as_bytes(),
+                    session.identity_id.as_bytes(),
+                    &now.to_le_bytes(),
+                    &token_id,
+                ]
+                .concat(),
+            )),
             executor: identity.did.clone(),
             execution_type: execution_type.to_string(),
             recipient: Some(hex::encode(dao_id)),
@@ -2302,7 +2492,8 @@ impl DaoHandler {
             Self::DAO_REGISTRY_REGISTER_EXEC,
             b"dao:registry:register",
             "DAO registry registration submitted to mempool",
-        ).await
+        )
+        .await
     }
 
     /// Handle POST /api/v1/dao/factory/create
@@ -2349,7 +2540,8 @@ impl DaoHandler {
             Self::DAO_FACTORY_CREATE_EXEC,
             b"dao:factory:create",
             "DAO factory create transaction submitted to mempool",
-        ).await
+        )
+        .await
     }
 
     /// Handle GET /api/v1/dao/registry/list
@@ -2406,25 +2598,29 @@ fn dao_entry_json(entry: DAOEntry, dao_id: [u8; 32]) -> serde_json::Value {
 impl ZhtpRequestHandler for DaoHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let path_parts: Vec<&str> = request.uri.trim_start_matches('/').split('/').collect();
-        
+
         match (request.method, path_parts.as_slice()) {
             // Treasury endpoints
-            (ZhtpMethod::Get, ["api", "v1", "dao", "treasury", "status"]) => {
-                self.handle_treasury_status().await.map_err(anyhow::Error::from)
-            },
+            (ZhtpMethod::Get, ["api", "v1", "dao", "treasury", "status"]) => self
+                .handle_treasury_status()
+                .await
+                .map_err(anyhow::Error::from),
             (ZhtpMethod::Get, ["api", "v1", "dao", "treasury", "transactions"]) => {
                 // Parse query parameters for pagination from URI
                 let (_, query_string) = request.uri.split_once('?').unwrap_or((&request.uri, ""));
                 let query_params = Self::parse_query_params(query_string);
                 let limit = query_params.get("limit").and_then(|l| l.parse().ok());
                 let offset = query_params.get("offset").and_then(|o| o.parse().ok());
-                self.handle_treasury_transactions(limit, offset).await.map_err(anyhow::Error::from)
-            },
+                self.handle_treasury_transactions(limit, offset)
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
 
             // Proposal endpoints
-            (ZhtpMethod::Post, ["api", "v1", "dao", "proposal", "create"]) => {
-                self.handle_create_proposal(&request).await.map_err(anyhow::Error::from)
-            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposal", "create"]) => self
+                .handle_create_proposal(&request)
+                .await
+                .map_err(anyhow::Error::from),
             (ZhtpMethod::Get, ["api", "v1", "dao", "proposals", "list"]) => {
                 let (_, query_string) = request.uri.split_once('?').unwrap_or((&request.uri, ""));
                 let query_params = Self::parse_query_params(query_string);
@@ -2434,105 +2630,133 @@ impl ZhtpRequestHandler for DaoHandler {
                     limit: query_params.get("limit").and_then(|l| l.parse().ok()),
                     offset: query_params.get("offset").and_then(|o| o.parse().ok()),
                 };
-                self.handle_list_proposals(query).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Get, ["api", "v1", "dao", "proposal", proposal_id]) => {
-                self.handle_get_proposal(proposal_id).await.map_err(anyhow::Error::from)
-            },
+                self.handle_list_proposals(query)
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
+            (ZhtpMethod::Get, ["api", "v1", "dao", "proposal", proposal_id]) => self
+                .handle_get_proposal(proposal_id)
+                .await
+                .map_err(anyhow::Error::from),
 
             // Voting endpoints
-            (ZhtpMethod::Post, ["api", "v1", "dao", "vote", "cast"]) => {
-                self.handle_cast_vote(&request).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Get, ["api", "v1", "dao", "vote", "power", identity_id]) => {
-                self.handle_get_voting_power(identity_id).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Get, ["api", "v1", "dao", "votes", proposal_id]) => {
-                self.handle_get_proposal_votes(proposal_id).await.map_err(anyhow::Error::from)
-            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "vote", "cast"]) => self
+                .handle_cast_vote(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Get, ["api", "v1", "dao", "vote", "power", identity_id]) => self
+                .handle_get_voting_power(identity_id)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Get, ["api", "v1", "dao", "votes", proposal_id]) => self
+                .handle_get_proposal_votes(proposal_id)
+                .await
+                .map_err(anyhow::Error::from),
 
             // Delegate endpoints (Issue #118)
-            (ZhtpMethod::Get, ["api", "v1", "dao", "data"]) => {
-                self.handle_dao_data(&request).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Get, ["api", "v1", "dao", "delegates"]) => {
-                self.handle_list_delegates().await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Post, ["api", "v1", "dao", "delegates", "register"]) => {
-                self.handle_register_delegate(&request).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Post, ["api", "v1", "dao", "delegates", "revoke"]) => {
-                self.handle_revoke_delegate(&request).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", "spending"]) => {
-                self.handle_spending_proposal(&request).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Post, ["api", "v1", "dao", "registry", "register"]) => {
-                self.handle_register_dao(&request).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Post, ["api", "v1", "dao", "factory", "create"]) => {
-                self.handle_factory_create_dao(&request).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Get, ["api", "v1", "dao", "registry", "list"]) => {
-                self.handle_list_registered_daos().await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Get, ["api", "v1", "dao", "registry", dao_id]) => {
-                self.handle_get_registered_dao(dao_id).await.map_err(anyhow::Error::from)
-            },
+            (ZhtpMethod::Get, ["api", "v1", "dao", "data"]) => self
+                .handle_dao_data(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Get, ["api", "v1", "dao", "delegates"]) => self
+                .handle_list_delegates()
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "delegates", "register"]) => self
+                .handle_register_delegate(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "delegates", "revoke"]) => self
+                .handle_revoke_delegate(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", "spending"]) => self
+                .handle_spending_proposal(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "registry", "register"]) => self
+                .handle_register_dao(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "factory", "create"]) => self
+                .handle_factory_create_dao(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Get, ["api", "v1", "dao", "registry", "list"]) => self
+                .handle_list_registered_daos()
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Get, ["api", "v1", "dao", "registry", dao_id]) => self
+                .handle_get_registered_dao(dao_id)
+                .await
+                .map_err(anyhow::Error::from),
 
             // Administrative endpoints
-            (ZhtpMethod::Post, ["api", "v1", "dao", "admin", "process-expired"]) => {
-                self.handle_process_expired(&request).await.map_err(anyhow::Error::from)
-            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "admin", "process-expired"]) => self
+                .handle_process_expired(&request)
+                .await
+                .map_err(anyhow::Error::from),
             (ZhtpMethod::Get, ["api", "v1", "dao", "admin", "stats"]) => {
                 self.handle_dao_stats().await.map_err(anyhow::Error::from)
-            },
+            }
 
             // Bootstrap Council endpoints (dao-1)
-            (ZhtpMethod::Get, ["api", "v1", "dao", "council", "members"]) => {
-                self.handle_get_council_members().await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Post, ["api", "v1", "dao", "council", "register"]) => {
-                self.handle_register_council_member(&request).await.map_err(anyhow::Error::from)
-            },
+            (ZhtpMethod::Get, ["api", "v1", "dao", "council", "members"]) => self
+                .handle_get_council_members()
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "council", "register"]) => self
+                .handle_register_council_member(&request)
+                .await
+                .map_err(anyhow::Error::from),
 
             // Emergency state endpoints (dao-2)
-            (ZhtpMethod::Post, ["api", "v1", "dao", "emergency", "activate"]) => {
-                self.handle_emergency_activate(&request).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Get, ["api", "v1", "dao", "emergency", "status"]) => {
-                self.handle_emergency_status().await.map_err(anyhow::Error::from)
-            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "emergency", "activate"]) => self
+                .handle_emergency_activate(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Get, ["api", "v1", "dao", "emergency", "status"]) => self
+                .handle_emergency_status()
+                .await
+                .map_err(anyhow::Error::from),
 
             // Treasury freeze endpoints (dao-7)
-            (ZhtpMethod::Post, ["api", "v1", "dao", "treasury", "freeze"]) => {
-                self.handle_treasury_freeze(&request).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Get, ["api", "v1", "dao", "treasury", "freeze-status"]) => {
-                self.handle_treasury_freeze_status().await.map_err(anyhow::Error::from)
-            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "treasury", "freeze"]) => self
+                .handle_treasury_freeze(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Get, ["api", "v1", "dao", "treasury", "freeze-status"]) => self
+                .handle_treasury_freeze_status()
+                .await
+                .map_err(anyhow::Error::from),
 
             // Voting power delegation (dao-5)
-            (ZhtpMethod::Post, ["api", "v1", "dao", "voting", "delegate"]) => {
-                self.handle_vote_delegate(&request).await.map_err(anyhow::Error::from)
-            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "voting", "delegate"]) => self
+                .handle_vote_delegate(&request)
+                .await
+                .map_err(anyhow::Error::from),
 
             // Hybrid governance endpoints (dao-4)
-            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", id, "council-cosign"]) => {
-                self.handle_council_cosign(&request, id).await.map_err(anyhow::Error::from)
-            },
-            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", id, "council-veto"]) => {
-                self.handle_council_veto(&request, id).await.map_err(anyhow::Error::from)
-            },
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", id, "council-cosign"]) => self
+                .handle_council_cosign(&request, id)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", id, "council-veto"]) => self
+                .handle_council_veto(&request, id)
+                .await
+                .map_err(anyhow::Error::from),
 
-            _ => Ok(create_error_response(ZhtpStatus::NotFound, "DAO endpoint not found".to_string())),
+            _ => Ok(create_error_response(
+                ZhtpStatus::NotFound,
+                "DAO endpoint not found".to_string(),
+            )),
         }
     }
-    
+
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
         request.uri.starts_with("/api/v1/dao/")
     }
-    
+
     fn priority(&self) -> u32 {
         100
     }
@@ -2540,10 +2764,14 @@ impl ZhtpRequestHandler for DaoHandler {
 
 #[cfg(test)]
 mod tests {
-    use super::{CastVoteRequest, CreateProposalRequest, DaoHandler, DAOType};
+    use super::{CastVoteRequest, CreateProposalRequest, DAOType, DaoHandler};
     use lib_blockchain::contracts::{derive_dao_id, DAORegistry, TokenContract};
-    use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
-    use lib_blockchain::transaction::{DaoExecutionData, OracleCommitteeUpdateData, OracleConfigUpdateData, Transaction};
+    use lib_blockchain::integration::crypto_integration::{
+        PublicKey, Signature, SignatureAlgorithm,
+    };
+    use lib_blockchain::transaction::{
+        DaoExecutionData, OracleCommitteeUpdateData, OracleConfigUpdateData, Transaction,
+    };
     use lib_blockchain::types::Hash as BcHash;
     use lib_blockchain::{Blockchain, ValidatorInfo};
     use serde_json::json;
@@ -2556,7 +2784,11 @@ mod tests {
         }
     }
 
-    fn dao_registry_tx(event: serde_json::Value, execution_type: &str, signer_seed: u8) -> Transaction {
+    fn dao_registry_tx(
+        event: serde_json::Value,
+        execution_type: &str,
+        signer_seed: u8,
+    ) -> Transaction {
         let now = 42_u64;
         let execution_data = DaoExecutionData {
             proposal_id: BcHash::from_slice(&lib_crypto::hash_blake3(
@@ -2594,7 +2826,8 @@ mod tests {
             "orchestrated":true
         }"#;
 
-        let parsed: CreateProposalRequest = serde_json::from_str(body).expect("legacy propose payload should parse");
+        let parsed: CreateProposalRequest =
+            serde_json::from_str(body).expect("legacy propose payload should parse");
         assert_eq!(parsed.title, "Legacy title");
         assert!(parsed.proposer_identity_id.is_none());
         assert!(parsed.proposal_type.is_none());
@@ -2611,7 +2844,8 @@ mod tests {
             "voting_period_days":7
         }"#;
 
-        let parsed: CreateProposalRequest = serde_json::from_str(body).expect("canonical propose payload should parse");
+        let parsed: CreateProposalRequest =
+            serde_json::from_str(body).expect("canonical propose payload should parse");
         assert_eq!(parsed.proposal_type.as_deref(), Some("treasury_allocation"));
         assert_eq!(parsed.voting_period_days, Some(7));
     }
@@ -2630,10 +2864,17 @@ mod tests {
             "11".repeat(32),
             "22".repeat(32)
         );
-        let parsed: CreateProposalRequest = serde_json::from_str(&body).expect("oracle committee payload should parse");
-        assert_eq!(parsed.proposal_type.as_deref(), Some("update_oracle_committee"));
+        let parsed: CreateProposalRequest =
+            serde_json::from_str(&body).expect("oracle committee payload should parse");
+        assert_eq!(
+            parsed.proposal_type.as_deref(),
+            Some("update_oracle_committee")
+        );
         assert_eq!(parsed.activate_at_epoch, Some(9));
-        assert_eq!(parsed.oracle_committee_members.as_ref().map(|m| m.len()), Some(2));
+        assert_eq!(
+            parsed.oracle_committee_members.as_ref().map(|m| m.len()),
+            Some(2)
+        );
     }
 
     #[test]
@@ -2649,8 +2890,12 @@ mod tests {
             "oracle_max_deviation_bps":900,
             "oracle_max_price_staleness_epochs":10
         }"#;
-        let parsed: CreateProposalRequest = serde_json::from_str(body).expect("oracle config payload should parse");
-        assert_eq!(parsed.proposal_type.as_deref(), Some("update_oracle_config"));
+        let parsed: CreateProposalRequest =
+            serde_json::from_str(body).expect("oracle config payload should parse");
+        assert_eq!(
+            parsed.proposal_type.as_deref(),
+            Some("update_oracle_config")
+        );
         assert_eq!(parsed.oracle_epoch_duration_secs, Some(600));
         assert_eq!(parsed.oracle_max_source_age_secs, Some(120));
         assert_eq!(parsed.oracle_max_deviation_bps, Some(900));
@@ -2761,8 +3006,10 @@ mod tests {
             "vote_choice":"no"
         }"#;
 
-        let legacy: CastVoteRequest = serde_json::from_str(legacy_body).expect("legacy vote payload should parse");
-        let canonical: CastVoteRequest = serde_json::from_str(canonical_body).expect("canonical vote payload should parse");
+        let legacy: CastVoteRequest =
+            serde_json::from_str(legacy_body).expect("legacy vote payload should parse");
+        let canonical: CastVoteRequest =
+            serde_json::from_str(canonical_body).expect("canonical vote payload should parse");
 
         assert_eq!(legacy.choice.as_deref(), Some(" yes "));
         assert_eq!(legacy.vote_choice, None);

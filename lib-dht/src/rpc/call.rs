@@ -1,18 +1,17 @@
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::messages::inter::method_message_base::MethodMessageBase;
 use crate::rpc::events::inter::response_callback::ResponseCallback;
 use crate::rpc::response_tracker::STALLED_TIME;
 use crate::utils::node::Node;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Call {
     message: Box<dyn MethodMessageBase>,
     node: Option<Node>,
     callback: Box<dyn ResponseCallback>,
-    sent_time: u128
+    sent_time: u128,
 }
 
 impl Call {
-
     pub fn new(message: &dyn MethodMessageBase, callback: Box<dyn ResponseCallback>) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -23,7 +22,7 @@ impl Call {
             message: message.dyn_clone(),
             node: None,
             callback,
-            sent_time: now
+            sent_time: now,
         }
     }
 
@@ -60,6 +59,6 @@ impl Call {
     }
 
     pub fn is_stalled(&self, now: u128) -> bool {
-        now-self.sent_time > STALLED_TIME
+        now - self.sent_time > STALLED_TIME
     }
 }

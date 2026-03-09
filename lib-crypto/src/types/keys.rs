@@ -2,15 +2,15 @@
 //!
 //! implementations from crypto.rs, lines 78-150
 
-use serde::{Serialize, Deserialize};
+use crate::hashing::hash_blake3;
+use crate::traits::ZeroizingKey;
+use crate::types::Signature;
+use crate::verification::verify_signature;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::{compiler_fence, Ordering};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
-use anyhow::Result;
-use std::sync::atomic::{compiler_fence, Ordering};
-use crate::types::Signature;
-use crate::hashing::hash_blake3;
-use crate::verification::verify_signature;
-use crate::traits::ZeroizingKey;
 
 /// Pure post-quantum public key with CRYSTALS implementations only
 ///
@@ -137,7 +137,9 @@ impl PublicKey {
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<bool> {
         // Always use CRYSTALS-Dilithium verification - no fallbacks
         if self.dilithium_pk.is_empty() {
-            return Err(anyhow::anyhow!("No Dilithium public key available for pure PQC verification"));
+            return Err(anyhow::anyhow!(
+                "No Dilithium public key available for pure PQC verification"
+            ));
         }
 
         // Pure post-quantum signature verification
@@ -212,7 +214,7 @@ mod tests {
         };
 
         let key2 = PublicKey {
-            dilithium_pk: vec![0xDDu8; 2592],  // Different
+            dilithium_pk: vec![0xDDu8; 2592], // Different
             kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
@@ -308,13 +310,13 @@ mod tests {
         // This test verifies that comparison doesn't exit early
         // Create keys that differ in the first field
         let key1 = PublicKey {
-            dilithium_pk: vec![0x00u8; 2592],  // First byte is 0x00
+            dilithium_pk: vec![0x00u8; 2592], // First byte is 0x00
             kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
         let key2 = PublicKey {
-            dilithium_pk: vec![0xFFu8; 2592],  // First byte is 0xFF
+            dilithium_pk: vec![0xFFu8; 2592], // First byte is 0xFF
             kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };

@@ -6,16 +6,16 @@
 //! These tests call the blockchain processing functions directly to verify state changes,
 //! serving as a safety net for token system refactoring.
 
-use lib_blockchain::Blockchain;
-use lib_blockchain::contracts::TokenContract;
-use lib_blockchain::contracts::utils::{generate_lib_token_id, generate_custom_token_id};
-use lib_blockchain::transaction::{
-    Transaction, TransactionInput, TransactionOutput,
-    TokenTransferData, TokenMintData, WalletTransactionData,
-};
-use lib_blockchain::types::{TransactionType, Hash, Difficulty};
-use lib_blockchain::types::contract_call::ContractCall;
 use lib_blockchain::block::{Block, BlockHeader};
+use lib_blockchain::contracts::utils::{generate_custom_token_id, generate_lib_token_id};
+use lib_blockchain::contracts::TokenContract;
+use lib_blockchain::transaction::{
+    TokenMintData, TokenTransferData, Transaction, TransactionInput, TransactionOutput,
+    WalletTransactionData,
+};
+use lib_blockchain::types::contract_call::ContractCall;
+use lib_blockchain::types::{Difficulty, Hash, TransactionType};
+use lib_blockchain::Blockchain;
 use lib_crypto::types::keys::PublicKey;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
@@ -96,14 +96,14 @@ fn wallet_registration_tx(
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
@@ -164,24 +164,19 @@ fn token_transfer_tx_with_nonce(
         }),
         token_mint_data: None,
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
 /// Create a TokenMint transaction (v2).
-fn token_mint_tx(
-    signer: &PublicKey,
-    token_id: [u8; 32],
-    to: [u8; 32],
-    amount: u64,
-) -> Transaction {
+fn token_mint_tx(signer: &PublicKey, token_id: [u8; 32], to: [u8; 32], amount: u64) -> Transaction {
     Transaction {
         version: 2,
         chain_id: 0x03,
@@ -206,23 +201,19 @@ fn token_mint_tx(
             amount: amount as u128,
         }),
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
 /// Create a ContractExecution transaction with a token contract call.
-fn contract_execution_tx(
-    signer: &PublicKey,
-    method: &str,
-    params: Vec<u8>,
-) -> Transaction {
+fn contract_execution_tx(signer: &PublicKey, method: &str, params: Vec<u8>) -> Transaction {
     let call = ContractCall::token_call(method.to_string(), params);
     let sig = test_signature(signer);
     let call_data = bincode::serialize(&(&call, &sig)).expect("serialize call+sig");
@@ -249,53 +240,66 @@ fn contract_execution_tx(
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
 /// Register a wallet directly in the blockchain state (bypasses block processing).
-fn register_wallet(blockchain: &mut Blockchain, wallet_id: [u8; 32], owner: &PublicKey, initial_balance: u64) {
+fn register_wallet(
+    blockchain: &mut Blockchain,
+    wallet_id: [u8; 32],
+    owner: &PublicKey,
+    initial_balance: u64,
+) {
     let wallet_id_hex = hex::encode(wallet_id);
-    blockchain.wallet_registry.insert(wallet_id_hex.clone(), WalletTransactionData {
-        wallet_id: Hash::new(wallet_id),
-        wallet_type: "Primary".to_string(),
-        wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
-        alias: None,
-        public_key: owner.dilithium_pk.clone(),
-        owner_identity_id: None,
-        seed_commitment: Hash::zero(),
-        created_at: 1_700_000_000,
-        registration_fee: 0,
-        capabilities: 0,
-        initial_balance,
-    });
+    blockchain.wallet_registry.insert(
+        wallet_id_hex.clone(),
+        WalletTransactionData {
+            wallet_id: Hash::new(wallet_id),
+            wallet_type: "Primary".to_string(),
+            wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
+            alias: None,
+            public_key: owner.dilithium_pk.clone(),
+            owner_identity_id: None,
+            seed_commitment: Hash::zero(),
+            created_at: 1_700_000_000,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance,
+        },
+    );
     blockchain.wallet_blocks.insert(wallet_id_hex, 0);
 }
 
 /// Register an identity directly in the blockchain state.
 fn register_identity(blockchain: &mut Blockchain, identity_id: &str, pubkey: &PublicKey) {
     use lib_blockchain::transaction::IdentityTransactionData;
-    blockchain.identity_registry.insert(identity_id.to_string(), IdentityTransactionData {
-        did: identity_id.to_string(),
-        display_name: format!("Test-{}", &identity_id[..8.min(identity_id.len())]),
-        public_key: pubkey.dilithium_pk.clone(),
-        ownership_proof: vec![],
-        identity_type: "human".to_string(),
-        did_document_hash: Hash::zero(),
-        created_at: 1_700_000_000,
-        registration_fee: 0,
-        dao_fee: 0,
-        controlled_nodes: vec![],
-        owned_wallets: vec![],
-    });
-    blockchain.identity_blocks.insert(identity_id.to_string(), 0);
+    blockchain.identity_registry.insert(
+        identity_id.to_string(),
+        IdentityTransactionData {
+            did: identity_id.to_string(),
+            display_name: format!("Test-{}", &identity_id[..8.min(identity_id.len())]),
+            public_key: pubkey.dilithium_pk.clone(),
+            ownership_proof: vec![],
+            identity_type: "human".to_string(),
+            did_document_hash: Hash::zero(),
+            created_at: 1_700_000_000,
+            registration_fee: 0,
+            dao_fee: 0,
+            controlled_nodes: vec![],
+            owned_wallets: vec![],
+        },
+    );
+    blockchain
+        .identity_blocks
+        .insert(identity_id.to_string(), 0);
 }
 
 /// Synthetic PublicKey keyed by wallet_id for SOV balance lookups.
@@ -350,12 +354,18 @@ fn test_create_custom_token() {
 
     // Verify token was created
     let token_id = generate_custom_token_id("CarbonBlue", "CBE");
-    let token = blockchain.token_contracts.get(&token_id)
+    let token = blockchain
+        .token_contracts
+        .get(&token_id)
         .expect("Token should exist after creation");
 
     assert_eq!(token.name, "CarbonBlue");
     assert_eq!(token.symbol, "CBE");
-    assert_eq!(token.balance_of(&creator), 1_000_000, "Creator should have initial supply");
+    assert_eq!(
+        token.balance_of(&creator),
+        1_000_000,
+        "Creator should have initial supply"
+    );
     assert_eq!(token.total_supply, 1_000_000);
 }
 
@@ -386,8 +396,15 @@ fn test_mint_custom_token_by_creator() {
     blockchain.process_token_transactions(&block).unwrap();
 
     let token = blockchain.token_contracts.get(&token_id).unwrap();
-    assert_eq!(token.balance_of(&recipient), 500_000, "Recipient should have minted tokens");
-    assert_eq!(token.total_supply, 1_500_000, "Total supply should include minted amount");
+    assert_eq!(
+        token.balance_of(&recipient),
+        500_000,
+        "Recipient should have minted tokens"
+    );
+    assert_eq!(
+        token.total_supply, 1_500_000,
+        "Total supply should include minted amount"
+    );
 }
 
 /// Test 3: Mint custom tokens by non-creator is rejected (issue #1129 fixed).
@@ -421,7 +438,11 @@ fn test_mint_custom_token_unauthorized_rejected() {
 
     // Verify no tokens were minted
     let token = blockchain.token_contracts.get(&token_id).unwrap();
-    assert_eq!(token.balance_of(&recipient), 0, "Attacker should not have minted anything");
+    assert_eq!(
+        token.balance_of(&recipient),
+        0,
+        "Attacker should not have minted anything"
+    );
     assert_eq!(token.total_supply, 1_000_000, "Supply should be unchanged");
 }
 
@@ -528,9 +549,15 @@ fn test_sov_wallet_transfer() {
     let sender_balance = token.balance_of(&wallet_key(&sender_wallet_id));
     let recipient_balance = token.balance_of(&wallet_key(&recipient_wallet_id));
 
-    assert_eq!(sender_balance, 7_000, "Sender should have 10000 - 3000 = 7000");
+    assert_eq!(
+        sender_balance, 7_000,
+        "Sender should have 10000 - 3000 = 7000"
+    );
     // Recipient receives net amount after 1% protocol fee (3000 * 99% = 2970)
-    assert_eq!(recipient_balance, 2_970, "Recipient should have 3000 minus 1% fee = 2970");
+    assert_eq!(
+        recipient_balance, 2_970,
+        "Recipient should have 3000 minus 1% fee = 2970"
+    );
 }
 
 /// Test 5: Custom token transfer using key_id addressing.
@@ -568,9 +595,17 @@ fn test_custom_token_transfer() {
     blockchain.process_token_transactions(&block).unwrap();
 
     let token = blockchain.token_contracts.get(&token_id).unwrap();
-    assert_eq!(token.balance_of(&creator), 750_000, "Creator should have 1M - 250K");
+    assert_eq!(
+        token.balance_of(&creator),
+        750_000,
+        "Creator should have 1M - 250K"
+    );
     // Recipient receives net amount after 1% protocol fee (250000 * 99% = 247500)
-    assert_eq!(token.balance_of(&recipient), 247_500, "Recipient should have 250K minus 1% fee = 247500");
+    assert_eq!(
+        token.balance_of(&recipient),
+        247_500,
+        "Recipient should have 250K minus 1% fee = 247500"
+    );
 }
 
 /// Test 6: ContractExecution token burn is rejected.
@@ -605,11 +640,21 @@ fn test_contract_execution_burn_rejected() {
     let block = test_block(1, vec![tx]);
 
     let result = blockchain.process_contract_transactions(&block);
-    assert!(result.is_ok(), "process_contract_transactions must not abort on a rejected ContractExecution");
+    assert!(
+        result.is_ok(),
+        "process_contract_transactions must not abort on a rejected ContractExecution"
+    );
 
     let token = blockchain.token_contracts.get(&token_id).unwrap();
-    assert_eq!(token.balance_of(&creator), 1_000_000, "Creator balance must be unchanged after rejected burn");
-    assert_eq!(token.total_supply, initial_supply, "Total supply must be unchanged after rejected burn");
+    assert_eq!(
+        token.balance_of(&creator),
+        1_000_000,
+        "Creator balance must be unchanged after rejected burn"
+    );
+    assert_eq!(
+        token.total_supply, initial_supply,
+        "Total supply must be unchanged after rejected burn"
+    );
 }
 
 /// Test 6a: ContractExecution mint cannot bypass kernel authority on protected tokens.
@@ -698,8 +743,7 @@ fn test_contract_execution_burn_rejected_for_kernel_controlled_token() {
 
     let token = blockchain.token_contracts.get(&token_id).unwrap();
     assert_eq!(
-        token.total_supply,
-        1_000_000,
+        token.total_supply, 1_000_000,
         "Kernel-protected burn bypass must not mutate supply"
     );
 }
@@ -741,8 +785,16 @@ fn test_contract_execution_transfer_rejected() {
     );
 
     let token = blockchain.token_contracts.get(&token_id).unwrap();
-    assert_eq!(token.balance_of(&creator), 1_000_000, "Rejected transfer must not move tokens from creator");
-    assert_eq!(token.balance_of(&recipient), 0, "Rejected transfer must not credit recipient");
+    assert_eq!(
+        token.balance_of(&creator),
+        1_000_000,
+        "Rejected transfer must not move tokens from creator"
+    );
+    assert_eq!(
+        token.balance_of(&recipient),
+        0,
+        "Rejected transfer must not credit recipient"
+    );
 }
 
 /// Test 7: Balance queries return correct values after mixed operations.
@@ -777,10 +829,18 @@ fn test_balance_queries_after_operations() {
     blockchain.process_token_transactions(&block2).unwrap();
 
     let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
-    assert_eq!(token.balance_of(&wallet_key(&wallet_a)), 25_000, "A: 50K - 20K - 5K = 25K");
+    assert_eq!(
+        token.balance_of(&wallet_key(&wallet_a)),
+        25_000,
+        "A: 50K - 20K - 5K = 25K"
+    );
     // B receives net amounts after 1% protocol fee:
     // 20K * 99% = 19800, 5K * 99% = 4950, total = 24750
-    assert_eq!(token.balance_of(&wallet_key(&wallet_b)), 24_750, "B: 20K * 99% + 5K * 99% = 24750");
+    assert_eq!(
+        token.balance_of(&wallet_key(&wallet_b)),
+        24_750,
+        "B: 20K * 99% + 5K * 99% = 24750"
+    );
 }
 
 /// Test 8: Created tokens appear in token_contracts listing.
@@ -792,8 +852,10 @@ fn test_token_list() {
     let creator = test_pubkey(1);
 
     // Create two custom tokens
-    let token1 = TokenContract::new_custom("Alpha".to_string(), "ALP".to_string(), 100, creator.clone());
-    let token2 = TokenContract::new_custom("Beta".to_string(), "BET".to_string(), 200, creator.clone());
+    let token1 =
+        TokenContract::new_custom("Alpha".to_string(), "ALP".to_string(), 100, creator.clone());
+    let token2 =
+        TokenContract::new_custom("Beta".to_string(), "BET".to_string(), 200, creator.clone());
     let id1 = token1.token_id;
     let id2 = token2.token_id;
     blockchain.token_contracts.insert(id1, token1);
@@ -801,10 +863,16 @@ fn test_token_list() {
 
     // Verify all tokens are listed
     let contracts = &blockchain.token_contracts;
-    assert!(contracts.contains_key(&generate_lib_token_id()), "SOV should be in list");
+    assert!(
+        contracts.contains_key(&generate_lib_token_id()),
+        "SOV should be in list"
+    );
     assert!(contracts.contains_key(&id1), "Alpha should be in list");
     assert!(contracts.contains_key(&id2), "Beta should be in list");
-    assert!(contracts.len() >= 3, "Should have at least SOV + 2 custom tokens");
+    assert!(
+        contracts.len() >= 3,
+        "Should have at least SOV + 2 custom tokens"
+    );
 
     // Verify metadata
     assert_eq!(contracts[&id1].symbol, "ALP");
@@ -829,7 +897,10 @@ fn test_wallet_registration_mints_initial_balance() {
 
     let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
     let balance = token.balance_of(&wallet_key(&wallet_id));
-    assert_eq!(balance, initial_balance, "Wallet should have initial balance minted via block processing");
+    assert_eq!(
+        balance, initial_balance,
+        "Wallet should have initial balance minted via block processing"
+    );
 }
 
 /// Test 10: Transfer fails with insufficient balance.
@@ -854,11 +925,21 @@ fn test_transfer_insufficient_balance() {
     }
 
     // Try to transfer 1000 SOV (more than balance)
-    let tx = token_transfer_tx(&sender_pk, sov_token_id, sender_wallet, recipient_wallet, 1_000, 40);
+    let tx = token_transfer_tx(
+        &sender_pk,
+        sov_token_id,
+        sender_wallet,
+        recipient_wallet,
+        1_000,
+        40,
+    );
     let block = test_block(1, vec![tx]);
 
     let result = blockchain.process_token_transactions(&block);
-    assert!(result.is_err(), "Transfer should fail with insufficient balance");
+    assert!(
+        result.is_err(),
+        "Transfer should fail with insufficient balance"
+    );
 }
 
 /// Test 11: Transfer to non-existent SOV wallet fails.
@@ -879,11 +960,21 @@ fn test_transfer_to_nonexistent_wallet_fails() {
         token.mint(&sender_key, 10_000).unwrap();
     }
 
-    let tx = token_transfer_tx(&sender_pk, sov_token_id, sender_wallet, ghost_wallet, 100, 50);
+    let tx = token_transfer_tx(
+        &sender_pk,
+        sov_token_id,
+        sender_wallet,
+        ghost_wallet,
+        100,
+        50,
+    );
     let block = test_block(1, vec![tx]);
 
     let result = blockchain.process_token_transactions(&block);
-    assert!(result.is_err(), "Transfer to unregistered wallet should fail");
+    assert!(
+        result.is_err(),
+        "Transfer to unregistered wallet should fail"
+    );
 }
 
 /// Test 12: Duplicate token symbol creation is rejected.
@@ -893,7 +984,12 @@ fn test_duplicate_symbol_rejected() {
     let creator = test_pubkey(1);
 
     // First token creation
-    let token = TokenContract::new_custom("CarbonBlue".to_string(), "CBE".to_string(), 1000, creator.clone());
+    let token = TokenContract::new_custom(
+        "CarbonBlue".to_string(),
+        "CBE".to_string(),
+        1000,
+        creator.clone(),
+    );
     blockchain.token_contracts.insert(token.token_id, token);
 
     // Try creating another token with same symbol via ContractExecution
@@ -921,10 +1017,15 @@ fn test_duplicate_symbol_rejected() {
     );
 
     // Verify only the original token exists (no duplicate created)
-    let count = blockchain.token_contracts.values()
+    let count = blockchain
+        .token_contracts
+        .values()
         .filter(|t| t.symbol.to_uppercase() == "CBE")
         .count();
-    assert_eq!(count, 1, "Only one CBE token should exist — duplicate symbol must be silently rejected");
+    assert_eq!(
+        count, 1,
+        "Only one CBE token should exist — duplicate symbol must be silently rejected"
+    );
 }
 
 // ─── Replay protection tests ───────────────────────────────────────────────
@@ -945,12 +1046,22 @@ fn test_replay_protection_rejects_duplicate_nonce() {
 
     // Mint SOV to sender
     let sender_key = wallet_key(&sender_wid);
-    blockchain.token_contracts.get_mut(&sov_token_id).unwrap()
-        .mint(&sender_key, 1_000_000).unwrap();
+    blockchain
+        .token_contracts
+        .get_mut(&sov_token_id)
+        .unwrap()
+        .mint(&sender_key, 1_000_000)
+        .unwrap();
 
     // First transfer with nonce 0 succeeds
     let tx1 = token_transfer_tx_with_nonce(
-        &sender_pk, sov_token_id, sender_wid, recipient_wid, 100_000, 30, 0,
+        &sender_pk,
+        sov_token_id,
+        sender_wid,
+        recipient_wid,
+        100_000,
+        30,
+        0,
     );
     let block1 = test_block(1, vec![tx1]);
     blockchain.process_token_transactions(&block1).unwrap();
@@ -960,7 +1071,13 @@ fn test_replay_protection_rejects_duplicate_nonce() {
 
     // Replay with nonce 0 again — must be rejected
     let tx_replay = token_transfer_tx_with_nonce(
-        &sender_pk, sov_token_id, sender_wid, recipient_wid, 100_000, 31, 0,
+        &sender_pk,
+        sov_token_id,
+        sender_wid,
+        recipient_wid,
+        100_000,
+        31,
+        0,
     );
     let block2 = test_block(2, vec![tx_replay]);
     let result = blockchain.process_token_transactions(&block2);
@@ -984,22 +1101,38 @@ fn test_sequential_nonces() {
 
     // Mint SOV to sender
     let sender_key = wallet_key(&sender_wid);
-    blockchain.token_contracts.get_mut(&sov_token_id).unwrap()
-        .mint(&sender_key, 1_000_000).unwrap();
+    blockchain
+        .token_contracts
+        .get_mut(&sov_token_id)
+        .unwrap()
+        .mint(&sender_key, 1_000_000)
+        .unwrap();
 
     // Three sequential transfers with incrementing nonces
     for nonce in 0..3u64 {
         let tx = token_transfer_tx_with_nonce(
-            &sender_pk, sov_token_id, sender_wid, recipient_wid, 10_000, (40 + nonce) as u8, nonce,
+            &sender_pk,
+            sov_token_id,
+            sender_wid,
+            recipient_wid,
+            10_000,
+            (40 + nonce) as u8,
+            nonce,
         );
         let block = test_block(nonce + 1, vec![tx]);
         blockchain.process_token_transactions(&block).unwrap();
-        assert_eq!(blockchain.get_token_nonce(&sov_token_id, &sender_wid), nonce + 1);
+        assert_eq!(
+            blockchain.get_token_nonce(&sov_token_id, &sender_wid),
+            nonce + 1
+        );
     }
 
     // Verify final balances
     let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
-    assert_eq!(token.balance_of(&wallet_key(&sender_wid)), 1_000_000 - 30_000);
+    assert_eq!(
+        token.balance_of(&wallet_key(&sender_wid)),
+        1_000_000 - 30_000
+    );
     // Recipient receives net amount after 1% fee per transfer: 3 * (10000 * 99%) = 29700
     assert_eq!(token.balance_of(&wallet_key(&recipient_wid)), 29_700);
 }
@@ -1027,29 +1160,54 @@ fn test_nonces_are_per_token() {
         sender_pk.clone(),
     );
     let custom_token_id = custom_token.token_id;
-    blockchain.token_contracts.insert(custom_token_id, custom_token);
-    blockchain.token_contracts.get_mut(&custom_token_id).unwrap()
-        .mint(&sender_pk, 500_000).unwrap();
+    blockchain
+        .token_contracts
+        .insert(custom_token_id, custom_token);
+    blockchain
+        .token_contracts
+        .get_mut(&custom_token_id)
+        .unwrap()
+        .mint(&sender_pk, 500_000)
+        .unwrap();
 
     // Mint SOV to sender wallet
     let sender_key = wallet_key(&sender_wid);
-    blockchain.token_contracts.get_mut(&sov_token_id).unwrap()
-        .mint(&sender_key, 1_000_000).unwrap();
+    blockchain
+        .token_contracts
+        .get_mut(&sov_token_id)
+        .unwrap()
+        .mint(&sender_key, 1_000_000)
+        .unwrap();
 
     // SOV transfer with nonce 0
     let tx1 = token_transfer_tx_with_nonce(
-        &sender_pk, sov_token_id, sender_wid, recipient_wid, 100_000, 50, 0,
+        &sender_pk,
+        sov_token_id,
+        sender_wid,
+        recipient_wid,
+        100_000,
+        50,
+        0,
     );
     let block1 = test_block(1, vec![tx1]);
     blockchain.process_token_transactions(&block1).unwrap();
 
     // Custom token transfer with nonce 0 should still succeed
     let tx2 = token_transfer_tx_with_nonce(
-        &sender_pk, custom_token_id, sender_pk.key_id, recipient_pk.key_id, 25_000, 51, 0,
+        &sender_pk,
+        custom_token_id,
+        sender_pk.key_id,
+        recipient_pk.key_id,
+        25_000,
+        51,
+        0,
     );
     let block2 = test_block(2, vec![tx2]);
     blockchain.process_token_transactions(&block2).unwrap();
 
     assert_eq!(blockchain.get_token_nonce(&sov_token_id, &sender_wid), 1);
-    assert_eq!(blockchain.get_token_nonce(&custom_token_id, &sender_pk.key_id), 1);
+    assert_eq!(
+        blockchain.get_token_nonce(&custom_token_id, &sender_pk.key_id),
+        1
+    );
 }

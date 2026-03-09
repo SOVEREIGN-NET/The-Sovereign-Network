@@ -1,40 +1,40 @@
 //! ZHTP Blockchain Package
-//! 
+//!
 //! Core blockchain implementation with zero-knowledge transactions
 //! and quantum-resistant consensus integration. Focuses on blockchain
 //! fundamentals while delegating specialized functionality to other packages.
 
 // External dependencies
 extern crate lib_crypto;
-extern crate lib_proofs;
-extern crate lib_identity;
 extern crate lib_economy;
+extern crate lib_identity;
+extern crate lib_proofs;
 
-pub mod types;
-pub mod transaction;
 pub mod block;
 pub mod blockchain;
-pub mod dao;
-pub mod mempool;
-pub mod integration;
-pub mod utils;
-pub mod edge_node_state;
-pub mod dht_index;
-pub mod receipts;
-mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan module errors
-pub mod events;
 pub mod byzantine_evidence;
-pub mod storage;
+pub mod dao;
+pub mod dht_index;
+pub mod edge_node_state;
+pub mod events;
+pub mod exchange;
 pub mod execution;
-pub mod validation;
 pub mod fees;
-pub mod sync;
+mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan module errors
+pub mod integration;
+pub mod mempool;
+pub mod oracle;
 pub mod protocol;
+pub mod receipts;
 pub mod resources;
 pub mod snapshot;
+pub mod storage;
+pub mod sync;
+pub mod transaction;
+pub mod types;
+pub mod utils;
+pub mod validation;
 pub mod vm;
-pub mod oracle;
-pub mod exchange;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
@@ -43,48 +43,53 @@ pub mod contracts;
 // Re-export core types for convenience
 // Types module (all types are already explicitly re-exported in types/mod.rs)
 pub use types::{
-    TransactionType, Hash, Difficulty,
-    blake3_hash, hash_to_hex, hex_to_hash, zero_hash, is_zero_hash, Hashable,
-    calculate_target, meets_difficulty, target_to_difficulty, max_target, min_target,
-    adjust_difficulty, adjust_difficulty_with_config, difficulty_to_work,
-    MiningProfile, MiningConfig, get_mining_config_from_env, validate_mining_for_chain,
-    DAOType, TokenClass, DAOMetadata, TreasuryAllocation, SectorDao, DifficultyParameterUpdateData,
-    WelfareSectorId, SectorVerificationFloor,
+    adjust_difficulty, adjust_difficulty_with_config, blake3_hash, calculate_target,
+    difficulty_to_work, get_mining_config_from_env, hash_to_hex, hex_to_hash, is_zero_hash,
+    max_target, meets_difficulty, min_target, target_to_difficulty, validate_mining_for_chain,
+    zero_hash, DAOMetadata, DAOType, Difficulty, DifficultyParameterUpdateData, Hash, Hashable,
+    MiningConfig, MiningProfile, SectorDao, SectorVerificationFloor, TokenClass, TransactionType,
+    TreasuryAllocation, WelfareSectorId,
 };
 
 // Transaction module (core types and functions)
 pub use transaction::{
-    Transaction, DaoProposalData, DaoVoteData, DaoExecutionData, UbiClaimData,
-    ProfitDeclarationData, RevenueSource, TransactionInput, TransactionOutput,
-    IdentityTransactionData, WalletTransactionData, WalletReference, WalletPrivateData,
-    ValidatorTransactionData, ValidatorOperation,
-    TransactionBuilder, TransactionCreateError,
-    create_transfer_transaction, create_identity_transaction, create_wallet_transaction,
-    create_contract_transaction, create_contract_deployment_transaction, create_token_transaction,
-    ContractDeploymentPayloadV1, CONTRACT_DEPLOYMENT_MEMO_PREFIX,
-    ValidationError, ValidationResult, TransactionValidator, StatefulTransactionValidator,
-    hash_transaction, hash_transaction_for_signing, hash_transaction_input, hash_transaction_output,
-    calculate_transaction_merkle_root, generate_nullifier, create_commitment, create_encrypted_note, hash_for_signature,
-    SigningError, sign_transaction, verify_transaction_signature,
+    calculate_transaction_merkle_root, create_commitment, create_contract_deployment_transaction,
+    create_contract_transaction, create_encrypted_note, create_identity_transaction,
+    create_token_transaction, create_transfer_transaction, create_wallet_transaction,
+    generate_nullifier, hash_for_signature, hash_transaction, hash_transaction_for_signing,
+    hash_transaction_input, hash_transaction_output, sign_transaction,
+    verify_transaction_signature, ContractDeploymentPayloadV1, DaoExecutionData, DaoProposalData,
+    DaoVoteData, IdentityTransactionData, ProfitDeclarationData, RevenueSource, SigningError,
+    StatefulTransactionValidator, Transaction, TransactionBuilder, TransactionCreateError,
+    TransactionInput, TransactionOutput, TransactionValidator, UbiClaimData, ValidationError,
+    ValidationResult, ValidatorOperation, ValidatorTransactionData, WalletPrivateData,
+    WalletReference, WalletTransactionData, CONTRACT_DEPLOYMENT_MEMO_PREFIX,
 };
 
 // Block module (core types and functions)
 pub use block::{
-    Block, BlockHeader, create_genesis_block, BlockValidationResult, BlockValidationError,
-    BlockBuilder, create_block, create_genesis_block_with_transactions,
-    mine_block,  // Deprecated stub - BFT-A-935
-    mine_block_with_config,  // Deprecated stub - BFT-A-935
-    estimate_block_time, select_transactions_for_block,
+    create_block,
+    create_genesis_block,
+    create_genesis_block_with_transactions,
+    estimate_block_time,
+    mine_block,             // Deprecated stub - BFT-A-935
+    mine_block_with_config, // Deprecated stub - BFT-A-935
+    select_transactions_for_block,
+    Block,
+    BlockBuilder,
+    BlockHeader,
+    BlockValidationError,
+    BlockValidationResult,
 };
 
 // Blockchain module
 pub use blockchain::{
-    Blockchain, BlockchainImport, BlockchainBroadcastMessage, EconomicsTransaction, ValidatorInfo,
-    ConsensusCheckpoint, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
+    Blockchain, BlockchainBroadcastMessage, BlockchainImport, ConsensusCheckpoint,
+    EconomicsTransaction, ValidatorInfo, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
 };
 
 // Mempool module
-pub use mempool::{Mempool, MempoolStats, MempoolError};
+pub use mempool::{Mempool, MempoolError, MempoolStats};
 
 // DHT Index module
 pub use dht_index::{IndexedBlockHeader, IndexedTransactionSummary};
@@ -93,75 +98,74 @@ pub use dht_index::{IndexedBlockHeader, IndexedTransactionSummary};
 pub use receipts::{TransactionReceipt, TransactionStatus};
 
 // Sync module (Phase 3A)
-pub use sync::{ChainSync, SyncError, SyncResult, ImportResult};
+pub use sync::{ChainSync, ImportResult, SyncError, SyncResult};
 
 // Snapshot module (Phase 11)
-pub use snapshot::{Snapshot, SnapshotError, SnapshotResult, snapshot, restore};
 pub use oracle::{
-    ORACLE_PRICE_SCALE, OracleConfig, OracleCommitteeState, PendingCommitteeUpdate,
-    ORACLE_ATTESTATION_DOMAIN, OraclePriceAttestationPayload, OraclePriceAttestation,
-    OracleAttestationValidationError, OracleAttestationAdmission, OracleAttestationAdmissionError,
-    PendingConfigUpdate, FinalizedOraclePrice, OracleEpochState, OracleState,
-    // ORACLE-4: Slashing
-    OracleSlashEvent, OracleSlashReason, OracleSlashingConfig,
+    FinalizedOraclePrice,
+    OracleAttestationAdmission,
+    OracleAttestationAdmissionError,
+    OracleAttestationValidationError,
+    OracleCommitteeState,
+    OracleConfig,
     // ORACLE-15: Config validation
     OracleConfigError,
+    OracleEpochState,
+    OraclePriceAttestation,
+    OraclePriceAttestationPayload,
+    // ORACLE-4: Slashing
+    OracleSlashEvent,
+    OracleSlashReason,
+    OracleSlashingConfig,
+    OracleState,
+    PendingCommitteeUpdate,
+    PendingConfigUpdate,
+    ORACLE_ATTESTATION_DOMAIN,
+    ORACLE_PRICE_SCALE,
 };
+pub use snapshot::{restore, snapshot, Snapshot, SnapshotError, SnapshotResult};
 
 // Exchange module re-exports (ORACLE-3)
-pub use exchange::{
-    ExchangeState, TradingPair, LastTradePrice,
-};
+pub use exchange::{ExchangeState, LastTradePrice, TradingPair};
 
 // Protocol module (Phase 3B)
-pub use protocol::{ProtocolParams, ProtocolError, ProtocolResult, fee_model, PROTOCOL_PARAMS_KEY};
+pub use protocol::{fee_model, ProtocolError, ProtocolParams, ProtocolResult, PROTOCOL_PARAMS_KEY};
 
 // Re-export enhanced integrations
 pub use integration::enhanced_zk_crypto::{
-    EnhancedTransactionValidator,
-    EnhancedTransactionCreator,
-    EnhancedConsensusValidator,
+    EnhancedConsensusValidator, EnhancedTransactionCreator, EnhancedTransactionValidator,
     TransactionSpec,
 };
 
 // Re-export economic integration
 pub use integration::economic_integration::{
-    EconomicTransactionProcessor,
-    TreasuryStats,
-    create_economic_processor,
-    create_welfare_funding_transactions,
-    validate_dao_fee_calculation,
-    calculate_minimum_blockchain_fee,
-    convert_economy_amount_to_blockchain,
-    convert_blockchain_amount_to_economy,
+    calculate_minimum_blockchain_fee, convert_blockchain_amount_to_economy,
+    convert_economy_amount_to_blockchain, create_economic_processor,
+    create_welfare_funding_transactions, validate_dao_fee_calculation,
+    EconomicTransactionProcessor, TreasuryStats,
 };
 
 // Re-export consensus integration
 pub use integration::consensus_integration::{
-    BlockchainConsensusCoordinator,
+    create_dao_proposal_transaction, create_dao_vote_transaction, initialize_consensus_integration,
+    initialize_consensus_integration_with_difficulty_config, BlockchainConsensusCoordinator,
     ConsensusStatus,
-    initialize_consensus_integration,
-    initialize_consensus_integration_with_difficulty_config,
-    create_dao_proposal_transaction,
-    create_dao_vote_transaction,
 };
 
 // Re-export difficulty types from lib-consensus for convenience
-pub use lib_consensus::{DifficultyConfig, DifficultyManager, DifficultyError, DifficultyResult};
+pub use lib_consensus::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
 
 // Re-export storage types (Phase 1 storage layer)
 pub use storage::{
-    BlockchainStore, SledStore, StorageError, StorageResult,
-    BlockHash, TxHash, OutPoint, Address, TokenId, Utxo,
-    AccountState, WalletState, WalletMetadata, IdentityState, IdentityAttribute,
-    IdentityStatus, ValidatorState, ValidatorStatus,
+    AccountState, Address, BlockHash, BlockchainStore, IdentityAttribute, IdentityState,
+    IdentityStatus, OutPoint, SledStore, StorageError, StorageResult, TokenId, TxHash, Utxo,
+    ValidatorState, ValidatorStatus, WalletMetadata, WalletState,
 };
 
 // Re-export execution types (Phase 2 execution layer)
 pub use execution::{
-    BlockExecutor, ExecutorConfig, ApplyOutcome, StateChangesSummary,
-    BlockApplyError, BlockApplyResult, TxApplyError, TxApplyResult,
-    StateMutator, StateView, StateViewExt,
+    ApplyOutcome, BlockApplyError, BlockApplyResult, BlockExecutor, ExecutorConfig,
+    StateChangesSummary, StateMutator, StateView, StateViewExt, TxApplyError, TxApplyResult,
 };
 
 // Phase 2 validation module available as crate::validation
@@ -171,29 +175,24 @@ pub use execution::{
 // contracts/mod.rs has explicit re-exports, so this is safe and curated
 #[cfg(feature = "contracts")]
 pub use contracts::{
-    SmartContract, ContractExecutor, ExecutionContext, MemoryStorage, ContractStorage,
-    BlockchainIntegration, ContractTransactionBuilder, ContractEvent, ContractEventListener, ContractEventPublisher,
-    ContractRuntime, RuntimeConfig, RuntimeContext, RuntimeResult, RuntimeFactory, NativeRuntime,
-    ContractCall, ContractLog, ContractPermissions, ContractResult, ContractType, MessageType, CallPermissions, EventType,
-    ContactEntry, SharedFile, FileContract, GroupChat,
-    WhisperMessage, MessageContract, MessageThread, GroupThread,
-    TokenContract, SovDaoTreasury, EmergencyReserve,
-    DAORegistry, DAOEntry, derive_dao_id,
-    DevGrants, ProposalId, Amount, ApprovedGrant, Disbursement, ProposalStatus,
-    UbiDistributor, MonthIndex,
-    SovSwapPool, SwapDirection, SwapResult, PoolState, SwapError,
-    LiquidityPosition, LpRewardBreakdown, LpPositionsManager,
-    SovDaoStaking, GlobalStakingGuardrails, PendingDao, StakingPosition, LaunchedDao,
-    EntityRegistry, EntityType, Role, EntityRegistryError,
-    FeeRouter, FeeRouterError, FeeDistribution, DaoDistribution,
-    FEE_RATE_BASIS_POINTS, UBI_ALLOCATION_PERCENT, DAO_ALLOCATION_PERCENT,
-    EMERGENCY_ALLOCATION_PERCENT, DEV_ALLOCATION_PERCENT,
-    Web4Contract, WebsiteContract, WebsiteMetadata, ContentRoute, DomainRecord, WebsiteDeploymentData,
-    RootRegistry, NameRecord, NameClass, ZoneController, NameStatus, VerificationLevel,
-    ReservedReason, WelfareSector, NameHash, DaoId, NameClassification,
-    GovernanceRecord, parse_and_validate, compute_name_hash,
-    Error, Result,
-    GAS_BASE, GAS_TOKEN, GAS_MESSAGING, GAS_CONTACT, GAS_GROUP,
+    compute_name_hash, derive_dao_id, parse_and_validate, Amount, ApprovedGrant,
+    BlockchainIntegration, CallPermissions, ContactEntry, ContentRoute, ContractCall,
+    ContractEvent, ContractEventListener, ContractEventPublisher, ContractExecutor, ContractLog,
+    ContractPermissions, ContractResult, ContractRuntime, ContractStorage,
+    ContractTransactionBuilder, ContractType, DAOEntry, DAORegistry, DaoDistribution, DaoId,
+    DevGrants, Disbursement, DomainRecord, EmergencyReserve, EntityRegistry, EntityRegistryError,
+    EntityType, Error, EventType, ExecutionContext, FeeDistribution, FeeRouter, FeeRouterError,
+    FileContract, GlobalStakingGuardrails, GovernanceRecord, GroupChat, GroupThread, LaunchedDao,
+    LiquidityPosition, LpPositionsManager, LpRewardBreakdown, MemoryStorage, MessageContract,
+    MessageThread, MessageType, MonthIndex, NameClass, NameClassification, NameHash, NameRecord,
+    NameStatus, NativeRuntime, PendingDao, PoolState, ProposalId, ProposalStatus, ReservedReason,
+    Result, Role, RootRegistry, RuntimeConfig, RuntimeContext, RuntimeFactory, RuntimeResult,
+    SharedFile, SmartContract, SovDaoStaking, SovDaoTreasury, SovSwapPool, StakingPosition,
+    SwapDirection, SwapError, SwapResult, TokenContract, UbiDistributor, VerificationLevel,
+    Web4Contract, WebsiteContract, WebsiteDeploymentData, WebsiteMetadata, WelfareSector,
+    WhisperMessage, ZoneController, DAO_ALLOCATION_PERCENT, DEV_ALLOCATION_PERCENT,
+    EMERGENCY_ALLOCATION_PERCENT, FEE_RATE_BASIS_POINTS, GAS_BASE, GAS_CONTACT, GAS_GROUP,
+    GAS_MESSAGING, GAS_TOKEN, UBI_ALLOCATION_PERCENT,
 };
 
 /// ZHTP blockchain protocol version.

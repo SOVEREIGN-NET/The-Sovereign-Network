@@ -1,13 +1,13 @@
 //! Quality bonus calculation for exceptional service provision
-//! 
+//!
 //! Implements quality-based bonuses for infrastructure providers who
 //! maintain high service quality, similar to SLA bonuses in enterprise contracts.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use crate::types::WorkMetrics;
 use crate::models::EconomicModel;
+use crate::types::WorkMetrics;
 use crate::wasm::logging::info;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Quality bonus structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,23 +34,24 @@ impl QualityBonus {
         } else {
             0 // No bonus unless exceptional
         };
-        
-        let uptime_bonus_amount = if work.uptime_hours >= crate::UPTIME_BONUS_THRESHOLD { // 99%+ uptime (23+ hours)
+
+        let uptime_bonus_amount = if work.uptime_hours >= crate::UPTIME_BONUS_THRESHOLD {
+            // 99%+ uptime (23+ hours)
             // 5% bonus for near-perfect uptime
             ((base_reward as f64) * model.uptime_multiplier) as u64
         } else {
             0 // No bonus unless near-perfect uptime
         };
-        
+
         let total_bonus = quality_bonus_amount + uptime_bonus_amount;
-        
+
         // Calculate uptime percentage for display
         let uptime_percentage = if work.uptime_hours >= 24 {
             100.0 // Cap at 100%
         } else {
             (work.uptime_hours as f64 / 24.0) * 100.0
         };
-        
+
         if total_bonus > 0 {
             info!(
                 "⭐ Quality bonus earned: quality={:.1}% ({}SOV), uptime={:.1}% ({}SOV), total={}SOV",
@@ -59,7 +60,7 @@ impl QualityBonus {
                 total_bonus
             );
         }
-        
+
         Ok(QualityBonus {
             quality_score: work.quality_score,
             uptime_percentage,
@@ -68,7 +69,7 @@ impl QualityBonus {
             total_bonus,
         })
     }
-    
+
     /// Calculate quality bonus for  work
     pub fn calculate_isp_bypass_quality(
         connection_quality: f64,
@@ -88,29 +89,33 @@ impl QualityBonus {
         } else {
             0 // No bonus for basic quality
         };
-        
-        let uptime_bonus_amount = if uptime_hours >= 23 { // 95%+ uptime
+
+        let uptime_bonus_amount = if uptime_hours >= 23 {
+            // 95%+ uptime
             // 10% bonus for excellent uptime
             (base_reward * 10) / 100
-        } else if uptime_hours >= 20 { // 83%+ uptime
+        } else if uptime_hours >= 20 {
+            // 83%+ uptime
             // 5% bonus for good uptime
             (base_reward * 5) / 100
         } else {
             0 // No bonus for poor uptime
         };
-        
+
         let total_bonus = quality_bonus_amount + uptime_bonus_amount;
         let uptime_percentage = (uptime_hours as f64 / 24.0) * 100.0;
-        
+
         if total_bonus > 0 {
             info!(
                 " quality bonus: connection={:.1}% ({}SOV), uptime={:.1}% ({}SOV), total={}SOV",
-                connection_quality * 100.0, quality_bonus_amount,
-                uptime_percentage, uptime_bonus_amount,
+                connection_quality * 100.0,
+                quality_bonus_amount,
+                uptime_percentage,
+                uptime_bonus_amount,
                 total_bonus
             );
         }
-        
+
         Ok(QualityBonus {
             quality_score: connection_quality,
             uptime_percentage,
@@ -119,19 +124,19 @@ impl QualityBonus {
             total_bonus,
         })
     }
-    
+
     /// Check if quality meets minimum standards
     pub fn meets_minimum_standards(quality_score: f64, uptime_hours: u64) -> bool {
         // Minimum standards for infrastructure services
         quality_score >= 0.8 && uptime_hours >= 12 // 50% uptime minimum
     }
-    
+
     /// Get quality tier description
     pub fn get_quality_tier(&self) -> &'static str {
         if self.quality_score >= 0.95 {
             "Exceptional"
         } else if self.quality_score >= 0.90 {
-            "Excellent" 
+            "Excellent"
         } else if self.quality_score >= 0.85 {
             "Very Good"
         } else if self.quality_score >= 0.80 {
@@ -140,7 +145,7 @@ impl QualityBonus {
             "Basic"
         }
     }
-    
+
     /// Get uptime tier description
     pub fn get_uptime_tier(&self) -> &'static str {
         if self.uptime_percentage >= 99.0 {
@@ -155,7 +160,7 @@ impl QualityBonus {
             "Poor"
         }
     }
-    
+
     /// Get detailed bonus breakdown
     pub fn get_breakdown(&self) -> serde_json::Value {
         serde_json::json!({

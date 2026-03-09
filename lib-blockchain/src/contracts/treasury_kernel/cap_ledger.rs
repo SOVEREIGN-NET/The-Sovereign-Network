@@ -109,7 +109,8 @@ impl CapLedger {
             total_consumed: self.global_pool_consumed,
             payout_count: 0, // Would need to track this separately
         };
-        self.period_history.insert(self.current_period, period_consumption);
+        self.period_history
+            .insert(self.current_period, period_consumption);
 
         // Reset global period consumption
         self.global_pool_consumed = 0;
@@ -185,7 +186,8 @@ impl CapLedger {
             assignment.snap_lifetime_cap,
             self.current_period,
         );
-        self.assignment_consumption.insert(assignment.assignment_id, consumption);
+        self.assignment_consumption
+            .insert(assignment.assignment_id, consumption);
     }
 
     /// Get assignment consumption info
@@ -359,7 +361,8 @@ impl CapLedger {
             current_epoch,
         );
 
-        self.pending_reservations.insert(reservation_id, reservation.clone());
+        self.pending_reservations
+            .insert(reservation_id, reservation.clone());
 
         Ok(reservation)
     }
@@ -408,7 +411,10 @@ impl CapLedger {
         }
 
         // Update assignment consumption (now returns Result after our changes)
-        if let Some(consumption) = self.assignment_consumption.get_mut(&reservation.assignment_id) {
+        if let Some(consumption) = self
+            .assignment_consumption
+            .get_mut(&reservation.assignment_id)
+        {
             consumption.record_consumption(reservation.amount);
         }
 
@@ -437,7 +443,8 @@ impl CapLedger {
 
     /// Get global pool remaining capacity
     pub fn global_remaining(&self) -> u64 {
-        self.global_pool_cap.saturating_sub(self.global_pool_consumed)
+        self.global_pool_cap
+            .saturating_sub(self.global_pool_consumed)
     }
 
     /// Get global pool consumed
@@ -559,7 +566,13 @@ mod tests {
     fn test_over_cap_payout_fails() {
         let mut ledger = setup_ledger();
         setup_ledger_with_role(&mut ledger, test_role_id(), 200_000);
-        setup_ledger_with_assignment(&mut ledger, test_assignment_id(10), test_role_id(), 100_000, None);
+        setup_ledger_with_assignment(
+            &mut ledger,
+            test_assignment_id(10),
+            test_role_id(),
+            100_000,
+            None,
+        );
 
         // Try to pay 150k against 100k annual cap
         let result = ledger.reserve_compensation(&test_assignment_id(10), 150_000, 100);
@@ -574,11 +587,25 @@ mod tests {
     fn test_global_cap_prevents_payout() {
         let mut ledger = CapLedger::new(100_000, 1); // 100k global cap
         setup_ledger_with_role(&mut ledger, test_role_id(), 200_000);
-        setup_ledger_with_assignment(&mut ledger, test_assignment_id(10), test_role_id(), 100_000, None);
-        setup_ledger_with_assignment(&mut ledger, test_assignment_id(11), test_role_id(), 100_000, None);
+        setup_ledger_with_assignment(
+            &mut ledger,
+            test_assignment_id(10),
+            test_role_id(),
+            100_000,
+            None,
+        );
+        setup_ledger_with_assignment(
+            &mut ledger,
+            test_assignment_id(11),
+            test_role_id(),
+            100_000,
+            None,
+        );
 
         // Pay 90k to Alice
-        let reservation = ledger.reserve_compensation(&test_assignment_id(10), 90_000, 100).unwrap();
+        let reservation = ledger
+            .reserve_compensation(&test_assignment_id(10), 90_000, 100)
+            .unwrap();
         ledger.commit_reservation(&reservation.id).unwrap();
 
         // Try to pay 20k to Bob (would exceed global 100k)
@@ -591,14 +618,24 @@ mod tests {
     fn test_rounding_cannot_bypass_caps() {
         let mut ledger = CapLedger::new(1_000_000, 1);
         setup_ledger_with_role(&mut ledger, test_role_id(), 1_000_000);
-        setup_ledger_with_assignment(&mut ledger, test_assignment_id(10), test_role_id(), 100, None);
+        setup_ledger_with_assignment(
+            &mut ledger,
+            test_assignment_id(10),
+            test_role_id(),
+            100,
+            None,
+        );
 
         // Pay 99
-        let r1 = ledger.reserve_compensation(&test_assignment_id(10), 99, 100).unwrap();
+        let r1 = ledger
+            .reserve_compensation(&test_assignment_id(10), 99, 100)
+            .unwrap();
         ledger.commit_reservation(&r1.id).unwrap();
 
         // Pay 1 more - should succeed (exactly at cap)
-        let r2 = ledger.reserve_compensation(&test_assignment_id(10), 1, 101).unwrap();
+        let r2 = ledger
+            .reserve_compensation(&test_assignment_id(10), 1, 101)
+            .unwrap();
         ledger.commit_reservation(&r2.id).unwrap();
 
         // Pay 1 more - should fail (over cap)
@@ -610,20 +647,34 @@ mod tests {
     fn test_cap_consumption_is_monotonic() {
         let mut ledger = setup_ledger();
         setup_ledger_with_role(&mut ledger, test_role_id(), 200_000);
-        setup_ledger_with_assignment(&mut ledger, test_assignment_id(10), test_role_id(), 100_000, None);
+        setup_ledger_with_assignment(
+            &mut ledger,
+            test_assignment_id(10),
+            test_role_id(),
+            100_000,
+            None,
+        );
 
         // Pay 50k
-        let r1 = ledger.reserve_compensation(&test_assignment_id(10), 50_000, 100).unwrap();
+        let r1 = ledger
+            .reserve_compensation(&test_assignment_id(10), 50_000, 100)
+            .unwrap();
         ledger.commit_reservation(&r1.id).unwrap();
 
-        let consumption = ledger.get_assignment_consumption(&test_assignment_id(10)).unwrap();
+        let consumption = ledger
+            .get_assignment_consumption(&test_assignment_id(10))
+            .unwrap();
         assert_eq!(consumption.total_consumed, 50_000);
 
         // Pay 25k more
-        let r2 = ledger.reserve_compensation(&test_assignment_id(10), 25_000, 101).unwrap();
+        let r2 = ledger
+            .reserve_compensation(&test_assignment_id(10), 25_000, 101)
+            .unwrap();
         ledger.commit_reservation(&r2.id).unwrap();
 
-        let consumption = ledger.get_assignment_consumption(&test_assignment_id(10)).unwrap();
+        let consumption = ledger
+            .get_assignment_consumption(&test_assignment_id(10))
+            .unwrap();
         assert_eq!(consumption.total_consumed, 75_000); // Only increases
 
         // There's no API to decrease consumption - by design
@@ -635,11 +686,25 @@ mod tests {
         // Role with 100k period cap
         setup_ledger_with_role(&mut ledger, test_role_id(), 100_000);
         // Alice and Bob both in this role, each with 80k individual cap
-        setup_ledger_with_assignment(&mut ledger, test_assignment_id(10), test_role_id(), 80_000, None);
-        setup_ledger_with_assignment(&mut ledger, test_assignment_id(11), test_role_id(), 80_000, None);
+        setup_ledger_with_assignment(
+            &mut ledger,
+            test_assignment_id(10),
+            test_role_id(),
+            80_000,
+            None,
+        );
+        setup_ledger_with_assignment(
+            &mut ledger,
+            test_assignment_id(11),
+            test_role_id(),
+            80_000,
+            None,
+        );
 
         // Pay Alice 60k
-        let r1 = ledger.reserve_compensation(&test_assignment_id(10), 60_000, 100).unwrap();
+        let r1 = ledger
+            .reserve_compensation(&test_assignment_id(10), 60_000, 100)
+            .unwrap();
         ledger.commit_reservation(&r1.id).unwrap();
 
         // Try to pay Bob 60k (would exceed role period cap of 100k)
@@ -668,14 +733,18 @@ mod tests {
         );
 
         // Period 1: Pay 100k
-        let r1 = ledger.reserve_compensation(&test_assignment_id(10), 100_000, 100).unwrap();
+        let r1 = ledger
+            .reserve_compensation(&test_assignment_id(10), 100_000, 100)
+            .unwrap();
         ledger.commit_reservation(&r1.id).unwrap();
 
         // Advance to period 2 (resets annual)
         ledger.advance_period(2);
 
         // Period 2: Pay 50k (within annual, within lifetime 150k)
-        let r2 = ledger.reserve_compensation(&test_assignment_id(10), 50_000, 200).unwrap();
+        let r2 = ledger
+            .reserve_compensation(&test_assignment_id(10), 50_000, 200)
+            .unwrap();
         ledger.commit_reservation(&r2.id).unwrap();
 
         // Period 2: Try to pay 10k more (would exceed 150k lifetime)
@@ -699,11 +768,15 @@ mod tests {
         );
 
         // Period 1: Pay 50k (full annual)
-        let r1 = ledger.reserve_compensation(&test_assignment_id(10), 50_000, 100).unwrap();
+        let r1 = ledger
+            .reserve_compensation(&test_assignment_id(10), 50_000, 100)
+            .unwrap();
         ledger.commit_reservation(&r1.id).unwrap();
 
         // Can't pay more in period 1
-        assert!(ledger.reserve_compensation(&test_assignment_id(10), 1, 101).is_err());
+        assert!(ledger
+            .reserve_compensation(&test_assignment_id(10), 1, 101)
+            .is_err());
 
         // Advance period
         ledger.advance_period(2);
@@ -714,7 +787,9 @@ mod tests {
         ledger.commit_reservation(&r2.unwrap().id).unwrap();
 
         // But lifetime tracks across periods
-        let consumption = ledger.get_assignment_consumption(&test_assignment_id(10)).unwrap();
+        let consumption = ledger
+            .get_assignment_consumption(&test_assignment_id(10))
+            .unwrap();
         assert_eq!(consumption.total_consumed, 100_000);
     }
 
@@ -722,10 +797,18 @@ mod tests {
     fn test_reservation_rollback() {
         let mut ledger = setup_ledger();
         setup_ledger_with_role(&mut ledger, test_role_id(), 100_000);
-        setup_ledger_with_assignment(&mut ledger, test_assignment_id(10), test_role_id(), 100_000, None);
+        setup_ledger_with_assignment(
+            &mut ledger,
+            test_assignment_id(10),
+            test_role_id(),
+            100_000,
+            None,
+        );
 
         // Reserve 50k
-        let reservation = ledger.reserve_compensation(&test_assignment_id(10), 50_000, 100).unwrap();
+        let reservation = ledger
+            .reserve_compensation(&test_assignment_id(10), 50_000, 100)
+            .unwrap();
         assert_eq!(ledger.pending_reservation_count(), 1);
 
         // Rollback
@@ -733,7 +816,9 @@ mod tests {
         assert_eq!(ledger.pending_reservation_count(), 0);
 
         // Consumption not affected
-        let consumption = ledger.get_assignment_consumption(&test_assignment_id(10)).unwrap();
+        let consumption = ledger
+            .get_assignment_consumption(&test_assignment_id(10))
+            .unwrap();
         assert_eq!(consumption.total_consumed, 0);
 
         // Can still reserve (wasn't consumed)
@@ -749,7 +834,7 @@ mod tests {
             &mut ledger,
             test_assignment_id(10),
             test_role_id(),
-            50_000,      // 50k annual
+            50_000,       // 50k annual
             Some(60_000), // 60k lifetime
         );
 
@@ -758,7 +843,9 @@ mod tests {
         assert_eq!(max, 50_000);
 
         // After paying 40k
-        let r1 = ledger.reserve_compensation(&test_assignment_id(10), 40_000, 100).unwrap();
+        let r1 = ledger
+            .reserve_compensation(&test_assignment_id(10), 40_000, 100)
+            .unwrap();
         ledger.commit_reservation(&r1.id).unwrap();
 
         // Max is now min(60k global, 40k role, 10k annual, 20k lifetime) = 10k
@@ -783,17 +870,27 @@ mod tests {
             requires_attestation: false,
         };
         ledger.register_role(&role, 100_000);
-        setup_ledger_with_assignment(&mut ledger, test_assignment_id(10), test_role_id(), 100_000, None);
+        setup_ledger_with_assignment(
+            &mut ledger,
+            test_assignment_id(10),
+            test_role_id(),
+            100_000,
+            None,
+        );
 
         // Pay 100k
-        let r1 = ledger.reserve_compensation(&test_assignment_id(10), 100_000, 100).unwrap();
+        let r1 = ledger
+            .reserve_compensation(&test_assignment_id(10), 100_000, 100)
+            .unwrap();
         ledger.commit_reservation(&r1.id).unwrap();
 
         // Advance period
         ledger.advance_period(2);
 
         // Pay 50k (within role lifetime of 150k)
-        let r2 = ledger.reserve_compensation(&test_assignment_id(10), 50_000, 200).unwrap();
+        let r2 = ledger
+            .reserve_compensation(&test_assignment_id(10), 50_000, 200)
+            .unwrap();
         ledger.commit_reservation(&r2.id).unwrap();
 
         // Try to pay 10k more (would exceed role lifetime)
@@ -809,11 +906,25 @@ mod tests {
         let mut ledger = setup_ledger();
         setup_ledger_with_role(&mut ledger, test_role_id(), 50_000);
         setup_ledger_with_role(&mut ledger, test_role_id_2(), 50_000);
-        setup_ledger_with_assignment(&mut ledger, test_assignment_id(10), test_role_id(), 50_000, None);
-        setup_ledger_with_assignment(&mut ledger, test_assignment_id(11), test_role_id_2(), 50_000, None);
+        setup_ledger_with_assignment(
+            &mut ledger,
+            test_assignment_id(10),
+            test_role_id(),
+            50_000,
+            None,
+        );
+        setup_ledger_with_assignment(
+            &mut ledger,
+            test_assignment_id(11),
+            test_role_id_2(),
+            50_000,
+            None,
+        );
 
         // Pay 50k to role 1
-        let r1 = ledger.reserve_compensation(&test_assignment_id(10), 50_000, 100).unwrap();
+        let r1 = ledger
+            .reserve_compensation(&test_assignment_id(10), 50_000, 100)
+            .unwrap();
         ledger.commit_reservation(&r1.id).unwrap();
 
         // Role 2 still has full capacity

@@ -56,14 +56,29 @@ impl ContentRoute {
         metadata_map.insert("content_type".to_string(), metadata.content_type.clone());
         metadata_map.insert("filename".to_string(), metadata.filename.clone());
         metadata_map.insert("tier".to_string(), format!("{:?}", metadata.tier));
-        metadata_map.insert("encryption".to_string(), format!("{:?}", metadata.encryption));
-        metadata_map.insert("replication".to_string(), metadata.replication_factor.to_string());
-        metadata_map.insert("cost_per_day".to_string(), metadata.cost_per_day.to_string());
-        metadata_map.insert("access_count".to_string(), metadata.access_count.to_string());
+        metadata_map.insert(
+            "encryption".to_string(),
+            format!("{:?}", metadata.encryption),
+        );
+        metadata_map.insert(
+            "replication".to_string(),
+            metadata.replication_factor.to_string(),
+        );
+        metadata_map.insert(
+            "cost_per_day".to_string(),
+            metadata.cost_per_day.to_string(),
+        );
+        metadata_map.insert(
+            "access_count".to_string(),
+            metadata.access_count.to_string(),
+        );
         metadata_map.insert("created_at".to_string(), metadata.created_at.to_string());
-        metadata_map.insert("last_accessed".to_string(), metadata.last_accessed.to_string());
+        metadata_map.insert(
+            "last_accessed".to_string(),
+            metadata.last_accessed.to_string(),
+        );
         metadata_map.insert("tags".to_string(), metadata.tags.join(","));
-        
+
         Self {
             path,
             content_hash,
@@ -124,52 +139,32 @@ pub enum Web4Operation {
         size: u64,
     },
     /// Add a new route
-    AddRoute {
-        route: ContentRoute,
-    },
+    AddRoute { route: ContentRoute },
     /// Update website metadata
-    UpdateMetadata {
-        metadata: WebsiteMetadata,
-    },
+    UpdateMetadata { metadata: WebsiteMetadata },
     /// Transfer domain ownership
-    TransferOwnership {
-        domain: String,
-        new_owner: String,
-    },
+    TransferOwnership { domain: String, new_owner: String },
     /// Renew domain registration
-    RenewDomain {
-        domain: String,
-        duration_years: u32,
-    },
+    RenewDomain { domain: String, duration_years: u32 },
     /// Remove a route
-    RemoveRoute {
-        route_path: String,
-    },
+    RemoveRoute { route_path: String },
 }
 
 /// Web4 contract query types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Web4Query {
     /// Get domain information
-    GetDomain {
-        domain: String,
-    },
+    GetDomain { domain: String },
     /// Get content hash for a route
-    GetContentHash {
-        route: String,
-    },
+    GetContentHash { route: String },
     /// Get all routes for the website
     GetRoutes,
     /// Get website metadata
     GetMetadata,
     /// Get domain owner
-    GetOwner {
-        domain: String,
-    },
+    GetOwner { domain: String },
     /// Check if domain is available
-    IsDomainAvailable {
-        domain: String,
-    },
+    IsDomainAvailable { domain: String },
     /// Get contract statistics
     GetStats,
 }
@@ -202,10 +197,7 @@ pub enum Web4Response {
         data: Option<serde_json::Value>,
     },
     /// Error response
-    Error {
-        code: u32,
-        message: String,
-    },
+    Error { code: u32, message: String },
 }
 
 /// Web4 contract error types
@@ -241,7 +233,9 @@ impl std::fmt::Display for Web4Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Web4Error::DomainNotFound(domain) => write!(f, "Domain not found: {}", domain),
-            Web4Error::DomainAlreadyRegistered(domain) => write!(f, "Domain already registered: {}", domain),
+            Web4Error::DomainAlreadyRegistered(domain) => {
+                write!(f, "Domain already registered: {}", domain)
+            }
             Web4Error::DomainExpired(domain) => write!(f, "Domain expired: {}", domain),
             Web4Error::Unauthorized => write!(f, "Unauthorized operation"),
             Web4Error::InvalidDomain(domain) => write!(f, "Invalid domain name: {}", domain),
@@ -424,7 +418,10 @@ impl DirectoryNode {
     pub fn total_size(&self) -> u64 {
         let mut size = 0;
 
-        if let NodeType::File { size: file_size, .. } = &self.node_type {
+        if let NodeType::File {
+            size: file_size, ..
+        } = &self.node_type
+        {
             size += file_size;
         }
 
@@ -568,7 +565,10 @@ impl WebsiteManifest {
         // Verify all entry points exist
         for (route, file_path) in &self.entry_points {
             if self.root_directory.find_node(file_path).is_none() {
-                return Err(format!("Entry point '{}' references non-existent file: {}", route, file_path));
+                return Err(format!(
+                    "Entry point '{}' references non-existent file: {}",
+                    route, file_path
+                ));
             }
         }
 
@@ -708,7 +708,7 @@ impl WasmMetadata {
             tags: Vec::new(),
             exports: Vec::new(),
             imports: Vec::new(),
-            memory_pages: 16, // 1MB default
+            memory_pages: 16,         // 1MB default
             max_execution_time: 5000, // 5 seconds
             gas_limit: 100_000_000,
         }
@@ -750,10 +750,7 @@ impl WasmDeployment {
             wasm_hash,
             size,
             entry_point,
-            permissions: vec![
-                WasmPermission::ReadState,
-                WasmPermission::EmitEvents,
-            ],
+            permissions: vec![WasmPermission::ReadState, WasmPermission::EmitEvents],
             metadata: WasmMetadata::default(),
             init_params: HashMap::new(),
             owner,
@@ -925,8 +922,9 @@ mod tests {
 
     #[test]
     fn test_directory_tree_operations() {
-        let mut root = DirectoryNode::new_directory("/".to_string(), "/".to_string(), "owner".to_string());
-        
+        let mut root =
+            DirectoryNode::new_directory("/".to_string(), "/".to_string(), "owner".to_string());
+
         let index = DirectoryNode::new_file(
             "index.html".to_string(),
             "/index.html".to_string(),
@@ -948,8 +946,9 @@ mod tests {
 
     #[test]
     fn test_website_manifest() {
-        let mut root = DirectoryNode::new_directory("/".to_string(), "/".to_string(), "owner".to_string());
-        
+        let mut root =
+            DirectoryNode::new_directory("/".to_string(), "/".to_string(), "owner".to_string());
+
         let index = DirectoryNode::new_file(
             "index.html".to_string(),
             "/index.html".to_string(),
@@ -962,13 +961,15 @@ mod tests {
         root.add_child(index).unwrap();
 
         let mut manifest = WebsiteManifest::new(root, "/index.html".to_string());
-        
+
         assert_eq!(manifest.file_count, 1);
         assert_eq!(manifest.total_size, 1024);
         assert!(manifest.validate().is_ok());
 
         // Test route resolution
-        manifest.add_entry_point("/".to_string(), "/index.html".to_string()).unwrap();
+        manifest
+            .add_entry_point("/".to_string(), "/index.html".to_string())
+            .unwrap();
         let resolved = manifest.resolve_route("/");
         assert!(resolved.is_some());
         assert_eq!(resolved.unwrap().name, "index.html");
@@ -976,10 +977,15 @@ mod tests {
 
     #[test]
     fn test_nested_directory_structure() {
-        let mut root = DirectoryNode::new_directory("/".to_string(), "/".to_string(), "owner".to_string());
-        
-        let mut assets_dir = DirectoryNode::new_directory("assets".to_string(), "/assets".to_string(), "owner".to_string());
-        
+        let mut root =
+            DirectoryNode::new_directory("/".to_string(), "/".to_string(), "owner".to_string());
+
+        let mut assets_dir = DirectoryNode::new_directory(
+            "assets".to_string(),
+            "/assets".to_string(),
+            "owner".to_string(),
+        );
+
         let css_file = DirectoryNode::new_file(
             "style.css".to_string(),
             "/assets/style.css".to_string(),
@@ -989,7 +995,7 @@ mod tests {
             "owner".to_string(),
             false,
         );
-        
+
         assets_dir.add_child(css_file).unwrap();
         root.add_child(assets_dir).unwrap();
 

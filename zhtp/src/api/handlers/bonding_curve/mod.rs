@@ -19,24 +19,23 @@
 //! ValuationHandler ──► Unified price endpoint with confidence
 //! ```
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 // ZHTP protocol imports
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 // Blockchain imports
-use lib_blockchain::Blockchain;
 use lib_blockchain::contracts::bonding_curve::{
-    BondingCurveToken,
-    Phase, CurveType, Threshold, Valuation, PriceSource, ConfidenceLevel,
+    BondingCurveToken, ConfidenceLevel, CurveType, Phase, PriceSource, Threshold, Valuation,
 };
 use lib_blockchain::integration::crypto_integration::PublicKey;
+use lib_blockchain::Blockchain;
 
 /// Helper function to create JSON responses
 fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -75,9 +74,19 @@ pub struct DeployCurveTokenRequest {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CurveTypeRequest {
-    Linear { base_price: u64, slope: u64 },
-    Exponential { base_price: u64, growth_rate_bps: u64 },
-    Sigmoid { max_price: u64, midpoint_supply: u64, steepness: u64 },
+    Linear {
+        base_price: u64,
+        slope: u64,
+    },
+    Exponential {
+        base_price: u64,
+        growth_rate_bps: u64,
+    },
+    Sigmoid {
+        max_price: u64,
+        midpoint_supply: u64,
+        steepness: u64,
+    },
 }
 
 impl From<CurveTypeRequest> for CurveType {
@@ -86,12 +95,22 @@ impl From<CurveTypeRequest> for CurveType {
             CurveTypeRequest::Linear { base_price, slope } => {
                 CurveType::Linear { base_price, slope }
             }
-            CurveTypeRequest::Exponential { base_price, growth_rate_bps } => {
-                CurveType::Exponential { base_price, growth_rate_bps }
-            }
-            CurveTypeRequest::Sigmoid { max_price, midpoint_supply, steepness } => {
-                CurveType::Sigmoid { max_price, midpoint_supply, steepness }
-            }
+            CurveTypeRequest::Exponential {
+                base_price,
+                growth_rate_bps,
+            } => CurveType::Exponential {
+                base_price,
+                growth_rate_bps,
+            },
+            CurveTypeRequest::Sigmoid {
+                max_price,
+                midpoint_supply,
+                steepness,
+            } => CurveType::Sigmoid {
+                max_price,
+                midpoint_supply,
+                steepness,
+            },
         }
     }
 }
@@ -100,10 +119,20 @@ impl From<CurveTypeRequest> for CurveType {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ThresholdRequest {
-    ReserveAmount { min_reserve: u64 },
-    SupplyAmount { min_supply: u64 },
-    TimeAndReserve { min_time_seconds: u64, min_reserve: u64 },
-    TimeAndSupply { min_time_seconds: u64, min_supply: u64 },
+    ReserveAmount {
+        min_reserve: u64,
+    },
+    SupplyAmount {
+        min_supply: u64,
+    },
+    TimeAndReserve {
+        min_time_seconds: u64,
+        min_reserve: u64,
+    },
+    TimeAndSupply {
+        min_time_seconds: u64,
+        min_supply: u64,
+    },
 }
 
 impl From<ThresholdRequest> for Threshold {
@@ -112,15 +141,21 @@ impl From<ThresholdRequest> for Threshold {
             ThresholdRequest::ReserveAmount { min_reserve } => {
                 Threshold::ReserveAmount(min_reserve)
             }
-            ThresholdRequest::SupplyAmount { min_supply } => {
-                Threshold::SupplyAmount(min_supply)
-            }
-            ThresholdRequest::TimeAndReserve { min_time_seconds, min_reserve } => {
-                Threshold::TimeAndReserve { min_time_seconds, min_reserve }
-            }
-            ThresholdRequest::TimeAndSupply { min_time_seconds, min_supply } => {
-                Threshold::TimeAndSupply { min_time_seconds, min_supply }
-            }
+            ThresholdRequest::SupplyAmount { min_supply } => Threshold::SupplyAmount(min_supply),
+            ThresholdRequest::TimeAndReserve {
+                min_time_seconds,
+                min_reserve,
+            } => Threshold::TimeAndReserve {
+                min_time_seconds,
+                min_reserve,
+            },
+            ThresholdRequest::TimeAndSupply {
+                min_time_seconds,
+                min_supply,
+            } => Threshold::TimeAndSupply {
+                min_time_seconds,
+                min_supply,
+            },
         }
     }
 }
@@ -246,7 +281,7 @@ pub struct LiquidityResponse {
 // ============================================================================
 
 /// Bonding curve lifecycle handler
-/// 
+///
 /// Handles: deploy, buy, sell, graduation, curve stats
 /// Does NOT handle: AMM swaps (use SwapHandler), pricing queries (use ValuationHandler)
 pub struct CurveHandler {
@@ -290,7 +325,8 @@ impl CurveHandler {
         let creator = self.get_requester_key(&request)?;
 
         // Generate token ID deterministically
-        let token_id = self.generate_token_id(&deploy_req.name, &deploy_req.symbol, &creator.key_id);
+        let token_id =
+            self.generate_token_id(&deploy_req.name, &deploy_req.symbol, &creator.key_id);
 
         // Gate 1 + duplicate check inside single read lock
         let creator_did = {
@@ -305,13 +341,15 @@ impl CurveHandler {
 
             // Gate 1: creator must have a registered on-chain identity (DID).
             let identity = blockchain.get_identity_by_public_key(&creator.dilithium_pk);
-            let identity = match identity {
-                Some(id) => id,
-                None => return Ok(create_error_response(
-                    ZhtpStatus::Unauthorized,
-                    "Deployer must have a registered identity (DID) on-chain to deploy a token".to_string(),
-                )),
-            };
+            let identity =
+                match identity {
+                    Some(id) => id,
+                    None => return Ok(create_error_response(
+                        ZhtpStatus::Unauthorized,
+                        "Deployer must have a registered identity (DID) on-chain to deploy a token"
+                            .to_string(),
+                    )),
+                };
             let did = identity.did.clone();
 
             // Gate 2: creator must hold at least 100 SOV.
@@ -321,7 +359,9 @@ impl CurveHandler {
             // Resolve the creator's primary wallet and check SOV balance against the wallet-based key.
             let sov_balance = match sov_token {
                 Some(token) => {
-                    let primary_wallet_id = match blockchain.primary_wallet_id_for_signer(&creator.key_id) {
+                    let primary_wallet_id = match blockchain
+                        .primary_wallet_id_for_signer(&creator.key_id)
+                    {
                         Some(wallet_id) => wallet_id,
                         None => {
                             return Ok(create_error_response(
@@ -364,17 +404,24 @@ impl CurveHandler {
             creator_did,
             self.get_current_block().await?,
             self.get_current_timestamp().await?,
-        ).map_err(|e| anyhow::anyhow!("Deploy failed: {}", e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("Deploy failed: {}", e))?;
 
         // Register in blockchain
         {
             let mut blockchain = self.blockchain.write().await;
-            blockchain.bonding_curve_registry.register(token.clone())
+            blockchain
+                .bonding_curve_registry
+                .register(token.clone())
                 .map_err(|e| anyhow::anyhow!("Registration failed: {}", e))?;
         }
 
-        info!("Bonding curve token deployed: {} ({}) - id={}", 
-            deploy_req.name, deploy_req.symbol, hex::encode(&token_id[..8]));
+        info!(
+            "Bonding curve token deployed: {} ({}) - id={}",
+            deploy_req.name,
+            deploy_req.symbol,
+            hex::encode(&token_id[..8])
+        );
 
         create_json_response(json!({
             "success": true,
@@ -391,9 +438,10 @@ impl CurveHandler {
         let buy_req: BuyTokensRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        let token_id = hex::decode(&buy_req.token_id)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id.try_into()
+        let token_id =
+            hex::decode(&buy_req.token_id).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
         let buyer = self.get_requester_key(&request)?;
@@ -401,17 +449,16 @@ impl CurveHandler {
         let timestamp = self.get_current_timestamp().await?;
 
         let mut blockchain = self.blockchain.write().await;
-        
-        let token = blockchain.bonding_curve_registry.get_mut(&token_id)
+
+        let token = blockchain
+            .bonding_curve_registry
+            .get_mut(&token_id)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         // Execute buy (contract enforces phase == Curve)
-        let (token_amount, _event) = token.buy(
-            buyer,
-            buy_req.stable_amount,
-            block_height,
-            timestamp,
-        ).map_err(|e| anyhow::anyhow!("Buy failed: {}", e))?;
+        let (token_amount, _event) = token
+            .buy(buyer, buy_req.stable_amount, block_height, timestamp)
+            .map_err(|e| anyhow::anyhow!("Buy failed: {}", e))?;
 
         // Check for automatic graduation
         let graduated = if token.can_graduate(timestamp) {
@@ -444,9 +491,10 @@ impl CurveHandler {
         let sell_req: SellTokensRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        let token_id = hex::decode(&sell_req.token_id)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id.try_into()
+        let token_id =
+            hex::decode(&sell_req.token_id).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
         let seller = self.get_requester_key(&request)?;
@@ -454,17 +502,16 @@ impl CurveHandler {
         let timestamp = self.get_current_timestamp().await?;
 
         let mut blockchain = self.blockchain.write().await;
-        
-        let token = blockchain.bonding_curve_registry.get_mut(&token_id)
+
+        let token = blockchain
+            .bonding_curve_registry
+            .get_mut(&token_id)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         // Execute sell (contract enforces phase == Curve and sell_enabled)
-        let (stable_amount, _event) = token.sell(
-            seller,
-            sell_req.token_amount,
-            block_height,
-            timestamp,
-        ).map_err(|e| anyhow::anyhow!("Sell failed: {}", e))?;
+        let (stable_amount, _event) = token
+            .sell(seller, sell_req.token_amount, block_height, timestamp)
+            .map_err(|e| anyhow::anyhow!("Sell failed: {}", e))?;
 
         drop(blockchain);
 
@@ -479,14 +526,17 @@ impl CurveHandler {
 
     /// GET /api/v1/curve/{id} - Get curve token info
     async fn handle_get_token(&self, token_id_hex: &str) -> Result<ZhtpResponse> {
-        let token_id = hex::decode(token_id_hex)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id.try_into()
+        let token_id =
+            hex::decode(token_id_hex).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
         let blockchain = self.blockchain.read().await;
-        
-        let token = blockchain.bonding_curve_registry.get(&token_id)
+
+        let token = blockchain
+            .bonding_curve_registry
+            .get(&token_id)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         let timestamp = self.get_current_timestamp().await?;
@@ -514,14 +564,17 @@ impl CurveHandler {
 
     /// GET /api/v1/curve/{id}/stats - Get detailed curve statistics
     async fn handle_get_stats(&self, token_id_hex: &str) -> Result<ZhtpResponse> {
-        let token_id = hex::decode(token_id_hex)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id.try_into()
+        let token_id =
+            hex::decode(token_id_hex).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
         let blockchain = self.blockchain.read().await;
-        
-        let token = blockchain.bonding_curve_registry.get(&token_id)
+
+        let token = blockchain
+            .bonding_curve_registry
+            .get(&token_id)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         let timestamp = self.get_current_timestamp().await?;
@@ -545,7 +598,8 @@ impl CurveHandler {
         let blockchain = self.blockchain.read().await;
         let registry = &blockchain.bonding_curve_registry;
 
-        let tokens: Vec<serde_json::Value> = registry.get_all()
+        let tokens: Vec<serde_json::Value> = registry
+            .get_all()
             .iter()
             .map(|t| {
                 json!({
@@ -590,7 +644,8 @@ impl CurveHandler {
         let blockchain = self.blockchain.read().await;
         let registry = &blockchain.bonding_curve_registry;
 
-        let tokens: Vec<serde_json::Value> = registry.get_by_phase(phase)
+        let tokens: Vec<serde_json::Value> = registry
+            .get_by_phase(phase)
             .iter()
             .map(|t| {
                 json!({
@@ -616,7 +671,8 @@ impl CurveHandler {
         let registry = &blockchain.bonding_curve_registry;
         let timestamp = self.get_current_timestamp().await?;
 
-        let tokens: Vec<serde_json::Value> = registry.get_ready_to_graduate(timestamp)
+        let tokens: Vec<serde_json::Value> = registry
+            .get_ready_to_graduate(timestamp)
             .iter()
             .map(|t| {
                 json!({
@@ -674,26 +730,21 @@ impl CurveHandler {
 
 #[async_trait::async_trait]
 impl ZhtpRequestHandler for CurveHandler {
-    async fn handle_request(&self, request: ZhtpRequest) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
+    async fn handle_request(
+        &self,
+        request: ZhtpRequest,
+    ) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
         info!("Curve handler: {} {}", request.method, request.uri);
 
         let response = match (request.method.clone(), request.uri.as_str()) {
             // POST /api/v1/curve/deploy
-            (ZhtpMethod::Post, "/api/v1/curve/deploy") => {
-                self.handle_deploy(request).await
-            }
+            (ZhtpMethod::Post, "/api/v1/curve/deploy") => self.handle_deploy(request).await,
             // POST /api/v1/curve/buy
-            (ZhtpMethod::Post, "/api/v1/curve/buy") => {
-                self.handle_buy(request).await
-            }
+            (ZhtpMethod::Post, "/api/v1/curve/buy") => self.handle_buy(request).await,
             // POST /api/v1/curve/sell
-            (ZhtpMethod::Post, "/api/v1/curve/sell") => {
-                self.handle_sell(request).await
-            }
+            (ZhtpMethod::Post, "/api/v1/curve/sell") => self.handle_sell(request).await,
             // GET /api/v1/curve/list
-            (ZhtpMethod::Get, "/api/v1/curve/list") => {
-                self.handle_list().await
-            }
+            (ZhtpMethod::Get, "/api/v1/curve/list") => self.handle_list().await,
             // GET /api/v1/curve/ready-to-graduate
             (ZhtpMethod::Get, "/api/v1/curve/ready-to-graduate") => {
                 self.handle_ready_to_graduate().await
@@ -707,7 +758,8 @@ impl ZhtpRequestHandler for CurveHandler {
             (ZhtpMethod::Get, path) if path.ends_with("/stats") => {
                 let prefix = "/api/v1/curve/";
                 let suffix = "/stats";
-                let token_id = path.strip_prefix(prefix)
+                let token_id = path
+                    .strip_prefix(prefix)
                     .and_then(|s| s.strip_suffix(suffix))
                     .unwrap_or("");
                 self.handle_get_stats(token_id).await
@@ -717,12 +769,13 @@ impl ZhtpRequestHandler for CurveHandler {
                 let token_id = path.strip_prefix("/api/v1/curve/").unwrap_or("");
                 self.handle_get_token(token_id).await
             }
-            _ => {
-                Ok(create_error_response(
-                    ZhtpStatus::NotFound,
-                    format!("Curve endpoint not found: {} {}", request.method, request.uri)
-                ))
-            }
+            _ => Ok(create_error_response(
+                ZhtpStatus::NotFound,
+                format!(
+                    "Curve endpoint not found: {} {}",
+                    request.method, request.uri
+                ),
+            )),
         };
 
         response.map_err(|e| {
@@ -772,14 +825,17 @@ impl SwapHandler {
         let swap_req: SwapRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        let token_id = hex::decode(&swap_req.token_id)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id.try_into()
+        let token_id =
+            hex::decode(&swap_req.token_id).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
         let blockchain = self.blockchain.read().await;
-        
-        let token = blockchain.bonding_curve_registry.get(&token_id)
+
+        let token = blockchain
+            .bonding_curve_registry
+            .get(&token_id)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         // Verify token is in AMM phase
@@ -795,7 +851,8 @@ impl SwapHandler {
             Some(expected) => {
                 let provided = hex::decode(&swap_req.pool_id)
                     .map_err(|_| anyhow::anyhow!("Invalid pool_id hex"))?;
-                let provided: [u8; 32] = provided.try_into()
+                let provided: [u8; 32] = provided
+                    .try_into()
                     .map_err(|_| anyhow::anyhow!("Pool ID must be 32 bytes"))?;
                 if expected != provided {
                     return Ok(create_error_response(
@@ -814,9 +871,11 @@ impl SwapHandler {
 
         // Get the AMM pool for real quote
         let pool_id = token.amm_pool_id.unwrap();
-        let pool = blockchain.amm_pools.get(&pool_id)
+        let pool = blockchain
+            .amm_pools
+            .get(&pool_id)
             .ok_or_else(|| anyhow::anyhow!("AMM pool not found in storage"))?;
-        
+
         // Get quote from actual AMM pool (read-only, doesn't modify state)
         // Convert min_amount_out: 0 means no slippage protection
         let min_out = if swap_req.min_amount_out > 0 {
@@ -824,7 +883,7 @@ impl SwapHandler {
         } else {
             None
         };
-        
+
         let (amount_out, price_impact_bps) = if swap_req.token_to_sov {
             // Token -> SOV
             let result = pool.simulate_token_to_sov(swap_req.amount_in, min_out)?;
@@ -837,8 +896,10 @@ impl SwapHandler {
 
         drop(blockchain);
 
-        info!("Swap quote: token={}, amount_in={}, amount_out={}, token_to_sov={}",
-            swap_req.token_id, swap_req.amount_in, amount_out, swap_req.token_to_sov);
+        info!(
+            "Swap quote: token={}, amount_in={}, amount_out={}, token_to_sov={}",
+            swap_req.token_id, swap_req.amount_in, amount_out, swap_req.token_to_sov
+        );
 
         create_json_response(json!({
             "success": true,
@@ -857,14 +918,17 @@ impl SwapHandler {
         let req: AddLiquidityRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        let token_id = hex::decode(&req.token_id)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id.try_into()
+        let token_id =
+            hex::decode(&req.token_id).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
         let blockchain = self.blockchain.read().await;
-        
-        let token = blockchain.bonding_curve_registry.get(&token_id)
+
+        let token = blockchain
+            .bonding_curve_registry
+            .get(&token_id)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         if !token.phase.is_amm_active() {
@@ -880,8 +944,10 @@ impl SwapHandler {
         let product = req.token_amount as u128 * req.sov_amount as u128;
         let lp_tokens = integer_sqrt(product) as u64;
 
-        info!("Add liquidity: token={}, token_amount={}, sov_amount={}, lp={}",
-            req.token_id, req.token_amount, req.sov_amount, lp_tokens);
+        info!(
+            "Add liquidity: token={}, token_amount={}, sov_amount={}, lp={}",
+            req.token_id, req.token_amount, req.sov_amount, lp_tokens
+        );
 
         create_json_response(json!({
             "success": true,
@@ -899,14 +965,17 @@ impl SwapHandler {
         let req: RemoveLiquidityRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        let token_id = hex::decode(&req.token_id)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id.try_into()
+        let token_id =
+            hex::decode(&req.token_id).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
         let blockchain = self.blockchain.read().await;
-        
-        let token = blockchain.bonding_curve_registry.get(&token_id)
+
+        let token = blockchain
+            .bonding_curve_registry
+            .get(&token_id)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         if !token.phase.is_amm_active() {
@@ -922,8 +991,10 @@ impl SwapHandler {
         let token_amount = req.lp_amount * 2;
         let sov_amount = req.lp_amount * 3;
 
-        info!("Remove liquidity: token={}, lp_burned={}, token_out={}, sov_out={}",
-            req.token_id, req.lp_amount, token_amount, sov_amount);
+        info!(
+            "Remove liquidity: token={}, lp_burned={}, token_out={}, sov_out={}",
+            req.token_id, req.lp_amount, token_amount, sov_amount
+        );
 
         create_json_response(json!({
             "success": true,
@@ -938,14 +1009,17 @@ impl SwapHandler {
 
     /// GET /api/v1/swap/pools/{token_id} - Get pool info for a token
     async fn handle_get_pool(&self, token_id_hex: &str) -> Result<ZhtpResponse> {
-        let token_id = hex::decode(token_id_hex)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id.try_into()
+        let token_id =
+            hex::decode(token_id_hex).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
         let blockchain = self.blockchain.read().await;
-        
-        let token = blockchain.bonding_curve_registry.get(&token_id)
+
+        let token = blockchain
+            .bonding_curve_registry
+            .get(&token_id)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         let pool_info = match token.amm_pool_id {
@@ -995,14 +1069,15 @@ impl SwapHandler {
 
 #[async_trait::async_trait]
 impl ZhtpRequestHandler for SwapHandler {
-    async fn handle_request(&self, request: ZhtpRequest) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
+    async fn handle_request(
+        &self,
+        request: ZhtpRequest,
+    ) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
         info!("Swap handler: {} {}", request.method, request.uri);
 
         let response = match (request.method.clone(), request.uri.as_str()) {
             // POST /api/v1/swap
-            (ZhtpMethod::Post, "/api/v1/swap") => {
-                self.handle_swap(request).await
-            }
+            (ZhtpMethod::Post, "/api/v1/swap") => self.handle_swap(request).await,
             // POST /api/v1/swap/liquidity/add
             (ZhtpMethod::Post, "/api/v1/swap/liquidity/add") => {
                 self.handle_add_liquidity(request).await
@@ -1016,12 +1091,13 @@ impl ZhtpRequestHandler for SwapHandler {
                 let token_id = path.strip_prefix("/api/v1/swap/pools/").unwrap_or("");
                 self.handle_get_pool(token_id).await
             }
-            _ => {
-                Ok(create_error_response(
-                    ZhtpStatus::NotFound,
-                    format!("Swap endpoint not found: {} {}", request.method, request.uri)
-                ))
-            }
+            _ => Ok(create_error_response(
+                ZhtpStatus::NotFound,
+                format!(
+                    "Swap endpoint not found: {} {}",
+                    request.method, request.uri
+                ),
+            )),
         };
 
         response.map_err(|e| {
@@ -1067,7 +1143,7 @@ impl ValuationHandler {
     }
 
     /// GET /api/v1/price/{token_id}?type=spot|twap
-    /// 
+    ///
     /// Returns price with source and confidence level
     /// Default type is twap (safer)
     async fn handle_price(&self, token_id_hex: &str, _query: &str) -> Result<ZhtpResponse> {
@@ -1080,9 +1156,10 @@ impl ValuationHandler {
         }
 
         // Regular token
-        let token_id = hex::decode(token_id_hex)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id.try_into()
+        let token_id =
+            hex::decode(token_id_hex).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
         let blockchain = self.blockchain.read().await;
@@ -1102,7 +1179,7 @@ impl ValuationHandler {
         // Try regular token
         if let Some(token) = blockchain.get_token_contract(&token_id) {
             // Regular tokens don't have built-in pricing
-            let _ = token;  // Silence unused warning for now
+            let _ = token; // Silence unused warning for now
             return create_json_response(json!({
                 "token_id": token_id_hex,
                 "price_usd_cents": 0,
@@ -1123,9 +1200,10 @@ impl ValuationHandler {
             return self.get_sov_valuation().await;
         }
 
-        let token_id = hex::decode(token_id_hex)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id.try_into()
+        let token_id =
+            hex::decode(token_id_hex).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
         let blockchain = self.blockchain.read().await;
@@ -1133,9 +1211,18 @@ impl ValuationHandler {
         if let Some(token) = blockchain.bonding_curve_registry.get(&token_id) {
             let price = token.current_price();
             let (source, confidence) = match token.phase {
-                Phase::Curve => (PriceSource::BondingCurve, ConfidenceLevel::DeterministicCurve),
-                Phase::AMM => (PriceSource::AMM_TWAP, ConfidenceLevel::TwapLiquiditySufficient),
-                _ => (PriceSource::BondingCurve, ConfidenceLevel::DeterministicCurve),
+                Phase::Curve => (
+                    PriceSource::BondingCurve,
+                    ConfidenceLevel::DeterministicCurve,
+                ),
+                Phase::AMM => (
+                    PriceSource::AMM_TWAP,
+                    ConfidenceLevel::TwapLiquiditySufficient,
+                ),
+                _ => (
+                    PriceSource::BondingCurve,
+                    ConfidenceLevel::DeterministicCurve,
+                ),
             };
 
             return create_json_response(json!({
@@ -1232,7 +1319,7 @@ impl ValuationHandler {
 
     async fn get_sov_valuation(&self) -> Result<ZhtpResponse> {
         let srv = self.get_srv_from_treasury().await;
-        
+
         // Get supply from Treasury Kernel
         let blockchain = self.blockchain.read().await;
         let supply = self.get_circulating_supply_from_treasury(&blockchain).await;
@@ -1255,7 +1342,7 @@ impl ValuationHandler {
     /// Returns SRV in cents (8 decimal precision stored, converted to cents for API)
     async fn get_srv_from_treasury(&self) -> u64 {
         let blockchain = self.blockchain.read().await;
-        
+
         if let Some(kernel) = blockchain.treasury_kernel.as_ref() {
             // SRV is stored with 8 decimals, convert to cents (2 decimals)
             // SRVState.current_srv has 8 decimal precision
@@ -1278,7 +1365,11 @@ impl ValuationHandler {
         }
     }
 
-    fn get_curve_valuation(&self, token: &BondingCurveToken, price_type: &str) -> Result<Valuation> {
+    fn get_curve_valuation(
+        &self,
+        token: &BondingCurveToken,
+        price_type: &str,
+    ) -> Result<Valuation> {
         match token.phase {
             Phase::Curve => {
                 // Curve phase: always use curve pricing
@@ -1301,7 +1392,7 @@ impl ValuationHandler {
                 } else {
                     ConfidenceLevel::TwapLiquiditySufficient
                 };
-                
+
                 // In production, query actual AMM
                 Ok(Valuation {
                     price_usd_cents: token.current_price(), // Mock: would be AMM price
@@ -1310,21 +1401,22 @@ impl ValuationHandler {
                     confidence,
                 })
             }
-            Phase::Graduated => {
-                Ok(Valuation {
-                    price_usd_cents: 0,
-                    value_usd_cents: 0,
-                    source: PriceSource::BondingCurve,
-                    confidence: ConfidenceLevel::None,
-                })
-            }
+            Phase::Graduated => Ok(Valuation {
+                price_usd_cents: 0,
+                value_usd_cents: 0,
+                source: PriceSource::BondingCurve,
+                confidence: ConfidenceLevel::None,
+            }),
         }
     }
 }
 
 #[async_trait::async_trait]
 impl ZhtpRequestHandler for ValuationHandler {
-    async fn handle_request(&self, request: ZhtpRequest) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
+    async fn handle_request(
+        &self,
+        request: ZhtpRequest,
+    ) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
         info!("Valuation handler: {} {}", request.method, request.uri);
 
         let response = match (request.method.clone(), request.uri.as_str()) {
@@ -1345,12 +1437,13 @@ impl ZhtpRequestHandler for ValuationHandler {
                 let query = parts.get(1).unwrap_or(&"");
                 self.handle_price(token_id, query).await
             }
-            _ => {
-                Ok(create_error_response(
-                    ZhtpStatus::NotFound,
-                    format!("Valuation endpoint not found: {} {}", request.method, request.uri)
-                ))
-            }
+            _ => Ok(create_error_response(
+                ZhtpStatus::NotFound,
+                format!(
+                    "Valuation endpoint not found: {} {}",
+                    request.method, request.uri
+                ),
+            )),
         };
 
         response.map_err(|e| {
@@ -1402,14 +1495,19 @@ mod tests {
 
     #[test]
     fn test_curve_type_conversion() {
-        let req = CurveTypeRequest::Linear { base_price: 100, slope: 10 };
+        let req = CurveTypeRequest::Linear {
+            base_price: 100,
+            slope: 10,
+        };
         let curve: CurveType = req.into();
         assert_eq!(curve.name(), "linear");
     }
 
     #[test]
     fn test_threshold_conversion() {
-        let req = ThresholdRequest::ReserveAmount { min_reserve: 1_000_000 };
+        let req = ThresholdRequest::ReserveAmount {
+            min_reserve: 1_000_000,
+        };
         let threshold: Threshold = req.into();
         assert!(threshold.is_met(1_000_000, 0, 0));
         assert!(!threshold.is_met(999_999, 0, 0));
@@ -1477,7 +1575,10 @@ mod tests {
         wallet_id_bytes: [u8; 32],
         sov_atomic: u64,
     ) -> [u8; 32] {
-        use lib_blockchain::{WalletTransactionData, contracts::TokenContract, contracts::utils::generate_lib_token_id};
+        use lib_blockchain::{
+            contracts::utils::generate_lib_token_id, contracts::TokenContract,
+            WalletTransactionData,
+        };
         use lib_crypto::hash_blake3;
 
         // key_id derived by get_requester_key from the requester hash, which must equal

@@ -9,27 +9,32 @@
 //! - POST /api/v1/identity/backup/import - Restore identity from encrypted backup (Issue #115)
 //! - POST /api/v1/identity/seed/verify - Verify seed phrase is correct (Issue #115)
 
+use base64::{engine::general_purpose, Engine as _};
+use lib_blockchain;
+use lib_storage;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
-use base64::{Engine as _, engine::general_purpose};
-use lib_storage;
-use lib_blockchain;
 
 // ZHTP protocol imports
-use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
+use lib_protocols::zhtp::ZhtpResult;
 
 // Identity management imports
-use lib_identity::{IdentityManager, RecoveryPhraseManager, PhraseGenerationOptions, EntropySource, RecoveryPhrase};
+use lib_identity::{
+    EntropySource, IdentityManager, PhraseGenerationOptions, RecoveryPhrase, RecoveryPhraseManager,
+};
 
 // Session management
 use crate::session_manager::SessionManager;
 
 // BIP39 and deterministic root key generation for recovery
 use super::bip39::entropy_from_mnemonic;
-use lib_identity_core::{derive_root_secret64_from_recovery_entropy, did_from_root_signing_public_key, RecoveryEntropy32, RootSigningKeypair};
+use lib_identity_core::{
+    derive_root_secret64_from_recovery_entropy, did_from_root_signing_public_key,
+    RecoveryEntropy32, RootSigningKeypair,
+};
 
 /// Request for generating recovery phrase
 #[derive(Debug, Deserialize)]
@@ -106,17 +111,27 @@ pub async fn handle_generate_recovery_phrase(
         .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
     // Extract client IP and User-Agent for session binding validation
-    let client_ip = request.headers.get("X-Real-IP")
-        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
-            f.split(',').next().map(|s| s.trim().to_string())
-        }))
+    let client_ip = request
+        .headers
+        .get("X-Real-IP")
+        .or_else(|| {
+            request
+                .headers
+                .get("X-Forwarded-For")
+                .and_then(|f| f.split(',').next().map(|s| s.trim().to_string()))
+        })
         .unwrap_or_else(|| "unknown".to_string());
 
-    let user_agent = request.headers.get("User-Agent")
+    let user_agent = request
+        .headers
+        .get("User-Agent")
         .unwrap_or_else(|| "unknown".to_string());
 
     // Validate session token with IP and User-Agent binding
-    let session = match session_manager.validate_session(&req.session_token, &client_ip, &user_agent).await {
+    let session = match session_manager
+        .validate_session(&req.session_token, &client_ip, &user_agent)
+        .await
+    {
         Ok(s) => s,
         Err(e) => {
             return Ok(ZhtpResponse::error(
@@ -127,8 +142,8 @@ pub async fn handle_generate_recovery_phrase(
     };
 
     // Verify session belongs to this identity
-    let identity_id_bytes = hex::decode(&req.identity_id)
-        .map_err(|e| anyhow::anyhow!("Invalid identity ID: {}", e))?;
+    let identity_id_bytes =
+        hex::decode(&req.identity_id).map_err(|e| anyhow::anyhow!("Invalid identity ID: {}", e))?;
     let identity_id = lib_crypto::Hash::from_bytes(&identity_id_bytes);
 
     if session.identity_id != identity_id {
@@ -220,7 +235,10 @@ pub async fn handle_verify_recovery_phrase(
     if words.len() != 20 && words.len() != 24 {
         return Ok(ZhtpResponse::error(
             ZhtpStatus::BadRequest,
-            format!("Recovery phrase must be 20 or 24 words, got {}", words.len()),
+            format!(
+                "Recovery phrase must be 20 or 24 words, got {}",
+                words.len()
+            ),
         ));
     }
 
@@ -267,15 +285,23 @@ pub async fn handle_recover_identity(
     tracing::debug!("Recovery handler entered, body_len={}", request_body.len());
 
     // Extract client IP for rate limiting
-    let client_ip = request.headers.get("X-Real-IP")
-        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
-            f.split(',').next().map(|s| s.trim().to_string())
-        }))
+    let client_ip = request
+        .headers
+        .get("X-Real-IP")
+        .or_else(|| {
+            request
+                .headers
+                .get("X-Forwarded-For")
+                .and_then(|f| f.split(',').next().map(|s| s.trim().to_string()))
+        })
         .unwrap_or_else(|| "unknown".to_string());
 
     // CRITICAL: Rate limit recovery attempts (3 per hour per IP)
     // This prevents brute force attacks on recovery phrases
-    if let Err(_) = rate_limiter.check_rate_limit_aggressive(&client_ip, 3, 3600).await {
+    if let Err(_) = rate_limiter
+        .check_rate_limit_aggressive(&client_ip, 3, 3600)
+        .await
+    {
         tracing::warn!("Recovery rate limit exceeded for IP: {}", &client_ip);
         return Ok(ZhtpResponse::error(
             ZhtpStatus::TooManyRequests,
@@ -300,7 +326,10 @@ pub async fn handle_recover_identity(
     if words.len() != 20 && words.len() != 24 {
         return Ok(ZhtpResponse::error(
             ZhtpStatus::BadRequest,
-            format!("Recovery phrase must be 20 or 24 words, got {}", words.len()),
+            format!(
+                "Recovery phrase must be 20 or 24 words, got {}",
+                words.len()
+            ),
         ));
     }
 
@@ -319,7 +348,8 @@ pub async fn handle_recover_identity(
             .map_err(|e| anyhow::anyhow!("Failed to extract entropy: {}", e))?;
 
         // Step 2: Derive root signing public key via RootSecret HKDF step (NEW invariant; breaking change)
-        let entropy32: [u8; 32] = entropy.as_slice()
+        let entropy32: [u8; 32] = entropy
+            .as_slice()
             .try_into()
             .map_err(|_| anyhow::anyhow!("Entropy must be 32 bytes"))?;
         let rs = derive_root_secret64_from_recovery_entropy(&RecoveryEntropy32(entropy32))?;
@@ -329,7 +359,8 @@ pub async fn handle_recover_identity(
         let did = did_from_root_signing_public_key(&rsk.public_key);
 
         // Step 4: Extract identity_id from DID
-        let id_hex = did.strip_prefix("did:zhtp:")
+        let id_hex = did
+            .strip_prefix("did:zhtp:")
             .ok_or_else(|| anyhow::anyhow!("Invalid DID format"))?;
         lib_crypto::Hash::from_hex(id_hex)
             .map_err(|e| anyhow::anyhow!("Invalid identity hash: {}", e))?
@@ -451,18 +482,28 @@ pub async fn handle_export_backup(
         .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
     // Extract client IP and User-Agent for session validation
-    let client_ip = request.headers.get("X-Real-IP")
-        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
-            f.split(',').next().map(|s| s.trim().to_string())
-        }))
+    let client_ip = request
+        .headers
+        .get("X-Real-IP")
+        .or_else(|| {
+            request
+                .headers
+                .get("X-Forwarded-For")
+                .and_then(|f| f.split(',').next().map(|s| s.trim().to_string()))
+        })
         .unwrap_or_else(|| "unknown".to_string());
 
-    let user_agent = request.headers.get("User-Agent")
+    let user_agent = request
+        .headers
+        .get("User-Agent")
         .unwrap_or_else(|| "unknown".to_string());
 
     // Validate session via Authorization header
-    let session_token = match request.headers.get("Authorization")
-        .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+    let session_token = match request
+        .headers
+        .get("Authorization")
+        .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+    {
         Some(token) => token,
         None => {
             return Ok(ZhtpResponse::error(
@@ -472,7 +513,10 @@ pub async fn handle_export_backup(
         }
     };
 
-    let session = match session_manager.validate_session(&session_token, &client_ip, &user_agent).await {
+    let session = match session_manager
+        .validate_session(&session_token, &client_ip, &user_agent)
+        .await
+    {
         Ok(s) => s,
         Err(e) => {
             return Ok(ZhtpResponse::error(
@@ -483,8 +527,8 @@ pub async fn handle_export_backup(
     };
 
     // Verify session belongs to this identity
-    let identity_id_bytes = hex::decode(&req.identity_id)
-        .map_err(|e| anyhow::anyhow!("Invalid identity ID: {}", e))?;
+    let identity_id_bytes =
+        hex::decode(&req.identity_id).map_err(|e| anyhow::anyhow!("Invalid identity ID: {}", e))?;
     let identity_id = lib_crypto::Hash::from_bytes(&identity_id_bytes);
 
     if session.identity_id != identity_id {
@@ -525,10 +569,7 @@ pub async fn handle_export_backup(
         .unwrap()
         .as_secs();
 
-    tracing::info!(
-        "Identity backup exported for: {}",
-        &req.identity_id[..16]
-    );
+    tracing::info!("Identity backup exported for: {}", &req.identity_id[..16]);
 
     // Build response
     let response = ExportBackupResponse {
@@ -568,14 +609,22 @@ pub async fn handle_import_backup(
     request: &lib_protocols::types::ZhtpRequest,
 ) -> ZhtpResult<ZhtpResponse> {
     // Extract client IP for rate limiting
-    let client_ip = request.headers.get("X-Real-IP")
-        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
-            f.split(',').next().map(|s| s.trim().to_string())
-        }))
+    let client_ip = request
+        .headers
+        .get("X-Real-IP")
+        .or_else(|| {
+            request
+                .headers
+                .get("X-Forwarded-For")
+                .and_then(|f| f.split(',').next().map(|s| s.trim().to_string()))
+        })
         .unwrap_or_else(|| "unknown".to_string());
 
     // CRITICAL: Rate limit import attempts (3 per hour per IP)
-    if let Err(_) = rate_limiter.check_rate_limit_aggressive(&client_ip, 3, 3600).await {
+    if let Err(_) = rate_limiter
+        .check_rate_limit_aggressive(&client_ip, 3, 3600)
+        .await
+    {
         tracing::warn!("Backup import rate limit exceeded for IP: {}", &client_ip);
         return Ok(ZhtpResponse::error(
             ZhtpStatus::TooManyRequests,
@@ -588,13 +637,16 @@ pub async fn handle_import_backup(
         .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
     // Decode base64 backup data
-    let encrypted_data = general_purpose::STANDARD.decode(&req.backup_data)
+    let encrypted_data = general_purpose::STANDARD
+        .decode(&req.backup_data)
         .map_err(|e| anyhow::anyhow!("Invalid backup data encoding: {}", e))?;
 
     // Decrypt with passphrase
     use lib_crypto::symmetric::chacha20::decrypt_data;
-    let decrypted_data = decrypt_data(&encrypted_data, req.passphrase.as_bytes())
-        .map_err(|_| anyhow::anyhow!("Decryption failed - invalid passphrase or corrupted backup"))?;
+    let decrypted_data =
+        decrypt_data(&encrypted_data, req.passphrase.as_bytes()).map_err(|_| {
+            anyhow::anyhow!("Decryption failed - invalid passphrase or corrupted backup")
+        })?;
 
     let identity_json = String::from_utf8(decrypted_data)
         .map_err(|e| anyhow::anyhow!("Invalid backup data format: {}", e))?;
@@ -627,21 +679,37 @@ pub async fn handle_import_backup(
         });
 
         if let Ok(identity_data) = serde_json::to_vec(&identity_record) {
-            if let Err(e) = guard.store_identity_record(&identity_id_str, &identity_data).await {
-                tracing::warn!("Failed to persist imported identity to DHT (non-fatal): {}", e);
+            if let Err(e) = guard
+                .store_identity_record(&identity_id_str, &identity_data)
+                .await
+            {
+                tracing::warn!(
+                    "Failed to persist imported identity to DHT (non-fatal): {}",
+                    e
+                );
             }
         }
 
         // Add to identity index
         if let Err(e) = guard.add_to_identity_index(&identity_id_str).await {
-            tracing::warn!("Failed to add imported identity to index (non-fatal): {}", e);
+            tracing::warn!(
+                "Failed to add imported identity to index (non-fatal): {}",
+                e
+            );
         }
 
         // Index wallets from the imported identity
         for wallet_summary in identity.wallet_manager.list_wallets() {
             let wallet_id_str = wallet_summary.id.to_string();
-            if let Err(e) = guard.add_to_wallet_index(&identity_id_str, &wallet_id_str).await {
-                tracing::warn!("Failed to add wallet {} to index (non-fatal): {}", wallet_id_str, e);
+            if let Err(e) = guard
+                .add_to_wallet_index(&identity_id_str, &wallet_id_str)
+                .await
+            {
+                tracing::warn!(
+                    "Failed to add wallet {} to index (non-fatal): {}",
+                    wallet_id_str,
+                    e
+                );
             }
         }
     }
@@ -700,18 +768,28 @@ pub async fn handle_verify_seed_phrase(
         .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
     // Extract client IP and User-Agent for session validation
-    let client_ip = request.headers.get("X-Real-IP")
-        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
-            f.split(',').next().map(|s| s.trim().to_string())
-        }))
+    let client_ip = request
+        .headers
+        .get("X-Real-IP")
+        .or_else(|| {
+            request
+                .headers
+                .get("X-Forwarded-For")
+                .and_then(|f| f.split(',').next().map(|s| s.trim().to_string()))
+        })
         .unwrap_or_else(|| "unknown".to_string());
 
-    let user_agent = request.headers.get("User-Agent")
+    let user_agent = request
+        .headers
+        .get("User-Agent")
         .unwrap_or_else(|| "unknown".to_string());
 
     // Validate session via Authorization header
-    let session_token = match request.headers.get("Authorization")
-        .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string())) {
+    let session_token = match request
+        .headers
+        .get("Authorization")
+        .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+    {
         Some(token) => token,
         None => {
             return Ok(ZhtpResponse::error(
@@ -721,7 +799,10 @@ pub async fn handle_verify_seed_phrase(
         }
     };
 
-    let session = match session_manager.validate_session(&session_token, &client_ip, &user_agent).await {
+    let session = match session_manager
+        .validate_session(&session_token, &client_ip, &user_agent)
+        .await
+    {
         Ok(s) => s,
         Err(e) => {
             return Ok(ZhtpResponse::error(
@@ -732,8 +813,8 @@ pub async fn handle_verify_seed_phrase(
     };
 
     // Verify session belongs to this identity
-    let identity_id_bytes = hex::decode(&req.identity_id)
-        .map_err(|e| anyhow::anyhow!("Invalid identity ID: {}", e))?;
+    let identity_id_bytes =
+        hex::decode(&req.identity_id).map_err(|e| anyhow::anyhow!("Invalid identity ID: {}", e))?;
     let identity_id = lib_crypto::Hash::from_bytes(&identity_id_bytes);
 
     if session.identity_id != identity_id {
@@ -744,7 +825,8 @@ pub async fn handle_verify_seed_phrase(
     }
 
     // Parse seed phrase (12 words for BIP39)
-    let words: Vec<String> = req.seed_phrase
+    let words: Vec<String> = req
+        .seed_phrase
         .split_whitespace()
         .map(|s| s.to_string())
         .collect();
@@ -874,20 +956,30 @@ pub async fn handle_migrate_identity(
 
     // Extract client IP for rate limiting and audit logging.
     let peer_addr = request.headers.get("peer_addr");
-    let reported_ip = request.headers.get("X-Real-IP")
-        .or_else(|| request.headers.get("X-Forwarded-For").and_then(|f| {
-            f.split(',').next().map(|s| s.trim().to_string())
-        }))
+    let reported_ip = request
+        .headers
+        .get("X-Real-IP")
+        .or_else(|| {
+            request
+                .headers
+                .get("X-Forwarded-For")
+                .and_then(|f| f.split(',').next().map(|s| s.trim().to_string()))
+        })
         .unwrap_or_else(|| "unknown".to_string());
 
-    let user_agent = request.headers.get("User-Agent")
+    let user_agent = request
+        .headers
+        .get("User-Agent")
         .unwrap_or_else(|| "unknown".to_string());
     let audit_ip = peer_addr.clone().unwrap_or_else(|| reported_ip.clone());
 
     // SECURITY: Rate limit migration attempts (3 per hour per IP)
     // Migrations are one-time operations, aggressive limiting is appropriate.
     let rate_limit_key = audit_ip.clone();
-    if let Err(_) = rate_limiter.check_rate_limit_aggressive(&rate_limit_key, 3, 3600).await {
+    if let Err(_) = rate_limiter
+        .check_rate_limit_aggressive(&rate_limit_key, 3, 3600)
+        .await
+    {
         tracing::warn!(
             "🔄 Migration rate limit exceeded for key: {} user_agent: {} reported_ip: {} audit_ip: {}",
             &rate_limit_key, &user_agent, &reported_ip, &audit_ip
@@ -923,13 +1015,16 @@ pub async fn handle_migrate_identity(
         rate_limiter.record_failed_attempt(&rate_limit_key).await;
         return Ok(ZhtpResponse::error(
             ZhtpStatus::BadRequest,
-            format!("Invalid Dilithium5 public key size: expected 2592, got {}", new_public_key_bytes.len()),
+            format!(
+                "Invalid Dilithium5 public key size: expected 2592, got {}",
+                new_public_key_bytes.len()
+            ),
         ));
     }
 
     // Decode signature
-    let signature_bytes = hex::decode(&req.signature)
-        .map_err(|_| anyhow::anyhow!("Invalid signature hex"))?;
+    let signature_bytes =
+        hex::decode(&req.signature).map_err(|_| anyhow::anyhow!("Invalid signature hex"))?;
 
     // Convert to lib_crypto::PublicKey (computes key_id = Blake3(dilithium_pk))
     let new_public_key = lib_crypto::PublicKey::new(new_public_key_bytes.clone());
@@ -937,11 +1032,16 @@ pub async fn handle_migrate_identity(
 
     // SECURITY: Verify signature using NEW public key (proves control of seed-derived key)
     // Message format: "SEED_MIGRATE:{display_name}:{new_public_key}:{timestamp}"
-    let signed_message = format!("SEED_MIGRATE:{}:{}:{}", req.display_name, req.new_public_key, req.timestamp);
+    let signed_message = format!(
+        "SEED_MIGRATE:{}:{}:{}",
+        req.display_name, req.new_public_key, req.timestamp
+    );
 
     tracing::info!(
         "🔄 MIGRATION DEBUG: msg_len={} sig_len={} pk_len={} msg_preview='{}'",
-        signed_message.len(), signature_bytes.len(), new_public_key_bytes.len(),
+        signed_message.len(),
+        signature_bytes.len(),
+        new_public_key_bytes.len(),
         &signed_message[..std::cmp::min(80, signed_message.len())]
     );
 
@@ -950,7 +1050,8 @@ pub async fn handle_migrate_identity(
         signed_message.as_bytes(),
         &signature_bytes,
         &new_public_key_bytes,
-    ).unwrap_or(false);
+    )
+    .unwrap_or(false);
 
     if !signature_valid {
         tracing::warn!(
@@ -967,10 +1068,12 @@ pub async fn handle_migrate_identity(
     let manager = identity_manager.read().await;
 
     // Look up old identity by display_name
-    let old_identity = manager.list_identities()
+    let old_identity = manager
+        .list_identities()
         .into_iter()
         .find(|id| {
-            id.metadata.get("display_name")
+            id.metadata
+                .get("display_name")
                 .map(|n| n == &req.display_name)
                 .unwrap_or(false)
         })
@@ -993,7 +1096,10 @@ pub async fn handle_migrate_identity(
     drop(manager);
 
     let old_did = old_identity.did.clone();
-    let display_name = old_identity.metadata.get("display_name").cloned()
+    let display_name = old_identity
+        .metadata
+        .get("display_name")
+        .cloned()
         .unwrap_or_else(|| "unnamed".to_string());
 
     // Optional dry-run: validate inputs and compute what would change, but do not mutate state.
@@ -1021,7 +1127,8 @@ pub async fn handle_migrate_identity(
         match crate::runtime::blockchain_provider::get_global_blockchain().await {
             Ok(shared_blockchain) => {
                 let blockchain = shared_blockchain.read().await;
-                let old_identity_id_chain = lib_blockchain::Hash::from_slice(old_identity.id.as_bytes());
+                let old_identity_id_chain =
+                    lib_blockchain::Hash::from_slice(old_identity.id.as_bytes());
                 let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
                 let token_opt = blockchain.token_contracts.get(&sov_token_id);
                 _has_token_contract = token_opt.is_some();
@@ -1034,14 +1141,18 @@ pub async fn handle_migrate_identity(
                         let key_len = wallet_data.public_key.len();
                         if key_len < MIN_DILITHIUM_PK_LEN {
                             short_key_count += 1;
-                            short_key_backfill_total = short_key_backfill_total.saturating_add(wallet_data.initial_balance);
-                            short_key_min_len = Some(short_key_min_len.map(|v| v.min(key_len)).unwrap_or(key_len));
-                            short_key_max_len = Some(short_key_max_len.map(|v| v.max(key_len)).unwrap_or(key_len));
+                            short_key_backfill_total = short_key_backfill_total
+                                .saturating_add(wallet_data.initial_balance);
+                            short_key_min_len =
+                                Some(short_key_min_len.map(|v| v.min(key_len)).unwrap_or(key_len));
+                            short_key_max_len =
+                                Some(short_key_max_len.map(|v| v.max(key_len)).unwrap_or(key_len));
                         } else if let Some(token) = token_opt {
                             let old_pk = lib_crypto::PublicKey::new(wallet_data.public_key.clone());
                             let new_pk = lib_crypto::PublicKey::new(new_public_key_bytes.clone());
                             if old_pk != new_pk {
-                                movable_balance_total = movable_balance_total.saturating_add(token.balance_of(&old_pk));
+                                movable_balance_total =
+                                    movable_balance_total.saturating_add(token.balance_of(&old_pk));
                             }
                         }
                     }
@@ -1111,7 +1222,8 @@ pub async fn handle_migrate_identity(
         rate_limiter.record_failed_attempt(&rate_limit_key).await;
         return Ok(ZhtpResponse::error(
             ZhtpStatus::Conflict,
-            "This display_name has already been migrated. Only one migration is allowed.".to_string(),
+            "This display_name has already been migrated. Only one migration is allowed."
+                .to_string(),
         ));
     }
 
@@ -1171,13 +1283,20 @@ pub async fn handle_migrate_identity(
     }
 
     // Mark old identity as migrated and collect wallet info for transfer
-    let mut wallet_ids_to_transfer: Vec<(lib_identity::wallets::WalletId, String, u64)> = Vec::new();
+    let mut wallet_ids_to_transfer: Vec<(lib_identity::wallets::WalletId, String, u64)> =
+        Vec::new();
     let mut old_wallet_manager: Option<lib_identity::wallets::WalletManager> = None;
 
     if let Some(old_id) = manager.get_identity_mut(&old_identity.id) {
-        old_id.metadata.insert("migrated_to".to_string(), new_did.clone());
-        old_id.metadata.insert("migrated_at".to_string(), created_at.to_string());
-        old_id.metadata.insert("migrated_ip".to_string(), audit_ip.clone());
+        old_id
+            .metadata
+            .insert("migrated_to".to_string(), new_did.clone());
+        old_id
+            .metadata
+            .insert("migrated_at".to_string(), created_at.to_string());
+        old_id
+            .metadata
+            .insert("migrated_ip".to_string(), audit_ip.clone());
         old_id.metadata.remove("display_name"); // Remove display_name from old
 
         // Collect wallet IDs from old identity for transfer
@@ -1207,8 +1326,12 @@ pub async fn handle_migrate_identity(
 
         if let Some(new_id) = manager.get_identity_mut(&new_identity_id) {
             new_id.wallet_manager = wallet_manager;
-            new_id.metadata.insert("migrated_from".to_string(), old_did.clone());
-            new_id.metadata.insert("migration_type".to_string(), "seed-only".to_string());
+            new_id
+                .metadata
+                .insert("migrated_from".to_string(), old_did.clone());
+            new_id
+                .metadata
+                .insert("migration_type".to_string(), "seed-only".to_string());
             tracing::info!(
                 "🔄 Transferred {} wallets to new identity",
                 new_id.wallet_manager.wallets.len()
@@ -1227,8 +1350,10 @@ pub async fn handle_migrate_identity(
     match crate::runtime::blockchain_provider::get_global_blockchain().await {
         Ok(shared_blockchain) => {
             let mut blockchain = shared_blockchain.write().await;
-            let old_identity_id_chain = lib_blockchain::Hash::from_slice(old_identity.id.as_bytes());
-            let new_identity_id_chain = lib_blockchain::Hash::from_slice(new_identity_id.as_bytes());
+            let old_identity_id_chain =
+                lib_blockchain::Hash::from_slice(old_identity.id.as_bytes());
+            let new_identity_id_chain =
+                lib_blockchain::Hash::from_slice(new_identity_id.as_bytes());
 
             // Collect any wallets in the chain registry still owned by the old identity.
             // This fixes cases where wallet_manager is incomplete (e.g., short-key wallets).
@@ -1263,10 +1388,10 @@ pub async fn handle_migrate_identity(
                 }
             }
 
-                // Enqueue wallet updates (system transaction with explicit memo prefix).
-                // Prepare TokenMint txs for balance fixes during migration.
-                let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-                let mut mint_txs: Vec<lib_blockchain::Transaction> = Vec::new();
+            // Enqueue wallet updates (system transaction with explicit memo prefix).
+            // Prepare TokenMint txs for balance fixes during migration.
+            let sov_token_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+            let mut mint_txs: Vec<lib_blockchain::Transaction> = Vec::new();
 
             for wallet_id_str in wallet_ids_all.iter() {
                 let wallet_id_bytes = match hex::decode(wallet_id_str) {
@@ -1298,10 +1423,12 @@ pub async fn handle_migrate_identity(
                     if old_pk_is_short {
                         if existing.initial_balance > 0 {
                             let token_opt = blockchain.token_contracts.get(&sov_token_id);
-                            let current_balance = token_opt.map(|t| t.balance_of(&wallet_addr)).unwrap_or(0);
+                            let current_balance =
+                                token_opt.map(|t| t.balance_of(&wallet_addr)).unwrap_or(0);
                             if current_balance < existing.initial_balance {
                                 let mint_amount = existing.initial_balance - current_balance;
-                                let memo = format!("TOKEN_BACKFILL_V1:{}", wallet_id_str).into_bytes();
+                                let memo =
+                                    format!("TOKEN_BACKFILL_V1:{}", wallet_id_str).into_bytes();
                                 if let Ok(tx) = build_signed_sov_mint_tx(
                                     &migration_authority_kp,
                                     chain_id,
@@ -1333,7 +1460,11 @@ pub async fn handle_migrate_identity(
                             if old_pk.key_id != wallet_addr.key_id {
                                 let old_balance = token.balance_of(&old_pk);
                                 if old_balance > 0 {
-                                    let memo = format!("TOKEN_MIGRATE_V1:{}", hex::encode(&old_public_key)).into_bytes();
+                                    let memo = format!(
+                                        "TOKEN_MIGRATE_V1:{}",
+                                        hex::encode(&old_public_key)
+                                    )
+                                    .into_bytes();
                                     if let Ok(tx) = build_signed_sov_mint_tx(
                                         &migration_authority_kp,
                                         chain_id,
@@ -1374,30 +1505,48 @@ pub async fn handle_migrate_identity(
 
                     // Sign the transaction hash (signing_hash excludes the signature field).
                     let signing_hash = tx.signing_hash();
-                    let sig = lib_crypto::sign_message(&migration_authority_kp, signing_hash.as_bytes())
-                        .map_err(|e| anyhow::anyhow!("Failed to sign WalletUpdate: {}", e))?;
+                    let sig =
+                        lib_crypto::sign_message(&migration_authority_kp, signing_hash.as_bytes())
+                            .map_err(|e| anyhow::anyhow!("Failed to sign WalletUpdate: {}", e))?;
                     tx.signature = sig;
 
                     if let Err(e) = blockchain.add_system_transaction(tx) {
-                        tracing::warn!("🔄 Failed to enqueue wallet update tx for {} ({}): {}", &wallet_id_str[..16.min(wallet_id_str.len())], wallet_type, e);
+                        tracing::warn!(
+                            "🔄 Failed to enqueue wallet update tx for {} ({}): {}",
+                            &wallet_id_str[..16.min(wallet_id_str.len())],
+                            wallet_type,
+                            e
+                        );
                     } else {
                         // Update in-memory view immediately (the block will make it durable).
-                        blockchain.wallet_registry.insert(wallet_id_str.clone(), updated);
+                        blockchain
+                            .wallet_registry
+                            .insert(wallet_id_str.clone(), updated);
                     }
                 } else {
-                    tracing::warn!("🔄 Wallet {} not found in blockchain registry; cannot rebind owner", &wallet_id_str[..16.min(wallet_id_str.len())]);
+                    tracing::warn!(
+                        "🔄 Wallet {} not found in blockchain registry; cannot rebind owner",
+                        &wallet_id_str[..16.min(wallet_id_str.len())]
+                    );
                 }
             }
 
-                for tx in mint_txs {
-                    if let Err(e) = blockchain.add_pending_transaction(tx) {
-                        tracing::warn!("🪙 Failed to enqueue migration TokenMint tx: {}", e);
-                    }
+            for tx in mint_txs {
+                if let Err(e) = blockchain.add_pending_transaction(tx) {
+                    tracing::warn!("🪙 Failed to enqueue migration TokenMint tx: {}", e);
                 }
+            }
 
             // Mine immediately to persist to SledStore and make replay deterministic.
-            if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(&mut *blockchain).await {
-                tracing::warn!("🔄 Failed to mine migration block (aborting persistence): {}", e);
+            if let Err(e) = crate::runtime::services::mining_service::MiningService::mine_block(
+                &mut *blockchain,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "🔄 Failed to mine migration block (aborting persistence): {}",
+                    e
+                );
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     "Migration failed to persist on-chain. Please retry.".to_string(),
@@ -1405,7 +1554,10 @@ pub async fn handle_migrate_identity(
             }
         }
         Err(e) => {
-            tracing::warn!("🔄 Failed to get blockchain for wallet update (aborting persistence): {}", e);
+            tracing::warn!(
+                "🔄 Failed to get blockchain for wallet update (aborting persistence): {}",
+                e
+            );
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::InternalServerError,
                 "Blockchain not available for migration persistence. Please retry.".to_string(),
@@ -1448,19 +1600,31 @@ pub async fn handle_migrate_identity(
 
     if let Ok(identity_data) = serde_json::to_vec(&identity_record) {
         let mut storage = storage_system.write().await;
-        if let Err(e) = storage.store_identity_record(&identity_id_str, &identity_data).await {
-            tracing::warn!("Failed to persist migrated identity to storage (non-fatal): {}", e);
+        if let Err(e) = storage
+            .store_identity_record(&identity_id_str, &identity_data)
+            .await
+        {
+            tracing::warn!(
+                "Failed to persist migrated identity to storage (non-fatal): {}",
+                e
+            );
         } else {
             tracing::info!("🔄 Migrated identity {} persisted to storage", &new_did);
         }
         if let Err(e) = storage.add_to_identity_index(&identity_id_str).await {
-            tracing::warn!("Failed to add migrated identity to index (non-fatal): {}", e);
+            tracing::warn!(
+                "Failed to add migrated identity to index (non-fatal): {}",
+                e
+            );
         }
 
         // Ensure wallet indexes reflect the transfer across restarts.
         for (wallet_id, _wallet_type, _balance) in &wallet_ids_to_transfer {
             let wallet_id_str = hex::encode(wallet_id.0);
-            if let Err(e) = storage.add_to_wallet_index(&identity_id_str, &wallet_id_str).await {
+            if let Err(e) = storage
+                .add_to_wallet_index(&identity_id_str, &wallet_id_str)
+                .await
+            {
                 tracing::warn!(
                     "Failed to add wallet {} to new identity index (non-fatal): {}",
                     &wallet_id_str[..16.min(wallet_id_str.len())],
@@ -1468,29 +1632,49 @@ pub async fn handle_migrate_identity(
                 );
             }
         }
-        if let Err(e) = storage.clear_wallet_index_for_identity(&old_identity_id_str).await {
-            tracing::warn!("Failed to clear old identity wallet index (non-fatal): {}", e);
+        if let Err(e) = storage
+            .clear_wallet_index_for_identity(&old_identity_id_str)
+            .await
+        {
+            tracing::warn!(
+                "Failed to clear old identity wallet index (non-fatal): {}",
+                e
+            );
         }
 
         // Tombstone the old identity record.
         match storage.get_identity_record(&old_identity_id_str).await {
             Ok(Some(old_record_bytes)) => {
-                if let Ok(mut old_json) = serde_json::from_slice::<serde_json::Value>(&old_record_bytes) {
+                if let Ok(mut old_json) =
+                    serde_json::from_slice::<serde_json::Value>(&old_record_bytes)
+                {
                     if let Some(obj) = old_json.as_object_mut() {
                         obj.remove("display_name");
                         obj.remove("primary_wallet_id");
                         obj.remove("ubi_wallet_id");
                         obj.remove("savings_wallet_id");
-                        obj.insert("migrated_to".to_string(), serde_json::Value::String(new_did.clone()));
+                        obj.insert(
+                            "migrated_to".to_string(),
+                            serde_json::Value::String(new_did.clone()),
+                        );
                         obj.insert(
                             "migrated_at".to_string(),
                             serde_json::Value::Number(serde_json::Number::from(created_at)),
                         );
-                        obj.insert("migrated_ip".to_string(), serde_json::Value::String(audit_ip.clone()));
+                        obj.insert(
+                            "migrated_ip".to_string(),
+                            serde_json::Value::String(audit_ip.clone()),
+                        );
                     }
                     if let Ok(updated_bytes) = serde_json::to_vec(&old_json) {
-                        if let Err(e) = storage.store_identity_record(&old_identity_id_str, &updated_bytes).await {
-                            tracing::warn!("Failed to persist old identity tombstone (non-fatal): {}", e);
+                        if let Err(e) = storage
+                            .store_identity_record(&old_identity_id_str, &updated_bytes)
+                            .await
+                        {
+                            tracing::warn!(
+                                "Failed to persist old identity tombstone (non-fatal): {}",
+                                e
+                            );
                         }
                     }
                 }
@@ -1505,13 +1689,22 @@ pub async fn handle_migrate_identity(
                     "migrated_ip": audit_ip.clone(),
                 });
                 if let Ok(tombstone_bytes) = serde_json::to_vec(&tombstone) {
-                    if let Err(e) = storage.store_identity_record(&old_identity_id_str, &tombstone_bytes).await {
-                        tracing::warn!("Failed to persist old identity tombstone (non-fatal): {}", e);
+                    if let Err(e) = storage
+                        .store_identity_record(&old_identity_id_str, &tombstone_bytes)
+                        .await
+                    {
+                        tracing::warn!(
+                            "Failed to persist old identity tombstone (non-fatal): {}",
+                            e
+                        );
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("Failed to load old identity record for tombstoning (non-fatal): {}", e);
+                tracing::warn!(
+                    "Failed to load old identity record for tombstoning (non-fatal): {}",
+                    e
+                );
             }
         }
     }
@@ -1545,9 +1738,7 @@ async fn load_migration_authority_keypair() -> anyhow::Result<lib_crypto::KeyPai
     let keystore_dir = std::env::var("ZHTP_KEYSTORE_DIR")
         .ok()
         .map(PathBuf::from)
-        .or_else(|| {
-            dirs::home_dir().map(|h| h.join(".zhtp").join("keystore"))
-        })
+        .or_else(|| dirs::home_dir().map(|h| h.join(".zhtp").join("keystore")))
         .unwrap_or_else(|| PathBuf::from("."));
 
     let key_path = keystore_dir.join(NODE_PRIVATE_KEY_FILENAME);
@@ -1573,7 +1764,10 @@ async fn load_migration_authority_keypair() -> anyhow::Result<lib_crypto::KeyPai
         master_seed: ks.master_seed,
     };
 
-    Ok(lib_crypto::KeyPair { public_key, private_key })
+    Ok(lib_crypto::KeyPair {
+        public_key,
+        private_key,
+    })
 }
 
 // Build a signed TokenMint transaction using the provided validator keypair.
@@ -1596,7 +1790,8 @@ fn build_signed_sov_mint_tx(
         lib_blockchain::integration::crypto_integration::Signature {
             signature: Vec::new(),
             public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(Vec::new()),
-            algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+            algorithm:
+                lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -1616,9 +1811,9 @@ fn build_signed_sov_mint_tx(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpStatus, ZHTP_VERSION};
     use std::sync::Arc;
     use tokio::sync::RwLock;
-    use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpStatus, ZHTP_VERSION};
     use zhtp_client::{build_migrate_identity_request_json, generate_identity};
 
     async fn build_persistent_storage() -> Arc<RwLock<lib_storage::PersistentStorageSystem>> {
@@ -1795,7 +1990,9 @@ mod tests {
         assert_eq!(parsed.new_did, expected_new_did);
 
         let mgr = manager.read().await;
-        let old_identity = mgr.get_identity(&identity_id).expect("old identity missing");
+        let old_identity = mgr
+            .get_identity(&identity_id)
+            .expect("old identity missing");
         assert!(old_identity.metadata.get("display_name").is_none());
         assert_eq!(
             old_identity.metadata.get("migrated_to"),
@@ -1809,7 +2006,8 @@ mod tests {
         let storage_system = build_persistent_storage().await;
 
         for i in 0..4u8 {
-            let (manager, identity_id, _did) = build_identity_manager(10 + i, "device-old", "alice");
+            let (manager, identity_id, _did) =
+                build_identity_manager(10 + i, "device-old", "alice");
             let manager = Arc::new(RwLock::new(manager));
 
             let req = MigrateIdentityRequest {
@@ -1874,8 +2072,17 @@ mod tests {
         .expect("write node_private_key.json");
 
         // Old identity that currently owns display_name + wallets.
-        let (mut manager, old_identity_id, old_did) = build_identity_manager(42, "device-old", "alice");
-        let mut wallet_summaries: Vec<(lib_identity::wallets::WalletId, lib_identity::wallets::WalletType, String, Option<String>, Vec<u8>, u64, u64)> = Vec::new();
+        let (mut manager, old_identity_id, old_did) =
+            build_identity_manager(42, "device-old", "alice");
+        let mut wallet_summaries: Vec<(
+            lib_identity::wallets::WalletId,
+            lib_identity::wallets::WalletType,
+            String,
+            Option<String>,
+            Vec<u8>,
+            u64,
+            u64,
+        )> = Vec::new();
         {
             let old = manager
                 .get_identity_mut(&old_identity_id)
@@ -1985,7 +2192,8 @@ mod tests {
                 slash_count: 0,
                 // Test helper: use genesis (off-chain) source since this is inserted
                 // directly into the registry at height 0 for testing purposes.
-                admission_source: lib_blockchain::blockchain::ADMISSION_SOURCE_OFFCHAIN_GENESIS.to_string(),
+                admission_source: lib_blockchain::blockchain::ADMISSION_SOURCE_OFFCHAIN_GENESIS
+                    .to_string(),
                 governance_proposal_id: None,
                 oracle_key_id: None,
             },
@@ -2021,10 +2229,16 @@ mod tests {
             .expect("set global blockchain");
 
         // First migration: build request JSON using lib-client helper.
-        let new_identity_1 = generate_identity("device-new-1".to_string()).expect("generate identity");
+        let new_identity_1 =
+            generate_identity("device-new-1".to_string()).expect("generate identity");
         let body_json_1 = build_migrate_identity_request_json(&new_identity_1, "alice".to_string())
             .expect("build migrate json");
-        let request_1 = build_request(body_json_1.into_bytes(), Some(old_identity_id.clone()), Some("10.0.0.10:1111"), None);
+        let request_1 = build_request(
+            body_json_1.into_bytes(),
+            Some(old_identity_id.clone()),
+            Some("10.0.0.10:1111"),
+            None,
+        );
 
         let response_1 = handle_migrate_identity(
             &request_1.body,
@@ -2051,22 +2265,32 @@ mod tests {
             let mgr = manager.read().await;
             assert_eq!(mgr.list_identities().len(), 2);
 
-            let old = mgr.get_identity(&old_identity_id).expect("old identity missing");
+            let old = mgr
+                .get_identity(&old_identity_id)
+                .expect("old identity missing");
             assert!(old.metadata.get("display_name").is_none());
             assert_eq!(old.metadata.get("migrated_to"), Some(&parsed_1.new_did));
             assert!(old.wallet_manager.wallets.is_empty());
 
-            let new = mgr.get_identity(&new_identity_id_1).expect("new identity missing");
+            let new = mgr
+                .get_identity(&new_identity_id_1)
+                .expect("new identity missing");
             assert_eq!(new.metadata.get("migrated_from"), Some(&parsed_1.old_did));
             assert_eq!(new.wallet_manager.wallets.len(), 3);
         }
 
         // Second migration attempt for same display_name with a different new identity must fail,
         // and must not transfer wallets a second time.
-        let new_identity_2 = generate_identity("device-new-2".to_string()).expect("generate identity");
+        let new_identity_2 =
+            generate_identity("device-new-2".to_string()).expect("generate identity");
         let body_json_2 = build_migrate_identity_request_json(&new_identity_2, "alice".to_string())
             .expect("build migrate json");
-        let request_2 = build_request(body_json_2.into_bytes(), Some(old_identity_id.clone()), Some("10.0.0.11:2222"), None);
+        let request_2 = build_request(
+            body_json_2.into_bytes(),
+            Some(old_identity_id.clone()),
+            Some("10.0.0.11:2222"),
+            None,
+        );
 
         let response_2 = handle_migrate_identity(
             &request_2.body,
@@ -2084,10 +2308,14 @@ mod tests {
             let mgr = manager.read().await;
             assert_eq!(mgr.list_identities().len(), 2);
 
-            let old = mgr.get_identity(&old_identity_id).expect("old identity missing");
+            let old = mgr
+                .get_identity(&old_identity_id)
+                .expect("old identity missing");
             assert!(old.wallet_manager.wallets.is_empty());
 
-            let new = mgr.get_identity(&new_identity_id_1).expect("new identity missing");
+            let new = mgr
+                .get_identity(&new_identity_id_1)
+                .expect("new identity missing");
             assert_eq!(new.wallet_manager.wallets.len(), 3);
         }
     }

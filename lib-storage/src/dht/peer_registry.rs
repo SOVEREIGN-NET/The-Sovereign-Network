@@ -27,7 +27,7 @@
 
 use crate::types::dht_types::DhtNode;
 use crate::types::NodeId;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -47,8 +47,15 @@ pub enum SequenceError {
 impl std::fmt::Display for SequenceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SequenceError::ReplayDetected { sequence, last_sequence } => {
-                write!(f, "Replay detected: sequence {} <= {}", sequence, last_sequence)
+            SequenceError::ReplayDetected {
+                sequence,
+                last_sequence,
+            } => {
+                write!(
+                    f,
+                    "Replay detected: sequence {} <= {}",
+                    sequence, last_sequence
+                )
             }
             SequenceError::PeerNotFound => write!(f, "Peer not found in registry"),
         }
@@ -188,7 +195,11 @@ pub struct DhtPeerRegistry {
 impl DhtPeerRegistry {
     /// Create a new empty DHT peer registry with default settings
     pub fn new(k: usize) -> Self {
-        Self::with_config(k, DEFAULT_RATE_LIMIT_PER_MINUTE, DEFAULT_MAX_FAILED_ATTEMPTS)
+        Self::with_config(
+            k,
+            DEFAULT_RATE_LIMIT_PER_MINUTE,
+            DEFAULT_MAX_FAILED_ATTEMPTS,
+        )
     }
 
     /// Create a new DHT peer registry with custom configuration
@@ -336,7 +347,9 @@ impl DhtPeerRegistry {
     /// Find K closest peers to a target NodeId
     pub fn find_closest(&self, target: &NodeId, count: usize) -> Vec<DhtNode> {
         let requested_count = std::cmp::min(count, self.k);
-        let mut closest: Vec<_> = self.peers.values()
+        let mut closest: Vec<_> = self
+            .peers
+            .values()
             .map(|entry| {
                 let distance = target.kademlia_distance(entry.node.peer.node_id());
                 (entry.node.clone(), distance)
@@ -347,7 +360,8 @@ impl DhtPeerRegistry {
         closest.sort_by_key(|(_, distance)| *distance);
 
         // Return k closest
-        closest.into_iter()
+        closest
+            .into_iter()
             .take(requested_count)
             .map(|(node, _)| node)
             .collect()
@@ -390,7 +404,9 @@ impl DhtPeerRegistry {
     ///
     /// Returns the number of peers removed
     pub fn cleanup_failed_peers_with_threshold(&mut self, max_failed_attempts: u32) -> usize {
-        let failed_nodes: Vec<NodeId> = self.peers.iter()
+        let failed_nodes: Vec<NodeId> = self
+            .peers
+            .iter()
             .filter(|(_, entry)| entry.failed_attempts > max_failed_attempts)
             .map(|(node_id, _)| node_id.clone())
             .collect();
@@ -412,8 +428,14 @@ impl DhtPeerRegistry {
     /// When a counter wraps from u64::MAX to 0, we accept sequences in a small window (0..1024)
     /// only if the last_sequence is very close to u64::MAX (within 1024 of overflow).
     /// This prevents replay attacks that try to exploit the wraparound window.
-    pub fn check_and_update_sequence(&mut self, node_id: &NodeId, sequence: u64) -> Result<(), SequenceError> {
-        let entry = self.peers.get_mut(node_id)
+    pub fn check_and_update_sequence(
+        &mut self,
+        node_id: &NodeId,
+        sequence: u64,
+    ) -> Result<(), SequenceError> {
+        let entry = self
+            .peers
+            .get_mut(node_id)
             .ok_or(SequenceError::PeerNotFound)?;
 
         if let Some(last_sequence) = entry.last_sequence {
@@ -424,7 +446,10 @@ impl DhtPeerRegistry {
                     && sequence < SEQUENCE_WRAPAROUND_WINDOW;
 
                 if !is_wraparound {
-                    return Err(SequenceError::ReplayDetected { sequence, last_sequence });
+                    return Err(SequenceError::ReplayDetected {
+                        sequence,
+                        last_sequence,
+                    });
                 }
             }
         }
@@ -552,17 +577,13 @@ pub fn new_shared_dht_registry_with_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_identity::{ZhtpIdentity, IdentityType};
     use crate::types::dht_types::build_peer_identity;
+    use lib_identity::{IdentityType, ZhtpIdentity};
 
     fn create_test_node(device_name: &str, port: u16) -> DhtNode {
-        let identity = ZhtpIdentity::new_unified(
-            IdentityType::Device,
-            None,
-            None,
-            device_name,
-            None,
-        ).expect("Failed to create test identity");
+        let identity =
+            ZhtpIdentity::new_unified(IdentityType::Device, None, None, device_name, None)
+                .expect("Failed to create test identity");
 
         let peer = build_peer_identity(
             identity.node_id.clone(),
@@ -595,7 +616,10 @@ mod tests {
         let registry = DhtPeerRegistry::new(20);
         assert_eq!(registry.get_k(), 20);
         assert_eq!(registry.stats().total_peers, 0);
-        assert_eq!(registry.get_max_failed_attempts(), DEFAULT_MAX_FAILED_ATTEMPTS);
+        assert_eq!(
+            registry.get_max_failed_attempts(),
+            DEFAULT_MAX_FAILED_ATTEMPTS
+        );
     }
 
     #[test]
@@ -659,7 +683,10 @@ mod tests {
 
         let result = registry.upsert(entry);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid bucket index"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid bucket index"));
     }
 
     #[test]
@@ -896,7 +923,13 @@ mod tests {
 
         // Should reject sequence 0 because it's not actually a wraparound
         let err = registry.check_and_update_sequence(&node_id, 0).unwrap_err();
-        assert_eq!(err, SequenceError::ReplayDetected { sequence: 0, last_sequence: 1000 });
+        assert_eq!(
+            err,
+            SequenceError::ReplayDetected {
+                sequence: 0,
+                last_sequence: 1000
+            }
+        );
     }
 
     #[test]
@@ -917,9 +950,14 @@ mod tests {
         registry.upsert(entry).unwrap();
 
         // Test that we get the correct custom error type
-        let err = registry.check_and_update_sequence(&node_id, 50).unwrap_err();
+        let err = registry
+            .check_and_update_sequence(&node_id, 50)
+            .unwrap_err();
         match err {
-            SequenceError::ReplayDetected { sequence, last_sequence } => {
+            SequenceError::ReplayDetected {
+                sequence,
+                last_sequence,
+            } => {
                 assert_eq!(sequence, 50);
                 assert_eq!(last_sequence, 100);
             }
@@ -929,7 +967,9 @@ mod tests {
         // Test PeerNotFound error
         let unknown_node = create_test_node("unknown", 4105);
         let unknown_id = unknown_node.peer.node_id().clone();
-        let err = registry.check_and_update_sequence(&unknown_id, 1).unwrap_err();
+        let err = registry
+            .check_and_update_sequence(&unknown_id, 1)
+            .unwrap_err();
         assert_eq!(err, SequenceError::PeerNotFound);
     }
 
@@ -973,7 +1013,10 @@ mod tests {
         // Add peers to different buckets
         for bucket_idx in 0..5 {
             for i in 0..2 {
-                let node = create_test_node(&format!("device-{}-{}", bucket_idx, i), 8000 + bucket_idx * 10 + i);
+                let node = create_test_node(
+                    &format!("device-{}-{}", bucket_idx, i),
+                    8000 + bucket_idx * 10 + i,
+                );
                 let entry = DhtPeerEntry {
                     node,
                     distance: (bucket_idx * 10 + i) as u32,
@@ -1041,7 +1084,10 @@ mod tests {
         };
         let result = registry.upsert(entry);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Rate limit exceeded"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Rate limit exceeded"));
     }
 
     #[test]
@@ -1068,12 +1114,17 @@ use async_trait::async_trait;
 
 #[async_trait]
 impl DhtPeerRegistryTrait for DhtPeerRegistry {
-    async fn add_dht_peer(&mut self, node: &DhtNode, bucket_index: usize, distance: u32) -> Result<()> {
+    async fn add_dht_peer(
+        &mut self,
+        node: &DhtNode,
+        bucket_index: usize,
+        distance: u32,
+    ) -> Result<()> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-            
+
         let entry = DhtPeerEntry {
             node: node.clone(),
             distance,
@@ -1082,39 +1133,44 @@ impl DhtPeerRegistryTrait for DhtPeerRegistry {
             failed_attempts: 0,
             last_sequence: None,
         };
-        
+
         self.upsert(entry)?;
         Ok(())
     }
-    
+
     async fn find_closest_dht_peers(&self, target: &NodeId, count: usize) -> Result<Vec<DhtNode>> {
         Ok(self.find_closest(target, count))
     }
-    
+
     async fn get_dht_bucket_peers(&self, bucket_index: usize) -> Result<Vec<DhtNode>> {
-        Ok(self.peers_in_bucket(bucket_index)
+        Ok(self
+            .peers_in_bucket(bucket_index)
             .into_iter()
             .map(|entry| entry.node.clone())
             .collect())
     }
-    
+
     async fn mark_dht_peer_failed(&mut self, node_id: &NodeId) -> Result<()> {
         self.mark_failed(node_id);
         Ok(())
     }
-    
+
     async fn mark_dht_peer_responsive(&mut self, node_id: &NodeId) -> Result<()> {
         self.mark_responsive(node_id);
         Ok(())
     }
-    
+
     async fn is_dht_bucket_full(&self, bucket_index: usize, k: usize) -> Result<bool> {
         if bucket_index >= NUM_K_BUCKETS {
-            return Err(anyhow!("Invalid bucket index {}: must be 0-{}", bucket_index, MAX_BUCKET_INDEX));
+            return Err(anyhow!(
+                "Invalid bucket index {}: must be 0-{}",
+                bucket_index,
+                MAX_BUCKET_INDEX
+            ));
         }
         Ok(self.bucket_index[bucket_index].len() >= k)
     }
-    
+
     async fn remove_dht_peer(&mut self, node_id: &NodeId) -> Result<()> {
         self.remove(node_id);
         Ok(())

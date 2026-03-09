@@ -3,11 +3,11 @@
 //! Implements social recovery where guardians can help recover a lost identity.
 //! Security-focused implementation with rate limiting, expiration, and signature verification.
 
+use crate::guardian::{Guardian, GuardianConfig};
+use chrono::{DateTime, Duration, Utc};
+use lib_crypto::{verify_signature, PostQuantumSignature};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc, Duration};
-use lib_crypto::{PostQuantumSignature, verify_signature};
-use crate::guardian::{Guardian, GuardianConfig};
 
 /// Recovery request status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -125,7 +125,10 @@ impl RecoveryRequest {
 
         // Security: Check status
         if self.status != RecoveryStatus::Pending {
-            return Err(format!("Recovery request is not pending (status: {:?})", self.status));
+            return Err(format!(
+                "Recovery request is not pending (status: {:?})",
+                self.status
+            ));
         }
 
         // Security: Check for duplicate approval
@@ -151,7 +154,8 @@ impl RecoveryRequest {
             approved_at: Utc::now(),
         };
 
-        self.approvals.insert(guardian.guardian_did.clone(), approval);
+        self.approvals
+            .insert(guardian.guardian_did.clone(), approval);
 
         // Check if threshold is met
         if self.approvals.len() >= self.threshold {
@@ -171,7 +175,10 @@ impl RecoveryRequest {
 
         // Security: Check status
         if self.status != RecoveryStatus::Pending {
-            return Err(format!("Recovery request is not pending (status: {:?})", self.status));
+            return Err(format!(
+                "Recovery request is not pending (status: {:?})",
+                self.status
+            ));
         }
 
         // Mark as rejected
@@ -190,7 +197,10 @@ impl RecoveryRequest {
 
         // Security: Check status
         if self.status != RecoveryStatus::Approved {
-            return Err(format!("Recovery is not approved (status: {:?})", self.status));
+            return Err(format!(
+                "Recovery is not approved (status: {:?})",
+                self.status
+            ));
         }
 
         // Security: Double-check threshold
@@ -232,12 +242,20 @@ impl SocialRecoveryManager {
     }
 
     /// Check rate limit for recovery initiation (Security: Prevent abuse)
-    pub fn check_rate_limit(&mut self, ip: &str, max_attempts: usize, window_hours: i64) -> Result<(), String> {
+    pub fn check_rate_limit(
+        &mut self,
+        ip: &str,
+        max_attempts: usize,
+        window_hours: i64,
+    ) -> Result<(), String> {
         let now = Utc::now();
         let window_start = now - Duration::hours(window_hours);
 
         // Get or create attempts list for this IP
-        let attempts = self.recovery_attempts.entry(ip.to_string()).or_insert_with(Vec::new);
+        let attempts = self
+            .recovery_attempts
+            .entry(ip.to_string())
+            .or_insert_with(Vec::new);
 
         // Remove old attempts outside the window
         attempts.retain(|&timestamp| timestamp > window_start);
@@ -272,9 +290,7 @@ impl SocialRecoveryManager {
 
         // Check for existing pending recovery for this identity
         let existing_pending = self.requests.values().any(|r| {
-            r.identity_did == identity_did
-                && r.status == RecoveryStatus::Pending
-                && !r.is_expired()
+            r.identity_did == identity_did && r.status == RecoveryStatus::Pending && !r.is_expired()
         });
 
         if existing_pending {
@@ -383,8 +399,12 @@ mod tests {
         let pubkey1 = PublicKey::new(vec![1, 2, 3, 4]);
         let pubkey2 = PublicKey::new(vec![5, 6, 7, 8]);
 
-        config.add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string()).unwrap();
-        config.add_guardian("did:zhtp:bob".to_string(), pubkey2, "Bob".to_string()).unwrap();
+        config
+            .add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string())
+            .unwrap();
+        config
+            .add_guardian("did:zhtp:bob".to_string(), pubkey2, "Bob".to_string())
+            .unwrap();
 
         let result = manager.initiate_recovery(
             "did:zhtp:carol".to_string(),
@@ -404,8 +424,12 @@ mod tests {
         let pubkey1 = PublicKey::new(vec![1, 2, 3, 4]);
         let pubkey2 = PublicKey::new(vec![5, 6, 7, 8]);
 
-        config.add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string()).unwrap();
-        config.add_guardian("did:zhtp:bob".to_string(), pubkey2, "Bob".to_string()).unwrap();
+        config
+            .add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string())
+            .unwrap();
+        config
+            .add_guardian("did:zhtp:bob".to_string(), pubkey2, "Bob".to_string())
+            .unwrap();
 
         // First recovery should succeed
         let result1 = manager.initiate_recovery(

@@ -64,7 +64,12 @@ impl SeedStorage {
         seed: &[u8],
         passphrase: &str,
     ) -> Result<()> {
-        self.store_seed_file(identity_id, kind, seed, &Zeroizing::new(passphrase.to_string()))
+        self.store_seed_file(
+            identity_id,
+            kind,
+            seed,
+            &Zeroizing::new(passphrase.to_string()),
+        )
     }
 
     pub fn load_seed(&self, identity_id: &Hash, kind: SeedKind) -> Result<Option<Vec<u8>>> {
@@ -130,12 +135,15 @@ impl SeedStorage {
             .get("id")
             .cloned()
             .ok_or_else(|| anyhow!("Identity JSON missing id"))?;
-        let id: Hash = serde_json::from_value(id_value)
-            .map_err(|e| anyhow!("Invalid identity id: {}", e))?;
+        let id: Hash =
+            serde_json::from_value(id_value).map_err(|e| anyhow!("Invalid identity id: {}", e))?;
         Ok(id)
     }
 
-    pub fn scrub_seed_from_key_file(path: &std::path::Path, key: &KeystoreSeedlessKey) -> Result<()> {
+    pub fn scrub_seed_from_key_file(
+        path: &std::path::Path,
+        key: &KeystoreSeedlessKey,
+    ) -> Result<()> {
         let json = serde_json::to_string_pretty(key)
             .map_err(|e| anyhow!("Failed to serialize sanitized key: {}", e))?;
         std::fs::write(path, json)
@@ -159,7 +167,9 @@ impl SeedStorage {
         if atty::is(atty::Stream::Stdin) {
             let prompt = format!("Enter passphrase for {} seed storage: ", kind.label());
             print!("{}", prompt);
-            std::io::stdout().flush().map_err(|e| anyhow!("Failed to write prompt: {}", e))?;
+            std::io::stdout()
+                .flush()
+                .map_err(|e| anyhow!("Failed to write prompt: {}", e))?;
             let passphrase = rpassword::read_password()
                 .map_err(|e| anyhow!("Failed to read passphrase: {}", e))?;
             if passphrase.trim().is_empty() {
@@ -248,7 +258,11 @@ impl SeedStorage {
     }
 
     fn seed_file_path(&self, identity_id: &Hash, kind: SeedKind) -> std::path::PathBuf {
-        let name = format!("{}_{}.json", kind.label(), hex::encode(identity_id.as_bytes()));
+        let name = format!(
+            "{}_{}.json",
+            kind.label(),
+            hex::encode(identity_id.as_bytes())
+        );
         let base = if self.config.storage_dir.ends_with(SEED_STORAGE_DIRNAME) {
             self.config.storage_dir.clone()
         } else {
@@ -332,7 +346,12 @@ mod tests {
         let identity_id = Hash::from_bytes(&lib_crypto::hash_blake3(b"seed-test").to_vec());
         let seed = vec![42u8; 64];
 
-        storage.store_seed_with_passphrase(&identity_id, SeedKind::User, &seed, "test-passphrase")?;
+        storage.store_seed_with_passphrase(
+            &identity_id,
+            SeedKind::User,
+            &seed,
+            "test-passphrase",
+        )?;
         let loaded = storage
             .load_seed_with_passphrase(&identity_id, SeedKind::User, "test-passphrase")?
             .ok_or_else(|| anyhow!("Seed missing"))?;

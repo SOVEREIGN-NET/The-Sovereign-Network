@@ -69,18 +69,21 @@ impl CacheCoherencyManager {
         match self.protocol {
             CoherencyProtocol::WriteThrough => {
                 // Mark as clean since write goes through to storage
-                self.entry_states.insert(key.clone(), CacheEntryState::Clean);
+                self.entry_states
+                    .insert(key.clone(), CacheEntryState::Clean);
             }
             CoherencyProtocol::WriteBack => {
                 // Mark as dirty and add to writeback queue
-                self.entry_states.insert(key.clone(), CacheEntryState::Dirty);
+                self.entry_states
+                    .insert(key.clone(), CacheEntryState::Dirty);
                 if !self.writeback_queue.contains(&key) {
                     self.writeback_queue.push(key.clone());
                 }
             }
             CoherencyProtocol::WriteAround => {
                 // Invalidate cache entry since write bypasses cache
-                self.entry_states.insert(key.clone(), CacheEntryState::Invalid);
+                self.entry_states
+                    .insert(key.clone(), CacheEntryState::Invalid);
             }
         }
 
@@ -89,7 +92,8 @@ impl CacheCoherencyManager {
 
     /// Invalidate an entry
     pub fn invalidate(&mut self, key: &str) {
-        self.entry_states.insert(key.to_string(), CacheEntryState::Invalid);
+        self.entry_states
+            .insert(key.to_string(), CacheEntryState::Invalid);
     }
 
     /// Get entries needing writeback
@@ -99,7 +103,8 @@ impl CacheCoherencyManager {
 
     /// Mark entry as written back
     pub fn mark_written_back(&mut self, key: &str) {
-        self.entry_states.insert(key.to_string(), CacheEntryState::Clean);
+        self.entry_states
+            .insert(key.to_string(), CacheEntryState::Clean);
         self.writeback_queue.retain(|k| k != key);
     }
 
@@ -148,9 +153,9 @@ mod tests {
     #[test]
     fn test_write_through() {
         let mut manager = CacheCoherencyManager::new(CoherencyProtocol::WriteThrough);
-        
+
         manager.on_write("key1".to_string());
-        
+
         assert_eq!(manager.get_state("key1"), CacheEntryState::Clean);
         assert!(!manager.is_dirty("key1"));
     }
@@ -158,9 +163,9 @@ mod tests {
     #[test]
     fn test_write_back() {
         let mut manager = CacheCoherencyManager::new(CoherencyProtocol::WriteBack);
-        
+
         manager.on_write("key1".to_string());
-        
+
         assert_eq!(manager.get_state("key1"), CacheEntryState::Dirty);
         assert!(manager.is_dirty("key1"));
         assert_eq!(manager.get_writeback_queue().len(), 1);
@@ -169,10 +174,10 @@ mod tests {
     #[test]
     fn test_flush_all() {
         let mut manager = CacheCoherencyManager::new(CoherencyProtocol::WriteBack);
-        
+
         manager.on_write("key1".to_string());
         manager.on_write("key2".to_string());
-        
+
         let dirty = manager.flush_all();
         assert_eq!(dirty.len(), 2);
         assert!(!manager.is_dirty("key1"));

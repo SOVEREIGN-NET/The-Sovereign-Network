@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::{config, gatt};
-use super::BluetoothMeshProtocol;
 use super::common::get_system_bluetooth_mac;
 use super::gatt::GattMessage;
+use super::BluetoothMeshProtocol;
+use super::{config, gatt};
 
 impl BluetoothMeshProtocol {
     /// Create new Bluetooth LE mesh protocol
@@ -26,7 +26,7 @@ impl BluetoothMeshProtocol {
             max_connections: config::DEFAULT_MAX_CONNECTIONS,
             current_connections: Arc::new(RwLock::new(HashMap::new())),
             discovery_active: false,
-            enabled: true,  // Default to enabled; mesh server will set to false if config disables it
+            enabled: true, // Default to enabled; mesh server will set to false if config disables it
             tracked_devices: Arc::new(RwLock::new(HashMap::new())),
             address_mapping: Arc::new(RwLock::new(HashMap::new())),
             zhtp_monitor_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -69,7 +69,9 @@ impl BluetoothMeshProtocol {
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
-            info!("⊘ Bluetooth LE disabled by configuration - discovery will be refused if attempted");
+            info!(
+                "⊘ Bluetooth LE disabled by configuration - discovery will be refused if attempted"
+            );
         }
     }
 }

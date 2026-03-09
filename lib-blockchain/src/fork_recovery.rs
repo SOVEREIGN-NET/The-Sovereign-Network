@@ -53,6 +53,8 @@ pub struct ForkRecoveryConfig {
 
 impl Default for ForkRecoveryConfig {
     fn default() -> Self {
-        Self { max_reorg_depth: 100 }
+        Self {
+            max_reorg_depth: 100,
+        }
     }
 }

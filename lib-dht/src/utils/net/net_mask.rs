@@ -1,20 +1,19 @@
 use std::net::IpAddr;
 
 pub struct NetMask {
-    pub(crate) address: [u8; 16],//Vec<u8>,
-    pub(crate) mask: u32
+    pub(crate) address: [u8; 16], //Vec<u8>,
+    pub(crate) mask: u32,
 }
 
 impl NetMask {
-
     pub fn new(address: IpAddr, mask: u32) -> Result<Self, ()> {
         if let IpAddr::V6(v6) = address {
             let octets = v6.octets();
 
             return Ok(Self {
                 address: octets,
-                mask
-            })
+                mask,
+            });
         }
 
         Err(())

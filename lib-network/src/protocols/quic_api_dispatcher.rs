@@ -21,20 +21,17 @@
 //! - Client identity is verified before processing any requests
 //! - Request authorization checked per-request based on client identity
 
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, debug, warn};
+use tracing::{debug, info, warn};
 
-use quinn::{Endpoint, Connection};
+use quinn::{Connection, Endpoint};
 
 use lib_identity::ZhtpIdentity;
-use lib_protocols::wire::{
-    ZhtpRequestWire, ZhtpResponseWire,
-    read_request, write_response,
-};
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use lib_protocols::wire::{read_request, write_response, ZhtpRequestWire, ZhtpResponseWire};
 
 /// Verified principal from UHP handshake + AuthContext validation
 #[derive(Debug, Clone)]
@@ -60,7 +57,7 @@ use crate::protocols::quic_handshake;
 pub type RequestHandler = Arc<
     dyn Fn(ZhtpRequest, VerifiedPrincipal) -> futures::future::BoxFuture<'static, ZhtpResponse>
         + Send
-        + Sync
+        + Sync,
 >;
 
 /// QUIC API Dispatcher - accepts connections and routes requests to handlers
@@ -200,10 +197,7 @@ impl QuicApiDispatcher {
         // Wait for accept task to complete
         if let Some(task) = self.accept_task.take() {
             // Give it a reasonable timeout
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                task
-            ).await {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), task).await {
                 Ok(_) => info!("QUIC API dispatcher stopped cleanly"),
                 Err(_) => {
                     warn!("QUIC API dispatcher shutdown timed out");
@@ -225,7 +219,10 @@ impl QuicApiDispatcher {
 
     /// Check if dispatcher is running
     pub fn is_running(&self) -> bool {
-        self.accept_task.as_ref().map(|t| !t.is_finished()).unwrap_or(false)
+        self.accept_task
+            .as_ref()
+            .map(|t| !t.is_finished())
+            .unwrap_or(false)
     }
 }
 
@@ -237,18 +234,16 @@ async fn handle_connection(
     handler: RequestHandler,
     connections: Arc<RwLock<Vec<ActiveConnection>>>,
 ) -> Result<()> {
-    let connection = incoming.await
-        .context("Failed to accept connection")?;
+    let connection = incoming.await.context("Failed to accept connection")?;
 
     let peer_addr = connection.remote_address();
     info!("New API connection from {}", peer_addr);
 
     // Perform UHP v2 handshake
-    let handshake_result = quic_handshake::handshake_as_responder(
-        &connection,
-        &identity,
-        &handshake_ctx,
-    ).await.context("Handshake failed")?;
+    let handshake_result =
+        quic_handshake::handshake_as_responder(&connection, &identity, &handshake_ctx)
+            .await
+            .context("Handshake failed")?;
 
     let peer_did = handshake_result.verified_peer.identity.did.clone();
 
@@ -287,7 +282,9 @@ async fn handle_connection(
                 let key = app_key;
 
                 tokio::spawn(async move {
-                    if let Err(e) = handle_stream(send, recv, h, client_did, server_did, sid, key).await {
+                    if let Err(e) =
+                        handle_stream(send, recv, h, client_did, server_did, sid, key).await
+                    {
                         debug!("Stream handling error: {}", e);
                     }
                 });
@@ -323,7 +320,8 @@ async fn handle_stream(
     app_key: [u8; 32],
 ) -> Result<()> {
     // Read request
-    let wire_request = read_request(&mut recv).await
+    let wire_request = read_request(&mut recv)
+        .await
         .context("Failed to read request")?;
 
     let request_id = wire_request.request_id;
@@ -454,12 +452,12 @@ async fn handle_stream(
     );
 
     // Send response
-    write_response(&mut send, &wire_response).await
+    write_response(&mut send, &wire_response)
+        .await
         .context("Failed to write response")?;
 
     // Finish stream
-    send.finish()
-        .context("Failed to finish stream")?;
+    send.finish().context("Failed to finish stream")?;
 
     Ok(())
 }
@@ -467,7 +465,12 @@ async fn handle_stream(
 /// Derive application-layer MAC key from session key
 ///
 /// This must match the derivation in Web4Client.
-fn derive_app_key(session_key: &[u8; 32], session_id: &[u8; 32], peer_did: &str, node_did: &str) -> [u8; 32] {
+fn derive_app_key(
+    session_key: &[u8; 32],
+    session_id: &[u8; 32],
+    peer_did: &str,
+    node_did: &str,
+) -> [u8; 32] {
     let mut input = Vec::new();
     input.extend_from_slice(b"zhtp-web4-app-mac");
     input.extend_from_slice(session_key);
@@ -481,32 +484,27 @@ fn derive_app_key(session_key: &[u8; 32], session_id: &[u8; 32], peer_did: &str,
 }
 
 /// Create a handler that routes requests to the ZHTP router
-pub fn create_router_handler<F>(
-    router: Arc<F>,
-) -> RequestHandler
+pub fn create_router_handler<F>(router: Arc<F>) -> RequestHandler
 where
     F: Fn(ZhtpRequest) -> futures::future::BoxFuture<'static, ZhtpResponse> + Send + Sync + 'static,
 {
     Arc::new(move |request, _principal| {
         let r = Arc::clone(&router);
-        Box::pin(async move {
-            r(request).await
-        })
+        Box::pin(async move { r(request).await })
     })
 }
 
 /// Create a handler that includes principal info for authorization
-pub fn create_authorized_handler<F>(
-    handler: Arc<F>,
-) -> RequestHandler
+pub fn create_authorized_handler<F>(handler: Arc<F>) -> RequestHandler
 where
-    F: Fn(ZhtpRequest, VerifiedPrincipal) -> futures::future::BoxFuture<'static, ZhtpResponse> + Send + Sync + 'static,
+    F: Fn(ZhtpRequest, VerifiedPrincipal) -> futures::future::BoxFuture<'static, ZhtpResponse>
+        + Send
+        + Sync
+        + 'static,
 {
     Arc::new(move |request, principal| {
         let h = Arc::clone(&handler);
-        Box::pin(async move {
-            h(request, principal).await
-        })
+        Box::pin(async move { h(request, principal).await })
     })
 }
 

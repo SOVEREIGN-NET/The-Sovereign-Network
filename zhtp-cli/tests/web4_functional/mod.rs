@@ -6,12 +6,12 @@
 //! - SiteGenerator: Automated test site creation
 //! - StateVerifier: State verification and assertion
 
-pub mod test_env;
 pub mod cli_executor;
 pub mod site_generator;
 pub mod state_verifier;
+pub mod test_env;
 
-pub use test_env::TestEnv;
 pub use cli_executor::CliExecutor;
 pub use site_generator::SiteGenerator;
 pub use state_verifier::StateVerifier;
+pub use test_env::TestEnv;

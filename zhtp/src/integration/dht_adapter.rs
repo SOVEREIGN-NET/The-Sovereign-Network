@@ -128,7 +128,8 @@ impl DhtIntegrationAdapter {
                     "Unable to create DHT persistence dir {:?} ({}), falling back to in-memory backend",
                     parent, e
                 );
-                self.storage = StorageBackend::Memory(DhtStorage::new(node_id, self.max_storage_bytes));
+                self.storage =
+                    StorageBackend::Memory(DhtStorage::new(node_id, self.max_storage_bytes));
                 return Ok(());
             }
         }
@@ -139,7 +140,10 @@ impl DhtIntegrationAdapter {
             &persist_path,
         ) {
             Ok(storage) => {
-                info!("DHT adapter initialized with persistent backend at {:?}", persist_path);
+                info!(
+                    "DHT adapter initialized with persistent backend at {:?}",
+                    persist_path
+                );
                 StorageBackend::Persistent(storage)
             }
             Err(e) => {
@@ -210,7 +214,8 @@ impl DhtIntegrationAdapter {
     pub async fn connect_to_peer(&mut self, peer_addr: &str) -> Result<()> {
         let addr: SocketAddr = peer_addr.parse()?;
         let node_id = socket_addr_to_peer_key(&addr);
-        self.register_peer(node_id, addr, vec!["dht".to_string()]).await
+        self.register_peer(node_id, addr, vec!["dht".to_string()])
+            .await
     }
 
     pub async fn send_dht_query(&self, peer_addr: &str, query: String) -> Result<Vec<String>> {
@@ -227,7 +232,10 @@ impl DhtIntegrationAdapter {
 
         stats.insert("total_nodes".to_string(), status.total_nodes as f64);
         stats.insert("connected_nodes".to_string(), status.connected_nodes as f64);
-        stats.insert("storage_used_bytes".to_string(), status.storage_used_bytes as f64);
+        stats.insert(
+            "storage_used_bytes".to_string(),
+            status.storage_used_bytes as f64,
+        );
         stats.insert("total_keys".to_string(), status.total_keys as f64);
         // Backward-compatible counters for API consumers that already read these keys.
         stats.insert("queries_sent".to_string(), 0.0);

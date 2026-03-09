@@ -28,7 +28,9 @@ mod tests {
         // Verify UBI tracking infrastructure works
         // Simulate recording a UBI claim using the identity_blocks map
         let claim_key = "ubi_claim:citizen_001:1";
-        blockchain.identity_blocks.insert(claim_key.to_string(), 100);
+        blockchain
+            .identity_blocks
+            .insert(claim_key.to_string(), 100);
 
         // Verify it was recorded
         assert!(
@@ -67,7 +69,11 @@ mod tests {
         );
 
         // Verify we can track different entities
-        assert_eq!(blockchain.identity_blocks.len(), 2, "Should have 2 declarations");
+        assert_eq!(
+            blockchain.identity_blocks.len(),
+            2,
+            "Should have 2 declarations"
+        );
     }
 
     #[test]
@@ -86,7 +92,10 @@ mod tests {
         // Test with odd number (rounding down)
         let profit_3 = 1001u64;
         let tribute_3 = profit_3 * 20 / 100; // Integer division rounds down
-        assert_eq!(tribute_3, 200, "20% of 1001 should be 200 (integer division)");
+        assert_eq!(
+            tribute_3, 200,
+            "20% of 1001 should be 200 (integer division)"
+        );
 
         // Test with zero
         let profit_4 = 0u64;
@@ -165,16 +174,12 @@ mod tests {
             .insert("profit_declaration:business_001:2026-Q1".to_string(), 200);
 
         // Both should exist
-        assert!(
-            blockchain
-                .identity_blocks
-                .contains_key("ubi_claim:citizen_001:1")
-        );
-        assert!(
-            blockchain
-                .identity_blocks
-                .contains_key("profit_declaration:business_001:2026-Q1")
-        );
+        assert!(blockchain
+            .identity_blocks
+            .contains_key("ubi_claim:citizen_001:1"));
+        assert!(blockchain
+            .identity_blocks
+            .contains_key("profit_declaration:business_001:2026-Q1"));
 
         // Verify isolation - wrong key should not exist
         assert!(!blockchain

@@ -1,7 +1,7 @@
 //! Checksum management
 
-use serde::{Deserialize, Serialize};
 use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Checksum algorithm type
@@ -26,7 +26,7 @@ impl Checksum {
         let hash = match algorithm {
             ChecksumAlgorithm::Blake3 => hash_blake3(data),
             ChecksumAlgorithm::Sha256 => {
-                use sha2::{Sha256, Digest};
+                use sha2::{Digest, Sha256};
                 let mut hasher = Sha256::new();
                 hasher.update(data);
                 hasher.finalize().into()
@@ -110,7 +110,7 @@ mod tests {
     fn test_checksum_verification() {
         let data = b"test data";
         let checksum = Checksum::new(ChecksumAlgorithm::Blake3, data);
-        
+
         assert!(checksum.verify(data));
         assert!(!checksum.verify(b"wrong data"));
     }
@@ -119,10 +119,10 @@ mod tests {
     fn test_checksum_manager() {
         let mut manager = ChecksumManager::new();
         let data = b"test data";
-        
+
         let checksum = manager.compute("key1".to_string(), data);
         assert!(checksum.verify(data));
-        
+
         assert!(manager.verify_cached("key1", data).unwrap());
         assert!(!manager.verify_cached("key1", b"wrong").unwrap());
     }

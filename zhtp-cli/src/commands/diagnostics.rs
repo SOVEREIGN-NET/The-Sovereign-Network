@@ -7,7 +7,7 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{DiagnosticsArgs, DiagnosticsAction};
+use crate::argument_parsing::{DiagnosticsAction, DiagnosticsArgs};
 use crate::error::CliResult;
 use crate::output::Output;
 
@@ -142,12 +142,12 @@ impl SystemMetrics {
         let disk_health = assess_disk_health(self.memory_percent);
 
         match (memory_health, cpu_health, disk_health) {
-            (HealthStatus::Critical, _, _) | (_, HealthStatus::Critical, _) | (_, _, HealthStatus::Critical) => {
-                HealthStatus::Critical
-            }
-            (HealthStatus::Warning, _, _) | (_, HealthStatus::Warning, _) | (_, _, HealthStatus::Warning) => {
-                HealthStatus::Warning
-            }
+            (HealthStatus::Critical, _, _)
+            | (_, HealthStatus::Critical, _)
+            | (_, _, HealthStatus::Critical) => HealthStatus::Critical,
+            (HealthStatus::Warning, _, _)
+            | (_, HealthStatus::Warning, _)
+            | (_, _, HealthStatus::Warning) => HealthStatus::Warning,
             _ => HealthStatus::Healthy,
         }
     }
@@ -160,7 +160,10 @@ impl SystemMetrics {
 /// Handle diagnostics command with proper error handling and output
 ///
 /// Public entry point that maintains backward compatibility
-pub async fn handle_diagnostics_command(args: DiagnosticsArgs, _cli: &crate::argument_parsing::ZhtpCli) -> CliResult<()> {
+pub async fn handle_diagnostics_command(
+    args: DiagnosticsArgs,
+    _cli: &crate::argument_parsing::ZhtpCli,
+) -> CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_diagnostics_command_impl(args, &output).await
 }
@@ -268,10 +271,7 @@ async fn quick_diagnostics_impl(output: &dyn Output) -> CliResult<()> {
         assess_cpu_health(metrics.load_percent).as_emoji()
     ))?;
 
-    output.print(&format!(
-        "Uptime: {} seconds",
-        metrics.uptime_seconds
-    ))?;
+    output.print(&format!("Uptime: {} seconds", metrics.uptime_seconds))?;
 
     Ok(())
 }
@@ -337,7 +337,10 @@ async fn network_diagnostics_impl(output: &dyn Output) -> CliResult<()> {
     output.print("Checking network interfaces...")?;
 
     // Use a simple method to check DNS resolution
-    match std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)).to_string().parse::<std::net::IpAddr>() {
+    match std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))
+        .to_string()
+        .parse::<std::net::IpAddr>()
+    {
         Ok(_) => {
             output.success("✓ Network stack operational")?;
         }
@@ -362,27 +365,42 @@ mod tests {
 
     #[test]
     fn test_action_to_operation_full() {
-        assert_eq!(action_to_operation(&DiagnosticsAction::Full), DiagnosticsOperation::Full);
+        assert_eq!(
+            action_to_operation(&DiagnosticsAction::Full),
+            DiagnosticsOperation::Full
+        );
     }
 
     #[test]
     fn test_action_to_operation_quick() {
-        assert_eq!(action_to_operation(&DiagnosticsAction::Quick), DiagnosticsOperation::Quick);
+        assert_eq!(
+            action_to_operation(&DiagnosticsAction::Quick),
+            DiagnosticsOperation::Quick
+        );
     }
 
     #[test]
     fn test_action_to_operation_system() {
-        assert_eq!(action_to_operation(&DiagnosticsAction::System), DiagnosticsOperation::System);
+        assert_eq!(
+            action_to_operation(&DiagnosticsAction::System),
+            DiagnosticsOperation::System
+        );
     }
 
     #[test]
     fn test_action_to_operation_node() {
-        assert_eq!(action_to_operation(&DiagnosticsAction::Node), DiagnosticsOperation::Node);
+        assert_eq!(
+            action_to_operation(&DiagnosticsAction::Node),
+            DiagnosticsOperation::Node
+        );
     }
 
     #[test]
     fn test_action_to_operation_network() {
-        assert_eq!(action_to_operation(&DiagnosticsAction::Network), DiagnosticsOperation::Network);
+        assert_eq!(
+            action_to_operation(&DiagnosticsAction::Network),
+            DiagnosticsOperation::Network
+        );
     }
 
     #[test]

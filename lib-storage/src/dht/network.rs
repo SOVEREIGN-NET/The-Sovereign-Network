@@ -1,28 +1,28 @@
 //! DHT Network Operations
-//! 
+//!
 //! **TICKET #152:** Multi-protocol DHT transport abstraction
-//! 
+//!
 //! Handles communication for DHT operations over multiple protocols (UDP, BLE, QUIC, WiFi Direct)
 //! using the DhtTransport abstraction from lib-network.
 
-use crate::types::dht_types::{DhtMessage, DhtNode, DhtMessageType, DhtQueryResponse};
+use crate::types::dht_types::{DhtMessage, DhtMessageType, DhtNode, DhtQueryResponse};
 use crate::types::NodeId;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
-use tracing::{debug, warn, error, info};
-use serde::{Serialize, Deserialize};
+use tracing::{debug, error, info, warn};
 
 // Import transport abstraction (Ticket #152)
 // Trait defined in lib-storage to avoid circular dependency with lib-network
 use crate::dht::transport::{DhtTransport, PeerId};
 
 // Import signing module (Issue #676)
-use crate::dht::signing::{MessageSigner, verify_message_signature, VerificationError};
+use crate::dht::signing::{verify_message_signature, MessageSigner, VerificationError};
 use lib_crypto::PublicKey;
 
 /// Network envelope for DHT messages with metadata
@@ -102,9 +102,15 @@ impl std::fmt::Debug for DhtNetwork {
             .field("transport", &"Arc<dyn DhtTransport>")
             .field("local_node", &self.local_node)
             .field("timeout_duration", &self.timeout_duration)
-            .field("sequence_counter", &self.sequence_counter.load(Ordering::SeqCst))
+            .field(
+                "sequence_counter",
+                &self.sequence_counter.load(Ordering::SeqCst),
+            )
             .field("signing_enabled", &self.signer.is_some())
-            .field("known_peers_count", &self.known_peers.read().map(|p| p.len()).unwrap_or(0))
+            .field(
+                "known_peers_count",
+                &self.known_peers.read().map(|p| p.len()).unwrap_or(0),
+            )
             .finish()
     }
 }
@@ -176,10 +182,7 @@ impl DhtNetwork {
         let tokio_socket = tokio::net::UdpSocket::from_std(socket)?;
 
         // Create UDP transport
-        let transport = Arc::new(UdpDhtTransport::new(
-            Arc::new(tokio_socket),
-            bind_addr,
-        ));
+        let transport = Arc::new(UdpDhtTransport::new(Arc::new(tokio_socket), bind_addr));
 
         Self::new(local_node, transport)
     }
@@ -198,10 +201,7 @@ impl DhtNetwork {
         socket.set_nonblocking(true)?;
         let tokio_socket = tokio::net::UdpSocket::from_std(socket)?;
 
-        let transport = Arc::new(UdpDhtTransport::new(
-            Arc::new(tokio_socket),
-            bind_addr,
-        ));
+        let transport = Arc::new(UdpDhtTransport::new(Arc::new(tokio_socket), bind_addr));
 
         Self::new_with_signing(local_node, transport, keypair)
     }
@@ -262,7 +262,8 @@ impl DhtNetwork {
     /// Sign a message if signing is enabled
     fn sign_message_if_enabled(&self, message: &mut DhtMessage) -> Result<()> {
         if let Some(ref signer) = self.signer {
-            signer.sign_message(message)
+            signer
+                .sign_message(message)
                 .map_err(|e| anyhow!("Failed to sign message: {}", e))?;
         } else {
             debug!(
@@ -367,7 +368,7 @@ impl DhtNetwork {
     fn next_sequence(&self) -> u64 {
         self.sequence_counter.fetch_add(1, Ordering::SeqCst)
     }
-    
+
     /// Send a DHT message to a target node
     ///
     /// **TICKET #152:** Now uses DhtTransport abstraction for multi-protocol support
@@ -380,7 +381,9 @@ impl DhtNetwork {
         let message_bytes = bincode::serialize(&message)?;
 
         // Get target address and create PeerId
-        let target_addr = target.addresses.first()
+        let target_addr = target
+            .addresses
+            .first()
             .ok_or_else(|| anyhow!("No address available for target node"))?;
 
         // Parse address to PeerId (default to UDP for socket addresses)
@@ -416,7 +419,7 @@ impl DhtNetwork {
 
         Ok(())
     }
-    
+
     /// Receive and parse DHT message with freshness and signature validation
     ///
     /// **TICKET #152:** Now uses DhtTransport abstraction for multi-protocol support
@@ -430,10 +433,8 @@ impl DhtNetwork {
     /// - Caller should check nonce against seen-nonce cache for replay protection
     pub async fn receive_message(&self) -> Result<(DhtMessage, PeerId)> {
         // Receive from transport abstraction
-        let (message_bytes, peer_id) = timeout(
-            self.timeout_duration,
-            self.transport.receive()
-        ).await??;
+        let (message_bytes, peer_id) =
+            timeout(self.timeout_duration, self.transport.receive()).await??;
 
         // Deserialize message
         let message: DhtMessage = bincode::deserialize(&message_bytes)?;
@@ -483,7 +484,7 @@ impl DhtNetwork {
 
         Ok((message, peer_id))
     }
-    
+
     /// Send PING message to check node liveness
     ///
     /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
@@ -516,8 +517,9 @@ impl DhtNetwork {
         let start_time = SystemTime::now();
         while start_time.elapsed()? < self.timeout_duration {
             if let Ok((response, _)) = self.receive_message().await {
-                if matches!(response.message_type, DhtMessageType::Pong) &&
-                   response.sender_id == *target.peer.node_id() {
+                if matches!(response.message_type, DhtMessageType::Pong)
+                    && response.sender_id == *target.peer.node_id()
+                {
                     return Ok(true);
                 }
             }
@@ -525,7 +527,7 @@ impl DhtNetwork {
 
         Ok(false)
     }
-    
+
     /// Send FIND_NODE query
     ///
     /// **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for sender_id
@@ -558,8 +560,9 @@ impl DhtNetwork {
         let start_time = SystemTime::now();
         while start_time.elapsed()? < self.timeout_duration {
             if let Ok((response, _)) = self.receive_message().await {
-                if matches!(response.message_type, DhtMessageType::FindNodeResponse) &&
-                   response.sender_id == *target.peer.node_id() {
+                if matches!(response.message_type, DhtMessageType::FindNodeResponse)
+                    && response.sender_id == *target.peer.node_id()
+                {
                     return Ok(response.nodes.unwrap_or_default());
                 }
             }
@@ -567,7 +570,7 @@ impl DhtNetwork {
 
         Err(anyhow!("FIND_NODE query timeout"))
     }
-    
+
     /// Send FIND_VALUE query
     ///
     /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
@@ -600,8 +603,9 @@ impl DhtNetwork {
         let start_time = SystemTime::now();
         while start_time.elapsed()? < self.timeout_duration {
             if let Ok((response, _)) = self.receive_message().await {
-                if matches!(response.message_type, DhtMessageType::FindValueResponse) &&
-                   response.sender_id == *target.peer.node_id() {
+                if matches!(response.message_type, DhtMessageType::FindValueResponse)
+                    && response.sender_id == *target.peer.node_id()
+                {
                     if let Some(value) = response.value {
                         return Ok(DhtQueryResponse::Value(value));
                     } else if let Some(nodes) = response.nodes {
@@ -613,7 +617,7 @@ impl DhtNetwork {
 
         Err(anyhow!("FIND_VALUE query timeout"))
     }
-    
+
     /// Send STORE message
     ///
     /// **MIGRATION (Ticket #145):** Uses `target.peer.node_id()` for target_id
@@ -646,8 +650,9 @@ impl DhtNetwork {
         let start_time = SystemTime::now();
         while start_time.elapsed()? < self.timeout_duration {
             if let Ok((response, _)) = self.receive_message().await {
-                if matches!(response.message_type, DhtMessageType::StoreResponse) &&
-                   response.sender_id == *target.peer.node_id() {
+                if matches!(response.message_type, DhtMessageType::StoreResponse)
+                    && response.sender_id == *target.peer.node_id()
+                {
                     return Ok(true);
                 }
             }
@@ -655,7 +660,7 @@ impl DhtNetwork {
 
         Ok(false)
     }
-    
+
     /// Handle incoming message and generate appropriate response
     ///
     /// **MIGRATION (Ticket #145):** Uses `local_node.peer.node_id()` for responses
@@ -666,7 +671,11 @@ impl DhtNetwork {
     /// - Response messages include nonce and sequence_number for replay protection
     /// - Response messages are signed (if signing enabled)
     /// - Incoming message freshness is already validated by receive_message()
-    pub async fn handle_incoming_message(&self, message: DhtMessage, _sender: PeerId) -> Result<Option<DhtMessage>> {
+    pub async fn handle_incoming_message(
+        &self,
+        message: DhtMessage,
+        _sender: PeerId,
+    ) -> Result<Option<DhtMessage>> {
         let response = match message.message_type {
             DhtMessageType::Ping => {
                 Some(DhtMessage {
@@ -753,7 +762,7 @@ impl DhtNetwork {
             None => Ok(None),
         }
     }
-    
+
     /// Get local socket address
     pub fn local_addr(&self) -> Result<SocketAddr> {
         // Extract address from transport's local peer ID
@@ -771,9 +780,9 @@ impl DhtNetwork {
 
 /// Generate a unique message ID
 fn generate_message_id() -> String {
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
-    
+    use std::hash::{Hash, Hasher};
+
     let mut hasher = DefaultHasher::new();
     SystemTime::now().hash(&mut hasher);
     format!("{:x}", hasher.finish())
@@ -782,18 +791,14 @@ fn generate_message_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_identity::{ZhtpIdentity, IdentityType};
-    use crate::types::dht_types::{DhtPeerIdentity, build_peer_identity};
+    use crate::types::dht_types::{build_peer_identity, DhtPeerIdentity};
+    use lib_identity::{IdentityType, ZhtpIdentity};
 
     fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
-        let identity = ZhtpIdentity::new_unified(
-            IdentityType::Device,
-            None,
-            None,
-            device_name,
-            None,
-        ).expect("Failed to create test identity");
-        
+        let identity =
+            ZhtpIdentity::new_unified(IdentityType::Device, None, None, device_name, None)
+                .expect("Failed to create test identity");
+
         build_peer_identity(
             identity.node_id.clone(),
             identity.public_key.clone(),
@@ -814,17 +819,17 @@ mod tests {
             timestamp: 0,
         }
     }
-    
+
     #[test]
     fn test_message_id_generation() {
         let id1 = generate_message_id();
         let id2 = generate_message_id();
-        
+
         assert_ne!(id1, id2);
         assert!(!id1.is_empty());
         assert!(!id2.is_empty());
     }
-    
+
     #[tokio::test]
     async fn test_network_creation() {
         let test_node = DhtNode {
@@ -835,7 +840,7 @@ mod tests {
             reputation: 1000,
             storage_info: None,
         };
-        
+
         let bind_addr = "127.0.0.1:0".parse().unwrap(); // Use any available port
         let network = DhtNetwork::new_udp(test_node, bind_addr);
 
@@ -844,7 +849,7 @@ mod tests {
             assert!(net.local_addr().is_ok());
         }
     }
-    
+
     #[tokio::test]
     async fn test_ping_pong_response() {
         let test_node = DhtNode {
@@ -855,10 +860,10 @@ mod tests {
             reputation: 1000,
             storage_info: None,
         };
-        
+
         let bind_addr = "127.0.0.1:0".parse().unwrap();
         let network = DhtNetwork::new_udp(test_node, bind_addr).expect("Failed to create network");
-        
+
         // Test PING message handling
         let ping_message = DhtMessage {
             message_id: "test_ping".to_string(),
@@ -869,14 +874,20 @@ mod tests {
             value: None,
             nodes: None,
             contract_data: None,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             nonce: [1u8; 32], // Non-zero nonce for testing
             sequence_number: 0,
             signature: None,
         };
-        
+
         let sender = PeerId::Udp("127.0.0.1:12345".parse().unwrap());
-        let response = network.handle_incoming_message(ping_message, sender).await.unwrap();
+        let response = network
+            .handle_incoming_message(ping_message, sender)
+            .await
+            .unwrap();
 
         assert!(response.is_some());
         if let Some(pong) = response {
@@ -941,7 +952,10 @@ mod tests {
             value: None,
             nodes: None,
             contract_data: None,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             nonce: [0u8; 32], // Zero nonce is invalid
             sequence_number: 0,
             signature: None,
@@ -976,7 +990,10 @@ mod tests {
         };
 
         let result = future_message.validate_freshness();
-        assert!(result.is_err(), "Future timestamp message should fail validation");
+        assert!(
+            result.is_err(),
+            "Future timestamp message should fail validation"
+        );
     }
 
     #[test]

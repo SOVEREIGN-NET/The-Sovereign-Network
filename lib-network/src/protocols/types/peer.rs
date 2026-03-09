@@ -87,8 +87,13 @@ impl ValidatedDeviceId {
             ));
         }
         // Allow alphanumeric, hyphens, colons, and underscores
-        if !id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == ':' || c == '_') {
-            return Err(anyhow!("Invalid Device ID format: only alphanumeric, -, :, _ allowed"));
+        if !id
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == ':' || c == '_')
+        {
+            return Err(anyhow!(
+                "Invalid Device ID format: only alphanumeric, -, :, _ allowed"
+            ));
         }
         Ok(Self(id))
     }
@@ -184,11 +189,7 @@ pub struct VerifiedPeerIdentity {
 
 impl VerifiedPeerIdentity {
     /// Create a new verified peer identity
-    pub fn new(
-        did: String,
-        public_key: Vec<u8>,
-        authentication_proof: Vec<u8>,
-    ) -> Result<Self> {
+    pub fn new(did: String, public_key: Vec<u8>, authentication_proof: Vec<u8>) -> Result<Self> {
         if did.is_empty() {
             return Err(anyhow!("DID cannot be empty"));
         }

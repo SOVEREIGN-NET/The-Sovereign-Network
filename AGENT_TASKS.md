@@ -1,6 +1,130 @@
+# Agent Task List - TokenCreation Fee Cleanup
+
+**Last Updated:** 2026-03-09 UTC by Codex
+**Primary Agent:** Agent 3 - Token Consensus Agent
+**Secondary Reviewers Required:** Agent 2 - Storage and Atomicity, Agent 4 - Runtime/API Contract, Agent 8 - Security and Replay Assurance, Agent 10 - QA and Release Readiness
+**Status:** Implemented and verified
+
+## Scope Summary
+
+Finish the `TokenCreation` fee mess by leaving exactly one live fee authority:
+
+- DAO-governed `TxFeeConfig.token_creation_fee`
+- exact-fee enforcement in validator
+- exact-fee enforcement in executor
+- fee-config API exposure
+- lib-client consumption of the same field
+
+## Invariants
+
+- [x] `TokenCreation` has exactly one canonical required fee.
+- [x] `TokenCreation` fee is not derived from legacy size-based estimation.
+- [x] `TokenCreation` fee is not derived from `FeeModelV2`.
+- [x] Validator and executor enforce the same exact fee rule.
+- [x] `/api/v1/blockchain/fee-config` exposes the canonical `token_creation_fee`.
+- [x] `lib-client` sets `tx.fee` to exactly the canonical `token_creation_fee`.
+- [x] No duplicate live `TokenCreation` fee logic remains.
+
+## Review Pass Findings
+
+- [x] Active pending admission path reviewed: [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/blockchain.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/blockchain.rs) uses `add_pending_transaction()` -> `verify_transaction()` -> `StatefulTransactionValidator`; current live mempool path does not go through `lib-mempool` for `TokenCreation`.
+- [x] Consensus/block production path reviewed: runtime block assembly pulls from `blockchain.pending_transactions`, and committed blocks go through `BlockExecutor.apply_block()`, so validator changes affect pending admission and executor changes affect final consensus application.
+- [x] Trusted replay path reviewed: [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/sync/mod.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/sync/mod.rs) uses `BlockExecutor::from_config_trusted_replay(...)`, which skips fee validation for replayed peer blocks.
+- [x] Parallel fee infrastructure reviewed: [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-mempool/src/admission.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-mempool/src/admission.rs), [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/validation/tx_validate.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/validation/tx_validate.rs), and [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/fees/classifiers.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/fees/classifiers.rs) do not currently classify `TokenCreation`; they remain repo debt but are not the live `TokenCreation` authority.
+- [x] Persistence compatibility reviewed: adding a new field to [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/fee.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/fee.rs) is not backward-compatible unless `TxFeeConfig` gains serde defaults for missing fields.
+- [x] Fee-config API surface reviewed: [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/zhtp/src/api/handlers/blockchain/mod.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/zhtp/src/api/handlers/blockchain/mod.rs) exposes `fee-config`, `estimate-fee`, and `quote-fee`; the generic `estimate-fee` request does not currently carry transaction type.
+- [x] Client/binding surfaces reviewed: [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/lib.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/lib.rs) exposes C and JNI fee-config setters and a generic `quote_fee_for_tx_hex`; because the client surface is fully controlled, these bindings can be changed directly as part of canonical cleanup.
+- [x] `lib-client` review completed: `zhtp_client_set_fee_config(...)` and `Java_com_sovereignnetworkmobile_Identity_nativeSetFeeConfig(...)` currently take exactly three numeric fee knobs; if canonical cleanup requires it, update these exported function signatures rather than adding compatibility shims.
+- [x] `lib-client` generic quote path reviewed: `zhtp_client_quote_fee_for_tx_hex(...)` currently routes through legacy size-based `calculate_min_fee_for_tx_hex(...)`; this will be wrong for canonical fixed-fee `TokenCreation` unless explicitly special-cased or blocked.
+- [x] `lib-client` token builder reviewed: `build_create_token_tx(...)` is the only in-repo token creation builder and currently hardcodes size-estimated fee assignment; removing that logic should not require changing the exported `zhtp_client_build_token_create(...)` signature.
+- [x] Existing targeted tests reviewed: current executor `TokenCreation` fixture uses arbitrary `fee: 10_000`, so it does not lock the intended canonical fee behavior.
+
+## Review-Derived Constraints
+
+- [x] Make `TxFeeConfig` backward-compatible for deserialization before adding `token_creation_fee`.
+- [x] Remove compatibility assumptions for controlled clients; update C/JNI fee-config bindings directly if needed so only one canonical client fee path remains.
+- [x] Keep exactly one client fee path for `TokenCreation`; no compatibility wrapper, alternate setter, or shadow config path survives.
+- [x] Decide explicit behavior for `/api/v1/blockchain/transaction/estimate-fee` because current request body cannot infer `TokenCreation` from size alone.
+- [x] Decide explicit behavior for `zhtp_client_quote_fee_for_tx_hex(...)` when passed a `TokenCreation` transaction.
+- [x] Keep `lib-mempool` / alternate fee-v2 paths out of scope for `TokenCreation` cleanup unless they become live admission paths.
+
+## Keep / Extend
+
+- [x] Extend [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/fee.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/fee.rs) `TxFeeConfig` with `token_creation_fee` defaulting to `1000`, with serde defaults for backward compatibility.
+- [x] Extend [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-consensus/src/dao/dao_types.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-consensus/src/dao/dao_types.rs) with a governance parameter for `token_creation_fee`.
+- [x] Extend [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/blockchain.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/blockchain.rs) governance application path to persist `token_creation_fee`.
+- [x] Extend [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/zhtp/src/api/handlers/blockchain/mod.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/zhtp/src/api/handlers/blockchain/mod.rs) fee-config response with `token_creation_fee`.
+- [x] Extend [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/token_tx.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/token_tx.rs) fee-config ingestion to cache `token_creation_fee`.
+- [x] Update [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/lib.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/lib.rs) bindings to match the canonical fee-config shape exactly, with no compatibility wrapper left behind.
+
+## Remove From Live TokenCreation Fee Path
+
+- [x] Remove `TokenCreation` size-based fee estimation from [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/token_tx.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/token_tx.rs).
+- [x] Remove `TokenCreation` dependence on `calculate_minimum_fee_with_config(...)` in [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/validation.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/validation.rs).
+- [x] Remove `TokenCreation` fallthrough into `FeeModelV2` in [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/execution/executor.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/execution/executor.rs).
+- [x] Remove or special-case stale generic token-creation fee quoting in [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/zhtp/src/api/handlers/blockchain/mod.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/zhtp/src/api/handlers/blockchain/mod.rs).
+- [x] Ensure `/api/v1/blockchain/transaction/estimate-fee` does not pretend to quote `TokenCreation` from size-only input.
+- [x] Remove or special-case stale client-side generic fee quoting for `TokenCreation` in [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/lib.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/lib.rs).
+
+## Canonical Rule Implementation
+
+- [x] Add one shared `TokenCreation` required-fee helper in `lib-blockchain` that reads `TxFeeConfig.token_creation_fee`.
+- [x] Make stateless validation enforce `tx.fee == token_creation_fee` for `TokenCreation`.
+- [x] Make stateful/executor validation enforce `tx.fee == token_creation_fee` for `TokenCreation`.
+- [x] Make `lib-client` build `TokenCreation` transactions with `tx.fee = token_creation_fee`.
+- [x] Make server fee quote endpoints return the fixed `token_creation_fee` for `TokenCreation` or explicitly reject generic quoting for that tx type.
+
+## Test Gates
+
+- [x] Add validator test: `TokenCreation` with exact configured fee is accepted.
+- [x] Add validator test: `TokenCreation` with lower fee is rejected.
+- [x] Add validator test: `TokenCreation` with higher fee is rejected.
+- [x] Add executor test: client-equivalent `TokenCreation` with exact configured fee is accepted.
+- [x] Replace arbitrary high-fee executor fixture with canonical fee-driven fixture.
+- [x] Add governance test: DAO update changes `token_creation_fee`.
+- [x] Add API test: `/api/v1/blockchain/fee-config` returns `token_creation_fee`.
+- [x] Add client config parse test for `token_creation_fee`.
+- [x] Add backward-compatibility test: old serialized `TxFeeConfig` / blockchain state loads with default `token_creation_fee`.
+- [x] Add API test for explicit `TokenCreation` quoting behavior on `/transaction/quote-fee` and `/transaction/estimate-fee`.
+
+## File-Level Diff Map
+
+- [x] [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/fee.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/fee.rs)
+- [x] [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/validation.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/validation.rs)
+- [x] [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/execution/executor.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/execution/executor.rs)
+- [x] [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/blockchain.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/blockchain.rs)
+- [x] [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-consensus/src/dao/dao_types.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-consensus/src/dao/dao_types.rs)
+- [x] [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-consensus/src/dao/dao_engine.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-consensus/src/dao/dao_engine.rs)
+- [x] [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/zhtp/src/api/handlers/blockchain/mod.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/zhtp/src/api/handlers/blockchain/mod.rs)
+- [x] [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/token_tx.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/token_tx.rs)
+- [x] [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/lib.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-client/src/lib.rs)
+
+## Risk Notes
+
+- [x] Ensure `TokenMint` policy remains unchanged unless explicitly requested.
+- [x] Ensure replay/catch-up paths do not create a second `TokenCreation` fee rule.
+- [x] Ensure trusted replay remains intentionally fee-skipping and does not become an accidental second authority for fresh `TokenCreation` admission.
+- [x] Ensure fee quote endpoints do not keep returning stale size-based values for `TokenCreation`.
+- [x] Ensure no parallel `TokenCreation` fee helper survives after cleanup.
+- [x] Ensure controlled client binding changes are applied coherently so there is still only one canonical fee-config contract.
+
+## Rollback Strategy
+
+- [x] If rollout fails, revert the full `TokenCreation` fee cleanup as one unit.
+  Rollback unit: revert the `TxFeeConfig.token_creation_fee` field, DAO governance parameter, validator exact-fee rule, executor exact-fee rule, API fee-config/quote changes, and `lib-client` fee-config + builder changes together.
+- [x] Do not leave partial state where client, validator, and executor disagree.
+  Required rollback rule: do not ship or backport any subset of the change; client bindings, server fee-config exposure, validator enforcement, and executor enforcement move together or are reverted together.
+
+## Type Architecture Compliance
+
+- [x] No duplicate fee-config type is introduced outside canonical existing types.
+- [x] No new `V2` or parallel `TokenCreation` fee model is introduced.
+
+---
+
 # Agent Task List - ORACLE Protocol v1 Implementation
 
-**Last Updated:** 2026-03-01 17:30 UTC by Kimi
+**Last Updated:** 2026-03-09 UTC by Codex
 
 ## ORACLE Protocol v1 Implementation - All Subtasks Complete
 
@@ -8,13 +132,13 @@
 
 | Subtask | PR | Branch | Status |
 |---------|-----|--------|--------|
-| ORACLE-7 | #1717 | feature/ORACLE-7-oracle-slashing-base | Ready for QE |
-| ORACLE-8 | #1719 | feature/ORACLE-8-oracle-slashing-api | Ready for QE |
-| ORACLE-9 | #1720 | feature/ORACLE-9-oracle-slashing-validation | Ready for QE |
-| ORACLE-10 | #1721 | feature/ORACLE-10-oracle-slashing-import-export | Ready for QE |
-| ORACLE-11 | #1722 | feature/ORACLE-11-oracle-slashing-governance | Ready for QE |
-| ORACLE-12 | #1723 | feature/ORACLE-12-oracle-slash-misbehaving-validator | Ready for QE |
-| ORACLE-13 | #1724 | feature/ORACLE-13-storage-migration-docs | **Just Created** |
+| ORACLE-7 | #1717 | feature/ORACLE-7-oracle-slashing-base | COMPLETE |
+| ORACLE-8 | #1719 | feature/ORACLE-8-oracle-slashing-api | COMPLETE |
+| ORACLE-9 | #1720 | feature/ORACLE-9-oracle-slashing-validation | COMPLETE |
+| ORACLE-10 | #1721 | feature/ORACLE-10-oracle-slashing-import-export | COMPLETE |
+| ORACLE-11 | #1722 | feature/ORACLE-11-oracle-slashing-governance | COMPLETE |
+| ORACLE-12 | #1723 | feature/ORACLE-12-oracle-slash-misbehaving-validator | COMPLETE |
+| ORACLE-13 | #1724 | feature/ORACLE-13-storage-migration-docs | COMPLETE |
 
 ### Implementation Summary
 
@@ -136,7 +260,7 @@ cargo test -p lib-mempool ✅ 13/13 tests passing
 
 ## Legacy: Casino PRs
 
-**Last Updated:** 2026-02-01 by Opus
+**Last Updated:** 2026-03-09 UTC by Codex
 **Scope:** ONLY PRs by scasino983/casino
 
 **IMPORTANT:** When you complete a task, add `[DONE]` next to it and leave a note.
@@ -149,7 +273,7 @@ Opus will review your work.
 
 | PR | Branch | CI | Ready |
 |----|--------|----|----|
-| #1035 | 846-fix-resubmit | PASS | NEEDS WORK (see below) |
+| #1035 | 846-fix-resubmit | PASS | DONE IN REPO (legacy note) |
 | #1036 | 878-phase1-resubmit | PASS | YES |
 | #1037 | 879-880-phase2-3-resubmit | PASS | YES |
 | #1038 | network-tests-resubmit | PASS | YES |
@@ -159,27 +283,23 @@ Opus will review your work.
 
 ---
 
-## CRITICAL: PR #1035 Incomplete Fix (Priority: HIGH)
+## Historical Note: PR #1035 DHT Fix
 
-**Problem Found by Opus:**
-PR #1035 only partially fixes Issue #846. It rewires `broadcast_to_peers_except()` to use 
-`QuicMeshProtocol.connections` but leaves other code still using the broken `MeshRouter.connections`.
+Legacy note from the original PR review:
+- PR #1035 initially only partially fixed Issue #846.
+- The missing DHT-side change was to use `QuicMeshProtocol.connections` in `handle_dht_find_node()`.
 
-**Remaining broken usages in `zhtp/src/server/mesh/udp_handler.rs`:**
-- Line 229: `self.connections.read().await` - needs investigation
-- Line 895-896: `handle_dht_find_node` uses `connections.iter()` - DHT will fail to find QUIC peers
+Current repo state:
+- [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/zhtp/src/server/mesh/udp_handler.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/zhtp/src/server/mesh/udp_handler.rs) now uses `self.quic_protocol.read().await` and `quic.connections.iter()` inside `handle_dht_find_node()`.
+- The `self.connections.read().await` usage around line 229 is a separate UDP requester registration check, not the stale DHT lookup path.
 
-**Fix Required:**
-Apply same pattern from `broadcast_to_peers_except()` to `handle_dht_find_node()`:
-1. Use `self.quic_protocol.read().await` instead of `self.connections.read().await`
-2. Iterate over `quic.connections.iter()` instead of `connections.iter()`
-
-**Branch:** `846-fix-resubmit`
-**After fixing:** Run `cargo check --workspace` and push
+[DONE] The repository already contains the required DHT fix. This section is kept only as historical context for the old PR thread.
 
 ---
 
 ## Task 1: Delete Copilot Inline Comments
+
+External blocker: requires valid `gh` authentication and network access.
 
 Delete these Copilot comment IDs using:
 ```bash
@@ -215,6 +335,8 @@ gh pr edit 1038 1041 1043 --remove-reviewer "copilot-pull-request-reviewer"
 
 ## Task 2: Request Reviews (Priority: MEDIUM)
 
+External blocker: requires valid `gh` authentication and a concrete reviewer username.
+
 All these PRs are passing CI and ready:
 
 ```bash
@@ -249,9 +371,6 @@ PRs must be merged in this order (dependencies):
 4. Run `cargo check --workspace` before pushing
 5. Mark tasks `[DONE]` when complete with brief note
 6. When ALL tasks done, add `## ALL TASKS COMPLETE` at bottom
-5. #1041 (Phase 4)
-6. #1042 (Phase 5)
-7. #1043 (Dedup fix - can merge anytime after #1035)
 
 **DO NOT MERGE AS AGENT** - Only human reviewers merge.
 

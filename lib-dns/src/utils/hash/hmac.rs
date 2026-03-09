@@ -11,7 +11,6 @@ where
         hasher.update(key, 0, key.len());
         let digest = hasher.get_value();
         key_block[..digest.as_ref().len()].copy_from_slice(digest.as_ref());
-
     } else {
         key_block[..key.len()].copy_from_slice(key);
     }

@@ -37,12 +37,15 @@
 //! - Deterministic: same block + same pre-state = same mutations
 
 pub mod errors;
+pub mod executor;
 pub mod state_view;
 pub mod tx_apply;
-pub mod executor;
 
 // Re-exports
 pub use errors::{BlockApplyError, BlockApplyResult, TxApplyError, TxApplyResult};
+pub use executor::{
+    ApplyOutcome, BlockExecutor, ExecutorConfig, StateChangesSummary, TokenMintOutcome,
+    TokenTransferOutcome,
+};
 pub use state_view::{StateView, StateViewExt};
-pub use tx_apply::{StateMutator, TransferOutcome, CoinbaseOutcome, OracleAttestationOutcome};
-pub use executor::{BlockExecutor, ExecutorConfig, ApplyOutcome, StateChangesSummary, TokenTransferOutcome, TokenMintOutcome};
+pub use tx_apply::{CoinbaseOutcome, OracleAttestationOutcome, StateMutator, TransferOutcome};

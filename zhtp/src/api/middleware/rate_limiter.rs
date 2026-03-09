@@ -4,10 +4,10 @@
 //! Only counts FAILED attempts - successful requests don't count against the limit.
 //! Avoids global state for better testability and flexibility.
 
+use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
 
 /// Configuration for rate limiting
 #[derive(Clone, Debug)]
@@ -21,8 +21,8 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            max_attempts: 100,       // 100 failed attempts allowed
-            window_seconds: 900,     // per 15 minutes
+            max_attempts: 100,   // 100 failed attempts allowed
+            window_seconds: 900, // per 15 minutes
         }
     }
 }
@@ -57,19 +57,28 @@ impl RateLimiter {
 
     /// Check rate limit with custom limits (for critical operations like recovery)
     /// This checks BEFORE the operation - call record_failed_attempt() after if it fails
-    pub async fn check_rate_limit_aggressive(&self, ip: &str, max_attempts: usize, window_seconds: u64) -> Result<(), ZhtpResponse> {
+    pub async fn check_rate_limit_aggressive(
+        &self,
+        ip: &str,
+        max_attempts: usize,
+        window_seconds: u64,
+    ) -> Result<(), ZhtpResponse> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
         let mut state = self.state.write().await;
-        let entry = state.entry(ip.to_string()).or_insert_with(|| RateLimitEntry {
-            failed_attempts: Vec::new(),
-        });
+        let entry = state
+            .entry(ip.to_string())
+            .or_insert_with(|| RateLimitEntry {
+                failed_attempts: Vec::new(),
+            });
 
         // Remove old attempts outside the window
-        entry.failed_attempts.retain(|&timestamp| now - timestamp < window_seconds);
+        entry
+            .failed_attempts
+            .retain(|&timestamp| now - timestamp < window_seconds);
 
         // Check if limit exceeded
         if entry.failed_attempts.len() >= max_attempts {
@@ -97,12 +106,16 @@ impl RateLimiter {
             .as_secs();
 
         let mut state = self.state.write().await;
-        let entry = state.entry(ip.to_string()).or_insert_with(|| RateLimitEntry {
-            failed_attempts: Vec::new(),
-        });
+        let entry = state
+            .entry(ip.to_string())
+            .or_insert_with(|| RateLimitEntry {
+                failed_attempts: Vec::new(),
+            });
 
         // Remove old attempts outside the window
-        entry.failed_attempts.retain(|&timestamp| now - timestamp < self.config.window_seconds);
+        entry
+            .failed_attempts
+            .retain(|&timestamp| now - timestamp < self.config.window_seconds);
 
         // Check if limit exceeded
         if entry.failed_attempts.len() >= self.config.max_attempts {
@@ -130,12 +143,18 @@ impl RateLimiter {
             .as_secs();
 
         let mut state = self.state.write().await;
-        let entry = state.entry(ip.to_string()).or_insert_with(|| RateLimitEntry {
-            failed_attempts: Vec::new(),
-        });
+        let entry = state
+            .entry(ip.to_string())
+            .or_insert_with(|| RateLimitEntry {
+                failed_attempts: Vec::new(),
+            });
 
         entry.failed_attempts.push(now);
-        tracing::debug!("Recorded failed attempt for IP {} (total: {})", ip, entry.failed_attempts.len());
+        tracing::debug!(
+            "Recorded failed attempt for IP {} (total: {})",
+            ip,
+            entry.failed_attempts.len()
+        );
     }
 
     /// Clear failed attempts for an IP (call after successful auth to reset)
@@ -158,7 +177,9 @@ impl RateLimiter {
 
         // P2 fix: Prevent unbounded HashMap growth
         state.retain(|_, entry| {
-            entry.failed_attempts.retain(|&ts| now - ts < self.config.window_seconds);
+            entry
+                .failed_attempts
+                .retain(|&ts| now - ts < self.config.window_seconds);
             !entry.failed_attempts.is_empty()
         });
 

@@ -72,7 +72,10 @@ fn auth_characteristic_uuid(message_type: &str) -> Result<&'static str> {
 
 impl BluetoothMeshProtocol {
     /// Initialize ZHTP authentication for this node
-    pub async fn initialize_zhtp_auth(&self, blockchain_pubkey: lib_crypto::PublicKey) -> Result<()> {
+    pub async fn initialize_zhtp_auth(
+        &self,
+        blockchain_pubkey: lib_crypto::PublicKey,
+    ) -> Result<()> {
         info!(" Initializing ZHTP authentication for Bluetooth mesh");
 
         let auth_manager = ZhtpAuthManager::new(blockchain_pubkey)?;
@@ -188,7 +191,10 @@ impl BluetoothMeshProtocol {
         peer_address: &str,
         response: &ZhtpAuthResponse,
     ) -> Result<ZhtpAuthVerification> {
-        info!(" Verifying ZHTP authentication response from {}", peer_address);
+        info!(
+            " Verifying ZHTP authentication response from {}",
+            peer_address
+        );
 
         let auth_manager = self.auth_manager.read().await;
         let auth_manager = auth_manager
@@ -207,12 +213,19 @@ impl BluetoothMeshProtocol {
 
     /// Check if peer is authenticated
     pub async fn is_peer_authenticated(&self, peer_address: &str) -> bool {
-        self.authenticated_peers.read().await.contains_key(peer_address)
+        self.authenticated_peers
+            .read()
+            .await
+            .contains_key(peer_address)
     }
 
     /// Get authenticated peer info
     pub async fn get_peer_auth_info(&self, peer_address: &str) -> Option<ZhtpAuthVerification> {
-        self.authenticated_peers.read().await.get(peer_address).cloned()
+        self.authenticated_peers
+            .read()
+            .await
+            .get(peer_address)
+            .cloned()
     }
 
     async fn apply_auth_commands(&self, commands: Vec<AuthCommand>) {
@@ -238,7 +251,10 @@ impl BluetoothMeshProtocol {
     /// Process ZK authentication data from Bluetooth LE
     #[allow(dead_code)]
     async fn process_zk_auth_data(&self, auth_data: &[u8]) -> Result<()> {
-        info!(" Processing ZK authentication data: {} bytes", auth_data.len());
+        info!(
+            " Processing ZK authentication data: {} bytes",
+            auth_data.len()
+        );
 
         if auth_data.len() < 32 {
             warn!(" ZK auth data too short, ignoring");
@@ -314,9 +330,9 @@ impl BluetoothMeshProtocol {
                     }
                     "ZHTP-Optimized-StorageAccess" => {
                         info!("🗄️ Verifying storage access proof");
-                        zk_system
-                            .verify_storage_access(&proof)
-                            .map_err(|e| anyhow!("Storage access proof verification failed: {}", e))?
+                        zk_system.verify_storage_access(&proof).map_err(|e| {
+                            anyhow!("Storage access proof verification failed: {}", e)
+                        })?
                     }
                     "ZHTP-Optimized-Routing" => {
                         info!(" Verifying routing proof");
@@ -326,9 +342,9 @@ impl BluetoothMeshProtocol {
                     }
                     "ZHTP-Optimized-DataIntegrity" => {
                         info!(" Verifying data integrity proof");
-                        zk_system
-                            .verify_data_integrity(&proof)
-                            .map_err(|e| anyhow!("Data integrity proof verification failed: {}", e))?
+                        zk_system.verify_data_integrity(&proof).map_err(|e| {
+                            anyhow!("Data integrity proof verification failed: {}", e)
+                        })?
                     }
                     "ZHTP-Optimized-Transaction" => {
                         info!(" Verifying transaction proof");
@@ -354,7 +370,10 @@ impl BluetoothMeshProtocol {
                 Ok(verification_result)
             }
             Err(e) => {
-                warn!(" Failed to deserialize ZK proof, trying fallback validation: {}", e);
+                warn!(
+                    " Failed to deserialize ZK proof, trying fallback validation: {}",
+                    e
+                );
 
                 if proof_data.len() >= 32 {
                     let proof_hash = Sha256::digest(proof_data);
@@ -446,10 +465,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(matches!(
-            commands[1],
-            AuthCommand::StoreVerifiedPeer { .. }
-        ));
+        assert!(matches!(commands[1], AuthCommand::StoreVerifiedPeer { .. }));
     }
 
     #[test]

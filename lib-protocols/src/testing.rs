@@ -1,12 +1,12 @@
 //! Testing Utilities for ZHTP Protocols
-//! 
+//!
 //! Comprehensive testing framework for ZHTP protocol components,
 //! including mock implementations, test fixtures, and integration test helpers.
 
 #![cfg(feature = "testing")]
 #![allow(dead_code)]
 
-use crate::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus, ZhtpHeaders};
+use crate::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use crate::{ProtocolError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -158,9 +158,11 @@ impl TestRequestBuilder {
 
     /// Set JSON body
     pub fn json_body<T: Serialize>(mut self, data: &T) -> Result<Self> {
-        self.body = serde_json::to_vec(data)
-            .map_err(|e| ProtocolError::InvalidRequest(format!("JSON serialization failed: {}", e)))?;
-        self.headers.insert("Content-Type".to_string(), "application/json".to_string());
+        self.body = serde_json::to_vec(data).map_err(|e| {
+            ProtocolError::InvalidRequest(format!("JSON serialization failed: {}", e))
+        })?;
+        self.headers
+            .insert("Content-Type".to_string(), "application/json".to_string());
         Ok(self)
     }
 
@@ -176,7 +178,7 @@ impl TestRequestBuilder {
         for (key, value) in self.headers {
             lib_headers.set(&key, value);
         }
-        
+
         ZhtpRequest {
             method: self.method,
             uri: self.path,
@@ -227,9 +229,11 @@ impl TestResponseBuilder {
 
     /// Set JSON body
     pub fn json_body<T: Serialize>(mut self, data: &T) -> Result<Self> {
-        self.body = serde_json::to_vec(data)
-            .map_err(|e| ProtocolError::InvalidRequest(format!("JSON serialization failed: {}", e)))?;
-        self.headers.insert("Content-Type".to_string(), "application/json".to_string());
+        self.body = serde_json::to_vec(data).map_err(|e| {
+            ProtocolError::InvalidRequest(format!("JSON serialization failed: {}", e))
+        })?;
+        self.headers
+            .insert("Content-Type".to_string(), "application/json".to_string());
         Ok(self)
     }
 
@@ -239,7 +243,7 @@ impl TestResponseBuilder {
         for (key, value) in self.headers {
             lib_headers.set(&key, value);
         }
-        
+
         ZhtpResponse {
             version: "1.0".to_string(),
             status: self.status,
@@ -273,7 +277,7 @@ pub mod fixtures {
             "test": true,
             "message": "Hello ZHTP"
         });
-        
+
         TestRequestBuilder::new(ZhtpMethod::Post, "/api/data")
             .json_body(&data)
             .unwrap()
@@ -309,7 +313,7 @@ pub mod fixtures {
         let mut parameters = std::collections::HashMap::new();
         parameters.insert("token_type".to_string(), "SOV".to_string());
         parameters.insert("network".to_string(), "mainnet".to_string());
-        
+
         // Create a simple test wallet operation (API types moved to zhtp)
         let wallet_op = serde_json::json!({
             "operation": "GetBalance",
@@ -329,7 +333,7 @@ pub mod fixtures {
     pub fn test_dao_request() -> ZhtpRequest {
         let mut parameters = std::collections::HashMap::new();
         parameters.insert("stake_amount".to_string(), "1000".to_string());
-        
+
         // Create a simple test DAO operation (API types moved to zhtp)
         let dao_op = serde_json::json!({
             "operation": "Vote",
@@ -423,9 +427,9 @@ pub mod utils {
     pub fn generate_test_string(length: usize) -> String {
         use rand::Rng;
         const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        
+
         let mut rng = rand::rngs::OsRng;
-        
+
         (0..length)
             .map(|_| {
                 let idx = rng.gen_range(0..CHARSET.len());
@@ -497,18 +501,21 @@ pub mod integration {
 
         pub async fn run(&self, server: &mut MockZhtpServer) -> Result<()> {
             println!("Running test scenario: {}", self.name);
-            
+
             for (i, request) in self.requests.iter().enumerate() {
                 let response = server.process_request(request.clone()).await?;
                 let expected_status = &self.expected_responses[i];
-                
+
                 if response.status != *expected_status {
-                    return Err(ProtocolError::InternalError(
-                        format!("Step {}: Expected {:?}, got {:?}", i + 1, expected_status, response.status)
-                    ));
+                    return Err(ProtocolError::InternalError(format!(
+                        "Step {}: Expected {:?}, got {:?}",
+                        i + 1,
+                        expected_status,
+                        response.status
+                    )));
                 }
             }
-            
+
             println!("Test scenario '{}' completed successfully", self.name);
             Ok(())
         }
@@ -542,10 +549,10 @@ mod tests {
     async fn test_mock_server() {
         let config = TestConfig::default();
         let mut server = MockZhtpServer::new(config);
-        
+
         let request = fixtures::test_get_request();
         let response = server.process_request(request).await.unwrap();
-        
+
         assert_eq!(response.status, ZhtpStatus::Ok);
         assert_eq!(server.get_recorded_requests().len(), 1);
     }
@@ -556,7 +563,7 @@ mod tests {
             .header("Test", "Value")
             .body(b"test body".to_vec())
             .build();
-        
+
         assert_eq!(request.method, ZhtpMethod::Get);
         assert_eq!(request.uri, "/test");
         assert_eq!(request.headers.get("Test"), Some("Value".to_string()));
@@ -569,9 +576,12 @@ mod tests {
             .header("Content-Type", "text/plain")
             .body(b"test response".to_vec())
             .build();
-        
+
         assert_eq!(response.status, ZhtpStatus::Ok);
-        assert_eq!(response.headers.get("Content-Type"), Some("text/plain".to_string()));
+        assert_eq!(
+            response.headers.get("Content-Type"),
+            Some("text/plain".to_string())
+        );
         assert_eq!(response.body, b"test response");
     }
 
@@ -579,26 +589,26 @@ mod tests {
     async fn test_integration_scenario() {
         let config = TestConfig::default();
         let mut server = MockZhtpServer::new(config);
-        
+
         let scenario = integration::create_wallet_test_scenario();
         let result = scenario.run(&mut server).await;
-        
+
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_mock_storage() {
         let mut storage = mocks::MockStorage::new();
-        
+
         let id = storage.store("test", b"test data".to_vec());
         assert!(!id.is_empty());
-        
+
         let retrieved = storage.retrieve(&id);
         assert_eq!(retrieved, Some(b"test data".to_vec()));
-        
+
         let deleted = storage.delete(&id);
         assert!(deleted);
-        
+
         let not_found = storage.retrieve(&id);
         assert_eq!(not_found, None);
     }

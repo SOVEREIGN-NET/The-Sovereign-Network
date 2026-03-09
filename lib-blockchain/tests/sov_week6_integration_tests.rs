@@ -37,16 +37,18 @@ fn test_key(id: u8) -> PublicKey {
 
 /// Initialize FeeRouter with test pool addresses
 fn init_fee_router(router: &mut FeeRouter) {
-    router.init(
-        &test_key(1),  // UBI
-        &test_key(2),  // Emergency
-        &test_key(3),  // Dev
-        &test_key(4),  // Healthcare
-        &test_key(5),  // Education
-        &test_key(6),  // Energy
-        &test_key(7),  // Housing
-        &test_key(8),  // Food
-    ).unwrap();
+    router
+        .init(
+            &test_key(1), // UBI
+            &test_key(2), // Emergency
+            &test_key(3), // Dev
+            &test_key(4), // Healthcare
+            &test_key(5), // Education
+            &test_key(6), // Energy
+            &test_key(7), // Housing
+            &test_key(8), // Food
+        )
+        .unwrap();
 }
 
 // ============================================================================
@@ -311,9 +313,10 @@ fn test_stress_10k_citizens() {
     // - 10: Starting offset to avoid reserved key_ids 0-9
     // - Result: (i % 245) gives 0-244, + 10 yields valid range 10-254
     const UNIQUE_KEY_RANGE: usize = 245; // u8 values 10-254
-    const KEY_OFFSET: usize = 10;        // Skip reserved key_ids 0-9
+    const KEY_OFFSET: usize = 10; // Skip reserved key_ids 0-9
     for i in 0..10_000 {
-        ubi.register(&test_key(((i % UNIQUE_KEY_RANGE) + KEY_OFFSET) as u8)).ok();
+        ubi.register(&test_key(((i % UNIQUE_KEY_RANGE) + KEY_OFFSET) as u8))
+            .ok();
     }
 
     assert_eq!(ubi.registered_count(), UNIQUE_KEY_RANGE); // Limited by unique key_ids (10-254)
@@ -475,10 +478,10 @@ fn test_fairness_allocation_percentages() {
     let dist = router.distribute(100).unwrap();
 
     // Verify exact percentages
-    assert_eq!(dist.ubi_pool, 450_000);      // 45%
-    assert_eq!(dist.dao_pool, 300_000);      // 30%
+    assert_eq!(dist.ubi_pool, 450_000); // 45%
+    assert_eq!(dist.dao_pool, 300_000); // 30%
     assert_eq!(dist.emergency_reserve, 150_000); // 15%
-    assert_eq!(dist.dev_grants, 100_000);    // 10%
+    assert_eq!(dist.dev_grants, 100_000); // 10%
 }
 
 #[test]
@@ -520,7 +523,11 @@ fn bench_fee_collection_throughput() {
     let elapsed = start.elapsed();
 
     // Should be very fast (< 100ms)
-    assert!(elapsed.as_millis() < 100, "Collection took {} ms", elapsed.as_millis());
+    assert!(
+        elapsed.as_millis() < 100,
+        "Collection took {} ms",
+        elapsed.as_millis()
+    );
 }
 
 #[test]
@@ -543,7 +550,11 @@ fn bench_distribution_throughput() {
     let elapsed = start.elapsed();
 
     // Should complete in < 1 second
-    assert!(elapsed.as_secs() < 1, "Distribution took {} ms", elapsed.as_millis());
+    assert!(
+        elapsed.as_secs() < 1,
+        "Distribution took {} ms",
+        elapsed.as_millis()
+    );
 }
 
 #[test]
@@ -561,7 +572,11 @@ fn bench_ubi_citizen_registration() {
     let elapsed = start.elapsed();
 
     // Should be fast (< 500ms for 1000)
-    assert!(elapsed.as_millis() < 500, "Registration took {} ms", elapsed.as_millis());
+    assert!(
+        elapsed.as_millis() < 500,
+        "Registration took {} ms",
+        elapsed.as_millis()
+    );
 }
 
 #[test]
@@ -577,11 +592,11 @@ fn bench_year1_to_year5_projection() {
     for month in 0..60 {
         // Varying fees based on year
         let fees = match month / 12 {
-            0 => 10_000,      // Year 1
-            1 => 50_000,      // Year 2
-            2 => 5_000_000,   // Year 3
-            3 => 15_000_000,  // Year 4
-            _ => 50_000_000,  // Year 5
+            0 => 10_000,     // Year 1
+            1 => 50_000,     // Year 2
+            2 => 5_000_000,  // Year 3
+            3 => 15_000_000, // Year 4
+            _ => 50_000_000, // Year 5
         };
 
         router.collect(fees).unwrap();
@@ -592,7 +607,11 @@ fn bench_year1_to_year5_projection() {
     let elapsed = start.elapsed();
 
     // 60-month simulation should be fast
-    assert!(elapsed.as_secs() < 1, "5-year simulation took {} ms", elapsed.as_millis());
+    assert!(
+        elapsed.as_secs() < 1,
+        "5-year simulation took {} ms",
+        elapsed.as_millis()
+    );
 }
 
 // ============================================================================

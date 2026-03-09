@@ -45,8 +45,8 @@ pub mod type_validator;
 pub mod validator;
 
 pub use call::CrossContractCall;
-pub use cycle_detector::{CallCycle, CallChainAnalysis, CallEdge, CycleDetector};
-pub use errors::{CalleeErrorCode, CrossContractError, ContractId};
+pub use cycle_detector::{CallChainAnalysis, CallCycle, CallEdge, CycleDetector};
+pub use errors::{CalleeErrorCode, ContractId, CrossContractError};
 pub use executor::{CallExecutor, CrossContractCallIntent, CrossContractCallResult};
 pub use serialization_validator::{SerializationFormat, SerializationValidator};
 pub use stack::{CallStack, MAX_RECURSION_DEPTH};

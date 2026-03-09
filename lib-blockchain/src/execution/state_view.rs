@@ -5,7 +5,6 @@
 //!
 //! For state mutations, use tx_apply.rs primitives.
 
-
 use crate::storage::{
     AccountState, Address, BlockHash, BlockchainStore, OutPoint, StorageResult, TokenId, Utxo,
 };

@@ -17,23 +17,20 @@
 //! - `types`: State machine types, pricing formulas, thresholds
 //! - `events`: Event types for indexing
 
-pub mod types;
-pub mod events;
-pub mod token;
-pub mod registry;
 pub mod event_indexer;
+pub mod events;
+pub mod registry;
+pub mod token;
+pub mod types;
 
 // Re-export core types
-pub use types::{
-    Phase, CurveType, Threshold, CurveStats, CurveError,
-    ConfidenceLevel, Valuation, PriceSource,
-};
-pub use events::{
-    BondingCurveEvent, ReserveUpdateReason, EventIndexer, InMemoryEventIndexer,
-};
 pub use event_indexer::SledEventIndexer;
-pub use token::BondingCurveToken;
+pub use events::{BondingCurveEvent, EventIndexer, InMemoryEventIndexer, ReserveUpdateReason};
 pub use registry::{BondingCurveRegistry, RegistryStats};
+pub use token::BondingCurveToken;
+pub use types::{
+    ConfidenceLevel, CurveError, CurveStats, CurveType, Phase, PriceSource, Threshold, Valuation,
+};
 
 /// Default token decimals
 pub const DEFAULT_DECIMALS: u8 = 8;

@@ -16,11 +16,11 @@
 //! L0 can NEVER register a .sov root. The `.zhtp` TLD may remain permissive
 //! for experimentation; `.sov` is sovereign-grade.
 
-use std::collections::HashSet;
 use super::types::{
-    hash_name, normalize_name, NameClass, NameHash, ReservedReason, VerificationLevel,
-    VerificationError, VerificationProof, WelfareSector,
+    hash_name, normalize_name, NameClass, NameHash, ReservedReason, VerificationError,
+    VerificationLevel, VerificationProof, WelfareSector,
 };
+use std::collections::HashSet;
 
 const IMMUTABLE_RESERVED: &[&str] = &[
     "food.dao.sov",
@@ -156,7 +156,10 @@ impl NamespacePolicy {
             };
         }
 
-        if self.governance_added_reserved.contains(&hash_name(&normalized)) {
+        if self
+            .governance_added_reserved
+            .contains(&hash_name(&normalized))
+        {
             return NameClass::Reserved {
                 reason: ReservedReason::GovernanceAdded,
             };

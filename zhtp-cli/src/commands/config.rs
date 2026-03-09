@@ -7,12 +7,12 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{ConfigArgs, ConfigAction};
-use crate::error::{CliResult, CliError};
+use crate::argument_parsing::{ConfigAction, ConfigArgs};
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
 
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -86,9 +86,10 @@ pub fn default_config_path() -> PathBuf {
 pub fn validate_config_format(format: &str) -> CliResult<()> {
     match format.to_lowercase().as_str() {
         "toml" | "json" | "yaml" => Ok(()),
-        _ => Err(CliError::ConfigError(
-            format!("Unsupported format: '{}'. Supported: toml, json, yaml", format),
-        )),
+        _ => Err(CliError::ConfigError(format!(
+            "Unsupported format: '{}'. Supported: toml, json, yaml",
+            format
+        ))),
     }
 }
 
@@ -99,16 +100,16 @@ pub fn validate_config_format(format: &str) -> CliResult<()> {
 /// Handle config command with proper error handling and output
 ///
 /// Public entry point that maintains backward compatibility
-pub async fn handle_config_command(args: ConfigArgs, _cli: &crate::argument_parsing::ZhtpCli) -> CliResult<()> {
+pub async fn handle_config_command(
+    args: ConfigArgs,
+    _cli: &crate::argument_parsing::ZhtpCli,
+) -> CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_config_command_impl(args, &output).await
 }
 
 /// Internal implementation with dependency injection
-async fn handle_config_command_impl(
-    args: ConfigArgs,
-    output: &dyn Output,
-) -> CliResult<()> {
+async fn handle_config_command_impl(args: ConfigArgs, output: &dyn Output) -> CliResult<()> {
     let op = action_to_operation(&args.action);
     output.info(&format!("{}...", op.description()))?;
 
@@ -156,20 +157,18 @@ async fn handle_config_command_impl(
 }
 
 /// Show configuration from file
-async fn show_config_impl(
-    config_path: &Path,
-    format: &str,
-    output: &dyn Output,
-) -> CliResult<()> {
+async fn show_config_impl(config_path: &Path, format: &str, output: &dyn Output) -> CliResult<()> {
     if !config_path.exists() {
-        output.warning(&format!("Configuration file not found: {}", config_path.display()))?;
+        output.warning(&format!(
+            "Configuration file not found: {}",
+            config_path.display()
+        ))?;
         output.print("Use 'zhtp-cli config init' to create a default configuration")?;
         return Ok(());
     }
 
-    let contents = fs::read_to_string(config_path).map_err(|e| {
-        CliError::ConfigError(format!("Failed to read config: {}", e))
-    })?;
+    let contents = fs::read_to_string(config_path)
+        .map_err(|e| CliError::ConfigError(format!("Failed to read config: {}", e)))?;
 
     // In a real implementation, we would parse and format the config
     // For now, just display the raw contents
@@ -193,10 +192,7 @@ async fn show_config_impl(
 }
 
 /// Validate configuration
-async fn validate_config_impl(
-    config_path: &Path,
-    output: &dyn Output,
-) -> CliResult<()> {
+async fn validate_config_impl(config_path: &Path, output: &dyn Output) -> CliResult<()> {
     crate::cli_config::load_config_strict(config_path)?;
     output.success("✓ Configuration is valid")?;
     output.print(&format!("Config file: {}", config_path.display()))?;
@@ -204,10 +200,7 @@ async fn validate_config_impl(
 }
 
 /// Edit configuration with editor
-async fn edit_config_impl(
-    config_path: &Path,
-    output: &dyn Output,
-) -> CliResult<()> {
+async fn edit_config_impl(config_path: &Path, output: &dyn Output) -> CliResult<()> {
     if !config_path.exists() {
         output.warning("Configuration file does not exist")?;
         output.print("Initializing default configuration first...")?;
@@ -223,17 +216,21 @@ async fn edit_config_impl(
         }
     });
 
-    output.info(&format!("Opening {} with {}", config_path.display(), editor))?;
+    output.info(&format!(
+        "Opening {} with {}",
+        config_path.display(),
+        editor
+    ))?;
 
     let status = std::process::Command::new(&editor)
         .arg(config_path)
         .status()
-        .map_err(|e| {
-            CliError::ConfigError(format!("Failed to open editor: {}", e))
-        })?;
+        .map_err(|e| CliError::ConfigError(format!("Failed to open editor: {}", e)))?;
 
     if !status.success() {
-        return Err(CliError::ConfigError("Editor exited with error".to_string()));
+        return Err(CliError::ConfigError(
+            "Editor exited with error".to_string(),
+        ));
     }
 
     output.success("✓ Configuration updated")?;
@@ -242,11 +239,7 @@ async fn edit_config_impl(
 }
 
 /// Initialize default configuration
-async fn init_config_impl(
-    config_path: &Path,
-    force: bool,
-    output: &dyn Output,
-) -> CliResult<()> {
+async fn init_config_impl(config_path: &Path, force: bool, output: &dyn Output) -> CliResult<()> {
     if config_path.exists() && !force {
         return Err(CliError::ConfigError(format!(
             "Configuration file already exists: {}\nUse --force to overwrite",
@@ -257,10 +250,7 @@ async fn init_config_impl(
     // Create parent directory if needed
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
-            CliError::ConfigError(format!(
-                "Failed to create config directory: {}",
-                e
-            ))
+            CliError::ConfigError(format!("Failed to create config directory: {}", e))
         })?;
     }
 
@@ -298,11 +288,13 @@ keystore = "~/.zhtp/keystore"
 address = "central.sov:9334"
 "#;
 
-    fs::write(config_path, default_config).map_err(|e| {
-        CliError::ConfigError(format!("Failed to write config: {}", e))
-    })?;
+    fs::write(config_path, default_config)
+        .map_err(|e| CliError::ConfigError(format!("Failed to write config: {}", e)))?;
 
-    output.success(&format!("✓ Configuration initialized at {}", config_path.display()))?;
+    output.success(&format!(
+        "✓ Configuration initialized at {}",
+        config_path.display()
+    ))?;
     output.print("Edit the configuration file to customize CLI defaults, servers, and profiles")?;
 
     Ok(())
@@ -382,7 +374,9 @@ mod tests {
     fn test_default_config_path() {
         let path = default_config_path();
         assert!(path.to_string_lossy().contains(".zhtp"));
-        assert!(path.to_string_lossy().contains(crate::cli_config::DEFAULT_CONFIG_FILENAME));
+        assert!(path
+            .to_string_lossy()
+            .contains(crate::cli_config::DEFAULT_CONFIG_FILENAME));
     }
 
     #[test]

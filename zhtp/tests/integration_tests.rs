@@ -1,5 +1,5 @@
-use zhtp::config::{NodeConfig, RuntimeRole};
 use zhtp::config::validation::validate_complete_configuration;
+use zhtp::config::{NodeConfig, RuntimeRole};
 
 #[tokio::test]
 async fn validator_and_non_validator_configs_pass_gate_validation() {
@@ -37,6 +37,10 @@ async fn validator_and_non_validator_configs_pass_gate_validation() {
         ("service", service_config),
     ] {
         let result = validate_complete_configuration(&config).await;
-        assert!(result.is_ok(), "{} config must pass readiness validation", name);
+        assert!(
+            result.is_ok(),
+            "{} config must pass readiness validation",
+            name
+        );
     }
 }

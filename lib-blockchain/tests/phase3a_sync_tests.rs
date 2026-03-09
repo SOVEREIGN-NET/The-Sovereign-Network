@@ -10,11 +10,11 @@ use tempfile::TempDir;
 
 use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::execution::{BlockExecutor, ExecutorConfig};
-use lib_blockchain::storage::{BlockchainStore, SledStore, Address, TokenId};
-use lib_blockchain::sync::{ChainSync, SyncError};
-use lib_blockchain::transaction::{Transaction, TransactionOutput, TokenTransferData};
-use lib_blockchain::types::{Hash, Difficulty, TransactionType};
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+use lib_blockchain::storage::{Address, BlockchainStore, SledStore, TokenId};
+use lib_blockchain::sync::{ChainSync, SyncError};
+use lib_blockchain::transaction::{TokenTransferData, Transaction, TransactionOutput};
+use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 
 // =============================================================================
 // Test Helpers
@@ -141,14 +141,14 @@ fn create_token_transfer_tx(
         }),
         token_mint_data: None,
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
@@ -196,9 +196,9 @@ fn test_roundtrip_n_blocks() {
         let block1 = store1.get_block_by_height(height).unwrap().unwrap();
         let block2 = store2.get_block_by_height(height).unwrap().unwrap();
         assert_eq!(
-            block1.header.block_hash,
-            block2.header.block_hash,
-            "Block hash mismatch at height {}", height
+            block1.header.block_hash, block2.header.block_hash,
+            "Block hash mismatch at height {}",
+            height
         );
     }
 }
@@ -242,7 +242,8 @@ fn test_crash_no_partial_state() {
     let block2 = create_block_at_height(2, block1.header.block_hash);
 
     // Import first 3 valid blocks
-    sync.import_blocks(vec![genesis.clone(), block1.clone(), block2.clone()]).unwrap();
+    sync.import_blocks(vec![genesis.clone(), block1.clone(), block2.clone()])
+        .unwrap();
 
     // Verify at height 2
     assert_eq!(store.latest_height().unwrap(), 2);
@@ -252,7 +253,10 @@ fn test_crash_no_partial_state() {
 
     // Try to import - should fail
     let result = sync.import_blocks(vec![invalid_block3]);
-    assert!(matches!(result, Err(SyncError::BlockApplyFailed { height: 3, .. })));
+    assert!(matches!(
+        result,
+        Err(SyncError::BlockApplyFailed { height: 3, .. })
+    ));
 
     // Verify state is EXACTLY at height 2 - no partial state from failed block
     assert_eq!(store.latest_height().unwrap(), 2);
@@ -295,7 +299,9 @@ fn test_token_transfer_state_sync() {
 
     // Set up initial balance for Alice in store1 before genesis
     store1.begin_block(0).unwrap();
-    store1.set_token_balance(&TokenId::new(token_id), &Address::new(alice), 1_000_000).unwrap();
+    store1
+        .set_token_balance(&TokenId::new(token_id), &Address::new(alice), 1_000_000)
+        .unwrap();
     let genesis = create_genesis_block();
     store1.append_block(&genesis).unwrap();
     store1.commit_block().unwrap();
@@ -308,9 +314,16 @@ fn test_token_transfer_state_sync() {
     executor1.apply_block(&block1).unwrap();
 
     // Verify balances in store1
-    let alice_balance_1 = store1.get_token_balance(&TokenId::new(token_id), &Address::new(alice)).unwrap();
-    let bob_balance_1 = store1.get_token_balance(&TokenId::new(token_id), &Address::new(bob)).unwrap();
-    assert_eq!(alice_balance_1, 999_900, "Alice should have 1M - 100 = 999900");
+    let alice_balance_1 = store1
+        .get_token_balance(&TokenId::new(token_id), &Address::new(alice))
+        .unwrap();
+    let bob_balance_1 = store1
+        .get_token_balance(&TokenId::new(token_id), &Address::new(bob))
+        .unwrap();
+    assert_eq!(
+        alice_balance_1, 999_900,
+        "Alice should have 1M - 100 = 999900"
+    );
     assert_eq!(bob_balance_1, 100, "Bob should have 100");
 
     // === STORE 2: Import blocks and verify structure ===
@@ -322,7 +335,9 @@ fn test_token_transfer_state_sync() {
     // Set up identical initial balance state in store2 and import genesis
     // Note: We manually set up genesis + balance, then apply block 1 via executor
     store2.begin_block(0).unwrap();
-    store2.set_token_balance(&TokenId::new(token_id), &Address::new(alice), 1_000_000).unwrap();
+    store2
+        .set_token_balance(&TokenId::new(token_id), &Address::new(alice), 1_000_000)
+        .unwrap();
     // Append the exported genesis block to store2
     store2.append_block(&exported[0]).unwrap();
     store2.commit_block().unwrap();
@@ -335,15 +350,21 @@ fn test_token_transfer_state_sync() {
     let block1_store1 = store1.get_block_by_height(1).unwrap().unwrap();
     let block1_store2 = store2.get_block_by_height(1).unwrap().unwrap();
     assert_eq!(
-        block1_store1.header.block_hash,
-        block1_store2.header.block_hash,
+        block1_store1.header.block_hash, block1_store2.header.block_hash,
         "Block 1 hash should match between stores"
     );
 
     // Verify balances match after re-execution
-    let alice_balance_2 = store2.get_token_balance(&TokenId::new(token_id), &Address::new(alice)).unwrap();
-    let bob_balance_2 = store2.get_token_balance(&TokenId::new(token_id), &Address::new(bob)).unwrap();
-    assert_eq!(alice_balance_2, alice_balance_1, "Alice balance should match");
+    let alice_balance_2 = store2
+        .get_token_balance(&TokenId::new(token_id), &Address::new(alice))
+        .unwrap();
+    let bob_balance_2 = store2
+        .get_token_balance(&TokenId::new(token_id), &Address::new(bob))
+        .unwrap();
+    assert_eq!(
+        alice_balance_2, alice_balance_1,
+        "Alice balance should match"
+    );
     assert_eq!(bob_balance_2, bob_balance_1, "Bob balance should match");
 }
 
@@ -368,10 +389,11 @@ fn test_import_progress_tracking() {
 
     sync.import_blocks_with_progress(blocks, |height, total| {
         progress_log.push((height, total));
-    }).unwrap();
+    })
+    .unwrap();
 
     assert_eq!(progress_log.len(), 10);
-    assert_eq!(progress_log[0], (0, 1));  // Genesis
+    assert_eq!(progress_log[0], (0, 1)); // Genesis
     assert_eq!(progress_log[9], (9, 10)); // Last block
 }
 
@@ -435,5 +457,11 @@ fn test_import_height_gap() {
     let block3 = create_block_at_height(3, Hash::new([1u8; 32]));
     let result = sync.import_blocks(vec![block3]);
 
-    assert!(matches!(result, Err(SyncError::HeightMismatch { expected: 1, actual: 3 })));
+    assert!(matches!(
+        result,
+        Err(SyncError::HeightMismatch {
+            expected: 1,
+            actual: 3
+        })
+    ));
 }

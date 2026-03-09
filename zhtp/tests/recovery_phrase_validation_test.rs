@@ -92,25 +92,40 @@ mod recovery_phrase_tests {
         // Test valid phrases
         let phrase_20 = "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 \
                         word11 word12 word13 word14 word15 word16 word17 word18 word19 word20";
-        assert!(is_valid_recovery_phrase(phrase_20), "20-word phrase should be valid");
+        assert!(
+            is_valid_recovery_phrase(phrase_20),
+            "20-word phrase should be valid"
+        );
 
         let phrase_24 = "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 \
                         word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 \
                         word21 word22 word23 word24";
-        assert!(is_valid_recovery_phrase(phrase_24), "24-word phrase should be valid");
+        assert!(
+            is_valid_recovery_phrase(phrase_24),
+            "24-word phrase should be valid"
+        );
 
         // Test invalid phrases
         let phrase_19 = "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 \
                         word11 word12 word13 word14 word15 word16 word17 word18 word19";
-        assert!(!is_valid_recovery_phrase(phrase_19), "19-word phrase should be invalid");
+        assert!(
+            !is_valid_recovery_phrase(phrase_19),
+            "19-word phrase should be invalid"
+        );
 
         let phrase_25 = "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 \
                         word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 \
                         word21 word22 word23 word24 word25";
-        assert!(!is_valid_recovery_phrase(phrase_25), "25-word phrase should be invalid");
+        assert!(
+            !is_valid_recovery_phrase(phrase_25),
+            "25-word phrase should be invalid"
+        );
 
         let phrase_empty = "";
-        assert!(!is_valid_recovery_phrase(phrase_empty), "empty phrase should be invalid");
+        assert!(
+            !is_valid_recovery_phrase(phrase_empty),
+            "empty phrase should be invalid"
+        );
     }
 
     /// Test error message generation

@@ -139,10 +139,7 @@ impl StorageBackend for SledBackend {
         // PERFORMANCE WARNING: This is O(n) as it iterates through all entries.
         // SledBackend does not maintain a cached count. For frequent len() calls,
         // consider maintaining a separate counter in DhtStorage instead.
-        let count = self
-            .db
-            .iter()
-            .count(); // count() consumes the iterator
+        let count = self.db.iter().count(); // count() consumes the iterator
 
         Ok(count)
     }

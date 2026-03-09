@@ -1,22 +1,22 @@
 //! Multi-wallet system for diverse economic activities
-//! 
+//!
 //! Implements a comprehensive multi-wallet architecture that supports different
 //! types of economic activities using the SOV identity system and economic incentives
 //! with seamless lib-blockchain and lib-identity integrations.
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::wallets::WalletBalance;
 use crate::models::TokenReward;
-use crate::types::{TransactionType, Priority};
 use crate::transactions::create_payment_transaction;
+use crate::types::{Priority, TransactionType};
+use crate::wallets::WalletBalance;
 use crate::wasm::logging::info;
 
 // integrations (without blockchain dependency to avoid circular dependency)
-use lib_identity::{IdentityManager, identity::ZhtpIdentity as Identity};
+use lib_identity::{identity::ZhtpIdentity as Identity, IdentityManager};
 
 // Local type definitions to replace blockchain imports
 pub type Address = Vec<u8>; // Simple address type
@@ -182,25 +182,30 @@ impl MultiWalletManager {
     pub async fn new(identity: Identity) -> Result<Self> {
         // Verify identity with proper registration
         let mut identity_manager = IdentityManager::new();
-        
+
         // Add the identity to the manager first
         identity_manager.add_identity(identity.clone());
-        
+
         let identity_hash = &identity.id;
         let proof_params = lib_identity::types::IdentityProofParams::new(
-            None, // min_age
-            None, // jurisdiction
+            None,   // min_age
+            None,   // jurisdiction
             vec![], // required_credentials
-            1, // privacy_level
+            1,      // privacy_level
         );
-        let identity_proof = identity_manager.verify_identity(identity_hash, &proof_params).await?;
-        
+        let identity_proof = identity_manager
+            .verify_identity(identity_hash, &proof_params)
+            .await?;
+
         if !identity_proof.verified {
             return Err(anyhow::anyhow!("Identity verification failed"));
         }
 
         let node_id = identity.id.clone();
-        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
         // Create primary wallet
         let mut wallets = HashMap::new();
@@ -211,7 +216,10 @@ impl MultiWalletManager {
         // Initialize primary wallet
         wallets.insert(WalletType::Primary, WalletBalance::new(node_id.0));
         wallet_created_at.insert(WalletType::Primary, current_time);
-        wallet_permissions.insert(WalletType::Primary, WalletPermissions::default_permissions());
+        wallet_permissions.insert(
+            WalletType::Primary,
+            WalletPermissions::default_permissions(),
+        );
         auto_consolidation_rules.insert(WalletType::Primary, ConsolidationRule::disabled());
 
         // Initialize transfer capabilities
@@ -238,7 +246,10 @@ impl MultiWalletManager {
     /// Create specialized wallet with blockchain registration
     pub async fn create_specialized_wallet(&mut self, wallet_type: WalletType) -> Result<()> {
         if self.wallets.contains_key(&wallet_type) {
-            return Err(anyhow::anyhow!("Wallet type {:?} already exists", wallet_type));
+            return Err(anyhow::anyhow!(
+                "Wallet type {:?} already exists",
+                wallet_type
+            ));
         }
 
         // Check if special permissions are required
@@ -246,7 +257,10 @@ impl MultiWalletManager {
             self.verify_special_permissions(&wallet_type).await?;
         }
 
-        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
         // Create wallet with appropriate node ID derivation
         let wallet_node_id = self.derive_wallet_node_id(&wallet_type)?;
@@ -261,13 +275,17 @@ impl MultiWalletManager {
 
         // Add to collections
         self.wallets.insert(wallet_type.clone(), wallet);
-        self.wallet_created_at.insert(wallet_type.clone(), current_time);
-        self.wallet_permissions.insert(wallet_type.clone(), permissions);
-        self.auto_consolidation_rules.insert(wallet_type.clone(), consolidation_rule);
+        self.wallet_created_at
+            .insert(wallet_type.clone(), current_time);
+        self.wallet_permissions
+            .insert(wallet_type.clone(), permissions);
+        self.auto_consolidation_rules
+            .insert(wallet_type.clone(), consolidation_rule);
 
         info!(
             " Created specialized wallet {:?} for identity {}",
-            wallet_type, hex::encode(self.identity.id.clone())
+            wallet_type,
+            hex::encode(self.identity.id.clone())
         );
 
         Ok(())
@@ -283,14 +301,21 @@ impl MultiWalletManager {
     ) -> Result<[u8; 32]> {
         // Validate wallets exist
         if !self.wallets.contains_key(&from_wallet) {
-            return Err(anyhow::anyhow!("Source wallet {:?} does not exist", from_wallet));
+            return Err(anyhow::anyhow!(
+                "Source wallet {:?} does not exist",
+                from_wallet
+            ));
         }
         if !self.wallets.contains_key(&to_wallet) {
-            return Err(anyhow::anyhow!("Destination wallet {:?} does not exist", to_wallet));
+            return Err(anyhow::anyhow!(
+                "Destination wallet {:?} does not exist",
+                to_wallet
+            ));
         }
 
         // Check transfer capabilities and limits
-        self.validate_transfer_capability(&from_wallet, &to_wallet, amount).await?;
+        self.validate_transfer_capability(&from_wallet, &to_wallet, amount)
+            .await?;
 
         // Calculate transfer fees
         let fee = self.calculate_transfer_fee(&from_wallet, &to_wallet, amount)?;
@@ -316,7 +341,9 @@ impl MultiWalletManager {
         }
 
         // Create blockchain transaction record
-        let tx_id = self.create_blockchain_transaction_record(&from_wallet, &to_wallet, amount, fee).await?;
+        let tx_id = self
+            .create_blockchain_transaction_record(&from_wallet, &to_wallet, amount, fee)
+            .await?;
 
         // Record cross-wallet transaction
         let cross_wallet_tx = CrossWalletTransaction {
@@ -326,7 +353,10 @@ impl MultiWalletManager {
             amount,
             fees: fee,
             block_height: 0, // Block height not available in this context
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             confirmations: 1, // Initial confirmation
             purpose,
         };
@@ -340,7 +370,11 @@ impl MultiWalletManager {
 
         info!(
             " Transferred {} SOV from {:?} to {:?} (fee: {} SOV, tx: {})",
-            amount, from_wallet, to_wallet, fee, hex::encode(tx_id)
+            amount,
+            from_wallet,
+            to_wallet,
+            fee,
+            hex::encode(tx_id)
         );
 
         Ok(tx_id)
@@ -355,11 +389,16 @@ impl MultiWalletManager {
         // Create wallet if it doesn't exist (for reward types)
         if !self.wallets.contains_key(&wallet_type) {
             match wallet_type {
-                WalletType::IspBypassRewards | WalletType::MeshDiscoveryRewards | WalletType::Infrastructure => {
+                WalletType::IspBypassRewards
+                | WalletType::MeshDiscoveryRewards
+                | WalletType::Infrastructure => {
                     self.create_specialized_wallet(wallet_type.clone()).await?;
-                },
+                }
                 _ => {
-                    return Err(anyhow::anyhow!("Cannot auto-create wallet type {:?}", wallet_type));
+                    return Err(anyhow::anyhow!(
+                        "Cannot auto-create wallet type {:?}",
+                        wallet_type
+                    ));
                 }
             }
         }
@@ -367,7 +406,10 @@ impl MultiWalletManager {
         // Check permissions
         let permissions = self.wallet_permissions.get(&wallet_type).unwrap();
         if !permissions.can_receive_rewards {
-            return Err(anyhow::anyhow!("Wallet {:?} cannot receive rewards", wallet_type));
+            return Err(anyhow::anyhow!(
+                "Wallet {:?} cannot receive rewards",
+                wallet_type
+            ));
         }
 
         // Add reward to wallet
@@ -387,20 +429,27 @@ impl MultiWalletManager {
 
     /// Get total balance across all wallets
     pub fn get_total_balance(&self) -> u64 {
-        self.wallets.values().map(|wallet| wallet.total_balance()).sum()
+        self.wallets
+            .values()
+            .map(|wallet| wallet.total_balance())
+            .sum()
     }
 
     /// Get balance breakdown by wallet type
     pub fn get_balance_breakdown(&self) -> HashMap<WalletType, u64> {
-        self.wallets.iter().map(|(wallet_type, wallet)| {
-            (wallet_type.clone(), wallet.total_balance())
-        }).collect()
+        self.wallets
+            .iter()
+            .map(|(wallet_type, wallet)| (wallet_type.clone(), wallet.total_balance()))
+            .collect()
     }
 
     /// Perform auto-consolidation based on rules
     pub async fn perform_auto_consolidation(&mut self) -> Result<Vec<[u8; 32]>> {
         let mut consolidation_transactions = Vec::new();
-        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
         for (wallet_type, rule) in self.auto_consolidation_rules.clone().iter() {
             if !rule.enabled {
@@ -415,15 +464,18 @@ impl MultiWalletManager {
             // Check if wallet has enough balance
             if let Some(wallet) = self.wallets.get(wallet_type) {
                 if wallet.available_balance >= rule.minimum_balance {
-                    let consolidation_amount = wallet.available_balance - (rule.minimum_balance / 2); // Leave some balance
-                    
+                    let consolidation_amount =
+                        wallet.available_balance - (rule.minimum_balance / 2); // Leave some balance
+
                     if consolidation_amount > 0 {
-                        let tx_id = self.transfer_between_wallets(
-                            wallet_type.clone(),
-                            rule.target_wallet.clone(),
-                            consolidation_amount,
-                            "Auto-consolidation".to_string(),
-                        ).await?;
+                        let tx_id = self
+                            .transfer_between_wallets(
+                                wallet_type.clone(),
+                                rule.target_wallet.clone(),
+                                consolidation_amount,
+                                "Auto-consolidation".to_string(),
+                            )
+                            .await?;
 
                         consolidation_transactions.push(tx_id);
 
@@ -449,20 +501,24 @@ impl MultiWalletManager {
         let total_balance = self.get_total_balance();
         let balance_breakdown = self.get_balance_breakdown();
 
-        let wallet_stats: HashMap<String, serde_json::Value> = self.wallets.iter().map(|(wallet_type, wallet)| {
-            (
-                format!("{:?}", wallet_type),
-                serde_json::json!({
-                    "available_balance": wallet.available_balance,
-                    "staked_balance": wallet.staked_balance,
-                    "pending_rewards": wallet.pending_rewards,
-                    "total_balance": wallet.total_balance(),
-                    "transaction_count": wallet.transaction_history.len(),
-                    "description": wallet_type.description(),
-                    "created_at": self.wallet_created_at.get(wallet_type).unwrap_or(&0)
-                })
-            )
-        }).collect();
+        let wallet_stats: HashMap<String, serde_json::Value> = self
+            .wallets
+            .iter()
+            .map(|(wallet_type, wallet)| {
+                (
+                    format!("{:?}", wallet_type),
+                    serde_json::json!({
+                        "available_balance": wallet.available_balance,
+                        "staked_balance": wallet.staked_balance,
+                        "pending_rewards": wallet.pending_rewards,
+                        "total_balance": wallet.total_balance(),
+                        "transaction_count": wallet.transaction_history.len(),
+                        "description": wallet_type.description(),
+                        "created_at": self.wallet_created_at.get(wallet_type).unwrap_or(&0)
+                    }),
+                )
+            })
+            .collect();
 
         Ok(serde_json::json!({
             "identity": {
@@ -497,33 +553,32 @@ impl MultiWalletManager {
                 // Check if identity has governance permissions
                 // For now, allow all verified identities
                 Ok(())
-            },
+            }
             WalletType::UbiDistribution => {
                 // Check if identity is authorized for UBI distribution
                 // This would typically require DAO approval
                 Ok(())
-            },
+            }
             WalletType::Bridge => {
                 // Check if identity is authorized for bridge operations
                 // This requires special bridge operator status
                 Ok(())
-            },
-            _ => Ok(())
+            }
+            _ => Ok(()),
         }
     }
 
     fn derive_wallet_node_id(&self, wallet_type: &WalletType) -> Result<[u8; 32]> {
         // Derive deterministic node ID for wallet type
-        
-        
+
         let mut input = Vec::new();
         input.extend_from_slice(&self.identity.id.as_bytes());
         input.extend_from_slice(format!("{:?}", wallet_type).as_bytes());
-        
+
         let hash = lib_crypto::hash_blake3(&input);
         let mut node_id = [0u8; 32];
         node_id.copy_from_slice(&hash[..32]);
-        
+
         Ok(node_id)
     }
 
@@ -545,7 +600,9 @@ impl MultiWalletManager {
                 daily_transaction_limit: 100_000, // 100K SOV
                 requires_multisig_threshold: Some(10_000), // 10K SOV
             },
-            WalletType::IspBypassRewards | WalletType::MeshDiscoveryRewards | WalletType::Infrastructure => WalletPermissions {
+            WalletType::IspBypassRewards
+            | WalletType::MeshDiscoveryRewards
+            | WalletType::Infrastructure => WalletPermissions {
                 can_transfer_external: false,
                 can_vote: false,
                 can_stake: false,
@@ -565,7 +622,10 @@ impl MultiWalletManager {
         }
     }
 
-    fn get_consolidation_rule_for_wallet_type(&self, wallet_type: &WalletType) -> ConsolidationRule {
+    fn get_consolidation_rule_for_wallet_type(
+        &self,
+        wallet_type: &WalletType,
+    ) -> ConsolidationRule {
         match wallet_type {
             WalletType::IspBypassRewards | WalletType::MeshDiscoveryRewards => ConsolidationRule {
                 enabled: true,
@@ -594,36 +654,54 @@ impl MultiWalletManager {
         // Validate the target wallet type is compatible
         match (from_wallet, to_wallet) {
             (WalletType::Governance, WalletType::UbiDistribution) => {
-                return Err(anyhow::anyhow!("Cannot transfer from governance to UBI distribution directly"));
-            },
+                return Err(anyhow::anyhow!(
+                    "Cannot transfer from governance to UBI distribution directly"
+                ));
+            }
             (WalletType::UbiDistribution, WalletType::Governance) => {
-                return Err(anyhow::anyhow!("UBI to governance transfers require special approval"));
-            },
+                return Err(anyhow::anyhow!(
+                    "UBI to governance transfers require special approval"
+                ));
+            }
             (WalletType::Infrastructure, WalletType::Governance) => {
-                return Err(anyhow::anyhow!("Infrastructure to governance transfers require DAO approval"));
-            },
+                return Err(anyhow::anyhow!(
+                    "Infrastructure to governance transfers require DAO approval"
+                ));
+            }
             _ => {} // Other combinations are allowed
         }
         // Check daily transfer limits
-        if let Some(limit) = self.transfer_capabilities.daily_transfer_limits.get(from_wallet) {
+        if let Some(limit) = self
+            .transfer_capabilities
+            .daily_transfer_limits
+            .get(from_wallet)
+        {
             if amount > *limit {
                 return Err(anyhow::anyhow!("Transfer amount exceeds daily limit"));
             }
         }
 
         // Check minimum transfer amounts
-        if let Some(minimum) = self.transfer_capabilities.minimum_transfer_amounts.get(from_wallet) {
+        if let Some(minimum) = self
+            .transfer_capabilities
+            .minimum_transfer_amounts
+            .get(from_wallet)
+        {
             if amount < *minimum {
                 return Err(anyhow::anyhow!("Transfer amount below minimum"));
             }
         }
 
         // Check cooldowns
-        if let Some(cooldown) = self.transfer_capabilities.transfer_cooldowns.get(from_wallet) {
+        if let Some(cooldown) = self
+            .transfer_capabilities
+            .transfer_cooldowns
+            .get(from_wallet)
+        {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs();
-            
+
             // Check if enough time has passed since last transfer (simplified check)
             if current_time < *cooldown {
                 return Err(anyhow::anyhow!("Transfer cooldown period not yet expired"));
@@ -633,9 +711,16 @@ impl MultiWalletManager {
         Ok(())
     }
 
-    fn calculate_transfer_fee(&self, from_wallet: &WalletType, to_wallet: &WalletType, amount: u64) -> Result<u64> {
+    fn calculate_transfer_fee(
+        &self,
+        from_wallet: &WalletType,
+        to_wallet: &WalletType,
+        amount: u64,
+    ) -> Result<u64> {
         // Get fee rate for this wallet pair
-        let fee_rate = self.transfer_capabilities.transfer_fee_rates
+        let fee_rate = self
+            .transfer_capabilities
+            .transfer_fee_rates
             .get(&(from_wallet.clone(), to_wallet.clone()))
             .unwrap_or(&50); // Default 0.5%
 
@@ -651,12 +736,13 @@ impl MultiWalletManager {
         fee: u64,
     ) -> Result<[u8; 32]> {
         // Create proper blockchain transaction using imported transaction creation functionality
-        let transaction_type = self.get_transaction_type_for_wallet_transfer(from_wallet, to_wallet);
-        
-        // Generate wallet addresses (simplified for demonstration) 
+        let transaction_type =
+            self.get_transaction_type_for_wallet_transfer(from_wallet, to_wallet);
+
+        // Generate wallet addresses (simplified for demonstration)
         let from_address = self.get_wallet_address(from_wallet)?;
         let to_address = self.get_wallet_address(to_wallet)?;
-        
+
         // Convert priority based on fee (simple heuristic)
         let priority = if fee >= amount / 10 {
             Priority::High
@@ -665,20 +751,15 @@ impl MultiWalletManager {
         } else {
             Priority::Low
         };
-        
+
         // Create the transaction using the imported create_payment_transaction function
-        let transaction = create_payment_transaction(
-            from_address,
-            to_address,
-            amount,
-            priority,
-        )?;
-        
+        let transaction = create_payment_transaction(from_address, to_address, amount, priority)?;
+
         info!(
             "🏦 Created blockchain transaction: from={:?} to={:?} amount={} fee={} type={:?}",
             from_wallet, to_wallet, amount, fee, transaction_type
         );
-        
+
         // Return the transaction ID
         Ok(transaction.tx_id)
     }
@@ -688,32 +769,44 @@ impl MultiWalletManager {
         // In production, this would derive proper addresses based on wallet type
         // For now, create deterministic addresses based on identity and wallet type
         use lib_crypto::hash_blake3;
-        
+
         let mut input = Vec::new();
         input.extend_from_slice(&self.identity.id.as_bytes());
         input.extend_from_slice(format!("{:?}", wallet_type).as_bytes());
-        
+
         let hash = hash_blake3(&input);
         Ok(hash) // Return full 32-byte hash as address
     }
 
     /// Get appropriate transaction type for wallet transfers
-    fn get_transaction_type_for_wallet_transfer(&self, from_wallet: &WalletType, to_wallet: &WalletType) -> TransactionType {
+    fn get_transaction_type_for_wallet_transfer(
+        &self,
+        from_wallet: &WalletType,
+        to_wallet: &WalletType,
+    ) -> TransactionType {
         match (from_wallet, to_wallet) {
             // Reward-related transfers
-            (_, WalletType::IspBypassRewards) | (_, WalletType::MeshDiscoveryRewards) => TransactionType::Reward,
-            (WalletType::IspBypassRewards, _) | (WalletType::MeshDiscoveryRewards, _) => TransactionType::Reward,
-            
+            (_, WalletType::IspBypassRewards) | (_, WalletType::MeshDiscoveryRewards) => {
+                TransactionType::Reward
+            }
+            (WalletType::IspBypassRewards, _) | (WalletType::MeshDiscoveryRewards, _) => {
+                TransactionType::Reward
+            }
+
             // UBI-related transfers
-            (_, WalletType::UbiDistribution) | (WalletType::UbiDistribution, _) => TransactionType::UbiDistribution,
-            
+            (_, WalletType::UbiDistribution) | (WalletType::UbiDistribution, _) => {
+                TransactionType::UbiDistribution
+            }
+
             // Staking-related transfers
             (_, WalletType::Staking) => TransactionType::Stake,
             (WalletType::Staking, _) => TransactionType::Unstake,
-            
+
             // Governance-related transfers
-            (_, WalletType::Governance) | (WalletType::Governance, _) => TransactionType::ProposalExecution,
-            
+            (_, WalletType::Governance) | (WalletType::Governance, _) => {
+                TransactionType::ProposalExecution
+            }
+
             // All other transfers are standard payments
             _ => TransactionType::Payment,
         }
@@ -722,10 +815,7 @@ impl MultiWalletManager {
     async fn register_wallet_on_blockchain(&self, wallet_type: &WalletType) -> Result<()> {
         // In production, this would register the wallet creation on blockchain
         // For now, just log the registration
-        info!(
-            "Registered wallet {:?} creation",
-            wallet_type
-        );
+        info!("Registered wallet {:?} creation", wallet_type);
         Ok(())
     }
 
@@ -811,34 +901,50 @@ pub async fn create_multi_wallet_manager(identity: Identity) -> Result<MultiWall
 }
 
 /// Create multi-wallet manager with pre-configured specialized wallets
-pub async fn create_comprehensive_multi_wallet_manager(identity: Identity) -> Result<MultiWalletManager> {
+pub async fn create_comprehensive_multi_wallet_manager(
+    identity: Identity,
+) -> Result<MultiWalletManager> {
     let mut manager = MultiWalletManager::new(identity).await?;
-    
+
     // Create common specialized wallets
-    manager.create_specialized_wallet(WalletType::IspBypassRewards).await?;
-    manager.create_specialized_wallet(WalletType::MeshDiscoveryRewards).await?;
-    manager.create_specialized_wallet(WalletType::Staking).await?;
-    manager.create_specialized_wallet(WalletType::Infrastructure).await?;
-    
-    info!("🏦 Created comprehensive multi-wallet manager with {} wallets", manager.wallets.len());
-    
+    manager
+        .create_specialized_wallet(WalletType::IspBypassRewards)
+        .await?;
+    manager
+        .create_specialized_wallet(WalletType::MeshDiscoveryRewards)
+        .await?;
+    manager
+        .create_specialized_wallet(WalletType::Staking)
+        .await?;
+    manager
+        .create_specialized_wallet(WalletType::Infrastructure)
+        .await?;
+
+    info!(
+        "🏦 Created comprehensive multi-wallet manager with {} wallets",
+        manager.wallets.len()
+    );
+
     Ok(manager)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_identity::types::{IdentityType, AccessLevel, NodeId};
+    use lib_crypto::{Hash, KeyPair, PublicKey};
+    use lib_identity::types::{AccessLevel, IdentityType, NodeId};
     use lib_identity::wallets::WalletManager;
     use lib_proofs::ZeroKnowledgeProof;
-    use lib_crypto::{Hash, KeyPair, PublicKey};
 
     fn create_test_identity() -> Identity {
         let keypair = KeyPair::generate().expect("keypair");
         let public_key: PublicKey = keypair.public_key.clone();
         let private_key = Some(keypair.private_key.clone());
         let did = "did:zhtp:test_identity".to_string();
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
         Identity {
             id: Hash::from_bytes("test_identity".as_bytes()),
@@ -882,7 +988,7 @@ mod tests {
     async fn test_multi_wallet_creation() {
         let identity = create_test_identity();
         let manager = MultiWalletManager::new(identity).await.unwrap();
-        
+
         assert_eq!(manager.wallets.len(), 1);
         assert!(manager.wallets.contains_key(&WalletType::Primary));
         assert_eq!(manager.get_total_balance(), 0);
@@ -892,10 +998,16 @@ mod tests {
     async fn test_specialized_wallet_creation() {
         let identity = create_test_identity();
         let mut manager = MultiWalletManager::new(identity).await.unwrap();
-        
-        manager.create_specialized_wallet(WalletType::IspBypassRewards).await.unwrap();
-        manager.create_specialized_wallet(WalletType::Staking).await.unwrap();
-        
+
+        manager
+            .create_specialized_wallet(WalletType::IspBypassRewards)
+            .await
+            .unwrap();
+        manager
+            .create_specialized_wallet(WalletType::Staking)
+            .await
+            .unwrap();
+
         assert_eq!(manager.wallets.len(), 3);
         assert!(manager.wallets.contains_key(&WalletType::IspBypassRewards));
         assert!(manager.wallets.contains_key(&WalletType::Staking));
@@ -905,14 +1017,23 @@ mod tests {
     async fn test_wallet_permissions() {
         let identity = create_test_identity();
         let mut manager = MultiWalletManager::new(identity).await.unwrap();
-        
-        manager.create_specialized_wallet(WalletType::Governance).await.unwrap();
-        
-        let governance_permissions = manager.wallet_permissions.get(&WalletType::Governance).unwrap();
+
+        manager
+            .create_specialized_wallet(WalletType::Governance)
+            .await
+            .unwrap();
+
+        let governance_permissions = manager
+            .wallet_permissions
+            .get(&WalletType::Governance)
+            .unwrap();
         assert!(governance_permissions.can_vote);
         assert!(!governance_permissions.can_transfer_external);
-        
-        let primary_permissions = manager.wallet_permissions.get(&WalletType::Primary).unwrap();
+
+        let primary_permissions = manager
+            .wallet_permissions
+            .get(&WalletType::Primary)
+            .unwrap();
         assert!(primary_permissions.can_transfer_external);
         assert!(!primary_permissions.can_vote);
     }

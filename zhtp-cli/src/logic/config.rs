@@ -86,11 +86,7 @@ pub fn validate_server_port(port: u16) -> CliResult<()> {
 }
 
 /// Build server configuration from components
-pub fn build_server_config(
-    address: &str,
-    port: u16,
-    use_tls: bool,
-) -> CliResult<ServerConfig> {
+pub fn build_server_config(address: &str, port: u16, use_tls: bool) -> CliResult<ServerConfig> {
     validate_server_address(address)?;
     validate_server_port(port)?;
 
@@ -150,9 +146,18 @@ mod tests {
 
     #[test]
     fn test_config_profile_from_str() {
-        assert_eq!(ConfigProfile::from_str("dev").unwrap(), ConfigProfile::Development);
-        assert_eq!(ConfigProfile::from_str("staging").unwrap(), ConfigProfile::Staging);
-        assert_eq!(ConfigProfile::from_str("prod").unwrap(), ConfigProfile::Production);
+        assert_eq!(
+            ConfigProfile::from_str("dev").unwrap(),
+            ConfigProfile::Development
+        );
+        assert_eq!(
+            ConfigProfile::from_str("staging").unwrap(),
+            ConfigProfile::Staging
+        );
+        assert_eq!(
+            ConfigProfile::from_str("prod").unwrap(),
+            ConfigProfile::Production
+        );
     }
 
     #[test]

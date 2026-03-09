@@ -3,16 +3,12 @@ use crate::keyring::inter::algorithms::Algorithms;
 #[derive(Debug, Clone)]
 pub struct Key {
     secret: Vec<u8>,
-    algorithm: Algorithms
+    algorithm: Algorithms,
 }
 
 impl Key {
-
     pub fn new(secret: Vec<u8>, algorithm: Algorithms) -> Self {
-        Self {
-            secret,
-            algorithm
-        }
+        Self { secret, algorithm }
     }
 
     pub fn set_secret(&mut self, secret: &[u8]) {
@@ -31,5 +27,3 @@ impl Key {
         self.algorithm
     }
 }
-
-

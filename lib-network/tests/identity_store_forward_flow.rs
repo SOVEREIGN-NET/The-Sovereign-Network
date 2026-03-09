@@ -1,13 +1,13 @@
+use lib_crypto::keypair::generation::KeyPair;
 use lib_identity::{
-    ZhtpIdentity, IdentityType,
-    create_device_add_update, apply_did_update, store_did_document, set_did_store_memory,
+    apply_did_update, create_device_add_update, set_did_store_memory, store_did_document,
+    IdentityType, ZhtpIdentity,
 };
+use lib_network::identity_store_forward::IdentityStoreForward;
 use lib_protocols::identity_messaging::{
     build_identity_envelope_with_payload, create_delivery_receipt,
 };
 use lib_protocols::types::{IdentityPayload, MessageTtl};
-use lib_network::identity_store_forward::IdentityStoreForward;
-use lib_crypto::keypair::generation::KeyPair;
 
 #[test]
 fn test_identity_store_forward_flow() -> Result<(), String> {
@@ -19,7 +19,8 @@ fn test_identity_store_forward_flow() -> Result<(), String> {
         Some("US".to_string()),
         "laptop",
         None,
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     let doc = lib_identity::DidDocument::from_identity(&identity, None)?;
     let add_update = create_device_add_update(
@@ -45,11 +46,14 @@ fn test_identity_store_forward_flow() -> Result<(), String> {
     let pending = queue.get_pending(&doc.id)?;
     assert_eq!(pending.len(), 1);
 
-    let receipt = create_delivery_receipt(envelope.message_id, "device-1", &KeyPair::generate().map_err(|e| e.to_string())?)?;
+    let receipt = create_delivery_receipt(
+        envelope.message_id,
+        "device-1",
+        &KeyPair::generate().map_err(|e| e.to_string())?,
+    )?;
     let removed = queue.acknowledge_delivery_receipt(&doc.id, &receipt)?;
     assert!(removed);
     let pending = queue.get_pending(&doc.id)?;
     assert!(pending.is_empty());
     Ok(())
 }
-

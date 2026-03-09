@@ -1,6 +1,6 @@
 pub mod identity_proofs;
-pub mod ubi_proofs;
 pub mod proof_verification;
+pub mod ubi_proofs;
 
 #[cfg(test)]
 mod identity_proofs_test;

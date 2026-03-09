@@ -3,7 +3,7 @@
 //! Tracks the call chain to enforce maximum recursion depth and prevent infinite loops.
 //! The call depth is a critical parameter in recorded intents for deterministic replay validation.
 
-use super::errors::{CrossContractError, ContractId};
+use super::errors::{ContractId, CrossContractError};
 use anyhow::{anyhow, Result};
 
 /// Maximum allowed recursion depth for cross-contract calls (hard limit)
@@ -95,11 +95,7 @@ impl CallStack {
     }
 
     /// Create a cross-contract error for depth exceeded
-    pub fn depth_exceeded_error(
-        &self,
-        callee: ContractId,
-        method: String,
-    ) -> CrossContractError {
+    pub fn depth_exceeded_error(&self, callee: ContractId, method: String) -> CrossContractError {
         CrossContractError::call_depth_exceeded(callee, method, self.depth)
     }
 }
@@ -221,10 +217,7 @@ mod tests {
         // Next push should fail
         let result = stack.push(contract, "method_overflow".to_string());
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("exceeds maximum"));
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
     }
 
     #[test]
@@ -299,13 +292,7 @@ mod tests {
         let mut stack = CallStack::new();
         let contract = [1u8; 32];
 
-        let methods = vec![
-            "transfer",
-            "approve",
-            "mint",
-            "burn",
-            "claim_rewards",
-        ];
+        let methods = vec!["transfer", "approve", "mint", "burn", "claim_rewards"];
 
         for method in &methods {
             stack.push(contract, method.to_string()).ok();
@@ -320,12 +307,7 @@ mod tests {
     fn test_call_stack_with_different_contracts() {
         let mut stack = CallStack::new();
 
-        let contracts = vec![
-            [1u8; 32],
-            [2u8; 32],
-            [3u8; 32],
-            [4u8; 32],
-        ];
+        let contracts = vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]];
 
         for contract in &contracts {
             stack.push(*contract, "method".to_string()).ok();

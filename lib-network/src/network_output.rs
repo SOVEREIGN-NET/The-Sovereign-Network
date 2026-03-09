@@ -5,8 +5,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 
-use crate::types::mesh_message::BlockchainRequestType;
 use crate::protocols::bluetooth::gatt::EdgeSyncMessage;
+use crate::types::mesh_message::BlockchainRequestType;
 use lib_crypto::PublicKey;
 
 #[derive(Clone, Debug)]

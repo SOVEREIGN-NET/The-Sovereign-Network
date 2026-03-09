@@ -18,7 +18,7 @@ pub struct PrivacyCredentials {
 /// Age verification credential without revealing exact age
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgeVerificationCredential {
-    pub age_bracket: String,  // "18-25", "26-35", etc.
+    pub age_bracket: String, // "18-25", "26-35", etc.
     pub verification_date: u64,
     pub issuer: String,
     pub proof_hash: Vec<u8>,
@@ -86,7 +86,7 @@ pub fn setup_privacy_credentials(
     if let Some(birth_year) = birth_year {
         let age = 2024 - birth_year;
         let age_bracket = get_age_bracket(age);
-        
+
         privacy_creds.age_verification = Some(AgeVerificationCredential {
             age_bracket,
             verification_date: timestamp,
@@ -102,7 +102,7 @@ pub fn setup_privacy_credentials(
     if let Some(bio_data) = biometric_data {
         let salt = generate_random_salt();
         let bio_hash = hash_biometric_data(&bio_data, &salt);
-        
+
         privacy_creds.biometric_hash = Some(BiometricCredential {
             hash_type: "SHA3_256_SALTED".to_string(),
             biometric_hash: bio_hash,
@@ -115,7 +115,7 @@ pub fn setup_privacy_credentials(
     if let Some(location) = location {
         let country_code = extract_country_code(&location);
         let region_proof = generate_region_proof(&location);
-        
+
         privacy_creds.location_proof = Some(LocationCredential {
             country_code,
             region_proof,
@@ -193,7 +193,7 @@ fn generate_random_salt() -> Vec<u8> {
     // Generate cryptographically secure random salt
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut hasher = DefaultHasher::new();
     std::time::SystemTime::now().hash(&mut hasher);
     hasher.finish().to_be_bytes().to_vec()
@@ -204,10 +204,10 @@ fn hash_biometric_data(data: &[u8], salt: &[u8]) -> Vec<u8> {
     let mut input = data.to_vec();
     input.extend_from_slice(salt);
     input.extend_from_slice(b"biometric_hash");
-    
+
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut hasher = DefaultHasher::new();
     input.hash(&mut hasher);
     hasher.finish().to_be_bytes().to_vec()
@@ -230,7 +230,7 @@ fn generate_region_proof(location: &str) -> Vec<u8> {
 fn parse_education_credential(education: &str) -> EducationCredential {
     // Parse education string into privacy-preserving credential
     let parts: Vec<&str> = education.split(',').collect();
-    
+
     EducationCredential {
         degree_level: parts.get(0).unwrap_or(&"Bachelor").to_string(),
         field_category: parts.get(1).unwrap_or(&"Technology").to_string(),
@@ -242,7 +242,7 @@ fn parse_education_credential(education: &str) -> EducationCredential {
 fn parse_employment_credential(employment: &str) -> EmploymentCredential {
     // Parse employment string into privacy-preserving credential
     let parts: Vec<&str> = employment.split(',').collect();
-    
+
     EmploymentCredential {
         industry_category: parts.get(0).unwrap_or(&"Technology").to_string(),
         role_level: parts.get(1).unwrap_or(&"Mid-Level").to_string(),

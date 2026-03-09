@@ -1,8 +1,8 @@
+use anyhow::Result;
+use lib_blockchain::{Block, Blockchain, Hash, IdentityTransactionData, Transaction};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
-use lib_blockchain::{Blockchain, Transaction, Block, IdentityTransactionData, Hash};
-use anyhow::Result;
-use tracing::{info, error};
+use tracing::{error, info};
 
 /// Access mode for global blockchain mutations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,7 +40,9 @@ impl BlockchainProvider {
 
     /// Get the blockchain instance
     pub async fn get_blockchain(&self) -> Result<Arc<RwLock<Blockchain>>> {
-        self.blockchain.read().await
+        self.blockchain
+            .read()
+            .await
             .as_ref()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Blockchain not available"))
@@ -137,21 +139,32 @@ pub async fn add_transaction(transaction: Transaction) -> Result<String> {
 
     let blockchain = get_global_blockchain().await?;
     let mut blockchain_lock = blockchain.write().await;
-    
+
     // Add transaction to blockchain and mempool
     let transaction_hash = transaction.hash().to_string();
     if let Err(e) = blockchain_lock.add_pending_transaction(transaction.clone()) {
-        error!("Failed to add pending transaction {}: {}", transaction_hash, e);
-        error!("Transaction details: inputs={}, outputs={}, fee={}, type={:?}", 
-            transaction.inputs.len(), 
-            transaction.outputs.len(), 
+        error!(
+            "Failed to add pending transaction {}: {}",
+            transaction_hash, e
+        );
+        error!(
+            "Transaction details: inputs={}, outputs={}, fee={}, type={:?}",
+            transaction.inputs.len(),
+            transaction.outputs.len(),
             transaction.fee,
-            transaction.transaction_type);
-        return Err(anyhow::anyhow!("Failed to add transaction to mempool: {}", e));
+            transaction.transaction_type
+        );
+        return Err(anyhow::anyhow!(
+            "Failed to add transaction to mempool: {}",
+            e
+        ));
     }
-    
-    info!("Transaction {} successfully added to mempool", transaction_hash);
-    
+
+    info!(
+        "Transaction {} successfully added to mempool",
+        transaction_hash
+    );
+
     Ok(transaction_hash)
 }
 
@@ -167,7 +180,10 @@ pub async fn get_transaction(hash: String) -> Result<Option<Transaction>> {
     let blockchain = get_global_blockchain().await?;
     let blockchain_lock = blockchain.read().await;
     // For now, search through pending transactions since get_transaction doesn't exist
-    Ok(blockchain_lock.get_pending_transactions().into_iter().find(|tx| tx.hash().to_string() == hash))
+    Ok(blockchain_lock
+        .get_pending_transactions()
+        .into_iter()
+        .find(|tx| tx.hash().to_string() == hash))
 }
 
 /// Get mempool transactions from the global blockchain
@@ -196,7 +212,8 @@ pub async fn register_identity(identity_data: IdentityTransactionData) -> Result
 }
 
 /// Get all identities from the global blockchain
-pub async fn get_all_identities() -> Result<std::collections::HashMap<String, IdentityTransactionData>> {
+pub async fn get_all_identities(
+) -> Result<std::collections::HashMap<String, IdentityTransactionData>> {
     let blockchain = get_global_blockchain().await?;
     let blockchain_lock = blockchain.read().await;
     Ok(blockchain_lock.get_all_identities().clone())

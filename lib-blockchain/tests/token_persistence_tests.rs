@@ -2,11 +2,9 @@
 //!
 //! Test suite for atomic persistence mechanism for token state.
 
-use lib_blockchain::contracts::executor::{
-    ContractExecutor, MemoryStorage, SystemConfig,
-};
-use lib_blockchain::integration::crypto_integration::PublicKey;
 use anyhow::Result;
+use lib_blockchain::contracts::executor::{ContractExecutor, MemoryStorage, SystemConfig};
+use lib_blockchain::integration::crypto_integration::PublicKey;
 
 /// Helper to create a test public key
 fn test_public_key(id: u8) -> PublicKey {
@@ -49,7 +47,10 @@ fn test_get_system_config() -> Result<()> {
 
     // Get system config
     let config = executor.get_system_config()?;
-    assert_eq!(config.governance_authority.key_id, test_public_key(1).key_id);
+    assert_eq!(
+        config.governance_authority.key_id,
+        test_public_key(1).key_id
+    );
 
     Ok(())
 }
@@ -169,7 +170,10 @@ fn test_finalize_without_begin_returns_ok() -> Result<()> {
 
     // Try to finalize without begin (should be ok, no pending changes)
     let result = executor.finalize_block_state(1);
-    assert!(result.is_ok(), "Finalizing with no pending changes should be ok");
+    assert!(
+        result.is_ok(),
+        "Finalizing with no pending changes should be ok"
+    );
 
     Ok(())
 }
@@ -199,8 +203,8 @@ fn test_multiple_executor_instances() -> Result<()> {
 /// Test 11: Token transfer with staging
 #[test]
 fn test_token_transfer_with_staging() -> Result<()> {
+    use lib_blockchain::contracts::executor::{CallOrigin, ExecutionContext};
     use lib_blockchain::types::contract_call::ContractCall;
-    use lib_blockchain::contracts::executor::{ExecutionContext, CallOrigin};
 
     let storage = MemoryStorage::default();
     let mut executor = ContractExecutor::new(storage);
@@ -223,7 +227,7 @@ fn test_token_transfer_with_staging() -> Result<()> {
 
     let call = ContractCall::token_call(
         "create_custom_token".to_string(),
-        bincode::serialize(&("TestToken".to_string(), "TEST".to_string(), 1000000u64))?
+        bincode::serialize(&("TestToken".to_string(), "TEST".to_string(), 1000000u64))?,
     );
 
     let result = executor.execute_call(call, &mut context)?;
@@ -236,7 +240,7 @@ fn test_token_transfer_with_staging() -> Result<()> {
     let recipient = test_public_key(2);
     let transfer_call = ContractCall::token_call(
         "transfer".to_string(),
-        bincode::serialize(&(token_id, recipient.clone(), 1000u64))?
+        bincode::serialize(&(token_id, recipient.clone(), 1000u64))?,
     );
 
     let transfer_result = executor.execute_call(transfer_call, &mut context)?;
@@ -248,12 +252,15 @@ fn test_token_transfer_with_staging() -> Result<()> {
     // Verify balance persisted
     let balance_call = ContractCall::token_call(
         "balance_of".to_string(),
-        bincode::serialize(&(token_id, recipient))?
+        bincode::serialize(&(token_id, recipient))?,
     );
 
     let balance_result = executor.execute_call(balance_call, &mut context)?;
     let balance: u64 = bincode::deserialize(&balance_result.return_data)?;
-    assert_eq!(balance, 1000, "Recipient should have 1000 tokens after finalization");
+    assert_eq!(
+        balance, 1000,
+        "Recipient should have 1000 tokens after finalization"
+    );
 
     Ok(())
 }
@@ -261,8 +268,8 @@ fn test_token_transfer_with_staging() -> Result<()> {
 /// Test 12: Token mint with staging
 #[test]
 fn test_token_mint_with_staging() -> Result<()> {
+    use lib_blockchain::contracts::executor::{CallOrigin, ExecutionContext};
     use lib_blockchain::types::contract_call::ContractCall;
-    use lib_blockchain::contracts::executor::{ExecutionContext, CallOrigin};
 
     let storage = MemoryStorage::default();
     let mut executor = ContractExecutor::new(storage);
@@ -283,7 +290,9 @@ fn test_token_mint_with_staging() -> Result<()> {
         max_call_depth: 10,
     };
 
-    let call = ContractCall::token_call("create_custom_token".to_string(), bincode::serialize(&("TestToken".to_string(), "TEST".to_string(), 1000000u64))?
+    let call = ContractCall::token_call(
+        "create_custom_token".to_string(),
+        bincode::serialize(&("TestToken".to_string(), "TEST".to_string(), 1000000u64))?,
     );
 
     let result = executor.execute_call(call, &mut context)?;
@@ -294,7 +303,9 @@ fn test_token_mint_with_staging() -> Result<()> {
 
     // Mint tokens
     let recipient = test_public_key(2);
-    let mint_call = ContractCall::token_call("mint".to_string(), bincode::serialize(&(token_id, recipient.clone(), 5000u64))?,
+    let mint_call = ContractCall::token_call(
+        "mint".to_string(),
+        bincode::serialize(&(token_id, recipient.clone(), 5000u64))?,
     );
 
     let mint_result = executor.execute_call(mint_call, &mut context)?;
@@ -304,12 +315,17 @@ fn test_token_mint_with_staging() -> Result<()> {
     executor.finalize_block_state(1)?;
 
     // Verify balance persisted
-    let balance_call = ContractCall::token_call("balance_of".to_string(), bincode::serialize(&(token_id, recipient))?,
+    let balance_call = ContractCall::token_call(
+        "balance_of".to_string(),
+        bincode::serialize(&(token_id, recipient))?,
     );
 
     let balance_result = executor.execute_call(balance_call, &mut context)?;
     let balance: u64 = bincode::deserialize(&balance_result.return_data)?;
-    assert_eq!(balance, 5000, "Recipient should have 5000 minted tokens after finalization");
+    assert_eq!(
+        balance, 5000,
+        "Recipient should have 5000 minted tokens after finalization"
+    );
 
     Ok(())
 }
@@ -321,25 +337,28 @@ fn test_wal_key_generation() -> Result<()> {
     // The WAL key is generated for each block height
     // It's used to ensure atomic persistence of block state changes
     use lib_blockchain::contracts::utils::generate_storage_key;
-    
+
     let block_height = 100u64;
     let wal_key = generate_storage_key("block_state_wal", &block_height.to_be_bytes());
-    
+
     // Verify the key is generated correctly
     assert!(!wal_key.is_empty(), "WAL key should not be empty");
-    
+
     // Different block heights should produce different keys
     let wal_key2 = generate_storage_key("block_state_wal", &101u64.to_be_bytes());
-    assert_ne!(wal_key, wal_key2, "Different block heights should have different WAL keys");
-    
+    assert_ne!(
+        wal_key, wal_key2,
+        "Different block heights should have different WAL keys"
+    );
+
     Ok(())
 }
 
 /// Test 14: Multiple token operations in single block
 #[test]
 fn test_multiple_token_operations_in_block() -> Result<()> {
+    use lib_blockchain::contracts::executor::{CallOrigin, ExecutionContext};
     use lib_blockchain::types::contract_call::ContractCall;
-    use lib_blockchain::contracts::executor::{ExecutionContext, CallOrigin};
 
     let storage = MemoryStorage::default();
     let mut executor = ContractExecutor::new(storage);
@@ -360,7 +379,9 @@ fn test_multiple_token_operations_in_block() -> Result<()> {
         max_call_depth: 10,
     };
 
-    let call = ContractCall::token_call("create_custom_token".to_string(), bincode::serialize(&("TestToken".to_string(), "TEST".to_string(), 1000000u64))?
+    let call = ContractCall::token_call(
+        "create_custom_token".to_string(),
+        bincode::serialize(&("TestToken".to_string(), "TEST".to_string(), 1000000u64))?,
     );
 
     let result = executor.execute_call(call, &mut context)?;
@@ -374,12 +395,16 @@ fn test_multiple_token_operations_in_block() -> Result<()> {
     let recipient2 = test_public_key(3);
 
     // Transfer to recipient1
-    let transfer1 = ContractCall::token_call("transfer".to_string(), bincode::serialize(&(token_id, recipient1.clone(), 1000u64))?,
+    let transfer1 = ContractCall::token_call(
+        "transfer".to_string(),
+        bincode::serialize(&(token_id, recipient1.clone(), 1000u64))?,
     );
     executor.execute_call(transfer1, &mut context)?;
 
     // Transfer to recipient2
-    let transfer2 = ContractCall::token_call("transfer".to_string(), bincode::serialize(&(token_id, recipient2.clone(), 2000u64))?,
+    let transfer2 = ContractCall::token_call(
+        "transfer".to_string(),
+        bincode::serialize(&(token_id, recipient2.clone(), 2000u64))?,
     );
     executor.execute_call(transfer2, &mut context)?;
 
@@ -387,12 +412,16 @@ fn test_multiple_token_operations_in_block() -> Result<()> {
     executor.finalize_block_state(1)?;
 
     // Verify both balances persisted
-    let balance1_call = ContractCall::token_call("balance_of".to_string(), bincode::serialize(&(token_id, recipient1))?,
+    let balance1_call = ContractCall::token_call(
+        "balance_of".to_string(),
+        bincode::serialize(&(token_id, recipient1))?,
     );
     let balance1_result = executor.execute_call(balance1_call, &mut context)?;
     let balance1: u64 = bincode::deserialize(&balance1_result.return_data)?;
 
-    let balance2_call = ContractCall::token_call("balance_of".to_string(), bincode::serialize(&(token_id, recipient2))?,
+    let balance2_call = ContractCall::token_call(
+        "balance_of".to_string(),
+        bincode::serialize(&(token_id, recipient2))?,
     );
     let balance2_result = executor.execute_call(balance2_call, &mut context)?;
     let balance2: u64 = bincode::deserialize(&balance2_result.return_data)?;

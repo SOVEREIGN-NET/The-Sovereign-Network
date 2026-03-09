@@ -3,13 +3,13 @@
 //! Verifies that transaction fees are actually deducted from sender balances
 //! during block processing, not just declared in the transaction.
 
-use lib_blockchain::Blockchain;
-use lib_blockchain::contracts::TokenContract;
+use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::contracts::utils::generate_lib_token_id;
+use lib_blockchain::contracts::TokenContract;
 use lib_blockchain::transaction::{Transaction, TransactionInput, TransactionOutput};
 use lib_blockchain::types::TransactionType;
-use lib_blockchain::types::{Hash, Difficulty};
-use lib_blockchain::block::{Block, BlockHeader};
+use lib_blockchain::types::{Difficulty, Hash};
+use lib_blockchain::Blockchain;
 use lib_crypto::types::keys::PublicKey;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
@@ -62,16 +62,16 @@ fn create_transfer_tx(sender: &PublicKey, fee: u64, nullifier_id: u8) -> Transac
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-            token_mint_data: None,
-                    governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        token_mint_data: None,
+        governance_config_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
@@ -122,7 +122,8 @@ fn test_fee_deduction_reduces_sender_balance() {
     }
 
     // Verify initial balance
-    let balance_before = blockchain.token_contracts
+    let balance_before = blockchain
+        .token_contracts
         .get(&sov_token_id)
         .map(|t| t.balance_of(&sender))
         .unwrap_or(0);
@@ -138,10 +139,15 @@ fn test_fee_deduction_reduces_sender_balance() {
     let fees_collected = blockchain.deduct_transaction_fees(&block).unwrap();
 
     // Verify: fee was collected
-    assert_eq!(fees_collected, fee, "Expected {} fee collected, got {}", fee, fees_collected);
+    assert_eq!(
+        fees_collected, fee,
+        "Expected {} fee collected, got {}",
+        fee, fees_collected
+    );
 
     // Verify: sender balance was reduced
-    let balance_after = blockchain.token_contracts
+    let balance_after = blockchain
+        .token_contracts
         .get(&sov_token_id)
         .map(|t| t.balance_of(&sender))
         .unwrap_or(0);
@@ -180,7 +186,10 @@ fn test_fee_deduction_skips_system_transactions() {
     let fees_collected = blockchain.deduct_transaction_fees(&block).unwrap();
 
     // Verify: no fees collected from system transaction
-    assert_eq!(fees_collected, 0, "System transactions should not have fees deducted");
+    assert_eq!(
+        fees_collected, 0,
+        "System transactions should not have fees deducted"
+    );
 }
 
 #[test]
@@ -216,17 +225,20 @@ fn test_fee_deduction_handles_insufficient_balance() {
     let fees_collected = blockchain.deduct_transaction_fees(&block).unwrap();
 
     // Verify: no fees collected (insufficient balance)
-    assert_eq!(fees_collected, 0, "Should not collect fees when sender has insufficient balance");
+    assert_eq!(
+        fees_collected, 0,
+        "Should not collect fees when sender has insufficient balance"
+    );
 
     // Verify: sender balance unchanged
-    let balance_after = blockchain.token_contracts
+    let balance_after = blockchain
+        .token_contracts
         .get(&sov_token_id)
         .map(|t| t.balance_of(&sender))
         .unwrap_or(0);
 
     assert_eq!(
-        balance_after,
-        initial_balance,
+        balance_after, initial_balance,
         "Balance should be unchanged when fee deduction fails"
     );
 }
@@ -275,11 +287,9 @@ fn test_fee_deduction_accumulates_multiple_transactions() {
     // Verify: total fees collected
     let expected_total = fee1 + fee2 + fee3;
     assert_eq!(
-        fees_collected,
-        expected_total,
+        fees_collected, expected_total,
         "Expected {} total fees, got {}",
-        expected_total,
-        fees_collected
+        expected_total, fees_collected
     );
 
     // Verify: each sender's balance was reduced correctly

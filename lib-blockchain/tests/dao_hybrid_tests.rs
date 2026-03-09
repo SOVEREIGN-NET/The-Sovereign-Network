@@ -1,8 +1,8 @@
 //! DAO Hybrid Governance tests (dao-4)
 
-use lib_blockchain::Blockchain;
-use lib_blockchain::dao::{GovernancePhase, CouncilBootstrapConfig, CouncilBootstrapEntry};
 use anyhow::Result;
+use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry, GovernancePhase};
+use lib_blockchain::Blockchain;
 
 fn council_config() -> CouncilBootstrapConfig {
     CouncilBootstrapConfig {
@@ -57,7 +57,11 @@ fn test_cosign_accepted_for_council_member() {
     bc.council_cosign_proposal(&proposal_id, "did:zhtp:alice".to_string(), vec![0xAB])
         .expect("alice is a council member");
 
-    let count = bc.pending_cosigns.get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
+    let count = bc
+        .pending_cosigns
+        .get(&proposal_id.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
     assert_eq!(count, 1);
 }
 
@@ -68,10 +72,16 @@ fn test_cosign_deduplicates_same_did() {
     bc.ensure_council_bootstrap(&council_config());
 
     let proposal_id = Hash::new([3u8; 32]);
-    bc.council_cosign_proposal(&proposal_id, "did:zhtp:alice".to_string(), vec![]).unwrap();
-    bc.council_cosign_proposal(&proposal_id, "did:zhtp:alice".to_string(), vec![]).unwrap();
+    bc.council_cosign_proposal(&proposal_id, "did:zhtp:alice".to_string(), vec![])
+        .unwrap();
+    bc.council_cosign_proposal(&proposal_id, "did:zhtp:alice".to_string(), vec![])
+        .unwrap();
 
-    let count = bc.pending_cosigns.get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
+    let count = bc
+        .pending_cosigns
+        .get(&proposal_id.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
     assert_eq!(count, 1, "duplicate cosign should be ignored");
 }
 
@@ -95,10 +105,18 @@ fn test_veto_accepted_for_council_member() {
     bc.ensure_council_bootstrap(&council_config());
 
     let proposal_id = Hash::new([5u8; 32]);
-    bc.council_veto_proposal(&proposal_id, "did:zhtp:bob".to_string(), "risky".to_string())
-        .expect("bob is a council member");
+    bc.council_veto_proposal(
+        &proposal_id,
+        "did:zhtp:bob".to_string(),
+        "risky".to_string(),
+    )
+    .expect("bob is a council member");
 
-    let count = bc.pending_vetoes.get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
+    let count = bc
+        .pending_vetoes
+        .get(&proposal_id.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
     assert_eq!(count, 1);
 }
 
@@ -109,10 +127,16 @@ fn test_veto_deduplicates_same_did() {
     bc.ensure_council_bootstrap(&council_config());
 
     let proposal_id = Hash::new([6u8; 32]);
-    bc.council_veto_proposal(&proposal_id, "did:zhtp:alice".to_string(), "r1".to_string()).unwrap();
-    bc.council_veto_proposal(&proposal_id, "did:zhtp:alice".to_string(), "r2".to_string()).unwrap();
+    bc.council_veto_proposal(&proposal_id, "did:zhtp:alice".to_string(), "r1".to_string())
+        .unwrap();
+    bc.council_veto_proposal(&proposal_id, "did:zhtp:alice".to_string(), "r2".to_string())
+        .unwrap();
 
-    let count = bc.pending_vetoes.get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
+    let count = bc
+        .pending_vetoes
+        .get(&proposal_id.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
     assert_eq!(count, 1, "duplicate veto should be ignored");
 }
 
@@ -120,15 +144,21 @@ fn test_veto_deduplicates_same_did() {
 
 #[test]
 fn test_hybrid_fields_survive_dat_round_trip() -> Result<()> {
-    use tempfile::NamedTempFile;
     use lib_blockchain::types::Hash;
+    use tempfile::NamedTempFile;
 
     let mut bc = Blockchain::new()?;
     bc.ensure_council_bootstrap(&council_config());
 
     let proposal_id = Hash::new([7u8; 32]);
-    bc.council_cosign_proposal(&proposal_id, "did:zhtp:alice".to_string(), vec![1, 2, 3]).unwrap();
-    bc.council_veto_proposal(&proposal_id, "did:zhtp:bob".to_string(), "security".to_string()).unwrap();
+    bc.council_cosign_proposal(&proposal_id, "did:zhtp:alice".to_string(), vec![1, 2, 3])
+        .unwrap();
+    bc.council_veto_proposal(
+        &proposal_id,
+        "did:zhtp:bob".to_string(),
+        "security".to_string(),
+    )
+    .unwrap();
     bc.treasury_epoch_execution_count.insert(1, 2);
     bc.max_executions_per_epoch = 5;
     bc.veto_window_blocks = 288;
@@ -141,10 +171,18 @@ fn test_hybrid_fields_survive_dat_round_trip() -> Result<()> {
     assert_eq!(loaded.veto_window_blocks, 288);
     assert_eq!(loaded.treasury_epoch_execution_count.get(&1), Some(&2));
 
-    let cosigns = loaded.pending_cosigns.get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
+    let cosigns = loaded
+        .pending_cosigns
+        .get(&proposal_id.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
     assert_eq!(cosigns, 1);
 
-    let vetoes = loaded.pending_vetoes.get(&proposal_id.as_array()).map(|v| v.len()).unwrap_or(0);
+    let vetoes = loaded
+        .pending_vetoes
+        .get(&proposal_id.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
     assert_eq!(vetoes, 1);
 
     Ok(())
@@ -159,6 +197,9 @@ fn test_hybrid_phase_blocks_bootstrap_council_check() {
     // Advance to Hybrid phase via time condition
     bc.phase_transition_config.phase0_max_duration_blocks = Some(0);
     bc.try_advance_governance_phase();
-    assert_eq!(bc.governance_phase, GovernancePhase::Hybrid,
-        "should be in Hybrid phase now");
+    assert_eq!(
+        bc.governance_phase,
+        GovernancePhase::Hybrid,
+        "should be in Hybrid phase now"
+    );
 }

@@ -1,42 +1,48 @@
-pub mod lorawan;
-pub mod satellite;
-pub mod wifi;
+pub mod geo_location;
 pub mod hardware;
+pub mod local_network;
+pub mod lorawan;
 #[cfg(feature = "lorawan")]
 pub mod lorawan_hardware;
-pub mod geo_location;
-pub mod local_network;
-pub mod smart_routing;
-pub mod unified;
 #[cfg(feature = "quic")]
 pub mod pin_cache;
 #[cfg(feature = "quic")]
 pub mod pinned_verifier;
+pub mod satellite;
+pub mod smart_routing;
+pub mod unified;
+pub mod wifi;
 
-pub use lorawan::*;
-pub use satellite::*;
-pub use wifi::*;
+pub use geo_location::GeographicLocation;
 pub use hardware::*;
+pub use local_network::*;
+pub use lorawan::*;
 #[cfg(feature = "lorawan")]
 pub use lorawan_hardware::*;
-pub use geo_location::GeographicLocation;
-pub use local_network::*;
 #[cfg(feature = "quic")]
-pub use pin_cache::{TlsPinCache, PinCacheEntry, NodeIdKey, global_pin_cache};
+pub use pin_cache::{global_pin_cache, NodeIdKey, PinCacheEntry, TlsPinCache};
 #[cfg(feature = "quic")]
 #[allow(deprecated)]
 pub use pinned_verifier::{
-    PinnedCertVerifier, PinnedVerifierConfig, SyncPinStore, VerificationResult,
-    init_global_verifier, global_verifier, is_verifier_initialized,
+    global_verifier, init_global_verifier, is_verifier_initialized, PinnedCertVerifier,
+    PinnedVerifierConfig, SyncPinStore, VerificationResult,
 };
+pub use satellite::*;
+pub use wifi::*;
 
 // Export unified discovery as the primary interface
 pub use unified::{
-    DiscoveryProtocol, DiscoveryResult, DiscoveryService, UnifiedDiscoveryService,
-    // Security exports
-    NonceTracker, PeerReputation, ReputationTracker,
-    SecurityMetrics, SecurityMetricsSnapshot,
     validate_public_key,
+    DiscoveryProtocol,
+    DiscoveryResult,
+    DiscoveryService,
+    // Security exports
+    NonceTracker,
+    PeerReputation,
+    ReputationTracker,
+    SecurityMetrics,
+    SecurityMetricsSnapshot,
+    UnifiedDiscoveryService,
 };
 
 use anyhow::Result;
@@ -79,13 +85,17 @@ pub async fn get_discovery_statistics() -> Result<DiscoveryStatistics> {
 
     // Get LoRaWAN discovery statistics using cached capabilities
     // Uses discover_lorawan_gateways_with_capabilities to avoid redundant detection
-    if let Ok(lorawan_peers) = lorawan::discover_lorawan_gateways_with_capabilities(&capabilities).await {
+    if let Ok(lorawan_peers) =
+        lorawan::discover_lorawan_gateways_with_capabilities(&capabilities).await
+    {
         stats.regional_peers += lorawan_peers.len() as u32;
     }
 
     // Get satellite discovery statistics using cached capabilities
     // Uses discover_satellite_uplinks_with_capabilities to avoid redundant detection
-    if let Ok(satellite_peers) = satellite::discover_satellite_uplinks_with_capabilities(&capabilities).await {
+    if let Ok(satellite_peers) =
+        satellite::discover_satellite_uplinks_with_capabilities(&capabilities).await
+    {
         stats.global_peers += satellite_peers.len() as u32;
     }
 

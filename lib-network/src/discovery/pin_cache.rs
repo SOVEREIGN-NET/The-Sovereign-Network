@@ -11,11 +11,11 @@
 //! - **LRU Eviction**: Oldest entries are evicted when capacity is reached
 //! - **Atomic Updates**: Thread-safe updates via RwLock
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::local_network::NodeAnnouncement;
@@ -92,7 +92,11 @@ impl TlsPinCache {
     /// This prevents an attacker from replacing a legitimate node's entry.
     /// TLS certificate rotation is allowed (tls_spki_sha256 can change) as long
     /// as the announcement is signed by the same Dilithium key.
-    pub async fn insert_verified(&self, announcement: &NodeAnnouncement, endpoints: Vec<String>) -> Result<()> {
+    pub async fn insert_verified(
+        &self,
+        announcement: &NodeAnnouncement,
+        endpoints: Vec<String>,
+    ) -> Result<()> {
         // Validate that the announcement has TLS pin data
         if !announcement.has_tls_pin() {
             return Err(anyhow!("Announcement does not have TLS pin data"));
@@ -144,7 +148,10 @@ impl TlsPinCache {
         entries.insert(node_id_key, entry);
         access_times.insert(node_id_key, Self::now());
 
-        debug!("Pin cache: inserted/updated entry for node {}", announcement.node_id);
+        debug!(
+            "Pin cache: inserted/updated entry for node {}",
+            announcement.node_id
+        );
         Ok(())
     }
 
@@ -177,7 +184,11 @@ impl TlsPinCache {
     ///
     /// Returns Ok(true) if the pin matches, Ok(false) if no pin cached,
     /// or Err if the pin doesn't match (security violation).
-    pub async fn verify_peer_spki(&self, node_id: &NodeIdKey, peer_spki_sha256: &[u8; 32]) -> Result<bool> {
+    pub async fn verify_peer_spki(
+        &self,
+        node_id: &NodeIdKey,
+        peer_spki_sha256: &[u8; 32],
+    ) -> Result<bool> {
         let entry = match self.get(node_id).await {
             Some(e) => e,
             None => {
@@ -193,9 +204,7 @@ impl TlsPinCache {
                 hex::encode(&entry.tls_spki_sha256[..8]),
                 hex::encode(&peer_spki_sha256[..8])
             );
-            return Err(anyhow!(
-                "TLS certificate SPKI does not match discovery pin"
-            ));
+            return Err(anyhow!("TLS certificate SPKI does not match discovery pin"));
         }
 
         debug!("Pin cache: SPKI verified for node {:?}", &node_id[..8]);
@@ -203,7 +212,11 @@ impl TlsPinCache {
     }
 
     /// Verify a peer's TLS SPKI using UUID (for discovery announcements)
-    pub async fn verify_peer_spki_by_uuid(&self, uuid: &Uuid, peer_spki_sha256: &[u8; 32]) -> Result<bool> {
+    pub async fn verify_peer_spki_by_uuid(
+        &self,
+        uuid: &Uuid,
+        peer_spki_sha256: &[u8; 32],
+    ) -> Result<bool> {
         let key = uuid_to_node_id_key(uuid);
         self.verify_peer_spki(&key, peer_spki_sha256).await
     }
@@ -220,11 +233,18 @@ impl TlsPinCache {
     ///
     /// Returns Ok(true) if the key matches, Ok(false) if no pin cached,
     /// or Err if the key doesn't match (security violation).
-    pub async fn verify_peer_dilithium_pk(&self, node_id: &NodeIdKey, peer_dilithium_pk: &[u8]) -> Result<bool> {
+    pub async fn verify_peer_dilithium_pk(
+        &self,
+        node_id: &NodeIdKey,
+        peer_dilithium_pk: &[u8],
+    ) -> Result<bool> {
         let entry = match self.get(node_id).await {
             Some(e) => e,
             None => {
-                debug!("Pin cache: no entry for node {:?} (dilithium pk check)", &node_id[..8]);
+                debug!(
+                    "Pin cache: no entry for node {:?} (dilithium pk check)",
+                    &node_id[..8]
+                );
                 return Ok(false);
             }
         };
@@ -241,7 +261,10 @@ impl TlsPinCache {
             ));
         }
 
-        debug!("Pin cache: Dilithium PK verified for node {:?}", &node_id[..8]);
+        debug!(
+            "Pin cache: Dilithium PK verified for node {:?}",
+            &node_id[..8]
+        );
         Ok(true)
     }
 
@@ -458,7 +481,10 @@ mod tests {
         // Peer presents matching SPKI → should succeed
         let result = cache.verify_peer_spki(&node_id_key, &valid_spki).await;
         assert!(result.is_ok(), "Valid SPKI should verify successfully");
-        assert!(result.unwrap(), "Result should indicate pin was found and matched");
+        assert!(
+            result.unwrap(),
+            "Result should indicate pin was found and matched"
+        );
     }
 
     /// Case 2: Valid TLS pin - SPKI mismatch → connection rejected
@@ -508,7 +534,10 @@ mod tests {
         // First contact → should return Ok(false) meaning "no pin, allow connection"
         let result = cache.verify_peer_spki(&unknown_node_id, &any_spki).await;
         assert!(result.is_ok(), "Unknown node should not cause error");
-        assert!(!result.unwrap(), "Result should indicate no pin was found (false)");
+        assert!(
+            !result.unwrap(),
+            "Result should indicate no pin was found (false)"
+        );
     }
 
     /// Case 4: Expired TLS pin → treated as no pin (connection allowed)
@@ -537,7 +566,10 @@ mod tests {
         let different_spki = [99u8; 32];
         let result = cache.verify_peer_spki(&node_id_key, &different_spki).await;
         assert!(result.is_ok(), "Expired pin should not cause error");
-        assert!(!result.unwrap(), "Expired pin should be treated as 'no pin' (false)");
+        assert!(
+            !result.unwrap(),
+            "Expired pin should be treated as 'no pin' (false)"
+        );
     }
 
     /// Case 5: Dilithium PK verification - match
@@ -565,9 +597,17 @@ mod tests {
         }
 
         // Peer presents matching Dilithium PK → should succeed
-        let result = cache.verify_peer_dilithium_pk(&node_id_key, &valid_dilithium_pk).await;
-        assert!(result.is_ok(), "Valid Dilithium PK should verify successfully");
-        assert!(result.unwrap(), "Result should indicate PK was found and matched");
+        let result = cache
+            .verify_peer_dilithium_pk(&node_id_key, &valid_dilithium_pk)
+            .await;
+        assert!(
+            result.is_ok(),
+            "Valid Dilithium PK should verify successfully"
+        );
+        assert!(
+            result.unwrap(),
+            "Result should indicate PK was found and matched"
+        );
     }
 
     /// Case 5b: Dilithium PK verification - mismatch (identity compromise)
@@ -596,8 +636,13 @@ mod tests {
         }
 
         // Attacker presents different Dilithium PK → should fail
-        let result = cache.verify_peer_dilithium_pk(&node_id_key, &attacker_dilithium_pk).await;
-        assert!(result.is_err(), "Mismatched Dilithium PK should return error");
+        let result = cache
+            .verify_peer_dilithium_pk(&node_id_key, &attacker_dilithium_pk)
+            .await;
+        assert!(
+            result.is_err(),
+            "Mismatched Dilithium PK should return error"
+        );
         assert!(
             result.unwrap_err().to_string().contains("does not match"),
             "Error should indicate Dilithium PK mismatch"
@@ -615,9 +660,14 @@ mod tests {
         assert!(cache.is_empty().await);
 
         // First contact → should return Ok(false) meaning "no cached PK, allow connection"
-        let result = cache.verify_peer_dilithium_pk(&unknown_node_id, &any_dilithium_pk).await;
+        let result = cache
+            .verify_peer_dilithium_pk(&unknown_node_id, &any_dilithium_pk)
+            .await;
         assert!(result.is_ok(), "Unknown node should not cause error");
-        assert!(!result.unwrap(), "Result should indicate no PK was cached (false)");
+        assert!(
+            !result.unwrap(),
+            "Result should indicate no PK was cached (false)"
+        );
     }
 
     // ========================================================================
@@ -669,11 +719,17 @@ mod tests {
         // Verify the new TLS SPKI is cached
         let result = cache.verify_peer_spki(&node_id_key, &new_tls_spki).await;
         assert!(result.is_ok());
-        assert!(result.unwrap(), "New TLS SPKI should be accepted after rotation");
+        assert!(
+            result.unwrap(),
+            "New TLS SPKI should be accepted after rotation"
+        );
 
         // Old TLS SPKI should now fail
         let result = cache.verify_peer_spki(&node_id_key, &old_tls_spki).await;
-        assert!(result.is_err(), "Old TLS SPKI should be rejected after rotation");
+        assert!(
+            result.is_err(),
+            "Old TLS SPKI should be rejected after rotation"
+        );
     }
 
     /// Key rotation: TLS certificate update with DIFFERENT Dilithium PK → rejected (hijack attempt)

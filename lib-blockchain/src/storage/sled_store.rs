@@ -52,13 +52,13 @@ pub struct SledStore {
     token_balances: Tree,
     token_nonces: Tree, // Nonce for token transfers (replay protection)
     token_contracts: Tree,
-    token_supply: Tree,      // Total supply tracking for deflationary tokens
-    contract_code: Tree,     // WASM contract code storage
-    contract_storage: Tree,  // Contract key-value storage
-    identities: Tree,        // Consensus: did_hash → IdentityConsensus
-    identity_metadata: Tree, // Non-consensus: did_hash → IdentityMetadata
-    identity_by_owner: Tree, // Index: owner_addr → did_hash
-    bonding_curves: Tree,    // Bonding curve tokens: token_id → BondingCurveToken
+    token_supply: Tree,          // Total supply tracking for deflationary tokens
+    contract_code: Tree,         // WASM contract code storage
+    contract_storage: Tree,      // Contract key-value storage
+    identities: Tree,            // Consensus: did_hash → IdentityConsensus
+    identity_metadata: Tree,     // Non-consensus: did_hash → IdentityMetadata
+    identity_by_owner: Tree,     // Index: owner_addr → did_hash
+    bonding_curves: Tree,        // Bonding curve tokens: token_id → BondingCurveToken
     bonding_curve_symbols: Tree, // Index: symbol → token_id
     meta: Tree,
 
@@ -1207,8 +1207,11 @@ impl BlockchainStore for SledStore {
 
     fn iter_bonding_curve_tokens(
         &self,
-    ) -> StorageResult<Box<dyn Iterator<Item = (TokenId, crate::contracts::bonding_curve::BondingCurveToken)> + '_>>
-    {
+    ) -> StorageResult<
+        Box<
+            dyn Iterator<Item = (TokenId, crate::contracts::bonding_curve::BondingCurveToken)> + '_,
+        >,
+    > {
         let iter = self.bonding_curves.iter().filter_map(|item| {
             let (k, v) = item.ok()?;
             let token_id_bytes: [u8; 32] = match k.as_ref().try_into() {
@@ -1255,7 +1258,11 @@ impl BlockchainStore for SledStore {
         }
     }
 
-    fn put_bonding_curve_symbol_index(&self, symbol: &str, token_id: &TokenId) -> StorageResult<()> {
+    fn put_bonding_curve_symbol_index(
+        &self,
+        symbol: &str,
+        token_id: &TokenId,
+    ) -> StorageResult<()> {
         self.require_transaction()?;
 
         let mut batch_guard = self.tx_batch.lock().unwrap();

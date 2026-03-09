@@ -14,19 +14,19 @@
 //! Both layers must succeed. The node's DID (from UHP) must match
 //! any configured expectation (--node-did or trustdb entry).
 
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Context, Result};
+#[cfg(unix)]
+use libc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 use x509_parser::prelude::*;
-#[cfg(unix)]
-use libc;
 
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::client::danger::{ServerCertVerifier, ServerCertVerified, HandshakeSignatureValid};
-use rustls::{DigitallySignedStruct, SignatureScheme, Error as TlsError};
+use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
 
 /// Trust policy for a node
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,10 +90,8 @@ impl TrustDb {
     pub fn load_or_create(path: &Path) -> Result<Self> {
         if path.exists() {
             Self::validate_permissions(path)?;
-            let data = std::fs::read_to_string(path)
-                .context("Failed to read trustdb")?;
-            let db: TrustDb = serde_json::from_str(&data)
-                .context("Failed to parse trustdb")?;
+            let data = std::fs::read_to_string(path).context("Failed to read trustdb")?;
+            let db: TrustDb = serde_json::from_str(&data).context("Failed to parse trustdb")?;
             Ok(db)
         } else {
             Ok(Self::new())
@@ -152,15 +150,15 @@ impl TrustDb {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            let meta = std::fs::metadata(path)
-                .context("Failed to stat trustdb")?;
+            let meta = std::fs::metadata(path).context("Failed to stat trustdb")?;
             let mode = meta.mode() & 0o777;
 
             // Only owner rw allowed
             if mode & 0o077 != 0 {
                 return Err(anyhow!(
                     "Insecure permissions on trustdb {:?} (mode {:o}). Set to 0600",
-                    path, mode
+                    path,
+                    mode
                 ));
             }
 
@@ -171,7 +169,9 @@ impl TrustDb {
             if uid != current_uid {
                 return Err(anyhow!(
                     "Trustdb {:?} is owned by uid {}, expected {}",
-                    path, uid, current_uid
+                    path,
+                    uid,
+                    current_uid
                 ));
             }
         }
@@ -259,8 +259,7 @@ impl TrustConfig {
 
     /// Get default trustdb path
     pub fn default_trustdb_path() -> Result<PathBuf> {
-        let home = dirs::home_dir()
-            .context("Could not determine home directory")?;
+        let home = dirs::home_dir().context("Could not determine home directory")?;
         Ok(home.join(".zhtp").join("trustdb.json"))
     }
 
@@ -331,8 +330,12 @@ impl ZhtpTrustVerifier {
     ///
     /// Fails if SPKI cannot be extracted, per security requirements.
     fn compute_spki_hash(cert: &CertificateDer<'_>) -> Result<String> {
-        let (_, parsed_cert) = X509Certificate::from_der(cert.as_ref())
-            .map_err(|e| anyhow!("Failed to parse X.509 certificate for SPKI extraction: {}", e))?;
+        let (_, parsed_cert) = X509Certificate::from_der(cert.as_ref()).map_err(|e| {
+            anyhow!(
+                "Failed to parse X.509 certificate for SPKI extraction: {}",
+                e
+            )
+        })?;
 
         // DER-encoded SubjectPublicKeyInfo
         let spki_bytes = parsed_cert.public_key().raw;
@@ -365,20 +368,28 @@ impl ZhtpTrustVerifier {
         };
 
         {
-            let mut db = self.trustdb.write()
+            let mut db = self
+                .trustdb
+                .write()
                 .map_err(|_| anyhow!("Failed to lock trustdb"))?;
             db.set(anchor);
         }
 
         // Save to disk if path configured
         if let Some(ref path) = self.config.trustdb_path {
-            let db = self.trustdb.read()
+            let db = self
+                .trustdb
+                .read()
                 .map_err(|_| anyhow!("Failed to lock trustdb"))?;
             db.save(path)?;
         }
 
         // Append audit log entry
-        let audit_path = self.config.audit_log_path.clone().unwrap_or_else(|| TrustConfig::default_audit_path());
+        let audit_path = self
+            .config
+            .audit_log_path
+            .clone()
+            .unwrap_or_else(|| TrustConfig::default_audit_path());
         if self.config.allow_tofu || self.config.bootstrap_mode {
             let entry = TrustAuditEntry {
                 timestamp: now,
@@ -397,7 +408,9 @@ impl ZhtpTrustVerifier {
 
     /// Update anchor with verified node DID (called after UHP handshake)
     pub fn bind_node_did(&self, node_did: &str) -> Result<()> {
-        let mut db = self.trustdb.write()
+        let mut db = self
+            .trustdb
+            .write()
             .map_err(|_| anyhow!("Failed to lock trustdb"))?;
 
         if let Some(anchor) = db.anchors.get_mut(&self.node_addr) {
@@ -406,7 +419,8 @@ impl ZhtpTrustVerifier {
                 if existing_did != node_did {
                     return Err(anyhow!(
                         "Node DID mismatch: expected {}, got {}",
-                        existing_did, node_did
+                        existing_did,
+                        node_did
                     ));
                 }
             } else {
@@ -422,7 +436,9 @@ impl ZhtpTrustVerifier {
         // Save if path configured
         drop(db);
         if let Some(ref path) = self.config.trustdb_path {
-            let db = self.trustdb.read()
+            let db = self
+                .trustdb
+                .read()
                 .map_err(|_| anyhow!("Failed to lock trustdb"))?;
             db.save(path)?;
         }
@@ -437,13 +453,16 @@ impl ZhtpTrustVerifier {
             if expected != node_did {
                 return Err(anyhow!(
                     "Node DID mismatch: expected {} (from --node-did), got {}",
-                    expected, node_did
+                    expected,
+                    node_did
                 ));
             }
         }
 
         // Check trustdb entry
-        let db = self.trustdb.read()
+        let db = self
+            .trustdb
+            .read()
             .map_err(|_| anyhow!("Failed to lock trustdb"))?;
 
         if let Some(anchor) = db.get(&self.node_addr) {
@@ -451,7 +470,8 @@ impl ZhtpTrustVerifier {
                 if stored_did != node_did {
                     return Err(anyhow!(
                         "Node DID mismatch: trusted {} but node presented {}",
-                        stored_did, node_did
+                        stored_did,
+                        node_did
                     ));
                 }
             }
@@ -497,10 +517,9 @@ impl ServerCertVerifier for ZhtpTrustVerifier {
                 }
                 return Ok(ServerCertVerified::assertion());
             } else {
-                return Err(TlsError::General(format!(
-                    "SPKI pin mismatch: expected {}, got {}",
-                    pin, spki_hash
-                ).into()));
+                return Err(TlsError::General(
+                    format!("SPKI pin mismatch: expected {}, got {}", pin, spki_hash).into(),
+                ));
             }
         }
 
@@ -522,11 +541,14 @@ impl ServerCertVerifier for ZhtpTrustVerifier {
                     }
                     return Ok(ServerCertVerified::assertion());
                 } else {
-                    return Err(TlsError::General(format!(
-                        "Certificate changed! Trusted fingerprint: {}, presented: {}. \
+                    return Err(TlsError::General(
+                        format!(
+                            "Certificate changed! Trusted fingerprint: {}, presented: {}. \
                         If this is expected, remove the old entry with: zhtp trust remove {}",
-                        anchor.cert_fingerprint, fingerprint, self.node_addr
-                    ).into()));
+                            anchor.cert_fingerprint, fingerprint, self.node_addr
+                        )
+                        .into(),
+                    ));
                 }
             }
         }
@@ -586,14 +608,17 @@ impl ServerCertVerifier for ZhtpTrustVerifier {
         }
 
         // 5. No trust anchor - reject with actionable error
-        Err(TlsError::General(format!(
-            "No trust anchor for node {}. Options:\n\
+        Err(TlsError::General(
+            format!(
+                "No trust anchor for node {}. Options:\n\
             1. Pin the certificate: --pin-spki {}\n\
             2. Trust on first use: --tofu\n\
             3. Specify expected node: --node-did <did>\n\
             4. Development only: --trust-node (insecure)",
-            self.node_addr, spki_hash
-        ).into()))
+                self.node_addr, spki_hash
+            )
+            .into(),
+        ))
     }
 
     fn verify_tls12_signature(
