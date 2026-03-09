@@ -36,6 +36,14 @@ use lib_blockchain::contracts::bonding_curve::{
 };
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::Blockchain;
+use lib_blockchain::Transaction;
+
+/// Request to submit a signed bonding curve transaction
+#[derive(Debug, Deserialize)]
+pub struct SubmitBondingCurveTransactionRequest {
+    /// Hex-encoded bincode Transaction
+    pub signed_tx: String,
+}
 
 /// Helper function to create JSON responses
 fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -301,226 +309,157 @@ impl CurveHandler {
         Self { blockchain }
     }
 
-    /// POST /api/v1/curve/deploy - Deploy new bonding curve token
+    /// POST /api/v1/curve/deploy - Submit signed bonding curve deploy transaction
+    /// 
+    /// Accepts a signed BondingCurveDeploy transaction and submits it to the mempool.
+    /// The transaction must be built using lib-client (build_bonding_curve_deploy_tx)
+    /// or equivalent client library.
     async fn handle_deploy(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let deploy_req: DeployCurveTokenRequest = serde_json::from_slice(&request.body)
+        let submit_req: SubmitBondingCurveTransactionRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        // Validate
-        if deploy_req.name.is_empty() || deploy_req.symbol.is_empty() {
+        // Decode the signed transaction
+        let tx_bytes = hex::decode(&submit_req.signed_tx)
+            .map_err(|e| anyhow::anyhow!("Invalid hex in signed_tx: {}", e))?;
+        let tx: Transaction = bincode::deserialize(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize transaction: {}", e))?;
+
+        // Validate transaction type
+        if tx.transaction_type != lib_blockchain::TransactionType::BondingCurveDeploy {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                "Name and symbol required".to_string(),
+                "Transaction must be of type BondingCurveDeploy".to_string(),
             ));
         }
 
-        if deploy_req.symbol.len() > 10 {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Symbol max 10 characters".to_string(),
-            ));
-        }
+        // Get deploy data for response (clone to avoid borrow issues)
+        let deploy_data = tx.bonding_curve_deploy_data.clone().ok_or_else(|| {
+            anyhow::anyhow!("BondingCurveDeploy transaction missing deploy data")
+        })?;
+        let tx_hash = hex::encode(tx.hash().as_bytes());
+        let name = deploy_data.name.clone();
+        let symbol = deploy_data.symbol.clone();
 
-        // Get creator from requester (must be authenticated)
-        let creator = self.get_requester_key(&request)?;
-
-        // Generate token ID deterministically
-        let token_id =
-            self.generate_token_id(&deploy_req.name, &deploy_req.symbol, &creator.key_id);
-
-        // Gate 1 + duplicate check inside single read lock
-        let creator_did = {
-            let blockchain = self.blockchain.read().await;
-
-            if blockchain.bonding_curve_registry.contains(&token_id) {
-                return Ok(create_error_response(
-                    ZhtpStatus::Conflict,
-                    "Token with this name and symbol already exists".to_string(),
-                ));
-            }
-
-            // Gate 1: creator must have a registered on-chain identity (DID).
-            let identity = blockchain.get_identity_by_public_key(&creator.dilithium_pk);
-            let identity =
-                match identity {
-                    Some(id) => id,
-                    None => return Ok(create_error_response(
-                        ZhtpStatus::Unauthorized,
-                        "Deployer must have a registered identity (DID) on-chain to deploy a token"
-                            .to_string(),
-                    )),
-                };
-            let did = identity.did.clone();
-
-            // Gate 2: creator must hold at least 100 SOV.
-            const CBE_DEPLOY_MIN_SOV: u64 = 100 * 100_000_000; // 100 SOV atomic
-            let sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
-            let sov_token = blockchain.token_contracts.get(&sov_id);
-            // Resolve the creator's primary wallet and check SOV balance against the wallet-based key.
-            let sov_balance = match sov_token {
-                Some(token) => {
-                    let primary_wallet_id = match blockchain
-                        .primary_wallet_id_for_signer(&creator.key_id)
-                    {
-                        Some(wallet_id) => wallet_id,
-                        None => {
-                            return Ok(create_error_response(
-                                ZhtpStatus::Unauthorized,
-                                "Deployer must have a primary wallet registered to hold SOV before deploying a token".to_string(),
-                            ));
-                        }
-                    };
-                    let sov_wallet_key =
-                        lib_blockchain::Blockchain::sov_key_from_wallet_id(&primary_wallet_id);
-                    token.balance_of(&sov_wallet_key)
-                }
-                None => 0,
-            };
-            if sov_balance < CBE_DEPLOY_MIN_SOV {
-                return Ok(create_error_response(
-                    ZhtpStatus::Unauthorized,
-                    format!(
-                        "Deployer must hold at least 100 SOV to deploy a token (current balance: {:.2} SOV)",
-                        sov_balance as f64 / 100_000_000.0
-                    ),
-                ));
-            }
-
-            did
-        };
-
-        // Deploy token
-        let curve_type: CurveType = deploy_req.curve_type.into();
-        let threshold: Threshold = deploy_req.threshold.into();
-
-        let mut token = BondingCurveToken::deploy(
-            token_id,
-            deploy_req.name.clone(),
-            deploy_req.symbol.clone(),
-            curve_type,
-            threshold,
-            deploy_req.sell_enabled,
-            creator,
-            creator_did,
-            self.get_current_block().await?,
-            self.get_current_timestamp().await?,
-        )
-        .map_err(|e| anyhow::anyhow!("Deploy failed: {}", e))?;
-
-        // Register in blockchain
-        {
-            let mut blockchain = self.blockchain.write().await;
-            blockchain
-                .bonding_curve_registry
-                .register(token.clone())
-                .map_err(|e| anyhow::anyhow!("Registration failed: {}", e))?;
-        }
+        // Submit to mempool
+        self.submit_to_mempool(tx).await.map_err(|e| {
+            anyhow::anyhow!("Failed to submit deploy transaction to mempool: {}", e)
+        })?;
 
         info!(
-            "Bonding curve token deployed: {} ({}) - id={}",
-            deploy_req.name,
-            deploy_req.symbol,
-            hex::encode(&token_id[..8])
+            "Bonding curve deploy submitted to mempool: {} ({}) - creator={}",
+            name,
+            symbol,
+            hex::encode(&deploy_data.creator[..8])
         );
 
         create_json_response(json!({
             "success": true,
-            "token_id": hex::encode(token_id),
-            "name": deploy_req.name,
-            "symbol": deploy_req.symbol,
-            "phase": "curve",
-            "tx_status": "confirmed"
+            "tx_hash": tx_hash,
+            "name": name,
+            "symbol": symbol,
+            "tx_status": "submitted_to_mempool"
         }))
     }
 
-    /// POST /api/v1/curve/buy - Buy tokens from curve
+    /// POST /api/v1/curve/buy - Submit signed bonding curve buy transaction
+    ///
+    /// Accepts a signed BondingCurveBuy transaction and submits it to the mempool.
+    /// The transaction must be built using lib-client (build_bonding_curve_buy_tx)
+    /// or equivalent client library.
     async fn handle_buy(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let buy_req: BuyTokensRequest = serde_json::from_slice(&request.body)
+        let submit_req: SubmitBondingCurveTransactionRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        let token_id =
-            hex::decode(&buy_req.token_id).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
+        // Decode the signed transaction
+        let tx_bytes = hex::decode(&submit_req.signed_tx)
+            .map_err(|e| anyhow::anyhow!("Invalid hex in signed_tx: {}", e))?;
+        let tx: Transaction = bincode::deserialize(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize transaction: {}", e))?;
 
-        let buyer = self.get_requester_key(&request)?;
-        let block_height = self.get_current_block().await?;
-        let timestamp = self.get_current_timestamp().await?;
+        // Validate transaction type
+        if tx.transaction_type != lib_blockchain::TransactionType::BondingCurveBuy {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Transaction must be of type BondingCurveBuy".to_string(),
+            ));
+        }
 
-        let mut blockchain = self.blockchain.write().await;
+        // Get buy data for response (clone to avoid borrow issues)
+        let buy_data = tx.bonding_curve_buy_data.clone().ok_or_else(|| {
+            anyhow::anyhow!("BondingCurveBuy transaction missing buy data")
+        })?;
+        let tx_hash = hex::encode(tx.hash().as_bytes());
+        let token_id = hex::encode(buy_data.token_id);
+        let stable_amount = buy_data.stable_amount;
 
-        let token = blockchain
-            .bonding_curve_registry
-            .get_mut(&token_id)
-            .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
+        // Submit to mempool
+        self.submit_to_mempool(tx).await.map_err(|e| {
+            anyhow::anyhow!("Failed to submit buy transaction to mempool: {}", e)
+        })?;
 
-        // Execute buy (contract enforces phase == Curve)
-        let (token_amount, _event) = token
-            .buy(buyer, buy_req.stable_amount, block_height, timestamp)
-            .map_err(|e| anyhow::anyhow!("Buy failed: {}", e))?;
-
-        // Check for automatic graduation
-        let graduated = if token.can_graduate(timestamp) {
-            match token.graduate(timestamp, block_height) {
-                Ok(grad_event) => {
-                    info!("Token {} auto-graduated", hex::encode(&token_id[..8]));
-                    // Emit graduation event (in production, this would be indexed)
-                    Some(grad_event)
-                }
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
-
-        drop(blockchain);
+        info!(
+            "Bonding curve buy submitted to mempool: token={}, amount={}",
+            &token_id[..16.min(token_id.len())],
+            stable_amount
+        );
 
         create_json_response(json!({
             "success": true,
-            "token_id": buy_req.token_id,
-            "stable_paid": buy_req.stable_amount,
-            "tokens_received": token_amount,
-            "auto_graduated": graduated.is_some(),
-            "tx_status": "confirmed"
+            "tx_hash": tx_hash,
+            "token_id": token_id,
+            "stable_amount": stable_amount,
+            "tx_status": "submitted_to_mempool"
         }))
     }
 
-    /// POST /api/v1/curve/sell - Sell tokens back to curve
+    /// POST /api/v1/curve/sell - Submit signed bonding curve sell transaction
+    ///
+    /// Accepts a signed BondingCurveSell transaction and submits it to the mempool.
+    /// The transaction must be built using lib-client (build_bonding_curve_sell_tx)
+    /// or equivalent client library.
     async fn handle_sell(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let sell_req: SellTokensRequest = serde_json::from_slice(&request.body)
+        let submit_req: SubmitBondingCurveTransactionRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        let token_id =
-            hex::decode(&sell_req.token_id).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
+        // Decode the signed transaction
+        let tx_bytes = hex::decode(&submit_req.signed_tx)
+            .map_err(|e| anyhow::anyhow!("Invalid hex in signed_tx: {}", e))?;
+        let tx: Transaction = bincode::deserialize(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize transaction: {}", e))?;
 
-        let seller = self.get_requester_key(&request)?;
-        let block_height = self.get_current_block().await?;
-        let timestamp = self.get_current_timestamp().await?;
+        // Validate transaction type
+        if tx.transaction_type != lib_blockchain::TransactionType::BondingCurveSell {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Transaction must be of type BondingCurveSell".to_string(),
+            ));
+        }
 
-        let mut blockchain = self.blockchain.write().await;
+        // Get sell data for response (clone to avoid borrow issues)
+        let sell_data = tx.bonding_curve_sell_data.clone().ok_or_else(|| {
+            anyhow::anyhow!("BondingCurveSell transaction missing sell data")
+        })?;
+        let tx_hash = hex::encode(tx.hash().as_bytes());
+        let token_id = hex::encode(sell_data.token_id);
+        let token_amount = sell_data.token_amount;
 
-        let token = blockchain
-            .bonding_curve_registry
-            .get_mut(&token_id)
-            .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
+        // Submit to mempool
+        self.submit_to_mempool(tx).await.map_err(|e| {
+            anyhow::anyhow!("Failed to submit sell transaction to mempool: {}", e)
+        })?;
 
-        // Execute sell (contract enforces phase == Curve and sell_enabled)
-        let (stable_amount, _event) = token
-            .sell(seller, sell_req.token_amount, block_height, timestamp)
-            .map_err(|e| anyhow::anyhow!("Sell failed: {}", e))?;
-
-        drop(blockchain);
+        info!(
+            "Bonding curve sell submitted to mempool: token={}, amount={}",
+            &token_id[..16.min(token_id.len())],
+            token_amount
+        );
 
         create_json_response(json!({
             "success": true,
-            "token_id": sell_req.token_id,
-            "tokens_sold": sell_req.token_amount,
-            "stable_received": stable_amount,
-            "tx_status": "confirmed"
+            "tx_hash": tx_hash,
+            "token_id": token_id,
+            "token_amount": token_amount,
+            "tx_status": "submitted_to_mempool"
         }))
     }
 
@@ -665,6 +604,56 @@ impl CurveHandler {
         }))
     }
 
+    /// POST /api/v1/curve/graduate - Submit signed bonding curve graduate transaction
+    ///
+    /// Accepts a signed BondingCurveGraduate transaction and submits it to the mempool.
+    /// The transaction must be built using lib-client (build_bonding_curve_graduate_tx)
+    /// or equivalent client library.
+    async fn handle_graduate(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        let submit_req: SubmitBondingCurveTransactionRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
+
+        // Decode the signed transaction
+        let tx_bytes = hex::decode(&submit_req.signed_tx)
+            .map_err(|e| anyhow::anyhow!("Invalid hex in signed_tx: {}", e))?;
+        let tx: Transaction = bincode::deserialize(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize transaction: {}", e))?;
+
+        // Validate transaction type
+        if tx.transaction_type != lib_blockchain::TransactionType::BondingCurveGraduate {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Transaction must be of type BondingCurveGraduate".to_string(),
+            ));
+        }
+
+        // Get graduate data for response (clone to avoid borrow issues)
+        let grad_data = tx.bonding_curve_graduate_data.clone().ok_or_else(|| {
+            anyhow::anyhow!("BondingCurveGraduate transaction missing graduate data")
+        })?;
+        let tx_hash = hex::encode(tx.hash().as_bytes());
+        let token_id = hex::encode(grad_data.token_id);
+        let pool_id = hex::encode(grad_data.pool_id);
+
+        // Submit to mempool
+        self.submit_to_mempool(tx).await.map_err(|e| {
+            anyhow::anyhow!("Failed to submit graduate transaction to mempool: {}", e)
+        })?;
+
+        info!(
+            "Bonding curve graduate submitted to mempool: token={}",
+            &token_id[..16.min(token_id.len())]
+        );
+
+        create_json_response(json!({
+            "success": true,
+            "tx_hash": tx_hash,
+            "token_id": token_id,
+            "pool_id": pool_id,
+            "tx_status": "submitted_to_mempool"
+        }))
+    }
+
     /// GET /api/v1/curve/ready-to-graduate - List tokens that can graduate
     async fn handle_ready_to_graduate(&self) -> Result<ZhtpResponse> {
         let blockchain = self.blockchain.read().await;
@@ -726,6 +715,14 @@ impl CurveHandler {
             .unwrap_or_default()
             .as_secs())
     }
+
+    /// Submit a transaction to the mempool for BFT consensus processing
+    async fn submit_to_mempool(&self, tx: Transaction) -> Result<()> {
+        let mut blockchain = self.blockchain.write().await;
+        blockchain
+            .add_pending_transaction(tx)
+            .map_err(|e| anyhow::anyhow!("Failed to submit transaction to mempool: {}", e))
+    }
 }
 
 #[async_trait::async_trait]
@@ -743,6 +740,8 @@ impl ZhtpRequestHandler for CurveHandler {
             (ZhtpMethod::Post, "/api/v1/curve/buy") => self.handle_buy(request).await,
             // POST /api/v1/curve/sell
             (ZhtpMethod::Post, "/api/v1/curve/sell") => self.handle_sell(request).await,
+            // POST /api/v1/curve/graduate
+            (ZhtpMethod::Post, "/api/v1/curve/graduate") => self.handle_graduate(request).await,
             // GET /api/v1/curve/list
             (ZhtpMethod::Get, "/api/v1/curve/list") => self.handle_list().await,
             // GET /api/v1/curve/ready-to-graduate
