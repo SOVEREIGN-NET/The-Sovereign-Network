@@ -84,28 +84,25 @@ pub enum ForProfitTreasuryError {
 impl std::fmt::Display for ForProfitTreasuryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ForProfitTreasuryError::NotInitialized =>
-                write!(f, "Treasury not yet initialized"),
-            ForProfitTreasuryError::AlreadyInitialized =>
-                write!(f, "Treasury already initialized"),
-            ForProfitTreasuryError::Unauthorized =>
-                write!(f, "Unauthorized operation"),
-            ForProfitTreasuryError::InsufficientBalance =>
-                write!(f, "Insufficient balance"),
-            ForProfitTreasuryError::ZeroAmount =>
-                write!(f, "Amount cannot be zero"),
-            ForProfitTreasuryError::Overflow =>
-                write!(f, "Arithmetic overflow"),
-            ForProfitTreasuryError::TributePending =>
-                write!(f, "Tribute payment pending"),
-            ForProfitTreasuryError::CircumventionAttempt =>
-                write!(f, "Spending violates anti-circumvention rules"),
-            ForProfitTreasuryError::DividendBeforeTribute =>
-                write!(f, "Cannot pay dividend before tribute"),
-            ForProfitTreasuryError::InvalidSpendingCategory =>
-                write!(f, "Invalid spending category"),
-            ForProfitTreasuryError::TreasuryFrozen =>
-                write!(f, "Treasury is frozen - no spending allowed"),
+            ForProfitTreasuryError::NotInitialized => write!(f, "Treasury not yet initialized"),
+            ForProfitTreasuryError::AlreadyInitialized => write!(f, "Treasury already initialized"),
+            ForProfitTreasuryError::Unauthorized => write!(f, "Unauthorized operation"),
+            ForProfitTreasuryError::InsufficientBalance => write!(f, "Insufficient balance"),
+            ForProfitTreasuryError::ZeroAmount => write!(f, "Amount cannot be zero"),
+            ForProfitTreasuryError::Overflow => write!(f, "Arithmetic overflow"),
+            ForProfitTreasuryError::TributePending => write!(f, "Tribute payment pending"),
+            ForProfitTreasuryError::CircumventionAttempt => {
+                write!(f, "Spending violates anti-circumvention rules")
+            }
+            ForProfitTreasuryError::DividendBeforeTribute => {
+                write!(f, "Cannot pay dividend before tribute")
+            }
+            ForProfitTreasuryError::InvalidSpendingCategory => {
+                write!(f, "Invalid spending category")
+            }
+            ForProfitTreasuryError::TreasuryFrozen => {
+                write!(f, "Treasury is frozen - no spending allowed")
+            }
         }
     }
 }
@@ -352,8 +349,10 @@ impl ForProfitTreasury {
         }
 
         // Calculate mandatory tribute (20%)
-        let tribute_amount = (profit_amount as u128 * MANDATORY_TRIBUTE_PERCENTAGE as u128 / 100) as u64;
-        let remaining = profit_amount.checked_sub(tribute_amount)
+        let tribute_amount =
+            (profit_amount as u128 * MANDATORY_TRIBUTE_PERCENTAGE as u128 / 100) as u64;
+        let remaining = profit_amount
+            .checked_sub(tribute_amount)
             .ok_or(ForProfitTreasuryError::Overflow)?;
 
         // Create profit declaration
@@ -369,7 +368,9 @@ impl ForProfitTreasury {
         };
 
         self.profit_declarations.insert(declaration_id, declaration);
-        self.next_declaration_id = self.next_declaration_id.checked_add(1)
+        self.next_declaration_id = self
+            .next_declaration_id
+            .checked_add(1)
             .ok_or(ForProfitTreasuryError::Overflow)?;
 
         // Update cycle tracking
@@ -377,9 +378,13 @@ impl ForProfitTreasury {
         self.current_cycle_tribute_paid = false;
 
         // Add to balance
-        self.balance = self.balance.checked_add(profit_amount)
+        self.balance = self
+            .balance
+            .checked_add(profit_amount)
             .ok_or(ForProfitTreasuryError::Overflow)?;
-        self.total_received = self.total_received.checked_add(profit_amount)
+        self.total_received = self
+            .total_received
+            .checked_add(profit_amount)
             .ok_or(ForProfitTreasuryError::Overflow)?;
 
         Ok(declaration_id)
@@ -416,7 +421,9 @@ impl ForProfitTreasury {
             return Err(ForProfitTreasuryError::Unauthorized);
         }
 
-        let declaration = self.profit_declarations.get_mut(&declaration_id)
+        let declaration = self
+            .profit_declarations
+            .get_mut(&declaration_id)
             .ok_or(ForProfitTreasuryError::InvalidSpendingCategory)?;
 
         if declaration.tribute_paid {
@@ -429,13 +436,19 @@ impl ForProfitTreasury {
         }
 
         // Transfer tribute
-        self.balance = self.balance.checked_sub(tribute)
+        self.balance = self
+            .balance
+            .checked_sub(tribute)
             .ok_or(ForProfitTreasuryError::InsufficientBalance)?;
 
-        self.total_spent = self.total_spent.checked_add(tribute)
+        self.total_spent = self
+            .total_spent
+            .checked_add(tribute)
             .ok_or(ForProfitTreasuryError::Overflow)?;
 
-        self.total_tribute_paid = self.total_tribute_paid.checked_add(tribute)
+        self.total_tribute_paid = self
+            .total_tribute_paid
+            .checked_add(tribute)
             .ok_or(ForProfitTreasuryError::Overflow)?;
 
         // Mark tribute as paid
@@ -529,14 +542,20 @@ impl ForProfitTreasury {
         };
 
         self.spending_records.insert(spending_id, record);
-        self.next_spending_id = self.next_spending_id.checked_add(1)
+        self.next_spending_id = self
+            .next_spending_id
+            .checked_add(1)
             .ok_or(ForProfitTreasuryError::Overflow)?;
 
         // Update balance
-        self.balance = self.balance.checked_sub(amount)
+        self.balance = self
+            .balance
+            .checked_sub(amount)
             .ok_or(ForProfitTreasuryError::InsufficientBalance)?;
 
-        self.total_spent = self.total_spent.checked_add(amount)
+        self.total_spent = self
+            .total_spent
+            .checked_add(amount)
             .ok_or(ForProfitTreasuryError::Overflow)?;
 
         Ok(spending_id)
@@ -601,7 +620,11 @@ impl ForProfitTreasury {
     // ========================================================================
 
     /// Freeze/unfreeze the treasury (emergency only)
-    pub fn set_frozen(&mut self, frozen: bool, caller: [u8; 32]) -> Result<(), ForProfitTreasuryError> {
+    pub fn set_frozen(
+        &mut self,
+        frozen: bool,
+        caller: [u8; 32],
+    ) -> Result<(), ForProfitTreasuryError> {
         if !self.initialized {
             return Err(ForProfitTreasuryError::NotInitialized);
         }

@@ -8,19 +8,9 @@
 //! - Cross-module integration tests for end-to-end observer outputs
 
 use lib_consensus::observer::{
-    encode_height_states,
-    encode_round_states,
-    EncodedConsensusPhase,
-    EncodedConsensusState,
-    ExecutionStatus,
-    ParsedConsensusEvent,
-    ParsedConsensusPhase,
-    ParsedHeightTrajectory,
-    ParsedPhaseTrajectory,
-    ParsedRoundTrajectory,
-    ProposalStatus,
-    RoundClass,
-    StateEncoderConfig,
+    encode_height_states, encode_round_states, EncodedConsensusPhase, EncodedConsensusState,
+    ExecutionStatus, ParsedConsensusEvent, ParsedConsensusPhase, ParsedHeightTrajectory,
+    ParsedPhaseTrajectory, ParsedRoundTrajectory, ProposalStatus, RoundClass, StateEncoderConfig,
     TimeClass,
 };
 
@@ -174,7 +164,10 @@ fn multi_round_with_divergence(height: u64) -> ParsedHeightTrajectory {
                     end_event: ParsedConsensusEvent::StepTimeout,
                     duration: 5,
                 }],
-                events: vec![ParsedConsensusEvent::EnterPropose, ParsedConsensusEvent::StepTimeout],
+                events: vec![
+                    ParsedConsensusEvent::EnterPropose,
+                    ParsedConsensusEvent::StepTimeout,
+                ],
             },
             // Round 1: Failed with equivocation
             ParsedRoundTrajectory {
@@ -241,10 +234,14 @@ fn golden_healthy_path() {
     assert!(states.iter().all(|s| s.round_class == RoundClass::R0));
 
     // Verify proposal status is Created
-    assert!(states.iter().all(|s| s.proposal_status == ProposalStatus::Created));
+    assert!(states
+        .iter()
+        .all(|s| s.proposal_status == ProposalStatus::Created));
 
     // Verify execution succeeds
-    assert!(states.iter().all(|s| s.execution_status == ExecutionStatus::ApplySucceeded));
+    assert!(states
+        .iter()
+        .all(|s| s.execution_status == ExecutionStatus::ApplySucceeded));
 
     // Verify phase sequence
     assert_eq!(states[0].phase, EncodedConsensusPhase::Propose);
@@ -280,10 +277,14 @@ fn golden_stalled_path() {
     assert_eq!(states[0].time_class, TimeClass::TimedOut);
 
     // Should have stalled phase
-    assert!(states.iter().any(|s| s.phase == EncodedConsensusPhase::Stalled));
+    assert!(states
+        .iter()
+        .any(|s| s.phase == EncodedConsensusPhase::Stalled));
 
     // Proposal status should be Missing (we had propose but timed out)
-    assert!(states.iter().any(|s| s.proposal_status == ProposalStatus::Missing));
+    assert!(states
+        .iter()
+        .any(|s| s.proposal_status == ProposalStatus::Missing));
 }
 
 /// OBSERVER-GOLDEN-4: Recovering path after stall
@@ -294,13 +295,17 @@ fn golden_recovering_path() {
     let states = encode_height_states(&height, config);
 
     // Should have recovering phase
-    assert!(states.iter().any(|s| s.phase == EncodedConsensusPhase::Recovering));
+    assert!(states
+        .iter()
+        .any(|s| s.phase == EncodedConsensusPhase::Recovering));
 
     // Round class should be R1
     assert!(states.iter().all(|s| s.round_class == RoundClass::R1));
 
     // Should eventually succeed
-    assert!(states.iter().any(|s| s.execution_status == ExecutionStatus::ApplySucceeded));
+    assert!(states
+        .iter()
+        .any(|s| s.execution_status == ExecutionStatus::ApplySucceeded));
 }
 
 /// OBSERVER-GOLDEN-5: Multi-round divergence pattern
@@ -336,7 +341,10 @@ fn replay_identical_inputs_produce_identical_outputs() {
     let states2 = encode_height_states(&height, config);
 
     // Outputs must be identical
-    assert_eq!(states1, states2, "Replay must produce identical state sequences");
+    assert_eq!(
+        states1, states2,
+        "Replay must produce identical state sequences"
+    );
 }
 
 /// OBSERVER-REPLAY-2: Round encoding is deterministic
@@ -392,13 +400,13 @@ fn replay_config_affects_output_deterministically() {
             ],
         }],
     };
-    
+
     let config1 = StateEncoderConfig {
         fallback_phase: EncodedConsensusPhase::NewRound,
         fallback_time_class: TimeClass::Early,
         step_timeout_reference: 3,
     };
-    
+
     let config2 = StateEncoderConfig {
         fallback_phase: EncodedConsensusPhase::Recovering,
         fallback_time_class: TimeClass::Late,
@@ -416,13 +424,26 @@ fn replay_config_affects_output_deterministically() {
 
     // Different configs should produce different outputs
     // (specifically the fallback_phase for Fault states)
-    assert_ne!(states1_a, states2_a, "Different configs should produce different outputs");
-    
+    assert_ne!(
+        states1_a, states2_a,
+        "Different configs should produce different outputs"
+    );
+
     // Verify the fallback phases are correctly applied
-    let fault_state1 = states1_a.iter().find(|s| s.phase == EncodedConsensusPhase::NewRound);
-    let fault_state2 = states2_a.iter().find(|s| s.phase == EncodedConsensusPhase::Recovering);
-    assert!(fault_state1.is_some(), "Config1 should map Fault to NewRound");
-    assert!(fault_state2.is_some(), "Config2 should map Fault to Recovering");
+    let fault_state1 = states1_a
+        .iter()
+        .find(|s| s.phase == EncodedConsensusPhase::NewRound);
+    let fault_state2 = states2_a
+        .iter()
+        .find(|s| s.phase == EncodedConsensusPhase::Recovering);
+    assert!(
+        fault_state1.is_some(),
+        "Config1 should map Fault to NewRound"
+    );
+    assert!(
+        fault_state2.is_some(),
+        "Config2 should map Fault to Recovering"
+    );
 }
 
 /// OBSERVER-REPLAY-4: Multiple heights processed independently
@@ -432,14 +453,19 @@ fn replay_multiple_heights_independent() {
     let config = default_config();
 
     // Encode all heights
-    let all_states: Vec<_> = heights.iter()
+    let all_states: Vec<_> = heights
+        .iter()
         .map(|h| encode_height_states(h, config))
         .collect();
 
     // Verify each height produces consistent output when re-encoded
     for (i, height) in heights.iter().enumerate() {
         let reencoded = encode_height_states(height, config);
-        assert_eq!(all_states[i], reencoded, "Height {} must be reproducible", i);
+        assert_eq!(
+            all_states[i], reencoded,
+            "Height {} must be reproducible",
+            i
+        );
     }
 }
 
@@ -503,7 +529,9 @@ fn anomaly_proposal_status_edge_cases() {
     let states = encode_height_states(&no_propose, config);
 
     // Without EnterPropose, proposal status should be Unknown
-    assert!(states.iter().all(|s| s.proposal_status == ProposalStatus::Unknown));
+    assert!(states
+        .iter()
+        .all(|s| s.proposal_status == ProposalStatus::Unknown));
 }
 
 /// OBSERVER-ANOMALY-4: Block apply failure detection
@@ -535,17 +563,19 @@ fn anomaly_block_apply_failure() {
     let states = encode_height_states(&failed_apply, config);
 
     // Should detect apply failure
-    assert!(states.iter().any(|s| s.execution_status == ExecutionStatus::ApplyFailed));
+    assert!(states
+        .iter()
+        .any(|s| s.execution_status == ExecutionStatus::ApplyFailed));
 }
 
 /// OBSERVER-ANOMALY-5: Time classification boundary conditions
 #[test]
 fn anomaly_time_classification_boundaries() {
     let test_cases = vec![
-        (0, TimeClass::Early),     // Zero duration = Early
-        (1, TimeClass::Early),     // At early cutoff = Early
-        (2, TimeClass::Mid),       // Mid range
-        (3, TimeClass::Late),      // Above mid cutoff = Late
+        (0, TimeClass::Early), // Zero duration = Early
+        (1, TimeClass::Early), // At early cutoff = Early
+        (2, TimeClass::Mid),   // Mid range
+        (3, TimeClass::Late),  // Above mid cutoff = Late
     ];
 
     for (duration, expected_class) in test_cases {
@@ -596,8 +626,7 @@ fn integration_full_pipeline() {
     assert!(states.iter().all(|s| s.height == 1000));
 
     // Should cover multiple rounds
-    let unique_rounds: std::collections::HashSet<_> = 
-        states.iter().map(|s| s.round).collect();
+    let unique_rounds: std::collections::HashSet<_> = states.iter().map(|s| s.round).collect();
     assert!(unique_rounds.len() > 1, "Should have multiple rounds");
 }
 
@@ -612,11 +641,14 @@ fn integration_serialization_roundtrip() {
     let serialized = serde_json::to_string(&states).expect("serialization failed");
 
     // Deserialize
-    let deserialized: Vec<EncodedConsensusState> = 
+    let deserialized: Vec<EncodedConsensusState> =
         serde_json::from_str(&serialized).expect("deserialization failed");
 
     // Must match original
-    assert_eq!(states, deserialized, "Serialization roundtrip must preserve state");
+    assert_eq!(
+        states, deserialized,
+        "Serialization roundtrip must preserve state"
+    );
 }
 
 /// OBSERVER-INTEGRATION-3: Multiple scenarios produce distinct signatures
@@ -638,7 +670,7 @@ fn integration_distinct_scenarios_distinct_outputs() {
     for (name, height) in &scenarios {
         let states = encode_height_states(&height, config);
         let serialized = serde_json::to_string(&states).expect("serialization failed");
-        
+
         // Each scenario should produce unique output
         assert!(
             outputs.insert(serialized.clone()),
@@ -647,7 +679,11 @@ fn integration_distinct_scenarios_distinct_outputs() {
         );
     }
 
-    assert_eq!(outputs.len(), scenarios.len(), "Each scenario should be unique");
+    assert_eq!(
+        outputs.len(),
+        scenarios.len(),
+        "Each scenario should be unique"
+    );
 }
 
 /// OBSERVER-INTEGRATION-4: Batch processing consistency
@@ -657,7 +693,8 @@ fn integration_batch_processing_consistency() {
     let config = default_config();
 
     // Process all heights
-    let batch_results: Vec<_> = heights.iter()
+    let batch_results: Vec<_> = heights
+        .iter()
         .map(|h| encode_height_states(h, config))
         .collect();
 

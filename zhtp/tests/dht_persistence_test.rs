@@ -1,7 +1,10 @@
 /// Helper: Run DHT consistency test across multiple restart cycles
 fn run_dht_consistency_across_restarts(nodes: &[(&str, [u8; 64])], cycles: usize) -> Result<()> {
     let reference_identities = create_identities_from_nodes(nodes)?;
-    let reference_node_ids: Vec<NodeId> = reference_identities.iter().map(|id| id.node_id.clone()).collect();
+    let reference_node_ids: Vec<NodeId> = reference_identities
+        .iter()
+        .map(|id| id.node_id.clone())
+        .collect();
     for cycle in 0..cycles {
         verify_restart_cycle_consistency(nodes, &reference_node_ids, cycle)?;
     }
@@ -15,7 +18,11 @@ fn run_dht_network_convergence(nodes: &[(&str, [u8; 64])]) -> Result<()> {
     discover_ring_neighbors(&mut dht_states, &identities)?;
     complete_mesh_discovery(&mut dht_states, &identities)?;
     let expected_peers = identities.len() - 1;
-    assert!(verify_dht_peer_counts(&dht_states, expected_peers), "All nodes should discover all {} peers", expected_peers);
+    assert!(
+        verify_dht_peer_counts(&dht_states, expected_peers),
+        "All nodes should discover all {} peers",
+        expected_peers
+    );
     Ok(())
 }
 
@@ -24,16 +31,26 @@ fn run_dht_persistence_metrics(nodes: &[(&str, [u8; 64])]) -> Result<()> {
     let identities_c1 = create_identities_from_nodes(nodes)?;
     let mut dht_c1 = create_dht_states(&identities_c1);
     populate_dht_full_mesh(&mut dht_c1, &identities_c1, 0)?;
-    for dht in &mut dht_c1 { dht.set_convergence_cycle(1); }
+    for dht in &mut dht_c1 {
+        dht.set_convergence_cycle(1);
+    }
     let metrics_c1: Vec<usize> = dht_c1.iter().map(|d| d.peer_count()).collect();
     let convergence_c1: Vec<u32> = dht_c1.iter().map(|d| d.get_convergence_cycle()).collect();
     let identities_c2 = create_identities_from_nodes(nodes)?;
-    assert!(verify_node_ids_match(&identities_c1, &identities_c2), "NodeIds must persist");
+    assert!(
+        verify_node_ids_match(&identities_c1, &identities_c2),
+        "NodeIds must persist"
+    );
     let mut dht_c2 = create_dht_states(&identities_c2);
     populate_dht_full_mesh(&mut dht_c2, &identities_c2, 1)?;
-    for dht in &mut dht_c2 { dht.set_convergence_cycle(2); }
+    for dht in &mut dht_c2 {
+        dht.set_convergence_cycle(2);
+    }
     let metrics_c2: Vec<usize> = dht_c2.iter().map(|d| d.peer_count()).collect();
-    assert_eq!(metrics_c1, metrics_c2, "DHT peer counts must match after restart");
+    assert_eq!(
+        metrics_c1, metrics_c2,
+        "DHT peer counts must match after restart"
+    );
     let convergence_c2: Vec<u32> = dht_c2.iter().map(|d| d.get_convergence_cycle()).collect();
     for (c1, c2) in convergence_c1.iter().zip(convergence_c2.iter()) {
         assert!(c2 > c1, "Convergence cycle must progress");
@@ -54,10 +71,10 @@ fn run_dht_persistence_metrics(nodes: &[(&str, [u8; 64])]) -> Result<()> {
 
 mod common_network_test;
 use common_network_test::{
-    create_test_identity_with_seed as create_test_identity,
-    peer_id_from_node_id, DhtEntry, DhtRoutingState,
-    create_identities_from_nodes, create_dht_states, populate_dht_full_mesh,
-    verify_node_ids_match, verify_dht_peer_counts,
+    create_dht_states, create_identities_from_nodes,
+    create_test_identity_with_seed as create_test_identity, peer_id_from_node_id,
+    populate_dht_full_mesh, verify_dht_peer_counts, verify_node_ids_match, DhtEntry,
+    DhtRoutingState,
 };
 
 use anyhow::Result;
@@ -92,7 +109,10 @@ fn test_three_node_dht_bootstrap() -> Result<()> {
     populate_dht_full_mesh(&mut dht_states, &identities, 0)?;
 
     // Phase 3: Verify DHT tables populated
-    assert!(verify_dht_peer_counts(&dht_states, 2), "All nodes should have 2 peers");
+    assert!(
+        verify_dht_peer_counts(&dht_states, 2),
+        "All nodes should have 2 peers"
+    );
 
     // Phase 4: Verify all nodes can see each other
     verify_full_mesh_connectivity(&dht_states, &identities);
@@ -101,13 +121,18 @@ fn test_three_node_dht_bootstrap() -> Result<()> {
 }
 
 /// Helper: Verify all nodes have entries for all other nodes
-fn verify_full_mesh_connectivity(dht_states: &[DhtRoutingState], identities: &[lib_identity::ZhtpIdentity]) {
+fn verify_full_mesh_connectivity(
+    dht_states: &[DhtRoutingState],
+    identities: &[lib_identity::ZhtpIdentity],
+) {
     for (i, dht) in dht_states.iter().enumerate() {
         for (j, identity) in identities.iter().enumerate() {
             if i != j {
                 assert!(
                     dht.has_peer(&identity.node_id),
-                    "Node {} should know about Node {}", i, j
+                    "Node {} should know about Node {}",
+                    i,
+                    j
                 );
             }
         }
@@ -152,13 +177,29 @@ fn test_dht_persistence_single_node_restart() -> Result<()> {
     dht_alice_after.set_convergence_cycle(2);
 
     // Verify Alice recovered her routing table
-    assert_eq!(dht_alice_after.peer_count(), 2, "Alice should recover 2 peers");
-    assert!(dht_alice_after.has_peer(&identities_before[1].node_id), "Alice should recover Bob's entry");
-    assert!(dht_alice_after.has_peer(&identities_before[2].node_id), "Alice should recover Charlie's entry");
+    assert_eq!(
+        dht_alice_after.peer_count(),
+        2,
+        "Alice should recover 2 peers"
+    );
+    assert!(
+        dht_alice_after.has_peer(&identities_before[1].node_id),
+        "Alice should recover Bob's entry"
+    );
+    assert!(
+        dht_alice_after.has_peer(&identities_before[2].node_id),
+        "Alice should recover Charlie's entry"
+    );
 
     // Verify Bob and Charlie still have Alice
-    assert!(dht_before[1].has_peer(&identities_before[0].node_id), "Bob should still have Alice's entry");
-    assert!(dht_before[2].has_peer(&identities_before[0].node_id), "Charlie should still have Alice's entry");
+    assert!(
+        dht_before[1].has_peer(&identities_before[0].node_id),
+        "Bob should still have Alice's entry"
+    );
+    assert!(
+        dht_before[2].has_peer(&identities_before[0].node_id),
+        "Charlie should still have Alice's entry"
+    );
 
     Ok(())
 }
@@ -201,11 +242,17 @@ fn test_dht_persistence_full_network_restart() -> Result<()> {
     for dht in &mut dht_cycle_0 {
         dht.set_convergence_cycle(1);
     }
-    assert!(verify_dht_peer_counts(&dht_cycle_0, 2), "All nodes should have 2 peers in cycle 0");
+    assert!(
+        verify_dht_peer_counts(&dht_cycle_0, 2),
+        "All nodes should have 2 peers in cycle 0"
+    );
 
     // Phase 2: Restart all nodes
     let identities_after = create_identities_from_nodes(&nodes)?;
-    assert!(verify_node_ids_match(&identities_before, &identities_after), "NodeIds must survive restart");
+    assert!(
+        verify_node_ids_match(&identities_before, &identities_after),
+        "NodeIds must survive restart"
+    );
 
     // Phase 3: Rebuild DHT tables after restart
     let mut dht_cycle_1 = create_dht_states(&identities_after);
@@ -215,8 +262,14 @@ fn test_dht_persistence_full_network_restart() -> Result<()> {
     }
 
     // Verify convergence
-    assert!(verify_dht_peer_counts(&dht_cycle_1, 2), "All nodes should repopulate 2 peers after restart");
-    assert!(dht_cycle_1.iter().all(|d| d.get_convergence_cycle() == 2), "All nodes should be at cycle 2");
+    assert!(
+        verify_dht_peer_counts(&dht_cycle_1, 2),
+        "All nodes should repopulate 2 peers after restart"
+    );
+    assert!(
+        dht_cycle_1.iter().all(|d| d.get_convergence_cycle() == 2),
+        "All nodes should be at cycle 2"
+    );
 
     Ok(())
 }
@@ -229,10 +282,7 @@ fn test_dht_persistence_full_network_restart() -> Result<()> {
 /// - Peer entries never change across restarts
 #[test]
 fn test_dht_consistency_across_multiple_restart_cycles() -> Result<()> {
-    let nodes = [
-        ("alice-dht-004", [0xAA; 64]),
-        ("bob-dht-004", [0xBB; 64]),
-    ];
+    let nodes = [("alice-dht-004", [0xAA; 64]), ("bob-dht-004", [0xBB; 64])];
     run_dht_consistency_across_restarts(&nodes, 3)
 }
 
@@ -243,12 +293,13 @@ fn verify_restart_cycle_consistency(
     cycle: usize,
 ) -> Result<()> {
     let identities = create_identities_from_nodes(nodes)?;
-    
+
     // Verify NodeIds match reference
     for (i, identity) in identities.iter().enumerate() {
         assert_eq!(
             identity.node_id, reference_node_ids[i],
-            "Node {} NodeId must be consistent in cycle {}", i, cycle
+            "Node {} NodeId must be consistent in cycle {}",
+            i, cycle
         );
     }
 
@@ -258,13 +309,19 @@ fn verify_restart_cycle_consistency(
 
     // Verify all peers are present
     for (i, dht) in dht_states.iter().enumerate() {
-        let expected_peers: Vec<&NodeId> = reference_node_ids.iter()
+        let expected_peers: Vec<&NodeId> = reference_node_ids
+            .iter()
             .enumerate()
             .filter(|(j, _)| *j != i)
             .map(|(_, id)| id)
             .collect();
         for peer_id in expected_peers {
-            assert!(dht.has_peer(peer_id), "Node {} should have peer in cycle {}", i, cycle);
+            assert!(
+                dht.has_peer(peer_id),
+                "Node {} should have peer in cycle {}",
+                i,
+                cycle
+            );
         }
     }
     Ok(())

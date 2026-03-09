@@ -41,13 +41,19 @@ fn extract_domain(host: &str, config: &GatewayTlsConfig) -> Option<String> {
     if !config.gateway_suffix.is_empty() {
         if let Some(without_suffix) = host.strip_suffix(&config.gateway_suffix) {
             if without_suffix.ends_with(".zhtp") {
-                debug!("Extracted .zhtp domain from gateway suffix: {}", without_suffix);
+                debug!(
+                    "Extracted .zhtp domain from gateway suffix: {}",
+                    without_suffix
+                );
                 return Some(without_suffix.to_string());
             }
             if without_suffix.ends_with(".sov") || without_suffix.contains(".sov.") {
                 if let Some(sov_idx) = without_suffix.rfind(".sov") {
                     if sov_idx + 4 == without_suffix.len() {
-                        debug!("Extracted .sov domain from gateway suffix: {}", without_suffix);
+                        debug!(
+                            "Extracted .sov domain from gateway suffix: {}",
+                            without_suffix
+                        );
                         return Some(without_suffix.to_string());
                     }
                 }
@@ -77,7 +83,10 @@ fn validate_domain(domain: &str) -> bool {
     }
 
     // Only allow alphanumeric, dots, and hyphens
-    if !domain.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') {
+    if !domain
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
         return false;
     }
 
@@ -121,17 +130,15 @@ pub async fn gateway_handler(
 </html>"#,
                     state.config.gateway_suffix
                 ),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
     // Validate domain
     if !validate_domain(&domain) {
         warn!("Invalid domain: {}", domain);
-        return (
-            StatusCode::BAD_REQUEST,
-            "Invalid domain name",
-        ).into_response();
+        return (StatusCode::BAD_REQUEST, "Invalid domain name").into_response();
     }
 
     // Get path from URI
@@ -197,7 +204,8 @@ pub async fn gateway_handler(
 </html>"#,
                     path, domain, e
                 ),
-            ).into_response()
+            )
+                .into_response()
         }
     }
 }
@@ -212,9 +220,18 @@ pub async fn redirect_handler(
 
     // Build redirect URL
     let redirect_url = if https_port == 443 {
-        format!("https://{}{}", host.split(':').next().unwrap_or(&host), uri.path())
+        format!(
+            "https://{}{}",
+            host.split(':').next().unwrap_or(&host),
+            uri.path()
+        )
     } else {
-        format!("https://{}:{}{}", host.split(':').next().unwrap_or(&host), https_port, uri.path())
+        format!(
+            "https://{}:{}{}",
+            host.split(':').next().unwrap_or(&host),
+            https_port,
+            uri.path()
+        )
     };
 
     (
@@ -231,9 +248,7 @@ pub async fn health_handler() -> impl IntoResponse {
 
 /// Gateway info endpoint (returns JSON)
 /// Note: HSTS header is added by middleware in server.rs
-pub async fn info_handler(
-    State(state): State<GatewayState>,
-) -> impl IntoResponse {
+pub async fn info_handler(State(state): State<GatewayState>) -> impl IntoResponse {
     let info = serde_json::json!({
         "service": "web4-gateway",
         "version": env!("CARGO_PKG_VERSION"),

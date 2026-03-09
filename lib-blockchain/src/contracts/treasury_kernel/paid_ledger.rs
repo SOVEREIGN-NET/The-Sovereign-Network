@@ -217,7 +217,14 @@ mod tests {
 
         // First payment succeeds
         ledger
-            .record_payment(1, &test_assignment_id(10), 50_000, test_hash(1), 2, test_tx_id(1))
+            .record_payment(
+                1,
+                &test_assignment_id(10),
+                50_000,
+                test_hash(1),
+                2,
+                test_tx_id(1),
+            )
             .unwrap();
 
         // Second payment for same epoch/assignment fails
@@ -239,7 +246,14 @@ mod tests {
 
         // Epoch 1
         ledger
-            .record_payment(1, &test_assignment_id(10), 50_000, test_hash(1), 2, test_tx_id(1))
+            .record_payment(
+                1,
+                &test_assignment_id(10),
+                50_000,
+                test_hash(1),
+                2,
+                test_tx_id(1),
+            )
             .unwrap();
 
         // Epoch 2 - same assignment, different epoch - should succeed
@@ -262,7 +276,14 @@ mod tests {
 
         // Alice
         ledger
-            .record_payment(1, &test_assignment_id(10), 50_000, test_hash(1), 2, test_tx_id(1))
+            .record_payment(
+                1,
+                &test_assignment_id(10),
+                50_000,
+                test_hash(1),
+                2,
+                test_tx_id(1),
+            )
             .unwrap();
 
         // Bob - same epoch, different assignment - should succeed
@@ -284,7 +305,14 @@ mod tests {
         let mut ledger = PaidLedger::new();
 
         ledger
-            .record_payment(1, &test_assignment_id(10), 50_000, test_hash(1), 2, test_tx_id(1))
+            .record_payment(
+                1,
+                &test_assignment_id(10),
+                50_000,
+                test_hash(1),
+                2,
+                test_tx_id(1),
+            )
             .unwrap();
 
         let record = ledger.get_payment(1, &test_assignment_id(10)).unwrap();
@@ -306,16 +334,40 @@ mod tests {
 
         // Multiple epochs for same assignment
         ledger
-            .record_payment(1, &test_assignment_id(10), 50_000, test_hash(1), 2, test_tx_id(1))
+            .record_payment(
+                1,
+                &test_assignment_id(10),
+                50_000,
+                test_hash(1),
+                2,
+                test_tx_id(1),
+            )
             .unwrap();
         ledger
-            .record_payment(2, &test_assignment_id(10), 60_000, test_hash(2), 3, test_tx_id(2))
+            .record_payment(
+                2,
+                &test_assignment_id(10),
+                60_000,
+                test_hash(2),
+                3,
+                test_tx_id(2),
+            )
             .unwrap();
         ledger
-            .record_payment(3, &test_assignment_id(10), 70_000, test_hash(3), 4, test_tx_id(3))
+            .record_payment(
+                3,
+                &test_assignment_id(10),
+                70_000,
+                test_hash(3),
+                4,
+                test_tx_id(3),
+            )
             .unwrap();
 
-        assert_eq!(ledger.total_paid_to_assignment(&test_assignment_id(10)), 180_000);
+        assert_eq!(
+            ledger.total_paid_to_assignment(&test_assignment_id(10)),
+            180_000
+        );
     }
 
     #[test]
@@ -324,13 +376,34 @@ mod tests {
 
         // Multiple assignments in epoch 1
         ledger
-            .record_payment(1, &test_assignment_id(10), 50_000, test_hash(1), 2, test_tx_id(1))
+            .record_payment(
+                1,
+                &test_assignment_id(10),
+                50_000,
+                test_hash(1),
+                2,
+                test_tx_id(1),
+            )
             .unwrap();
         ledger
-            .record_payment(1, &test_assignment_id(11), 60_000, test_hash(2), 2, test_tx_id(2))
+            .record_payment(
+                1,
+                &test_assignment_id(11),
+                60_000,
+                test_hash(2),
+                2,
+                test_tx_id(2),
+            )
             .unwrap();
         ledger
-            .record_payment(2, &test_assignment_id(10), 70_000, test_hash(3), 3, test_tx_id(3))
+            .record_payment(
+                2,
+                &test_assignment_id(10),
+                70_000,
+                test_hash(3),
+                3,
+                test_tx_id(3),
+            )
             .unwrap();
 
         let epoch1_payments = ledger.get_payments_for_epoch(1);
@@ -342,7 +415,14 @@ mod tests {
         let mut ledger = PaidLedger::new();
 
         ledger
-            .record_payment(1, &test_assignment_id(10), 50_000, test_hash(1), 2, test_tx_id(1))
+            .record_payment(
+                1,
+                &test_assignment_id(10),
+                50_000,
+                test_hash(1),
+                2,
+                test_tx_id(1),
+            )
             .unwrap();
 
         // Correct hash

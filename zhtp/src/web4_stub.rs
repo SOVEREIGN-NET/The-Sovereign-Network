@@ -9,10 +9,10 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
 use lib_crypto::KeyPair;
-use lib_proofs::ZeroKnowledgeProof;
 use lib_identity::ZhtpIdentity;
-use lib_storage::dht::transport::{DhtTransport, PeerId};
 use lib_network::web4::DomainRegistry;
+use lib_proofs::ZeroKnowledgeProof;
+use lib_storage::dht::transport::{DhtTransport, PeerId};
 
 // ----------------------------- Trust -----------------------------
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -320,7 +320,10 @@ impl StubDomainRegistry {
         });
 
         let mut records = self.domain_records.write().await;
-        records.insert(record["domain"].as_str().unwrap_or_default().to_string(), record.clone());
+        records.insert(
+            record["domain"].as_str().unwrap_or_default().to_string(),
+            record.clone(),
+        );
 
         let mut history = self.history.write().await;
         history.insert(
@@ -391,7 +394,10 @@ impl StubDomainRegistry {
             return Ok(DomainStatusResponse {
                 found: true,
                 status: "active".to_string(),
-                owner_did: record.get("owner").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                owner_did: record
+                    .get("owner")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
                 updated_at: record.get("updated_at").and_then(|v| v.as_u64()),
                 current_manifest_cid: record
                     .get("current_manifest_cid")
@@ -417,10 +423,7 @@ impl StubDomainRegistry {
         _limit: usize,
     ) -> Result<DomainHistoryResponse> {
         let history = self.history.read().await;
-        let versions = history
-            .get(_domain)
-            .cloned()
-            .unwrap_or_default();
+        let versions = history.get(_domain).cloned().unwrap_or_default();
 
         let limited = if _limit == 0 || versions.len() <= _limit {
             versions.clone()
@@ -447,7 +450,10 @@ impl StubDomainRegistry {
         Ok(domains)
     }
 
-    pub async fn update_domain(&self, _req: DomainUpdateRequest) -> Result<DomainRegistrationResponse> {
+    pub async fn update_domain(
+        &self,
+        _req: DomainUpdateRequest,
+    ) -> Result<DomainRegistrationResponse> {
         let mut records = self.domain_records.write().await;
         if let Some(record) = records.get_mut(&_req.domain) {
             let current_cid = record
@@ -474,7 +480,8 @@ impl StubDomainRegistry {
                 .as_secs();
             let new_version = record.get("version").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
 
-            record["current_manifest_cid"] = serde_json::Value::String(_req.new_manifest_cid.clone());
+            record["current_manifest_cid"] =
+                serde_json::Value::String(_req.new_manifest_cid.clone());
             record["version"] = serde_json::Value::Number(new_version.into());
             record["updated_at"] = serde_json::Value::Number(now.into());
 
@@ -561,7 +568,12 @@ impl StubDomainRegistry {
         }))
     }
 
-    pub async fn rollback_domain(&self, domain: &str, version: u64, _owner: &str) -> Result<DomainRegistrationResponse> {
+    pub async fn rollback_domain(
+        &self,
+        domain: &str,
+        version: u64,
+        _owner: &str,
+    ) -> Result<DomainRegistrationResponse> {
         let history = self.history.read().await;
         let manifest_cid = history
             .get(domain)
@@ -641,7 +653,9 @@ pub async fn initialize_web4_system_with_storage(
 pub struct ZdnsResolver;
 
 impl ZdnsResolver {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub fn is_valid_domain(domain: &str) -> bool {
         if domain.is_empty() || domain.len() > 253 {
@@ -713,7 +727,10 @@ impl std::fmt::Debug for Web4ContentService {
 
 impl Web4ContentService {
     pub fn new(registry: Arc<DomainRegistry>) -> Self {
-        Self { _registry: registry, _zdns: None }
+        Self {
+            _registry: registry,
+            _zdns: None,
+        }
     }
 
     pub fn with_zdns(registry: Arc<DomainRegistry>, zdns_resolver: Arc<ZdnsResolver>) -> Self {
@@ -812,7 +829,11 @@ impl Web4Client {
         Ok(Vec::new())
     }
 
-    pub async fn register_domain(&mut self, domain: &str, manifest_cid: &str) -> Result<serde_json::Value> {
+    pub async fn register_domain(
+        &mut self,
+        domain: &str,
+        manifest_cid: &str,
+    ) -> Result<serde_json::Value> {
         Ok(serde_json::json!({
             "domain": domain,
             "new_version": 1,
@@ -821,7 +842,12 @@ impl Web4Client {
         }))
     }
 
-    pub async fn update_domain(&mut self, domain: &str, manifest_cid: &str, previous_cid: &str) -> Result<serde_json::Value> {
+    pub async fn update_domain(
+        &mut self,
+        domain: &str,
+        manifest_cid: &str,
+        previous_cid: &str,
+    ) -> Result<serde_json::Value> {
         Ok(serde_json::json!({
             "domain": domain,
             "new_version": 2,
@@ -830,7 +856,11 @@ impl Web4Client {
         }))
     }
 
-    pub async fn rollback_domain(&mut self, domain: &str, to_version: u64) -> Result<serde_json::Value> {
+    pub async fn rollback_domain(
+        &mut self,
+        domain: &str,
+        to_version: u64,
+    ) -> Result<serde_json::Value> {
         Ok(serde_json::json!({
             "domain": domain,
             "rolled_back_to": to_version
@@ -881,7 +911,11 @@ impl ZhtpClient {
         self.inner.peer_did()
     }
 
-    pub async fn post_json<T: Serialize + ?Sized>(&mut self, _path: &str, _body: &T) -> Result<ZhtpClientResponse> {
+    pub async fn post_json<T: Serialize + ?Sized>(
+        &mut self,
+        _path: &str,
+        _body: &T,
+    ) -> Result<ZhtpClientResponse> {
         let body = serde_json::to_vec(&serde_json::json!({
             "verified": true,
             "verification_score": 1.0,

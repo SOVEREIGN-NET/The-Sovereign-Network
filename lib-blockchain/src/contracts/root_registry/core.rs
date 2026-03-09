@@ -13,10 +13,10 @@ use std::collections::HashMap;
 use super::delegation_tree::DelegationTree;
 use super::namespace_policy::NamespacePolicy;
 use super::types::{
-    hash_name, normalize_name, BlockHeight, CustodianId, DaoId, EffectiveStatus,
+    hash_name, normalize_name, timing, BlockHeight, CustodianId, DaoId, EffectiveStatus,
     LegacyDomainRecord, LifecycleFields, LifecycleParams, NameClass, NameClassification, NameHash,
     NameStatus, PublicKey, ReasonCode, RevokedRecord, VerificationLevel, VerificationProof,
-    WelfareSector, ZoneController, timing,
+    WelfareSector, ZoneController,
 };
 use crate::impl_lifecycle_fields_accessors;
 
@@ -115,7 +115,9 @@ impl RootRegistry {
     /// This is the primary read method. It ensures no zombie domains by
     /// computing effective status on every access.
     pub fn get_record(&self, name_hash: &NameHash) -> Option<CoreNameRecord> {
-        self.records.get(name_hash).map(|stored| self.load_record(stored))
+        self.records
+            .get(name_hash)
+            .map(|stored| self.load_record(stored))
     }
 
     /// Get record with lazy state transition and mutation (for writes)
@@ -128,7 +130,11 @@ impl RootRegistry {
     /// 4. Persists the updated state
     ///
     /// Returns None if record doesn't exist or has been released.
-    pub fn touch(&mut self, name_hash: &NameHash, current_height: BlockHeight) -> Option<CoreNameRecord> {
+    pub fn touch(
+        &mut self,
+        name_hash: &NameHash,
+        current_height: BlockHeight,
+    ) -> Option<CoreNameRecord> {
         let stored = self.records.get(name_hash)?;
         let mut record = self.load_record(stored);
 
@@ -140,7 +146,8 @@ impl RootRegistry {
             EffectiveStatus::Released => {
                 // Commercial domain past grace - finalize release
                 record.finalize_release();
-                self.records.insert(*name_hash, CoreStoredRecord::V2(record.clone()));
+                self.records
+                    .insert(*name_hash, CoreStoredRecord::V2(record.clone()));
                 // Return None to indicate domain is no longer owned
                 return None;
             }
@@ -148,7 +155,8 @@ impl RootRegistry {
                 // Welfare/Reserved domain past grace - finalize return
                 let sector_dao = record.governance_pointer;
                 record.finalize_return_to_governance(sector_dao);
-                self.records.insert(*name_hash, CoreStoredRecord::V2(record.clone()));
+                self.records
+                    .insert(*name_hash, CoreStoredRecord::V2(record.clone()));
             }
             _ => {
                 // No state change needed
@@ -159,7 +167,11 @@ impl RootRegistry {
     }
 
     /// Get record with effective status computed (read-only, no mutation)
-    pub fn get_record_with_status(&self, name_hash: &NameHash, current_height: BlockHeight) -> Option<(CoreNameRecord, EffectiveStatus)> {
+    pub fn get_record_with_status(
+        &self,
+        name_hash: &NameHash,
+        current_height: BlockHeight,
+    ) -> Option<(CoreNameRecord, EffectiveStatus)> {
         let record = self.get_record(name_hash)?;
         let effective = record.effective_status(current_height);
         Some((record, effective))
@@ -191,10 +203,14 @@ impl RootRegistry {
 
         match classification {
             NameClass::Reserved { .. } => {
-                return Err("Reserved namespaces cannot be registered via commercial path".to_string());
+                return Err(
+                    "Reserved namespaces cannot be registered via commercial path".to_string(),
+                );
             }
             NameClass::WelfareChild { .. } => {
-                return Err("Welfare namespaces cannot be registered via commercial path".to_string());
+                return Err(
+                    "Welfare namespaces cannot be registered via commercial path".to_string(),
+                );
             }
             NameClass::DaoPrefixed { .. } => {
                 // Phase 2 (Issue #657): dao.* names are VIRTUAL and cannot be registered
@@ -206,10 +222,24 @@ impl RootRegistry {
 
         // [Phase 5] Verify identity before registration — critical security gate
         self.policy
-            .verify(&classification, verification_level, verification_proof, current_height, None)
+            .verify(
+                &classification,
+                verification_level,
+                verification_proof,
+                current_height,
+                None,
+            )
             .map_err(|e| e.to_string())?;
 
-        self.insert_record_verified(normalized, owner, classification, verification_level, current_height, duration_blocks, None)
+        self.insert_record_verified(
+            normalized,
+            owner,
+            classification,
+            verification_level,
+            current_height,
+            duration_blocks,
+            None,
+        )
     }
 
     /// Register a commercial domain without verification (for testing/migration only)
@@ -233,10 +263,14 @@ impl RootRegistry {
 
         match classification {
             NameClass::Reserved { .. } => {
-                return Err("Reserved namespaces cannot be registered via commercial path".to_string());
+                return Err(
+                    "Reserved namespaces cannot be registered via commercial path".to_string(),
+                );
             }
             NameClass::WelfareChild { .. } => {
-                return Err("Welfare namespaces cannot be registered via commercial path".to_string());
+                return Err(
+                    "Welfare namespaces cannot be registered via commercial path".to_string(),
+                );
             }
             NameClass::DaoPrefixed { .. } => {
                 return Err("dao.* names are virtual and cannot be registered. Use resolution to access governance.".to_string());
@@ -244,7 +278,14 @@ impl RootRegistry {
             NameClass::Commercial { .. } => {}
         }
 
-        self.insert_record(normalized, owner, classification, current_height, duration_blocks, None)
+        self.insert_record(
+            normalized,
+            owner,
+            classification,
+            current_height,
+            duration_blocks,
+            None,
+        )
     }
 
     /// Register a reserved root domain (welfare sector roots, etc.)
@@ -267,7 +308,14 @@ impl RootRegistry {
             _ => return Err("Name is not a reserved root".to_string()),
         }
 
-        let name_hash = self.insert_record(normalized, owner, classification, current_height, duration_blocks, dao_id)?;
+        let name_hash = self.insert_record(
+            normalized,
+            owner,
+            classification,
+            current_height,
+            duration_blocks,
+            dao_id,
+        )?;
 
         if let Some(sector) = welfare_root_sector(name) {
             if let Some(dao_id) = dao_id {
@@ -298,7 +346,8 @@ impl RootRegistry {
 
         let mut updated = record.clone();
         updated.zone_controller = Some(controller);
-        self.records.insert(*name_hash, CoreStoredRecord::V2(updated));
+        self.records
+            .insert(*name_hash, CoreStoredRecord::V2(updated));
         Ok(())
     }
 
@@ -340,7 +389,14 @@ impl RootRegistry {
         }
 
         let classification = self.policy.classify_name(&normalized);
-        self.insert_record(normalized, owner, classification, current_height, duration_blocks, parent.governance_pointer)
+        self.insert_record(
+            normalized,
+            owner,
+            classification,
+            current_height,
+            duration_blocks,
+            parent.governance_pointer,
+        )
     }
 
     /// Mark a domain as expired (manual expiration)
@@ -350,27 +406,32 @@ impl RootRegistry {
     /// automatically transition expired domains. This method is kept for
     /// backward compatibility and explicit expiration.
     #[deprecated(note = "Prefer touch() for automatic lifecycle transitions")]
-    pub fn expire_name(&mut self, name_hash: &NameHash, current_height: BlockHeight) -> Result<(), String> {
+    pub fn expire_name(
+        &mut self,
+        name_hash: &NameHash,
+        current_height: BlockHeight,
+    ) -> Result<(), String> {
         let record = self
             .get_record(name_hash)
             .ok_or_else(|| "Name record not found".to_string())?;
-        
+
         // Check if already past expiry
         if current_height <= record.expires_at_height {
             return Err("Domain has not yet expired".to_string());
         }
-        
+
         let mut updated = record.clone();
         #[allow(deprecated)]
         {
             // Note: NameStatus::Expired.grace_ends expects Timestamp (legacy)
             // but Phase 6 uses block heights. Use deprecated grace_ends_at or 0.
             // Authoritative grace period is in renew_grace_until_height field.
-            updated.status = NameStatus::Expired { 
-                grace_ends: updated.grace_ends_at.unwrap_or(0)
+            updated.status = NameStatus::Expired {
+                grace_ends: updated.grace_ends_at.unwrap_or(0),
             };
         }
-        self.records.insert(*name_hash, CoreStoredRecord::V2(updated));
+        self.records
+            .insert(*name_hash, CoreStoredRecord::V2(updated));
         self.suspend_children(name_hash);
         Ok(())
     }
@@ -424,7 +485,8 @@ impl RootRegistry {
         // Apply the renewal
         let mut updated = record.clone();
         updated.extend_registration(duration_blocks, &self.lifecycle_params, current_height);
-        self.records.insert(*name_hash, CoreStoredRecord::V2(updated));
+        self.records
+            .insert(*name_hash, CoreStoredRecord::V2(updated));
 
         Ok(required_fee)
     }
@@ -442,11 +504,16 @@ impl RootRegistry {
     /// Number of domains transitioned
     pub fn sweep_expired(&mut self, current_height: BlockHeight, limit: u32) -> u32 {
         // Collect domains that need finalization with their expiry heights
-        let mut candidates: Vec<(NameHash, BlockHeight)> = self.records.iter()
+        let mut candidates: Vec<(NameHash, BlockHeight)> = self
+            .records
+            .iter()
             .filter_map(|(hash, stored)| {
                 let record = self.load_record(stored);
                 let effective = record.effective_status(current_height);
-                if matches!(effective, EffectiveStatus::Released | EffectiveStatus::ReturnedToGovernance) {
+                if matches!(
+                    effective,
+                    EffectiveStatus::Released | EffectiveStatus::ReturnedToGovernance
+                ) {
                     Some((*hash, record.renew_grace_until_height))
                 } else {
                     None
@@ -537,7 +604,10 @@ impl RootRegistry {
         // Verify it's classified as a welfare child
         let classification = self.policy.classify_name(&normalized);
         match &classification {
-            NameClass::WelfareChild { sector: class_sector, .. } => {
+            NameClass::WelfareChild {
+                sector: class_sector,
+                ..
+            } => {
                 if class_sector != &sector {
                     return Err("Classification sector mismatch".to_string());
                 }
@@ -571,10 +641,10 @@ impl RootRegistry {
 
         // Phase 6: Calculate lifecycle heights
         let expires_at_height = current_height.saturating_add(duration_blocks);
-        let renewal_window_start_height = expires_at_height
-            .saturating_sub(self.lifecycle_params.renewal_window_blocks);
-        let renew_grace_until_height = expires_at_height
-            .saturating_add(self.lifecycle_params.expiry_grace_blocks);
+        let renewal_window_start_height =
+            expires_at_height.saturating_sub(self.lifecycle_params.renewal_window_blocks);
+        let renew_grace_until_height =
+            expires_at_height.saturating_add(self.lifecycle_params.expiry_grace_blocks);
 
         #[allow(deprecated)]
         let record = CoreNameRecord {
@@ -641,10 +711,10 @@ impl RootRegistry {
         let depth = parent_hash.map(|_| 1u8).unwrap_or(0);
 
         let expires_at_height = current_height.saturating_add(duration_blocks);
-        let renewal_window_start_height = expires_at_height
-            .saturating_sub(self.lifecycle_params.renewal_window_blocks);
-        let renew_grace_until_height = expires_at_height
-            .saturating_add(self.lifecycle_params.expiry_grace_blocks);
+        let renewal_window_start_height =
+            expires_at_height.saturating_sub(self.lifecycle_params.renewal_window_blocks);
+        let renew_grace_until_height =
+            expires_at_height.saturating_add(self.lifecycle_params.expiry_grace_blocks);
 
         #[allow(deprecated)]
         let record = CoreNameRecord {
@@ -694,10 +764,10 @@ impl RootRegistry {
 
         // Phase 6: Calculate lifecycle heights
         let expires_at_height = current_height.saturating_add(duration_blocks);
-        let renewal_window_start_height = expires_at_height
-            .saturating_sub(self.lifecycle_params.renewal_window_blocks);
-        let renew_grace_until_height = expires_at_height
-            .saturating_add(self.lifecycle_params.expiry_grace_blocks);
+        let renewal_window_start_height =
+            expires_at_height.saturating_sub(self.lifecycle_params.renewal_window_blocks);
+        let renew_grace_until_height =
+            expires_at_height.saturating_add(self.lifecycle_params.expiry_grace_blocks);
 
         #[allow(deprecated)]
         let record = CoreNameRecord {
@@ -876,9 +946,7 @@ impl CoreNameRecord {
         // Set custodian based on classification
         match &self.classification {
             NameClass::WelfareChild { .. } => {
-                self.custodian = Some(CustodianId::SectorDao(
-                    sector_dao_id.unwrap_or([0u8; 32]),
-                ));
+                self.custodian = Some(CustodianId::SectorDao(sector_dao_id.unwrap_or([0u8; 32])));
             }
             _ => {
                 self.custodian = Some(CustodianId::RootGovernance);

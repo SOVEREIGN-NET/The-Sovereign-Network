@@ -1,21 +1,21 @@
 //! Native Binary DHT Protocol
-//! 
+//!
 //! Secure, efficient binary protocol for DHT operations over UDP mesh networking.
 //! This replaces JavaScript-based DHT operations with native Rust binary packets.
 
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
+use anyhow::{anyhow, Result};
+use lib_crypto::post_quantum::dilithium::{dilithium2_keypair, dilithium_sign, dilithium_verify};
 use lib_crypto::{Hash, PostQuantumSignature, PublicKey, SignatureAlgorithm};
-use lib_crypto::post_quantum::dilithium::{dilithium_sign, dilithium_verify, dilithium2_keypair};
 use lib_identity::ZhtpIdentity;
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
-use tracing::{info, warn, debug};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{debug, info, warn};
 
 // Import ZHTP protocol types for secure relay
-use crate::protocols::zhtp_auth::{NodeCapabilities};
-use crate::protocols::zhtp_encryption::{ZhtpEncryptedMessage};
+use crate::protocols::zhtp_auth::NodeCapabilities;
+use crate::protocols::zhtp_encryption::ZhtpEncryptedMessage;
 
 /// DHT Protocol Version
 pub const DHT_PROTOCOL_VERSION: u16 = 1;
@@ -406,13 +406,13 @@ impl DhtProtocolHandler {
     /// Initialize DHT protocol handler with UDP socket
     pub async fn initialize(&mut self, bind_addr: SocketAddr) -> Result<()> {
         info!("Initializing DHT binary protocol on {}", bind_addr);
-        
+
         let socket = Arc::new(tokio::net::UdpSocket::bind(bind_addr).await?);
         self.socket = Some(socket.clone());
-        
+
         // Start packet receiver with shared socket
         self.start_packet_receiver(socket).await?;
-        
+
         info!(" DHT binary protocol initialized");
         Ok(())
     }
@@ -420,29 +420,31 @@ impl DhtProtocolHandler {
     /// Start the packet receiver loop
     async fn start_packet_receiver(&mut self, socket: Arc<tokio::net::UdpSocket>) -> Result<()> {
         let identity = self.identity.clone();
-        
+
         // Share socket with background receiver task
         tokio::spawn(async move {
             Self::packet_receiver_loop(socket, identity).await;
         });
-        
+
         Ok(())
     }
 
     /// Packet receiver loop (runs in background)
     async fn packet_receiver_loop(socket: Arc<tokio::net::UdpSocket>, identity: ZhtpIdentity) {
         let mut buffer = [0u8; MAX_DHT_PACKET_SIZE];
-        
+
         info!(" DHT packet receiver started");
-        
+
         loop {
             match socket.recv_from(&mut buffer).await {
                 Ok((len, addr)) => {
                     debug!(" DHT packet from {}: {} bytes", addr, len);
-                    
+
                     match Self::parse_dht_packet(&buffer[..len]) {
                         Ok(packet) => {
-                            if let Err(e) = Self::handle_received_packet(packet, addr, &socket, &identity).await {
+                            if let Err(e) =
+                                Self::handle_received_packet(packet, addr, &socket, &identity).await
+                            {
                                 warn!("Failed to handle DHT packet from {}: {}", addr, e);
                             }
                         }
@@ -467,61 +469,66 @@ impl DhtProtocolHandler {
 
         // Deserialize using bincode for efficient binary format
         let packet: DhtPacket = bincode::deserialize(data)?;
-        
+
         // Verify protocol version
         if packet.header.version != DHT_PROTOCOL_VERSION {
-            return Err(anyhow!("Unsupported DHT protocol version: {}", packet.header.version));
+            return Err(anyhow!(
+                "Unsupported DHT protocol version: {}",
+                packet.header.version
+            ));
         }
 
         // Verify packet integrity (signature check would go here)
-        
+
         Ok(packet)
     }
 
     /// Handle received DHT packet (with cryptographic verification)
     async fn handle_received_packet(
-        packet: DhtPacket, 
-        addr: SocketAddr, 
+        packet: DhtPacket,
+        addr: SocketAddr,
         socket: &tokio::net::UdpSocket,
-        identity: &ZhtpIdentity
+        identity: &ZhtpIdentity,
     ) -> Result<()> {
         debug!(" Handling DHT {:?} from {}", packet.header.operation, addr);
 
         // CRYPTOGRAPHIC VERIFICATION: Verify packet signature before processing
-        let signature_valid = match Self::verify_packet_signature(&packet.header, &packet.payload, &packet.signature) {
-            Ok(valid) => {
-                if valid {
-                    debug!(" DHT packet signature verified from {}", addr);
-                    true
-                } else {
-                    warn!(" DHT packet signature verification failed from {}", addr);
+        let signature_valid =
+            match Self::verify_packet_signature(&packet.header, &packet.payload, &packet.signature)
+            {
+                Ok(valid) => {
+                    if valid {
+                        debug!(" DHT packet signature verified from {}", addr);
+                        true
+                    } else {
+                        warn!(" DHT packet signature verification failed from {}", addr);
+                        false
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        " DHT packet signature verification error from {}: {}",
+                        addr, e
+                    );
                     false
                 }
-            }
-            Err(e) => {
-                warn!(" DHT packet signature verification error from {}: {}", addr, e);
-                false
-            }
-        };
+            };
 
         // Only process packets with cryptographically valid signatures
         if !signature_valid {
-            return Err(anyhow!("DHT packet signature verification failed from {}", addr));
+            return Err(anyhow!(
+                "DHT packet signature verification failed from {}",
+                addr
+            ));
         }
 
         match packet.header.operation {
-            DhtOperation::Query => {
-                Self::handle_query_packet(packet, addr, socket, identity).await
-            }
-            DhtOperation::Store => {
-                Self::handle_store_packet(packet, addr, socket, identity).await
-            }
+            DhtOperation::Query => Self::handle_query_packet(packet, addr, socket, identity).await,
+            DhtOperation::Store => Self::handle_store_packet(packet, addr, socket, identity).await,
             DhtOperation::PeerDiscovery => {
                 Self::handle_peer_discovery_packet(packet, addr, socket, identity).await
             }
-            DhtOperation::Ping => {
-                Self::handle_ping_packet(packet, addr, socket, identity).await
-            }
+            DhtOperation::Ping => Self::handle_ping_packet(packet, addr, socket, identity).await,
             // ZHTP relay operations (handled separately in unified_server.rs)
             DhtOperation::RelayQuery | DhtOperation::RelayResponse => {
                 debug!(" ZHTP relay operation received (handled by MeshRouter)");
@@ -529,13 +536,18 @@ impl DhtProtocolHandler {
             }
             // ZHTP peer discovery operations
             DhtOperation::PeerRegister | DhtOperation::PeerQuery => {
-                debug!(" ZHTP peer discovery operation received (requires peer registry integration)");
+                debug!(
+                    " ZHTP peer discovery operation received (requires peer registry integration)"
+                );
                 Ok(())
             }
             // Responses are handled by the request matching system
-            DhtOperation::QueryResponse | DhtOperation::StoreAck | 
-            DhtOperation::PeerResponse | DhtOperation::Pong |
-            DhtOperation::PeerRegisterAck | DhtOperation::PeerQueryResponse => {
+            DhtOperation::QueryResponse
+            | DhtOperation::StoreAck
+            | DhtOperation::PeerResponse
+            | DhtOperation::Pong
+            | DhtOperation::PeerRegisterAck
+            | DhtOperation::PeerQueryResponse => {
                 debug!("📬 Response packet received (handled by request matcher)");
                 Ok(())
             }
@@ -547,24 +559,27 @@ impl DhtProtocolHandler {
         packet: DhtPacket,
         addr: SocketAddr,
         socket: &tokio::net::UdpSocket,
-        _identity: &ZhtpIdentity
+        _identity: &ZhtpIdentity,
     ) -> Result<()> {
         if let DhtPacketPayload::Query(query) = packet.payload {
-            info!(" DHT query for {}:{} from {}", query.domain, query.path, addr);
+            info!(
+                " DHT query for {}:{} from {}",
+                query.domain, query.path, addr
+            );
 
             // TODO: Implement actual content lookup in storage system
             let response_payload = DhtQueryResponsePayload {
                 content_hash: None, // Would lookup in storage
                 error: Some("Content not found".to_string()),
                 peer_suggestions: vec![], // Would query other peers
-                ttl: 300, // 5 minutes
+                ttl: 300,                 // 5 minutes
             };
 
             let response = Self::create_response_packet_with_identity(
                 packet.header,
                 DhtOperation::QueryResponse,
                 DhtPacketPayload::QueryResponse(response_payload),
-                _identity
+                _identity,
             )?;
 
             Self::send_packet(socket, &response, addr).await?;
@@ -577,11 +592,16 @@ impl DhtProtocolHandler {
         packet: DhtPacket,
         addr: SocketAddr,
         socket: &tokio::net::UdpSocket,
-        _identity: &ZhtpIdentity
+        _identity: &ZhtpIdentity,
     ) -> Result<()> {
         if let DhtPacketPayload::Store(store) = packet.payload {
-            info!(" DHT store {}:{} ({} bytes) from {}", 
-                store.domain, store.path, store.content.len(), addr);
+            info!(
+                " DHT store {}:{} ({} bytes) from {}",
+                store.domain,
+                store.path,
+                store.content.len(),
+                addr
+            );
 
             // TODO: Implement actual content storage in storage system
             let success = true; // Would attempt to store content
@@ -589,18 +609,23 @@ impl DhtProtocolHandler {
             let ack_payload = DhtStoreAckPayload {
                 content_hash: store.content_hash,
                 success,
-                error: if success { None } else { Some("Storage failed".to_string()) },
+                error: if success {
+                    None
+                } else {
+                    Some("Storage failed".to_string())
+                },
                 expires_at: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_secs() + store.duration as u64,
+                    .as_secs()
+                    + store.duration as u64,
             };
 
             let response = Self::create_response_packet_with_identity(
                 packet.header,
                 DhtOperation::StoreAck,
                 DhtPacketPayload::StoreAck(ack_payload),
-                _identity
+                _identity,
             )?;
 
             Self::send_packet(socket, &response, addr).await?;
@@ -613,10 +638,13 @@ impl DhtProtocolHandler {
         packet: DhtPacket,
         addr: SocketAddr,
         socket: &tokio::net::UdpSocket,
-        _identity: &ZhtpIdentity
+        _identity: &ZhtpIdentity,
     ) -> Result<()> {
         if let DhtPacketPayload::PeerDiscovery(discovery) = packet.payload {
-            info!(" DHT peer discovery (max: {}) from {}", discovery.max_peers, addr);
+            info!(
+                " DHT peer discovery (max: {}) from {}",
+                discovery.max_peers, addr
+            );
 
             // TODO: Implement actual peer lookup
             let peers = vec![]; // Would query peer manager
@@ -627,7 +655,7 @@ impl DhtProtocolHandler {
                 packet.header,
                 DhtOperation::PeerResponse,
                 DhtPacketPayload::PeerResponse(response_payload),
-                _identity
+                _identity,
             )?;
 
             Self::send_packet(socket, &response, addr).await?;
@@ -640,7 +668,7 @@ impl DhtProtocolHandler {
         packet: DhtPacket,
         addr: SocketAddr,
         socket: &tokio::net::UdpSocket,
-        _identity: &ZhtpIdentity
+        _identity: &ZhtpIdentity,
     ) -> Result<()> {
         info!("🏓 DHT ping from {}", addr);
 
@@ -648,7 +676,7 @@ impl DhtProtocolHandler {
             packet.header,
             DhtOperation::Pong,
             DhtPacketPayload::Pong,
-            _identity
+            _identity,
         )?;
 
         Self::send_packet(socket, &response, addr).await?;
@@ -656,10 +684,15 @@ impl DhtProtocolHandler {
     }
 
     /// Create cryptographic signature for DHT packet
-    fn sign_packet(header: &DhtPacketHeader, payload: &DhtPacketPayload, private_key: &[u8], public_key: &[u8]) -> Result<PostQuantumSignature> {
+    fn sign_packet(
+        header: &DhtPacketHeader,
+        payload: &DhtPacketPayload,
+        private_key: &[u8],
+        public_key: &[u8],
+    ) -> Result<PostQuantumSignature> {
         // Create canonical packet representation for signing
         let mut signing_data = Vec::new();
-        
+
         // Header fields
         signing_data.extend_from_slice(&header.version.to_le_bytes());
         signing_data.extend_from_slice(&bincode::serialize(&header.operation)?);
@@ -668,19 +701,19 @@ impl DhtProtocolHandler {
         signing_data.extend_from_slice(&header.target_id);
         signing_data.extend_from_slice(&header.timestamp.to_le_bytes());
         signing_data.extend_from_slice(&header.reserved);
-        
+
         // Payload data
         signing_data.extend_from_slice(&bincode::serialize(payload)?);
-        
+
         // Generate Dilithium2 signature
         let signature_bytes = dilithium_sign(&signing_data, private_key)
             .map_err(|e| anyhow!("Failed to sign DHT packet: {}", e))?;
-        
+
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         Ok(PostQuantumSignature {
             signature: signature_bytes,
             public_key: PublicKey::new(public_key.to_vec()),
@@ -690,10 +723,14 @@ impl DhtProtocolHandler {
     }
 
     /// Verify cryptographic signature for DHT packet
-    fn verify_packet_signature(header: &DhtPacketHeader, payload: &DhtPacketPayload, signature: &PostQuantumSignature) -> Result<bool> {
+    fn verify_packet_signature(
+        header: &DhtPacketHeader,
+        payload: &DhtPacketPayload,
+        signature: &PostQuantumSignature,
+    ) -> Result<bool> {
         // Reconstruct signing data
         let mut signing_data = Vec::new();
-        
+
         // Header fields (same order as signing)
         signing_data.extend_from_slice(&header.version.to_le_bytes());
         signing_data.extend_from_slice(&bincode::serialize(&header.operation)?);
@@ -702,10 +739,10 @@ impl DhtProtocolHandler {
         signing_data.extend_from_slice(&header.target_id);
         signing_data.extend_from_slice(&header.timestamp.to_le_bytes());
         signing_data.extend_from_slice(&header.reserved);
-        
+
         // Payload data
         signing_data.extend_from_slice(&bincode::serialize(payload)?);
-        
+
         // Verify based on algorithm
         match signature.algorithm {
             SignatureAlgorithm::Dilithium2 => {
@@ -715,11 +752,15 @@ impl DhtProtocolHandler {
                     // All signatures must be cryptographically valid - no placeholders allowed
                     Err(anyhow!("Empty public key not allowed"))
                 } else {
-                    dilithium_verify(&signing_data, &signature.signature, &signature.public_key.dilithium_pk)
+                    dilithium_verify(
+                        &signing_data,
+                        &signature.signature,
+                        &signature.public_key.dilithium_pk,
+                    )
                 }
-                    .map_err(|e| anyhow!("Failed to verify DHT packet signature: {}", e))
+                .map_err(|e| anyhow!("Failed to verify DHT packet signature: {}", e))
             }
-            _ => Err(anyhow!("Unsupported signature algorithm for DHT packets"))
+            _ => Err(anyhow!("Unsupported signature algorithm for DHT packets")),
         }
     }
 
@@ -728,7 +769,7 @@ impl DhtProtocolHandler {
         original_header: DhtPacketHeader,
         response_op: DhtOperation,
         response_payload: DhtPacketPayload,
-        identity: &ZhtpIdentity
+        identity: &ZhtpIdentity,
     ) -> Result<DhtPacket> {
         // Extract node ID from identity
         let node_id = {
@@ -742,9 +783,9 @@ impl DhtProtocolHandler {
             version: DHT_PROTOCOL_VERSION,
             operation: response_op,
             packet_id: original_header.packet_id, // Same ID for response matching
-            sender_id: node_id, // node ID
+            sender_id: node_id,                   // node ID
             target_id: original_header.sender_id, // Send back to requester
-            payload_length: 0, // Will be calculated during serialization
+            payload_length: 0,                    // Will be calculated during serialization
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -755,12 +796,7 @@ impl DhtProtocolHandler {
         // Generate cryptographic signature using identity's public key
         // For production, we would need proper key management
         let (temp_pk, temp_sk) = dilithium2_keypair();
-        let signature = Self::sign_packet(
-            &header, 
-            &response_payload, 
-            &temp_sk,
-            &temp_pk
-        )?;
+        let signature = Self::sign_packet(&header, &response_payload, &temp_sk, &temp_pk)?;
 
         Ok(DhtPacket {
             header,
@@ -775,18 +811,22 @@ impl DhtProtocolHandler {
     async fn send_packet(
         socket: &tokio::net::UdpSocket,
         packet: &DhtPacket,
-        addr: SocketAddr
+        addr: SocketAddr,
     ) -> Result<()> {
         let packet_data = bincode::serialize(packet)?;
-        
+
         if packet_data.len() > MAX_DHT_PACKET_SIZE {
             return Err(anyhow!("DHT packet too large: {} bytes", packet_data.len()));
         }
 
         socket.send_to(&packet_data, addr).await?;
-        debug!(" Sent DHT {:?} packet to {} ({} bytes)", 
-            packet.header.operation, addr, packet_data.len());
-        
+        debug!(
+            " Sent DHT {:?} packet to {} ({} bytes)",
+            packet.header.operation,
+            addr,
+            packet_data.len()
+        );
+
         Ok(())
     }
 
@@ -802,8 +842,16 @@ impl DhtProtocolHandler {
 /// Client API for DHT operations
 impl DhtProtocolHandler {
     /// Query DHT for content
-    pub async fn query_content(&self, domain: &str, path: &str, peer_addr: SocketAddr) -> Result<Option<Hash>> {
-        let socket = self.socket.as_ref().ok_or_else(|| anyhow!("DHT not initialized"))?;
+    pub async fn query_content(
+        &self,
+        domain: &str,
+        path: &str,
+        peer_addr: SocketAddr,
+    ) -> Result<Option<Hash>> {
+        let socket = self
+            .socket
+            .as_ref()
+            .ok_or_else(|| anyhow!("DHT not initialized"))?;
 
         let payload = DhtQueryPayload {
             domain: domain.to_string(),
@@ -811,10 +859,8 @@ impl DhtProtocolHandler {
             flags: 0,
         };
 
-        let packet = self.create_request_packet(
-            DhtOperation::Query,
-            DhtPacketPayload::Query(payload)
-        )?;
+        let packet =
+            self.create_request_packet(DhtOperation::Query, DhtPacketPayload::Query(payload))?;
 
         Self::send_packet(socket, &packet, peer_addr).await?;
 
@@ -825,13 +871,16 @@ impl DhtProtocolHandler {
 
     /// Store content in DHT
     pub async fn store_content(
-        &self, 
-        domain: &str, 
-        path: &str, 
+        &self,
+        domain: &str,
+        path: &str,
         content: Vec<u8>,
-        peer_addr: SocketAddr
+        peer_addr: SocketAddr,
     ) -> Result<bool> {
-        let socket = self.socket.as_ref().ok_or_else(|| anyhow!("DHT not initialized"))?;
+        let socket = self
+            .socket
+            .as_ref()
+            .ok_or_else(|| anyhow!("DHT not initialized"))?;
 
         let content_hash = lib_crypto::hash_blake3(&content);
 
@@ -844,10 +893,8 @@ impl DhtProtocolHandler {
             replication: 3,
         };
 
-        let packet = self.create_request_packet(
-            DhtOperation::Store,
-            DhtPacketPayload::Store(payload)
-        )?;
+        let packet =
+            self.create_request_packet(DhtOperation::Store, DhtPacketPayload::Store(payload))?;
 
         Self::send_packet(socket, &packet, peer_addr).await?;
 
@@ -856,8 +903,15 @@ impl DhtProtocolHandler {
     }
 
     /// Discover DHT peers
-    pub async fn discover_peers(&self, max_peers: u16, peer_addr: SocketAddr) -> Result<Vec<DhtPeerInfo>> {
-        let socket = self.socket.as_ref().ok_or_else(|| anyhow!("DHT not initialized"))?;
+    pub async fn discover_peers(
+        &self,
+        max_peers: u16,
+        peer_addr: SocketAddr,
+    ) -> Result<Vec<DhtPeerInfo>> {
+        let socket = self
+            .socket
+            .as_ref()
+            .ok_or_else(|| anyhow!("DHT not initialized"))?;
 
         let payload = DhtPeerDiscoveryPayload {
             max_peers,
@@ -867,7 +921,7 @@ impl DhtProtocolHandler {
 
         let packet = self.create_request_packet(
             DhtOperation::PeerDiscovery,
-            DhtPacketPayload::PeerDiscovery(payload)
+            DhtPacketPayload::PeerDiscovery(payload),
         )?;
 
         Self::send_packet(socket, &packet, peer_addr).await?;
@@ -880,7 +934,7 @@ impl DhtProtocolHandler {
     fn create_request_packet(
         &self,
         operation: DhtOperation,
-        payload: DhtPacketPayload
+        payload: DhtPacketPayload,
     ) -> Result<DhtPacket> {
         let node_id = {
             let id_bytes = self.identity.id.as_bytes();
@@ -895,7 +949,7 @@ impl DhtProtocolHandler {
             packet_id: Self::generate_packet_id(),
             sender_id: node_id,
             target_id: [0; 32], // Broadcast or would be specific peer
-            payload_length: 0, // Will be calculated during serialization
+            payload_length: 0,  // Will be calculated during serialization
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -904,14 +958,9 @@ impl DhtProtocolHandler {
         };
 
         // Generate cryptographic signature using temporary keys
-        // For production, we would use the identity's actual signing keys  
+        // For production, we would use the identity's actual signing keys
         let (temp_pk, temp_sk) = dilithium2_keypair();
-        let signature = Self::sign_packet(
-            &header, 
-            &payload, 
-            &temp_sk,
-            &temp_pk
-        )?;
+        let signature = Self::sign_packet(&header, &payload, &temp_sk, &temp_pk)?;
 
         Ok(DhtPacket {
             header,
@@ -922,28 +971,31 @@ impl DhtProtocolHandler {
 
     /// Ping a peer to check availability with proper response validation
     pub async fn ping_peer(&self, peer_addr: SocketAddr) -> Result<()> {
-        let socket = self.socket.as_ref()
+        let socket = self
+            .socket
+            .as_ref()
             .ok_or_else(|| anyhow!("DHT protocol not initialized"))?;
-        
+
         // Create ping packet
-        let ping_packet = self.create_request_packet(
-            DhtOperation::Ping,
-            DhtPacketPayload::Ping
-        )?;
-        
+        let ping_packet = self.create_request_packet(DhtOperation::Ping, DhtPacketPayload::Ping)?;
+
         // Send ping and wait for pong response (with timeout)
         let packet_data = bincode::serialize(&ping_packet)?;
-        
+
         // Send the ping
-        socket.send_to(&packet_data, peer_addr).await
+        socket
+            .send_to(&packet_data, peer_addr)
+            .await
             .map_err(|e| anyhow!("Failed to send DHT ping: {}", e))?;
-        
+
         // Wait for pong response with short timeout
         let mut buffer = [0u8; MAX_DHT_PACKET_SIZE];
         match tokio::time::timeout(
             std::time::Duration::from_millis(500), // Short timeout for responsiveness
-            socket.recv_from(&mut buffer)
-        ).await {
+            socket.recv_from(&mut buffer),
+        )
+        .await
+        {
             Ok(Ok((len, addr))) if addr == peer_addr => {
                 // Try to parse response as DHT packet
                 if let Ok(response_packet) = bincode::deserialize::<DhtPacket>(&buffer[..len]) {
@@ -954,12 +1006,8 @@ impl DhtProtocolHandler {
                 }
                 Err(anyhow!("Invalid pong response from {}", peer_addr))
             }
-            Ok(Ok(_)) => {
-                Err(anyhow!("Response from wrong address"))
-            }
-            Ok(Err(e)) => {
-                Err(anyhow!("Socket error waiting for pong: {}", e))
-            }
+            Ok(Ok(_)) => Err(anyhow!("Response from wrong address")),
+            Ok(Err(e)) => Err(anyhow!("Socket error waiting for pong: {}", e)),
             Err(_) => {
                 // Timeout is expected for closed ports
                 Err(anyhow!("Pong timeout from {}", peer_addr))

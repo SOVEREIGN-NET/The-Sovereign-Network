@@ -4,8 +4,7 @@
 //! Used by DAOs that use standard governance voting for approval decisions.
 
 use super::traits::{
-    ApprovalProof, IssuanceApprovalVerifier, IssuanceRequest, VerificationError,
-    VerificationResult,
+    ApprovalProof, IssuanceApprovalVerifier, IssuanceRequest, VerificationError, VerificationResult,
 };
 
 /// Configuration for governance vote verification
@@ -169,7 +168,13 @@ impl IssuanceApprovalVerifier for GovernanceVoteVerifier {
                 votes_for,
                 votes_against,
                 merkle_proof,
-            } => (proposal_id, *vote_concluded_at, *votes_for, *votes_against, merkle_proof),
+            } => (
+                proposal_id,
+                *vote_concluded_at,
+                *votes_for,
+                *votes_against,
+                merkle_proof,
+            ),
             _ => {
                 return Err(VerificationError::ProofTypeMismatch {
                     expected: "governance_vote".to_string(),
@@ -264,7 +269,10 @@ mod tests {
         };
 
         let result = verifier.verify_issuance_approval(&request, &proof, [4u8; 32]);
-        assert!(matches!(result, Err(VerificationError::VoteDidNotPass { .. })));
+        assert!(matches!(
+            result,
+            Err(VerificationError::VoteDidNotPass { .. })
+        ));
     }
 
     #[test]
@@ -282,7 +290,10 @@ mod tests {
         };
 
         let result = verifier.verify_issuance_approval(&request, &proof, [4u8; 32]);
-        assert!(matches!(result, Err(VerificationError::ApprovalExpired { .. })));
+        assert!(matches!(
+            result,
+            Err(VerificationError::ApprovalExpired { .. })
+        ));
     }
 
     #[test]
@@ -323,6 +334,9 @@ mod tests {
         };
 
         let result = verifier.verify_issuance_approval(&request, &proof, [4u8; 32]);
-        assert!(matches!(result, Err(VerificationError::VoteDidNotPass { .. })));
+        assert!(matches!(
+            result,
+            Err(VerificationError::VoteDidNotPass { .. })
+        ));
     }
 }

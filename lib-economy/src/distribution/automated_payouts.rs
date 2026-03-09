@@ -1,16 +1,16 @@
 //! Automated payout system for recurring distributions
-//! 
+//!
 //! Handles scheduled UBI distributions, infrastructure rewards,
 //! and other automated economic operations.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
 use crate::treasury_economics::DaoTreasury;
 use crate::wallets::WalletBalance;
 use crate::wasm::logging::info;
-use std::collections::HashMap;
-use lib_identity::citizenship::UbiRegistration;
+use anyhow::Result;
 use lib_crypto::Hash;
+use lib_identity::citizenship::UbiRegistration;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Automated payout schedule
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ impl PayoutSchedule {
     /// Create a new payout schedule
     pub fn new(frequency_seconds: u64, amount_per_payout: u64) -> Self {
         let current_time = crate::wasm::compatibility::current_timestamp().unwrap_or(0);
-        
+
         PayoutSchedule {
             frequency_seconds,
             last_payout: 0,
@@ -43,25 +43,25 @@ impl PayoutSchedule {
             total_amount_paid: 0,
         }
     }
-    
+
     /// Check if payout is due
     pub fn is_payout_due(&self) -> bool {
         let current_time = crate::wasm::compatibility::current_timestamp().unwrap_or(0);
         current_time >= self.next_payout
     }
-    
+
     /// Process payout and update schedule
     pub fn process_payout(&mut self) -> Result<u64> {
         if !self.is_payout_due() {
             return Ok(0);
         }
-        
+
         let current_time = crate::wasm::compatibility::current_timestamp().unwrap_or(0);
         self.last_payout = current_time;
         self.next_payout = current_time + self.frequency_seconds;
         self.total_payouts += 1;
         self.total_amount_paid += self.amount_per_payout;
-        
+
         Ok(self.amount_per_payout)
     }
 }
@@ -81,27 +81,31 @@ impl AutomatedUBI {
     /// Create new automated UBI system
     pub fn new(monthly_ubi_amount: u64) -> Self {
         let monthly_frequency = 30 * 24 * 3600; // 30 days in seconds
-        
+
         AutomatedUBI {
             schedule: PayoutSchedule::new(monthly_frequency, 0), // Amount calculated per distribution
             recipients: HashMap::new(),
             ubi_per_recipient: monthly_ubi_amount,
         }
     }
-    
+
     /// Register UBI recipient
-    pub fn register_recipient(&mut self, citizen_id: String, wallet_address: [u8; 32]) -> Result<()> {
+    pub fn register_recipient(
+        &mut self,
+        citizen_id: String,
+        wallet_address: [u8; 32],
+    ) -> Result<()> {
         self.recipients.insert(citizen_id.clone(), wallet_address);
-        
+
         info!(
             "Registered UBI recipient: {} -> {}",
             citizen_id,
             hex::encode(wallet_address)
         );
-        
+
         Ok(())
     }
-    
+
     /// Process UBI distribution with state synchronization to registrations.
     ///
     /// # Thread safety
@@ -156,7 +160,8 @@ impl AutomatedUBI {
                 // Synchronize registration state - record the payout with block height
                 // Handles remainder distribution automatically
                 let wallet_hash = Hash(*wallet_address);
-                let actual_payout = if let Some(registration) = registrations.get_mut(&wallet_hash) {
+                let actual_payout = if let Some(registration) = registrations.get_mut(&wallet_hash)
+                {
                     registration.record_payout(ubi_per_citizen, current_block)
                 } else {
                     // Log warning if registration is missing - indicates data inconsistency
@@ -186,19 +191,19 @@ impl AutomatedUBI {
                 );
             }
         }
-        
+
         // Update schedule
         self.schedule.amount_per_payout = total_distribution;
         self.schedule.process_payout()?;
-        
+
         info!(
             "Completed UBI distribution: {} SOV to {} recipients",
             total_distribution, successful_distributions
         );
-        
+
         Ok(total_distribution)
     }
-    
+
     /// Get UBI statistics
     pub fn get_ubi_stats(&self) -> serde_json::Value {
         serde_json::json!({
@@ -226,26 +231,30 @@ impl AutomatedInfrastructureRewards {
     /// Create new automated infrastructure rewards
     pub fn new(daily_reward_pool: u64) -> Self {
         let daily_frequency = 24 * 3600; // 24 hours in seconds
-        
+
         AutomatedInfrastructureRewards {
             schedule: PayoutSchedule::new(daily_frequency, daily_reward_pool),
             providers: HashMap::new(),
         }
     }
-    
+
     /// Register infrastructure provider
-    pub fn register_provider(&mut self, wallet_address: [u8; 32], contribution_score: u64) -> Result<()> {
+    pub fn register_provider(
+        &mut self,
+        wallet_address: [u8; 32],
+        contribution_score: u64,
+    ) -> Result<()> {
         self.providers.insert(wallet_address, contribution_score);
-        
+
         info!(
             "🏭 Registered infrastructure provider: {} (score: {})",
             hex::encode(wallet_address),
             contribution_score
         );
-        
+
         Ok(())
     }
-    
+
     /// Process infrastructure rewards distribution
     pub fn process_infrastructure_rewards(
         &mut self,
@@ -254,24 +263,24 @@ impl AutomatedInfrastructureRewards {
         if !self.schedule.is_payout_due() || self.providers.is_empty() {
             return Ok(0);
         }
-        
+
         let total_contribution_score: u64 = self.providers.values().sum();
-        
+
         if total_contribution_score == 0 {
             return Ok(0);
         }
-        
+
         let reward_pool = self.schedule.amount_per_payout;
         let mut total_distributed = 0u64;
-        
+
         // Distribute rewards proportionally
         for (wallet_address, contribution_score) in &self.providers {
             let provider_reward = (reward_pool * contribution_score) / total_contribution_score;
-            
+
             if let Some(wallet) = wallets.get_mut(wallet_address) {
                 wallet.available_balance += provider_reward;
                 total_distributed += provider_reward;
-                
+
                 info!(
                     "🏭 Distributed {} SOV infrastructure reward to provider {}",
                     provider_reward,
@@ -279,22 +288,23 @@ impl AutomatedInfrastructureRewards {
                 );
             }
         }
-        
+
         // Update schedule
         self.schedule.process_payout()?;
-        
+
         info!(
             "🏭 Completed infrastructure rewards: {} SOV to {} providers",
-            total_distributed, self.providers.len()
+            total_distributed,
+            self.providers.len()
         );
-        
+
         Ok(total_distributed)
     }
-    
+
     /// Get infrastructure rewards statistics
     pub fn get_infrastructure_stats(&self) -> serde_json::Value {
         let total_score: u64 = self.providers.values().sum();
-        
+
         serde_json::json!({
             "total_providers": self.providers.len(),
             "total_contribution_score": total_score,
@@ -321,10 +331,12 @@ impl AutomatedPayoutProcessor {
     pub fn new(monthly_ubi: u64, daily_infrastructure_rewards: u64) -> Self {
         AutomatedPayoutProcessor {
             ubi_system: AutomatedUBI::new(monthly_ubi),
-            infrastructure_system: AutomatedInfrastructureRewards::new(daily_infrastructure_rewards),
+            infrastructure_system: AutomatedInfrastructureRewards::new(
+                daily_infrastructure_rewards,
+            ),
         }
     }
-    
+
     /// Process all scheduled payouts with state synchronization
     pub fn process_all_payouts(
         &mut self,
@@ -333,12 +345,19 @@ impl AutomatedPayoutProcessor {
         registrations: &mut HashMap<Hash, UbiRegistration>,
         current_block: u64,
     ) -> Result<(u64, u64)> {
-        let ubi_distributed = self.ubi_system.process_ubi_distribution(treasury, wallets, registrations, current_block)?;
-        let infrastructure_distributed = self.infrastructure_system.process_infrastructure_rewards(wallets)?;
+        let ubi_distributed = self.ubi_system.process_ubi_distribution(
+            treasury,
+            wallets,
+            registrations,
+            current_block,
+        )?;
+        let infrastructure_distributed = self
+            .infrastructure_system
+            .process_infrastructure_rewards(wallets)?;
 
         Ok((ubi_distributed, infrastructure_distributed))
     }
-    
+
     /// Get combined payout statistics
     pub fn get_payout_stats(&self) -> serde_json::Value {
         serde_json::json!({
@@ -357,12 +376,16 @@ pub fn process_automated_payouts(
     registrations: &mut HashMap<Hash, UbiRegistration>,
     current_block: u64,
 ) -> Result<()> {
-    let (ubi_distributed, infrastructure_distributed) = processor.process_all_payouts(treasury, wallets, registrations, current_block)?;
+    let (ubi_distributed, infrastructure_distributed) =
+        processor.process_all_payouts(treasury, wallets, registrations, current_block)?;
 
     if ubi_distributed > 0 || infrastructure_distributed > 0 {
         info!(
             " Automated payouts completed: {} UBI + {} infrastructure = {} total SOV at block {}",
-            ubi_distributed, infrastructure_distributed, ubi_distributed + infrastructure_distributed, current_block
+            ubi_distributed,
+            infrastructure_distributed,
+            ubi_distributed + infrastructure_distributed,
+            current_block
         );
     }
 

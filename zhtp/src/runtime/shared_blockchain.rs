@@ -3,12 +3,15 @@
 //! Provides a centralized blockchain service that can be accessed by all components
 //! without creating separate blockchain instances.
 
-use std::sync::Arc;
-use anyhow::Result;
-use tokio::sync::{RwLock, mpsc::{self, UnboundedSender}};
-use tracing::{info, error, warn};
 use crate::runtime::dht_indexing::index_block_in_dht;
-use lib_blockchain::{Blockchain, Transaction, Block, BlockHeader, Hash, Difficulty};
+use anyhow::Result;
+use lib_blockchain::{Block, BlockHeader, Blockchain, Difficulty, Hash, Transaction};
+use std::sync::Arc;
+use tokio::sync::{
+    mpsc::{self, UnboundedSender},
+    RwLock,
+};
+use tracing::{error, info, warn};
 
 /// Shared blockchain service that manages a single blockchain instance
 /// across all ZHTP components
@@ -16,7 +19,8 @@ use lib_blockchain::{Blockchain, Transaction, Block, BlockHeader, Hash, Difficul
 pub struct SharedBlockchainService {
     blockchain: Arc<RwLock<Blockchain>>,
     operation_tx: UnboundedSender<BlockchainOperation>,
-}/// Blockchain operation request
+}
+/// Blockchain operation request
 #[derive(Debug)]
 pub enum BlockchainOperation {
     AddTransaction {
@@ -46,7 +50,7 @@ impl SharedBlockchainService {
     /// Create a new shared blockchain service
     pub fn new(blockchain: Arc<RwLock<Blockchain>>) -> Self {
         let (operation_tx, mut operation_rx) = mpsc::unbounded_channel();
-        
+
         // Spawn background task to handle operations
         let blockchain_clone = blockchain.clone();
         tokio::spawn(async move {
@@ -56,20 +60,23 @@ impl SharedBlockchainService {
                 }
             }
         });
-        
+
         Self {
             blockchain,
             operation_tx,
         }
     }
-    
+
     /// Handle a blockchain operation
     async fn handle_operation(
         blockchain_arc: &Arc<RwLock<Blockchain>>,
         operation: BlockchainOperation,
     ) -> Result<()> {
         match operation {
-            BlockchainOperation::AddTransaction { transaction, response_tx } => {
+            BlockchainOperation::AddTransaction {
+                transaction,
+                response_tx,
+            } => {
                 let result = {
                     let mut blockchain = blockchain_arc.write().await;
                     match blockchain.add_pending_transaction(transaction.clone()) {
@@ -86,8 +93,11 @@ impl SharedBlockchainService {
                 };
                 let _ = response_tx.send(result);
             }
-            
-            BlockchainOperation::GetBlock { height, response_tx } => {
+
+            BlockchainOperation::GetBlock {
+                height,
+                response_tx,
+            } => {
                 let result = {
                     let blockchain = blockchain_arc.read().await;
                     if height < blockchain.blocks.len() as u64 {
@@ -98,7 +108,7 @@ impl SharedBlockchainService {
                 };
                 let _ = response_tx.send(result);
             }
-            
+
             BlockchainOperation::GetTransaction { hash, response_tx } => {
                 let result = {
                     let blockchain = blockchain_arc.read().await;
@@ -111,9 +121,11 @@ impl SharedBlockchainService {
                                 break;
                             }
                         }
-                        if found_tx.is_some() { break; }
+                        if found_tx.is_some() {
+                            break;
+                        }
                     }
-                    
+
                     // Also check pending transactions if not found in blocks
                     if found_tx.is_none() {
                         for tx in &blockchain.pending_transactions {
@@ -123,14 +135,14 @@ impl SharedBlockchainService {
                             }
                         }
                     }
-                    
+
                     found_tx
                 };
-                
+
                 // Send result using the found transaction
                 let _ = response_tx.send(Ok(result));
             }
-            
+
             BlockchainOperation::GetMempool { response_tx } => {
                 let result = {
                     let blockchain = blockchain_arc.read().await;
@@ -138,7 +150,7 @@ impl SharedBlockchainService {
                 };
                 let _ = response_tx.send(result);
             }
-            
+
             BlockchainOperation::GetHeight { response_tx } => {
                 let result = {
                     let blockchain = blockchain_arc.read().await;
@@ -146,43 +158,53 @@ impl SharedBlockchainService {
                 };
                 let _ = response_tx.send(result);
             }
-            
+
             BlockchainOperation::MineBlock { response_tx } => {
                 let result = {
                     let mut blockchain = blockchain_arc.write().await;
                     // Create a simple block with pending transactions
                     if !blockchain.pending_transactions.is_empty() {
-                        info!("Mining block with {} transactions", blockchain.pending_transactions.len());
-                        
+                        info!(
+                            "Mining block with {} transactions",
+                            blockchain.pending_transactions.len()
+                        );
+
                         // For this implementation, we'll just create a simple block
                         // mining would involve proof of work
                         let transactions = blockchain.pending_transactions.clone();
                         blockchain.pending_transactions.clear();
-                        
+
                         let timestamp = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
                             .as_secs();
-                        
+
                         // Create block header
                         let header = BlockHeader::new(
                             1, // version
-                            blockchain.blocks.last().map(|b| b.hash()).unwrap_or_default(), // previous hash
+                            blockchain
+                                .blocks
+                                .last()
+                                .map(|b| b.hash())
+                                .unwrap_or_default(), // previous hash
                             Hash::default(), // merkle root (simplified)
                             timestamp,
                             Difficulty::default(), // difficulty (simplified)
                             blockchain.height + 1, // height
                             transactions.len() as u32, // transaction count
-                            1024, // block size (simplified)
+                            1024,                  // block size (simplified)
                             Difficulty::default(), // cumulative difficulty (simplified)
                         );
-                        
+
                         // Create a new block
                         let new_block = Block::new(header, transactions);
-                        
+
                         match blockchain.add_block_with_proof(new_block.clone()).await {
                             Ok(()) => {
-                                info!("Block mined successfully at height {} with recursive proof", blockchain.height);
+                                info!(
+                                    "Block mined successfully at height {} with recursive proof",
+                                    blockchain.height
+                                );
                                 if let Err(e) = index_block_in_dht(&new_block).await {
                                     warn!("DHT indexing failed (shared_blockchain): {}", e);
                                 }
@@ -200,103 +222,112 @@ impl SharedBlockchainService {
                 let _ = response_tx.send(result);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Add a transaction to the blockchain
     pub async fn add_transaction(&self, transaction: Transaction) -> Result<String> {
         let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        
+
         let operation = BlockchainOperation::AddTransaction {
             transaction,
             response_tx,
         };
-        
-        self.operation_tx.send(operation)
+
+        self.operation_tx
+            .send(operation)
             .map_err(|_| anyhow::anyhow!("Failed to send blockchain operation"))?;
-        
-        response_rx.recv().await
+
+        response_rx
+            .recv()
+            .await
             .ok_or_else(|| anyhow::anyhow!("No response received"))?
     }
-    
+
     /// Get a block by height
     pub async fn get_block(&self, height: u64) -> Result<Option<Block>> {
         let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        
+
         let operation = BlockchainOperation::GetBlock {
             height,
             response_tx,
         };
-        
-        self.operation_tx.send(operation)
+
+        self.operation_tx
+            .send(operation)
             .map_err(|_| anyhow::anyhow!("Failed to send blockchain operation"))?;
-        
-        response_rx.recv().await
+
+        response_rx
+            .recv()
+            .await
             .ok_or_else(|| anyhow::anyhow!("No response received"))?
     }
-    
+
     /// Get a transaction by hash
     pub async fn get_transaction(&self, hash: String) -> Result<Option<Transaction>> {
         let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        
-        let operation = BlockchainOperation::GetTransaction {
-            hash,
-            response_tx,
-        };
-        
-        self.operation_tx.send(operation)
+
+        let operation = BlockchainOperation::GetTransaction { hash, response_tx };
+
+        self.operation_tx
+            .send(operation)
             .map_err(|_| anyhow::anyhow!("Failed to send blockchain operation"))?;
-        
-        response_rx.recv().await
+
+        response_rx
+            .recv()
+            .await
             .ok_or_else(|| anyhow::anyhow!("No response received"))?
     }
-    
+
     /// Get the mempool (pending transactions)
     pub async fn get_mempool(&self) -> Result<Vec<Transaction>> {
         let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        
-        let operation = BlockchainOperation::GetMempool {
-            response_tx,
-        };
-        
-        self.operation_tx.send(operation)
+
+        let operation = BlockchainOperation::GetMempool { response_tx };
+
+        self.operation_tx
+            .send(operation)
             .map_err(|_| anyhow::anyhow!("Failed to send blockchain operation"))?;
-        
-        response_rx.recv().await
+
+        response_rx
+            .recv()
+            .await
             .ok_or_else(|| anyhow::anyhow!("No response received"))?
     }
-    
+
     /// Get the current blockchain height
     pub async fn get_height(&self) -> Result<u64> {
         let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        
-        let operation = BlockchainOperation::GetHeight {
-            response_tx,
-        };
-        
-        self.operation_tx.send(operation)
+
+        let operation = BlockchainOperation::GetHeight { response_tx };
+
+        self.operation_tx
+            .send(operation)
             .map_err(|_| anyhow::anyhow!("Failed to send blockchain operation"))?;
-        
-        response_rx.recv().await
+
+        response_rx
+            .recv()
+            .await
             .ok_or_else(|| anyhow::anyhow!("No response received"))?
     }
-    
+
     /// Mine a new block
     pub async fn mine_block(&self) -> Result<Block> {
         let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        
-        let operation = BlockchainOperation::MineBlock {
-            response_tx,
-        };
-        
-        self.operation_tx.send(operation)
+
+        let operation = BlockchainOperation::MineBlock { response_tx };
+
+        self.operation_tx
+            .send(operation)
             .map_err(|_| anyhow::anyhow!("Failed to send blockchain operation"))?;
-        
-        response_rx.recv().await
+
+        response_rx
+            .recv()
+            .await
             .ok_or_else(|| anyhow::anyhow!("No response received"))?
     }
-    
+
     /// Get direct access to the blockchain Arc (for advanced operations)
     pub fn get_blockchain_arc(&self) -> Arc<RwLock<Blockchain>> {
         self.blockchain.clone()

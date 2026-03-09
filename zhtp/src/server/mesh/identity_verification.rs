@@ -10,12 +10,12 @@
 //! 3. **Bootstrap Mode Handling**: Allow limited routing for bootstrap peers
 //! 4. **Audit Logging**: Track all verification attempts for security monitoring
 
+use lib_network::identity::unified_peer::UnifiedPeerId;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
-use lib_network::identity::unified_peer::UnifiedPeerId;
 
 /// Global counter for identity verification attempts
 static VERIFICATION_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
@@ -81,11 +81,11 @@ pub struct VerificationConfig {
 impl Default for VerificationConfig {
     fn default() -> Self {
         Self {
-            cache_ttl_secs: 300,            // 5 minutes for verified
-            unverified_cache_ttl_secs: 60,  // 1 minute for unverified (re-check sooner)
+            cache_ttl_secs: 300,           // 5 minutes for verified
+            unverified_cache_ttl_secs: 60, // 1 minute for unverified (re-check sooner)
             max_cache_size: 10_000,
-            allow_bootstrap_routing: true,   // Allow limited bootstrap routing
-            min_trust_score: 0.3,           // Minimum trust for full routing
+            allow_bootstrap_routing: true, // Allow limited bootstrap routing
+            min_trust_score: 0.3,          // Minimum trust for full routing
         }
     }
 }
@@ -108,7 +108,10 @@ pub enum VerificationResult {
 impl VerificationResult {
     /// Check if routing should be allowed
     pub fn allows_routing(&self) -> bool {
-        matches!(self, VerificationResult::Verified | VerificationResult::Bootstrap)
+        matches!(
+            self,
+            VerificationResult::Verified | VerificationResult::Bootstrap
+        )
     }
 
     /// Check if this is full access (not bootstrap)
@@ -164,8 +167,10 @@ impl IdentityVerificationCache {
             if let Some(cached) = cache.get(did) {
                 if !cached.is_expired() {
                     CACHE_HITS.fetch_add(1, Ordering::Relaxed);
-                    debug!("✅ Cache hit for {}: verified={}, bootstrap={}",
-                           did, cached.is_verified, cached.is_bootstrap);
+                    debug!(
+                        "✅ Cache hit for {}: verified={}, bootstrap={}",
+                        did, cached.is_verified, cached.is_bootstrap
+                    );
                     return self.cached_to_result(cached);
                 }
             }
@@ -173,7 +178,10 @@ impl IdentityVerificationCache {
 
         // MEDIUM-3 FIX: Check if using unverified DID marker from CRITICAL-1 fix
         if did.contains(":unverified:") {
-            warn!("⚠️ Peer {} has unverified DID marker - bootstrap mode only", did);
+            warn!(
+                "⚠️ Peer {} has unverified DID marker - bootstrap mode only",
+                did
+            );
 
             // Cache as bootstrap mode
             let verified = VerifiedIdentity {
@@ -199,7 +207,10 @@ impl IdentityVerificationCache {
 
         let result = match trust_score {
             Some(score) if score >= self.config.min_trust_score => {
-                info!("✅ Identity {} verified on blockchain (trust: {:.2})", did, score);
+                info!(
+                    "✅ Identity {} verified on blockchain (trust: {:.2})",
+                    did, score
+                );
 
                 let verified = VerifiedIdentity {
                     did: did.to_string(),
@@ -214,8 +225,10 @@ impl IdentityVerificationCache {
                 VerificationResult::Verified
             }
             Some(score) => {
-                warn!("⚠️ Identity {} has insufficient trust score: {:.2} < {:.2}",
-                      did, score, self.config.min_trust_score);
+                warn!(
+                    "⚠️ Identity {} has insufficient trust score: {:.2} < {:.2}",
+                    did, score, self.config.min_trust_score
+                );
 
                 let verified = VerifiedIdentity {
                     did: did.to_string(),
@@ -259,7 +272,8 @@ impl IdentityVerificationCache {
     /// Check if identity is verified (cache-only, no blockchain lookup)
     pub async fn is_cached_verified(&self, did: &str) -> Option<bool> {
         let cache = self.cache.read().await;
-        cache.get(did)
+        cache
+            .get(did)
             .filter(|c| !c.is_expired())
             .map(|c| c.is_verified)
     }
@@ -286,7 +300,10 @@ impl IdentityVerificationCache {
         cache.retain(|_, entry| entry.expires_at > now);
         let removed = before - cache.len();
         if removed > 0 {
-            info!("🧹 Verification cache cleanup: removed {} expired entries", removed);
+            info!(
+                "🧹 Verification cache cleanup: removed {} expired entries",
+                removed
+            );
         }
     }
 
@@ -334,7 +351,8 @@ impl IdentityVerificationCache {
         // Enforce max cache size
         if cache.len() >= self.config.max_cache_size {
             // Remove oldest entry
-            let oldest_did = cache.iter()
+            let oldest_did = cache
+                .iter()
                 .min_by_key(|(_, e)| e.verified_at)
                 .map(|(did, _)| did.clone());
             if let Some(did) = oldest_did {
@@ -446,24 +464,28 @@ mod tests {
         let cache = IdentityVerificationCache::new();
 
         // Add valid entry
-        cache.cache_entry(VerifiedIdentity {
-            did: "did:zhtp:valid".to_string(),
-            is_verified: true,
-            is_bootstrap: false,
-            trust_score: 0.9,
-            verified_at: current_timestamp(),
-            expires_at: current_timestamp() + 300,
-        }).await;
+        cache
+            .cache_entry(VerifiedIdentity {
+                did: "did:zhtp:valid".to_string(),
+                is_verified: true,
+                is_bootstrap: false,
+                trust_score: 0.9,
+                verified_at: current_timestamp(),
+                expires_at: current_timestamp() + 300,
+            })
+            .await;
 
         // Add expired entry
-        cache.cache_entry(VerifiedIdentity {
-            did: "did:zhtp:expired".to_string(),
-            is_verified: true,
-            is_bootstrap: false,
-            trust_score: 0.9,
-            verified_at: current_timestamp() - 1000,
-            expires_at: current_timestamp() - 500,
-        }).await;
+        cache
+            .cache_entry(VerifiedIdentity {
+                did: "did:zhtp:expired".to_string(),
+                is_verified: true,
+                is_bootstrap: false,
+                trust_score: 0.9,
+                verified_at: current_timestamp() - 1000,
+                expires_at: current_timestamp() - 500,
+            })
+            .await;
 
         // Cleanup
         cache.cleanup().await;
@@ -478,22 +500,30 @@ mod tests {
         let cache = IdentityVerificationCache::new();
 
         // Add entry
-        cache.cache_entry(VerifiedIdentity {
-            did: "did:zhtp:toremove".to_string(),
-            is_verified: true,
-            is_bootstrap: false,
-            trust_score: 0.9,
-            verified_at: current_timestamp(),
-            expires_at: current_timestamp() + 300,
-        }).await;
+        cache
+            .cache_entry(VerifiedIdentity {
+                did: "did:zhtp:toremove".to_string(),
+                is_verified: true,
+                is_bootstrap: false,
+                trust_score: 0.9,
+                verified_at: current_timestamp(),
+                expires_at: current_timestamp() + 300,
+            })
+            .await;
 
         // Verify it exists
-        assert!(cache.is_cached_verified("did:zhtp:toremove").await.is_some());
+        assert!(cache
+            .is_cached_verified("did:zhtp:toremove")
+            .await
+            .is_some());
 
         // Invalidate
         cache.invalidate("did:zhtp:toremove").await;
 
         // Should be gone
-        assert!(cache.is_cached_verified("did:zhtp:toremove").await.is_none());
+        assert!(cache
+            .is_cached_verified("did:zhtp:toremove")
+            .await
+            .is_none());
     }
 }

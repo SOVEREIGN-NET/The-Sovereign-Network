@@ -1,19 +1,18 @@
-use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::kad::server::TID_LENGTH;
 use crate::rpc::call::Call;
 use crate::rpc::events::inter::message_event::MessageEvent;
 use crate::rpc::events::stalled_event::StalledEvent;
+use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MAX_ACTIVE_CALLS: usize = 512;
 pub const STALLED_TIME: u128 = 60000;
 
 pub struct ResponseTracker {
-    calls: HashMap<[u8; TID_LENGTH], Call>
+    calls: HashMap<[u8; TID_LENGTH], Call>,
 }
 
 impl ResponseTracker {
-
     pub fn new() -> Self {
         Self {
             calls: HashMap::with_capacity(MAX_ACTIVE_CALLS),

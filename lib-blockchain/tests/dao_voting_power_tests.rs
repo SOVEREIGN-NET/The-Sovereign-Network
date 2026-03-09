@@ -1,8 +1,8 @@
 //! DAO Voting Power Reform tests (dao-5)
 
-use lib_blockchain::Blockchain;
-use lib_blockchain::dao::VotingPowerMode;
 use anyhow::Result;
+use lib_blockchain::dao::VotingPowerMode;
+use lib_blockchain::Blockchain;
 
 // ── VotingPowerMode round-trip ────────────────────────────────────────────────
 
@@ -74,10 +74,8 @@ fn test_vote_delegations_survive_dat_round_trip() -> Result<()> {
     use tempfile::NamedTempFile;
 
     let mut bc = Blockchain::new()?;
-    bc.vote_delegations.insert(
-        "aabbccdd".to_string(),
-        "11223344".to_string(),
-    );
+    bc.vote_delegations
+        .insert("aabbccdd".to_string(), "11223344".to_string());
 
     let tmp = NamedTempFile::new()?;
     bc.save_to_file(tmp.path())?;
@@ -100,10 +98,8 @@ fn test_voting_power_delegation_aggregates_correctly() -> Result<()> {
     let mut bc = Blockchain::new()?;
     let delegate_bytes = [0xABu8; 32];
     let delegator_bytes = [0xCDu8; 32];
-    bc.vote_delegations.insert(
-        hex::encode(delegator_bytes),
-        hex::encode(delegate_bytes),
-    );
+    bc.vote_delegations
+        .insert(hex::encode(delegator_bytes), hex::encode(delegate_bytes));
 
     let delegate_id = lib_crypto::Hash(delegate_bytes);
     let power = bc.calculate_user_voting_power(&delegate_id);

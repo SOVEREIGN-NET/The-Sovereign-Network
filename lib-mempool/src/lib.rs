@@ -40,21 +40,16 @@
 
 pub mod admission;
 pub mod config;
-pub mod state;
 pub mod errors;
+pub mod state;
 
 // Re-export pure data types from lib-types (canonical location)
 pub use lib_types::mempool::{
-    AdmitResult,
-    AdmitErrorKind,
-    AdmitTx,
-    MempoolConfig,
-    MempoolState,
-    SenderState,
+    AdmitErrorKind, AdmitResult, AdmitTx, MempoolConfig, MempoolState, SenderState,
 };
 
 // Re-export behavior from this crate
 pub use admission::{admit, AdmitResultExt};
 pub use config::MempoolConfigExt;
-pub use state::MempoolStateExt;
 pub use errors::AdmitError;
+pub use state::MempoolStateExt;

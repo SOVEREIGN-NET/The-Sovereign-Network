@@ -100,10 +100,9 @@ impl TransactionExecutor {
         }
 
         // Select transactions by priority
-        let selected = self.mempool.select_transactions(
-            self.max_transactions_per_block,
-            current_height,
-        );
+        let selected = self
+            .mempool
+            .select_transactions(self.max_transactions_per_block, current_height);
 
         // Calculate total fees and size for selected transactions
         let mut total_fees = 0u64;
@@ -204,8 +203,14 @@ mod tests {
         let mut executor = TransactionExecutor::new(100, 1_000_000, 1000, 1000);
 
         // Add transactions to mempool
-        executor.mempool.add_transaction([1u8; 32], 1000, 200, 100, 1000000).ok();
-        executor.mempool.add_transaction([2u8; 32], 500, 100, 100, 1000000).ok();
+        executor
+            .mempool
+            .add_transaction([1u8; 32], 1000, 200, 100, 1000000)
+            .ok();
+        executor
+            .mempool
+            .add_transaction([2u8; 32], 500, 100, 100, 1000000)
+            .ok();
 
         // Prepare block
         let (selected, fees, size) = executor.prepare_block_transactions(100);
@@ -219,7 +224,10 @@ mod tests {
     fn test_transaction_execution() {
         let mut executor = TransactionExecutor::new(100, 1_000_000, 1000, 1000);
 
-        executor.mempool.add_transaction([1u8; 32], 1000, 200, 100, 1000000).ok();
+        executor
+            .mempool
+            .add_transaction([1u8; 32], 1000, 200, 100, 1000000)
+            .ok();
 
         let (total_fees, results) = executor.execute_transactions(&[[1u8; 32]], 100);
 

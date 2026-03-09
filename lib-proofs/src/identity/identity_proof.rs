@@ -1,12 +1,12 @@
 //! Identity zero-knowledge proof implementation for unified ZK system
-//! 
-//! Provides identity proofs using unified Plonky2 backend that allow users 
+//!
+//! Provides identity proofs using unified Plonky2 backend that allow users
 //! to prove they possess certain identity attributes without revealing the actual identity data
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use lib_crypto::hashing::hash_blake3;
 use crate::types::zk_proof::ZkProof;
+use anyhow::Result;
+use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
 
 /// Identity attributes that can be proven in zero-knowledge
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,44 +78,44 @@ impl IdentityAttributes {
     pub fn to_bytes(&self) -> Vec<u8> {
         // Deterministic serialization for consistent hashing
         let mut bytes = Vec::new();
-        
+
         if let Some((min, max)) = self.age_range {
             bytes.extend_from_slice(b"age_range:");
             bytes.extend_from_slice(&min.to_le_bytes());
             bytes.extend_from_slice(&max.to_le_bytes());
         }
-        
+
         if let Some(ref citizenship) = self.citizenship {
             bytes.extend_from_slice(b"citizenship:");
             bytes.extend_from_slice(citizenship.as_bytes());
         }
-        
+
         if let Some(ref license) = self.license_type {
             bytes.extend_from_slice(b"license:");
             bytes.extend_from_slice(license.as_bytes());
         }
-        
+
         if let Some(ref education) = self.education_level {
             bytes.extend_from_slice(b"education:");
             bytes.extend_from_slice(education.as_bytes());
         }
-        
+
         if let Some(level) = self.kyc_level {
             bytes.extend_from_slice(b"kyc:");
             bytes.push(level);
         }
-        
+
         // Sort custom attributes for deterministic serialization
         let mut sorted_attrs: Vec<_> = self.custom_attributes.iter().collect();
         sorted_attrs.sort_by_key(|(k, _)| *k);
-        
+
         for (key, value) in sorted_attrs {
             bytes.extend_from_slice(key.as_bytes());
             bytes.push(b':');
             bytes.extend_from_slice(value.as_bytes());
             bytes.push(b';');
         }
-        
+
         bytes
     }
 }
@@ -148,14 +148,15 @@ impl IdentityCommitment {
     ) -> Result<Self> {
         let attribute_bytes = attributes.to_bytes();
         let attribute_commitment = hash_blake3(&attribute_bytes);
-        
-        let secret_commitment = hash_blake3(&[&identity_secret[..], &attribute_commitment[..]].concat());
-        
+
+        let secret_commitment =
+            hash_blake3(&[&identity_secret[..], &attribute_commitment[..]].concat());
+
         let nullifier = hash_blake3(&[&nullifier_secret[..], &identity_secret[..]].concat());
-        
+
         // Generate public key from identity secret
         let public_key = hash_blake3(&[&identity_secret[..], b"pubkey"].concat());
-        
+
         Ok(IdentityCommitment {
             attribute_commitment,
             secret_commitment,
@@ -186,12 +187,14 @@ impl ZkIdentityProof {
         nullifier_secret: [u8; 32],
         proven_attributes: Vec<String>,
     ) -> Result<Self> {
-        let commitment = IdentityCommitment::generate(attributes, identity_secret, nullifier_secret)?;
+        let commitment =
+            IdentityCommitment::generate(attributes, identity_secret, nullifier_secret)?;
 
         // Use unified ZK system via Plonky2 with prove_identity
         let zk_system = crate::plonky2::ZkProofSystem::new()?;
 
-        let identity_secret_u64 = u64::from_le_bytes(identity_secret[0..8].try_into().unwrap_or([0u8; 8]));
+        let identity_secret_u64 =
+            u64::from_le_bytes(identity_secret[0..8].try_into().unwrap_or([0u8; 8]));
 
         let age = if let Some((min, max)) = attributes.age_range {
             (min + max) as u64 / 2 // Average age
@@ -200,12 +203,20 @@ impl ZkIdentityProof {
         };
 
         let jurisdiction_hash = if let Some(ref citizenship) = attributes.citizenship {
-            u64::from_le_bytes(hash_blake3(citizenship.as_bytes())[0..8].try_into().unwrap_or([0u8; 8]))
+            u64::from_le_bytes(
+                hash_blake3(citizenship.as_bytes())[0..8]
+                    .try_into()
+                    .unwrap_or([0u8; 8]),
+            )
         } else {
             840 // Default to US
         };
 
-        let credential_hash = u64::from_le_bytes(commitment.attribute_commitment[0..8].try_into().unwrap_or([0u8; 8]));
+        let credential_hash = u64::from_le_bytes(
+            commitment.attribute_commitment[0..8]
+                .try_into()
+                .unwrap_or([0u8; 8]),
+        );
         let min_age = 18;
         let required_jurisdiction = 0;
         let verification_level = 1;
@@ -245,11 +256,21 @@ impl ZkIdentityProof {
         nullifier_secret: [u8; 32],
     ) -> Result<Self> {
         if age < min_age || age > max_age {
-            return Err(anyhow::anyhow!("Age {} not in range [{}, {}]", age, min_age, max_age));
+            return Err(anyhow::anyhow!(
+                "Age {} not in range [{}, {}]",
+                age,
+                min_age,
+                max_age
+            ));
         }
-        
+
         let attributes = IdentityAttributes::new().with_age_range(min_age, max_age);
-        Self::generate(&attributes, identity_secret, nullifier_secret, vec!["age_range".to_string()])
+        Self::generate(
+            &attributes,
+            identity_secret,
+            nullifier_secret,
+            vec!["age_range".to_string()],
+        )
     }
 
     /// Generate proof for citizenship verification
@@ -259,7 +280,12 @@ impl ZkIdentityProof {
         nullifier_secret: [u8; 32],
     ) -> Result<Self> {
         let attributes = IdentityAttributes::new().with_citizenship(citizenship);
-        Self::generate(&attributes, identity_secret, nullifier_secret, vec!["citizenship".to_string()])
+        Self::generate(
+            &attributes,
+            identity_secret,
+            nullifier_secret,
+            vec!["citizenship".to_string()],
+        )
     }
 
     /// Generate proof for KYC level verification
@@ -269,7 +295,12 @@ impl ZkIdentityProof {
         nullifier_secret: [u8; 32],
     ) -> Result<Self> {
         let attributes = IdentityAttributes::new().with_kyc_level(kyc_level);
-        Self::generate(&attributes, identity_secret, nullifier_secret, vec!["kyc_level".to_string()])
+        Self::generate(
+            &attributes,
+            identity_secret,
+            nullifier_secret,
+            vec!["kyc_level".to_string()],
+        )
     }
 
     /// Generate comprehensive identity proof with multiple attributes
@@ -279,7 +310,7 @@ impl ZkIdentityProof {
         nullifier_secret: [u8; 32],
     ) -> Result<Self> {
         let mut proven_attrs = Vec::new();
-        
+
         if attributes.age_range.is_some() {
             proven_attrs.push("age_range".to_string());
         }
@@ -298,7 +329,7 @@ impl ZkIdentityProof {
         for key in attributes.custom_attributes.keys() {
             proven_attrs.push(format!("custom:{}", key));
         }
-        
+
         Self::generate(attributes, identity_secret, nullifier_secret, proven_attrs)
     }
 
@@ -318,7 +349,7 @@ impl ZkIdentityProof {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         current_time > self.timestamp + duration_seconds
     }
 
@@ -328,7 +359,7 @@ impl ZkIdentityProof {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         current_time.saturating_sub(self.timestamp)
     }
 
@@ -339,10 +370,14 @@ impl ZkIdentityProof {
 
     /// Get the size of this proof in bytes
     pub fn proof_size(&self) -> usize {
-        self.proof.size() +
-        std::mem::size_of::<IdentityCommitment>() +
-        self.proven_attributes.iter().map(|a| a.len()).sum::<usize>() +
-        8 // timestamp
+        self.proof.size()
+            + std::mem::size_of::<IdentityCommitment>()
+            + self
+                .proven_attributes
+                .iter()
+                .map(|a| a.len())
+                .sum::<usize>()
+            + 8 // timestamp
     }
 }
 
@@ -377,16 +412,19 @@ impl BatchIdentityProof {
         // Calculate Merkle root
         let mut leaf_data = Vec::new();
         for proof in &proofs {
-            let proof_hash = hash_blake3(&[
-                &proof.commitment.attribute_commitment[..],
-                &proof.commitment.secret_commitment[..],
-                &proof.proof.proof_data[..],
-            ].concat());
+            let proof_hash = hash_blake3(
+                &[
+                    &proof.commitment.attribute_commitment[..],
+                    &proof.commitment.secret_commitment[..],
+                    &proof.proof.proof_data[..],
+                ]
+                .concat(),
+            );
             leaf_data.push(proof_hash);
         }
-        
+
         let merkle_root = calculate_merkle_root(&leaf_data);
-        
+
         let batch_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -423,16 +461,16 @@ fn calculate_merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
     if leaves.is_empty() {
         return [0u8; 32];
     }
-    
+
     if leaves.len() == 1 {
         return leaves[0];
     }
-    
+
     let mut current_level = leaves.to_vec();
-    
+
     while current_level.len() > 1 {
         let mut next_level = Vec::new();
-        
+
         for chunk in current_level.chunks(2) {
             let hash = if chunk.len() == 2 {
                 hash_blake3(&[&chunk[0][..], &chunk[1][..]].concat())
@@ -441,10 +479,10 @@ fn calculate_merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
             };
             next_level.push(hash);
         }
-        
+
         current_level = next_level;
     }
-    
+
     current_level[0]
 }
 
@@ -459,12 +497,12 @@ mod tests {
             .with_citizenship("US".to_string())
             .with_kyc_level(3)
             .with_custom("profession".to_string(), "engineer".to_string());
-        
+
         assert_eq!(attrs.age_range, Some((18, 65)));
         assert_eq!(attrs.citizenship, Some("US".to_string()));
         assert_eq!(attrs.kyc_level, Some(3));
         assert!(attrs.custom_attributes.contains_key("profession"));
-        
+
         let bytes = attrs.to_bytes();
         assert!(!bytes.is_empty());
     }
@@ -474,9 +512,10 @@ mod tests {
         let attrs = IdentityAttributes::new().with_age_range(25, 35);
         let identity_secret = [1u8; 32];
         let nullifier_secret = [2u8; 32];
-        
-        let commitment = IdentityCommitment::generate(&attrs, identity_secret, nullifier_secret).unwrap();
-        
+
+        let commitment =
+            IdentityCommitment::generate(&attrs, identity_secret, nullifier_secret).unwrap();
+
         assert_ne!(commitment.attribute_commitment, [0u8; 32]);
         assert_ne!(commitment.secret_commitment, [0u8; 32]);
         assert_ne!(commitment.nullifier, [0u8; 32]);
@@ -488,14 +527,15 @@ mod tests {
         let attrs = IdentityAttributes::new().with_age_range(21, 25);
         let identity_secret = [3u8; 32];
         let nullifier_secret = [4u8; 32];
-        
+
         let proof = ZkIdentityProof::generate(
             &attrs,
             identity_secret,
             nullifier_secret,
             vec!["age_range".to_string()],
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         assert!(proof.proves_attribute("age_range"));
         assert!(!proof.proves_attribute("citizenship"));
         assert!(!proof.is_expired());
@@ -506,11 +546,11 @@ mod tests {
     fn test_age_proof() {
         let identity_secret = [5u8; 32];
         let nullifier_secret = [6u8; 32];
-        
-        let proof = ZkIdentityProof::generate_age_proof(
-            22, 18, 65, identity_secret, nullifier_secret
-        ).unwrap();
-        
+
+        let proof =
+            ZkIdentityProof::generate_age_proof(22, 18, 65, identity_secret, nullifier_secret)
+                .unwrap();
+
         assert!(proof.proves_attribute("age_range"));
         assert_eq!(proof.proven_attributes.len(), 1);
     }
@@ -519,11 +559,14 @@ mod tests {
     fn test_citizenship_proof() {
         let identity_secret = [7u8; 32];
         let nullifier_secret = [8u8; 32];
-        
+
         let proof = ZkIdentityProof::generate_citizenship_proof(
-            "CA".to_string(), identity_secret, nullifier_secret
-        ).unwrap();
-        
+            "CA".to_string(),
+            identity_secret,
+            nullifier_secret,
+        )
+        .unwrap();
+
         assert!(proof.proves_attribute("citizenship"));
     }
 
@@ -533,12 +576,14 @@ mod tests {
             .with_age_range(30, 40)
             .with_citizenship("UK".to_string())
             .with_kyc_level(2);
-        
+
         let identity_secret = [9u8; 32];
         let nullifier_secret = [10u8; 32];
-        
-        let proof = ZkIdentityProof::generate_comprehensive(&attrs, identity_secret, nullifier_secret).unwrap();
-        
+
+        let proof =
+            ZkIdentityProof::generate_comprehensive(&attrs, identity_secret, nullifier_secret)
+                .unwrap();
+
         assert!(proof.proves_attribute("age_range"));
         assert!(proof.proves_attribute("citizenship"));
         assert!(proof.proves_attribute("kyc_level"));
@@ -551,15 +596,27 @@ mod tests {
         let identity_secret2 = [12u8; 32];
         let nullifier_secret1 = [13u8; 32];
         let nullifier_secret2 = [14u8; 32];
-        
+
         let attrs1 = IdentityAttributes::new().with_age_range(25, 30);
         let attrs2 = IdentityAttributes::new().with_citizenship("DE".to_string());
-        
-        let proof1 = ZkIdentityProof::generate(&attrs1, identity_secret1, nullifier_secret1, vec!["age_range".to_string()]).unwrap();
-        let proof2 = ZkIdentityProof::generate(&attrs2, identity_secret2, nullifier_secret2, vec!["citizenship".to_string()]).unwrap();
-        
+
+        let proof1 = ZkIdentityProof::generate(
+            &attrs1,
+            identity_secret1,
+            nullifier_secret1,
+            vec!["age_range".to_string()],
+        )
+        .unwrap();
+        let proof2 = ZkIdentityProof::generate(
+            &attrs2,
+            identity_secret2,
+            nullifier_secret2,
+            vec!["citizenship".to_string()],
+        )
+        .unwrap();
+
         let batch = BatchIdentityProof::create(vec![proof1, proof2]).unwrap();
-        
+
         assert_eq!(batch.batch_size(), 2);
         assert!(batch.get_proof(0).is_some());
         assert!(batch.get_proof(2).is_none());
@@ -568,19 +625,15 @@ mod tests {
 
     #[test]
     fn test_merkle_root_calculation() {
-        let leaves = vec![
-            [1u8; 32],
-            [2u8; 32],
-            [3u8; 32],
-        ];
-        
+        let leaves = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+
         let root = calculate_merkle_root(&leaves);
         assert_ne!(root, [0u8; 32]);
-        
+
         // Single leaf should return itself
         let single_root = calculate_merkle_root(&[[1u8; 32]]);
         assert_eq!(single_root, [1u8; 32]);
-        
+
         // Empty should return zero
         let empty_root = calculate_merkle_root(&[]);
         assert_eq!(empty_root, [0u8; 32]);
@@ -594,14 +647,16 @@ mod tests {
             [15u8; 32],
             [16u8; 32],
             vec!["kyc_level".to_string()],
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         // Set timestamp to 2 hours ago
         proof.timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() - 7200;
-        
+            .as_secs()
+            - 7200;
+
         assert!(!proof.is_expired_after(3 * 60 * 60)); // 3 hours
         assert!(proof.is_expired_after(1 * 60 * 60)); // 1 hour
         assert!(proof.age_seconds() >= 7200);

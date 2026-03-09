@@ -9,7 +9,7 @@
 //! Wire format: ZHTP magic (4 bytes) + version (1 byte) + length (4 bytes BE) + payload
 //! The payload format is auto-detected from content.
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
 use tracing::debug;
 
@@ -44,7 +44,8 @@ impl PayloadFormat {
 
         // JSON detection: starts with { or [ (possibly with whitespace)
         // Check first non-whitespace byte
-        let first_non_ws = data.iter()
+        let first_non_ws = data
+            .iter()
             .find(|&&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
             .copied()
             .unwrap_or(0);
@@ -74,7 +75,10 @@ pub fn serialize_request(request: &ZhtpRequest) -> Result<Vec<u8>> {
 }
 
 /// Serialize a ZHTP request with specific format
-pub fn serialize_request_with_format(request: &ZhtpRequest, format: PayloadFormat) -> Result<Vec<u8>> {
+pub fn serialize_request_with_format(
+    request: &ZhtpRequest,
+    format: PayloadFormat,
+) -> Result<Vec<u8>> {
     let body = match format {
         PayloadFormat::Cbor => {
             let mut buf = Vec::new();
@@ -83,18 +87,19 @@ pub fn serialize_request_with_format(request: &ZhtpRequest, format: PayloadForma
             buf
         }
         PayloadFormat::Json => {
-            serde_json::to_vec(request)
-                .context("Failed to serialize ZhtpRequest as JSON")?
+            serde_json::to_vec(request).context("Failed to serialize ZhtpRequest as JSON")?
         }
         PayloadFormat::Bincode => {
-            bincode::serialize(request)
-                .context("Failed to serialize ZhtpRequest as bincode")?
+            bincode::serialize(request).context("Failed to serialize ZhtpRequest as bincode")?
         }
     };
 
     if body.len() > MAX_MESSAGE_SIZE {
-        return Err(anyhow::anyhow!("Request too large: {} bytes (max: {} bytes)",
-            body.len(), MAX_MESSAGE_SIZE));
+        return Err(anyhow::anyhow!(
+            "Request too large: {} bytes (max: {} bytes)",
+            body.len(),
+            MAX_MESSAGE_SIZE
+        ));
     }
 
     // Build message with header
@@ -120,7 +125,10 @@ pub fn serialize_request_with_format(request: &ZhtpRequest, format: PayloadForma
 pub fn deserialize_request_with_format(data: &[u8]) -> Result<(ZhtpRequest, PayloadFormat)> {
     // Validate minimum size
     if data.len() < 9 {
-        return Err(anyhow::anyhow!("Message too short: {} bytes (min: 9)", data.len()));
+        return Err(anyhow::anyhow!(
+            "Message too short: {} bytes (min: 9)",
+            data.len()
+        ));
     }
 
     // Validate magic bytes
@@ -139,13 +147,19 @@ pub fn deserialize_request_with_format(data: &[u8]) -> Result<(ZhtpRequest, Payl
 
     // Validate length
     if length > MAX_MESSAGE_SIZE {
-        return Err(anyhow::anyhow!("Message too large: {} bytes (max: {})",
-            length, MAX_MESSAGE_SIZE));
+        return Err(anyhow::anyhow!(
+            "Message too large: {} bytes (max: {})",
+            length,
+            MAX_MESSAGE_SIZE
+        ));
     }
 
     if data.len() < 9 + length {
-        return Err(anyhow::anyhow!("Incomplete message: expected {} bytes, got {}",
-            9 + length, data.len()));
+        return Err(anyhow::anyhow!(
+            "Incomplete message: expected {} bytes, got {}",
+            9 + length,
+            data.len()
+        ));
     }
 
     let payload = &data[9..9 + length];
@@ -156,17 +170,12 @@ pub fn deserialize_request_with_format(data: &[u8]) -> Result<(ZhtpRequest, Payl
 
     let request = match format {
         PayloadFormat::Cbor => {
-            ciborium::from_reader(payload)
-                .context("Failed to deserialize ZhtpRequest from CBOR")?
+            ciborium::from_reader(payload).context("Failed to deserialize ZhtpRequest from CBOR")?
         }
-        PayloadFormat::Json => {
-            serde_json::from_slice(payload)
-                .context("Failed to deserialize ZhtpRequest from JSON")?
-        }
-        PayloadFormat::Bincode => {
-            bincode::deserialize(payload)
-                .context("Failed to deserialize ZhtpRequest from bincode")?
-        }
+        PayloadFormat::Json => serde_json::from_slice(payload)
+            .context("Failed to deserialize ZhtpRequest from JSON")?,
+        PayloadFormat::Bincode => bincode::deserialize(payload)
+            .context("Failed to deserialize ZhtpRequest from bincode")?,
     };
 
     Ok((request, format))
@@ -183,7 +192,10 @@ pub fn serialize_response(response: &ZhtpResponse) -> Result<Vec<u8>> {
 }
 
 /// Serialize a ZHTP response with specific format
-pub fn serialize_response_with_format(response: &ZhtpResponse, format: PayloadFormat) -> Result<Vec<u8>> {
+pub fn serialize_response_with_format(
+    response: &ZhtpResponse,
+    format: PayloadFormat,
+) -> Result<Vec<u8>> {
     let body = match format {
         PayloadFormat::Cbor => {
             let mut buf = Vec::new();
@@ -192,18 +204,19 @@ pub fn serialize_response_with_format(response: &ZhtpResponse, format: PayloadFo
             buf
         }
         PayloadFormat::Json => {
-            serde_json::to_vec(response)
-                .context("Failed to serialize ZhtpResponse as JSON")?
+            serde_json::to_vec(response).context("Failed to serialize ZhtpResponse as JSON")?
         }
         PayloadFormat::Bincode => {
-            bincode::serialize(response)
-                .context("Failed to serialize ZhtpResponse as bincode")?
+            bincode::serialize(response).context("Failed to serialize ZhtpResponse as bincode")?
         }
     };
 
     if body.len() > MAX_MESSAGE_SIZE {
-        return Err(anyhow::anyhow!("Response too large: {} bytes (max: {} bytes)",
-            body.len(), MAX_MESSAGE_SIZE));
+        return Err(anyhow::anyhow!(
+            "Response too large: {} bytes (max: {} bytes)",
+            body.len(),
+            MAX_MESSAGE_SIZE
+        ));
     }
 
     // Build message with header
@@ -228,7 +241,10 @@ pub fn serialize_response_with_format(response: &ZhtpResponse, format: PayloadFo
 pub fn deserialize_response_with_format(data: &[u8]) -> Result<(ZhtpResponse, PayloadFormat)> {
     // Validate minimum size
     if data.len() < 9 {
-        return Err(anyhow::anyhow!("Message too short: {} bytes (min: 9)", data.len()));
+        return Err(anyhow::anyhow!(
+            "Message too short: {} bytes (min: 9)",
+            data.len()
+        ));
     }
 
     // Validate magic bytes
@@ -247,13 +263,19 @@ pub fn deserialize_response_with_format(data: &[u8]) -> Result<(ZhtpResponse, Pa
 
     // Validate length
     if length > MAX_MESSAGE_SIZE {
-        return Err(anyhow::anyhow!("Message too large: {} bytes (max: {})",
-            length, MAX_MESSAGE_SIZE));
+        return Err(anyhow::anyhow!(
+            "Message too large: {} bytes (max: {})",
+            length,
+            MAX_MESSAGE_SIZE
+        ));
     }
 
     if data.len() < 9 + length {
-        return Err(anyhow::anyhow!("Incomplete message: expected {} bytes, got {}",
-            9 + length, data.len()));
+        return Err(anyhow::anyhow!(
+            "Incomplete message: expected {} bytes, got {}",
+            9 + length,
+            data.len()
+        ));
     }
 
     let payload = &data[9..9 + length];
@@ -262,18 +284,12 @@ pub fn deserialize_response_with_format(data: &[u8]) -> Result<(ZhtpResponse, Pa
     let format = PayloadFormat::detect(payload);
 
     let response = match format {
-        PayloadFormat::Cbor => {
-            ciborium::from_reader(payload)
-                .context("Failed to deserialize ZhtpResponse from CBOR")?
-        }
-        PayloadFormat::Json => {
-            serde_json::from_slice(payload)
-                .context("Failed to deserialize ZhtpResponse from JSON")?
-        }
-        PayloadFormat::Bincode => {
-            bincode::deserialize(payload)
-                .context("Failed to deserialize ZhtpResponse from bincode")?
-        }
+        PayloadFormat::Cbor => ciborium::from_reader(payload)
+            .context("Failed to deserialize ZhtpResponse from CBOR")?,
+        PayloadFormat::Json => serde_json::from_slice(payload)
+            .context("Failed to deserialize ZhtpResponse from JSON")?,
+        PayloadFormat::Bincode => bincode::deserialize(payload)
+            .context("Failed to deserialize ZhtpResponse from bincode")?,
     };
 
     Ok((response, format))
@@ -287,7 +303,7 @@ pub fn deserialize_response(data: &[u8]) -> Result<ZhtpResponse> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_protocols::types::{ZhtpMethod, ZhtpHeaders, ZhtpStatus};
+    use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpStatus};
 
     fn create_test_request() -> ZhtpRequest {
         ZhtpRequest {
@@ -351,7 +367,9 @@ mod tests {
         assert_eq!(serialized[4], ZHTP_VERSION);
 
         // Parse length
-        let length = u32::from_be_bytes([serialized[5], serialized[6], serialized[7], serialized[8]]) as usize;
+        let length =
+            u32::from_be_bytes([serialized[5], serialized[6], serialized[7], serialized[8]])
+                as usize;
         let payload = &serialized[9..9 + length];
 
         // IMPORTANT: Bincode cannot be reliably auto-detected because it has no magic bytes.
@@ -402,14 +420,23 @@ mod tests {
         assert_eq!(PayloadFormat::detect(&[0xbf]), PayloadFormat::Cbor);
 
         // JSON object
-        assert_eq!(PayloadFormat::detect(b"{\"key\":\"value\"}"), PayloadFormat::Json);
-        assert_eq!(PayloadFormat::detect(b"  {\"key\":\"value\"}"), PayloadFormat::Json);
+        assert_eq!(
+            PayloadFormat::detect(b"{\"key\":\"value\"}"),
+            PayloadFormat::Json
+        );
+        assert_eq!(
+            PayloadFormat::detect(b"  {\"key\":\"value\"}"),
+            PayloadFormat::Json
+        );
 
         // JSON array
         assert_eq!(PayloadFormat::detect(b"[1,2,3]"), PayloadFormat::Json);
 
         // Bincode (small numbers = enum variants)
-        assert_eq!(PayloadFormat::detect(&[0x00, 0x01, 0x02]), PayloadFormat::Bincode);
+        assert_eq!(
+            PayloadFormat::detect(&[0x00, 0x01, 0x02]),
+            PayloadFormat::Bincode
+        );
     }
 
     #[test]
@@ -419,7 +446,10 @@ mod tests {
 
         let result = deserialize_request(&data);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid ZHTP magic bytes"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid ZHTP magic bytes"));
     }
 
     #[test]
@@ -430,7 +460,10 @@ mod tests {
 
         let result = deserialize_request(&data);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported ZHTP version"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported ZHTP version"));
     }
 
     #[test]

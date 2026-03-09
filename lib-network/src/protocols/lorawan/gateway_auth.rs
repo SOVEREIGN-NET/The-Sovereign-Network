@@ -5,10 +5,10 @@
 //! mesh side. This is platform-agnostic and avoids macOS-specific code paths.
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use tracing::info;
 use lib_crypto::hash_sha3_256;
 use lib_crypto::post_quantum::dilithium::{dilithium_sign, dilithium_verify};
+use serde::{Deserialize, Serialize};
+use tracing::info;
 
 /// 49-byte device message (fits DR0=51 bytes).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,7 +259,11 @@ impl LoRaWANGatewayAuth {
         // In production, nonce should be stored in attestation or retrieved separately
 
         // Verify Dilithium5 signature
-        match dilithium_verify(&attestation_msg, &binding.attestation.signature, gateway_public_key) {
+        match dilithium_verify(
+            &attestation_msg,
+            &binding.attestation.signature,
+            gateway_public_key,
+        ) {
             Ok(valid) => {
                 info!(
                     device = %hex::encode(binding.device_eui),

@@ -22,8 +22,8 @@
 //! of their inputs.
 
 use super::role_types::{
-    Assignment, AssignmentId, AssignmentStatus, IdentityId,
-    RoleDefinition, RoleId, RoleRegistryError,
+    Assignment, AssignmentId, AssignmentStatus, IdentityId, RoleDefinition, RoleId,
+    RoleRegistryError,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -592,7 +592,10 @@ mod tests {
 
         registry.grant_role(role.clone(), &admin_key()).unwrap();
         let result = registry.grant_role(role, &admin_key());
-        assert!(matches!(result, Err(RoleRegistryError::RoleAlreadyExists(_))));
+        assert!(matches!(
+            result,
+            Err(RoleRegistryError::RoleAlreadyExists(_))
+        ));
     }
 
     #[test]
@@ -600,7 +603,9 @@ mod tests {
         let mut registry = RoleRegistry::new(admin_key());
         registry.grant_role(engineer_role(), &admin_key()).unwrap();
 
-        assert!(registry.revoke_role(&engineer_role_id(), &admin_key()).is_ok());
+        assert!(registry
+            .revoke_role(&engineer_role_id(), &admin_key())
+            .is_ok());
         assert!(!registry.get_role(&engineer_role_id()).unwrap().is_active);
     }
 
@@ -610,7 +615,13 @@ mod tests {
         registry.grant_role(engineer_role(), &admin_key()).unwrap();
 
         registry
-            .update_role_caps(&engineer_role_id(), 50_000, Some(200_000), 5_000, &admin_key())
+            .update_role_caps(
+                &engineer_role_id(),
+                50_000,
+                Some(200_000),
+                5_000,
+                &admin_key(),
+            )
             .unwrap();
 
         let role = registry.get_role(&engineer_role_id()).unwrap();
@@ -718,7 +729,9 @@ mod tests {
 
         // Pay 10k per epoch for 5 epochs = 50k total
         for epoch in 100..105 {
-            registry.record_payment(&assignment_id, 10_000, epoch, 2024, &admin_key()).unwrap();
+            registry
+                .record_payment(&assignment_id, 10_000, epoch, 2024, &admin_key())
+                .unwrap();
         }
 
         // Suspend
@@ -759,7 +772,9 @@ mod tests {
         registry.grant_role(engineer_role(), &admin_key()).unwrap();
 
         // Revoke role
-        registry.revoke_role(&engineer_role_id(), &admin_key()).unwrap();
+        registry
+            .revoke_role(&engineer_role_id(), &admin_key())
+            .unwrap();
 
         // Cannot assign to inactive role
         let result =
@@ -780,7 +795,9 @@ mod tests {
         let assignment_id = assignment.assignment_id;
 
         // Pay
-        registry.record_payment(&assignment_id, 10_000, 100, 2024, &admin_key()).unwrap();
+        registry
+            .record_payment(&assignment_id, 10_000, 100, 2024, &admin_key())
+            .unwrap();
 
         // Suspend
         registry
@@ -793,7 +810,9 @@ mod tests {
             .unwrap();
 
         // Pay more
-        registry.record_payment(&assignment_id, 10_000, 102, 2024, &admin_key()).unwrap();
+        registry
+            .record_payment(&assignment_id, 10_000, 102, 2024, &admin_key())
+            .unwrap();
 
         // Terminate
         registry

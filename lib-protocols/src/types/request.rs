@@ -1,15 +1,15 @@
 //! ZHTP Request Implementation
-//! 
+//!
 //! Complete ZHTP request structure with automatic DAO fee calculation,
 //! zero-knowledge proof integration, and post-quantum cryptography.
 
-use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
-use crate::types::{ZhtpMethod, ZhtpHeaders, ZHTP_VERSION, MIN_DAO_FEE, DAO_FEE_PERCENTAGE};
+use crate::types::{ZhtpHeaders, ZhtpMethod, DAO_FEE_PERCENTAGE, MIN_DAO_FEE, ZHTP_VERSION};
+use lib_crypto::hash_blake3;
+use lib_economy::{EconomicModel, Priority};
 use lib_identity::IdentityId;
 use lib_proofs::ZeroKnowledgeProof;
-use lib_economy::{EconomicModel, Priority};
-use lib_crypto::hash_blake3;
+use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// ZHTP request with Web4 extensions
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,10 +44,8 @@ impl ZhtpRequest {
         priority: Priority,
         economic_model: &EconomicModel,
     ) -> anyhow::Result<Self> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs();
-        
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+
         // Fee Policy: Getters are FREE (rate-limited), Setters require DAO fee
         // GET/HEAD: 0 fee (100 requests per 30 seconds enforced by node)
         // POST/PUT/DELETE/PATCH: Standard DAO fee for UBI funding
@@ -58,16 +56,18 @@ impl ZhtpRequest {
             }
             _ => {
                 // Setters require fees
-                let request_value = crate::economics::utils::calculate_request_value(&method, &body, &uri);
+                let request_value =
+                    crate::economics::utils::calculate_request_value(&method, &body, &uri);
                 let tx_size = body.len() as u64 + uri.len() as u64;
-                let (net_fee, dao_fee_calc, _total) = economic_model.calculate_fee(tx_size, request_value, priority);
+                let (net_fee, dao_fee_calc, _total) =
+                    economic_model.calculate_fee(tx_size, request_value, priority);
                 (net_fee, dao_fee_calc)
             }
         };
-        
+
         // Generate DAO fee proof for UBI funding validation
         let dao_fee_proof = hash_blake3(&format!("dao_fee_{}_{}", dao_fee, timestamp).as_bytes());
-        
+
         // Create headers with Web4 defaults
         let mut headers = ZhtpHeaders::new()
             .with_content_type("application/octet-stream".to_string())
@@ -84,7 +84,8 @@ impl ZhtpRequest {
                 headers = headers.with_cache_control("max-age=3600".to_string());
             }
             ZhtpMethod::Post | ZhtpMethod::Put | ZhtpMethod::Patch => {
-                headers = headers.with_content_tier("hot".to_string())
+                headers = headers
+                    .with_content_tier("hot".to_string())
                     .with_replication_factor(3);
             }
             _ => {}
@@ -110,9 +111,7 @@ impl ZhtpRequest {
         headers: ZhtpHeaders,
         requester: Option<IdentityId>,
     ) -> anyhow::Result<Self> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs();
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
         Ok(ZhtpRequest {
             method,
@@ -155,7 +154,7 @@ impl ZhtpRequest {
             Priority::Normal,
             &economic_model,
         )?;
-        
+
         request.headers = request.headers.with_content_type(content_type);
         Ok(request)
     }
@@ -176,7 +175,7 @@ impl ZhtpRequest {
             Priority::Normal,
             &economic_model,
         )?;
-        
+
         request.headers = request.headers.with_content_type(content_type);
         Ok(request)
     }
@@ -209,7 +208,7 @@ impl ZhtpRequest {
             Priority::High, // Verification has high priority
             &economic_model,
         )?;
-        
+
         request.headers = request.headers.with_zk_proof(proof);
         Ok(request)
     }
@@ -217,36 +216,38 @@ impl ZhtpRequest {
     /// Validate ZHTP request includes mandatory DAO fee for UBI/welfare funding
     pub fn validate_dao_fee(&self, _economic_model: &EconomicModel) -> anyhow::Result<bool> {
         // Calculate expected DAO fee based on request value
-        let request_value = crate::economics::utils::calculate_request_value(&self.method, &self.body, &self.uri);
-        
+        let request_value =
+            crate::economics::utils::calculate_request_value(&self.method, &self.body, &self.uri);
+
         // Calculate expected DAO fee (2% of request value)
         let expected_dao_fee = (request_value * DAO_FEE_PERCENTAGE) / 10000; // 2.00%
         let expected_dao_fee = expected_dao_fee.max(MIN_DAO_FEE); // Minimum 5 tokens
-        
+
         // Validate DAO fee was paid
         let dao_fee_valid = self.headers.dao_fee >= expected_dao_fee;
-        
+
         // Validate DAO fee proof exists
         let proof_valid = self.headers.dao_fee_proof.is_some();
-        
+
         if !dao_fee_valid {
             tracing::warn!(
                 "ZHTP request rejected: insufficient DAO fee. Expected: {}, Provided: {}",
-                expected_dao_fee, self.headers.dao_fee
+                expected_dao_fee,
+                self.headers.dao_fee
             );
             return Ok(false);
         }
-        
+
         if !proof_valid {
             tracing::warn!("ZHTP request rejected: missing DAO fee proof");
             return Ok(false);
         }
-        
+
         tracing::info!(
             "ZHTP request validated: {} SOV DAO fee paid for UBI/welfare funding",
             self.headers.dao_fee
         );
-        
+
         Ok(true)
     }
 
@@ -277,21 +278,21 @@ impl ZhtpRequest {
 
     /// Validate request timestamp (prevent replay attacks)
     pub fn validate_timestamp(&self, max_age_seconds: u64) -> anyhow::Result<bool> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs();
-        
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+
         let age = now.saturating_sub(self.timestamp);
-        
+
         if age > max_age_seconds {
             tracing::warn!(
                 "ZHTP request rejected: timestamp too old. Age: {}s, Max: {}s",
-                age, max_age_seconds
+                age,
+                max_age_seconds
             );
             return Ok(false);
         }
 
-        if self.timestamp > now + 300 { // Allow 5 minutes clock skew
+        if self.timestamp > now + 300 {
+            // Allow 5 minutes clock skew
             tracing::warn!(
                 "ZHTP request rejected: timestamp in future. Skew: {}s",
                 self.timestamp - now
@@ -335,8 +336,11 @@ impl ZhtpRequest {
 
     /// Get request size in bytes
     pub fn size(&self) -> usize {
-        self.body.len() + self.uri.len() + 
-        serde_json::to_string(&self.headers).unwrap_or_default().len()
+        self.body.len()
+            + self.uri.len()
+            + serde_json::to_string(&self.headers)
+                .unwrap_or_default()
+                .len()
     }
 
     /// Check if request is safe (doesn't modify state)
@@ -356,9 +360,9 @@ impl ZhtpRequest {
 
     /// Check if request requires special permissions
     pub fn requires_special_permissions(&self) -> bool {
-        self.method.requires_special_permissions() || 
-        self.headers.access_requirements.is_some() ||
-        self.headers.required_reputation.is_some()
+        self.method.requires_special_permissions()
+            || self.headers.access_requirements.is_some()
+            || self.headers.required_reputation.is_some()
     }
 }
 
@@ -376,7 +380,8 @@ mod tests {
             None,
             Priority::Normal,
             &economic_model,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(request.method, ZhtpMethod::Post);
         assert_eq!(request.uri, "/test");
@@ -395,10 +400,14 @@ mod tests {
             b"test data".to_vec(),
             "text/plain".to_string(),
             None,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(post_req.method, ZhtpMethod::Post);
         assert_eq!(post_req.body, b"test data");
-        assert_eq!(post_req.headers.content_type, Some("text/plain".to_string()));
+        assert_eq!(
+            post_req.headers.content_type,
+            Some("text/plain".to_string())
+        );
     }
 
     #[test]
@@ -411,7 +420,8 @@ mod tests {
             None,
             Priority::Normal,
             &economic_model,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(request.validate_dao_fee(&economic_model).unwrap());
     }
@@ -419,7 +429,7 @@ mod tests {
     #[test]
     fn test_size_validation() {
         let economic_model = EconomicModel::new();
-        
+
         // Small request should pass
         let small_request = ZhtpRequest::new(
             ZhtpMethod::Get,
@@ -428,7 +438,8 @@ mod tests {
             None,
             Priority::Normal,
             &economic_model,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(small_request.validate_size_limits().unwrap());
 
         // Large request should fail
@@ -439,7 +450,8 @@ mod tests {
             None,
             Priority::Normal,
             &economic_model,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(!large_request.validate_size_limits().unwrap());
     }
 
@@ -453,7 +465,8 @@ mod tests {
             None,
             Priority::Normal,
             &economic_model,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Current timestamp should be valid
         assert!(request.validate_timestamp(300).unwrap()); // 5 minutes max age
@@ -462,12 +475,12 @@ mod tests {
     #[test]
     fn test_request_value_calculation() {
         use crate::economics::utils::calculate_request_value;
-        
+
         assert_eq!(
             calculate_request_value(&ZhtpMethod::Get, &[], "/test"),
             100 + ("/test".len() as u64 / 10)
         );
-        
+
         assert_eq!(
             calculate_request_value(&ZhtpMethod::Post, b"data", "/test"),
             4 * 10 // 4 bytes * 10 tokens per byte
@@ -477,7 +490,7 @@ mod tests {
     #[test]
     fn test_request_properties() {
         let economic_model = EconomicModel::new();
-        
+
         let get_req = ZhtpRequest::new(
             ZhtpMethod::Get,
             "/test".to_string(),
@@ -485,7 +498,8 @@ mod tests {
             None,
             Priority::Normal,
             &economic_model,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(get_req.is_safe());
         assert!(get_req.is_idempotent());
         assert!(!get_req.requires_special_permissions());
@@ -497,7 +511,8 @@ mod tests {
             None,
             Priority::Normal,
             &economic_model,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(!post_req.is_safe());
         assert!(!post_req.is_idempotent());
         assert!(post_req.requires_special_permissions());

@@ -43,7 +43,7 @@ use crate::storage::{
 use crate::transaction::{
     contract_deployment::ContractDeploymentPayloadV1,
     contract_execution::DecodedContractExecutionMemo, hash_transaction,
-    token_creation::TokenCreationPayloadV1,
+    token_creation::TokenCreationPayloadV1, DEFAULT_TOKEN_CREATION_FEE,
 };
 use crate::types::TransactionType;
 
@@ -197,6 +197,8 @@ pub struct ExecutorConfig {
     pub allow_empty_blocks: bool,
     /// Protocol parameters for fee model versioning (Phase 3B)
     pub protocol_params: ProtocolParams,
+    /// Fixed fee for canonical TokenCreation transactions
+    pub token_creation_fee: u64,
 }
 
 impl Default for ExecutorConfig {
@@ -206,6 +208,7 @@ impl Default for ExecutorConfig {
             block_reward: 50_000_000,  // 50 tokens (in smallest unit)
             allow_empty_blocks: true,
             protocol_params: ProtocolParams::default(),
+            token_creation_fee: DEFAULT_TOKEN_CREATION_FEE,
         }
     }
 }
@@ -214,6 +217,11 @@ impl ExecutorConfig {
     /// Create config with specific protocol params
     pub fn with_protocol_params(mut self, params: ProtocolParams) -> Self {
         self.protocol_params = params;
+        self
+    }
+
+    pub fn with_token_creation_fee(mut self, fee: u64) -> Self {
+        self.token_creation_fee = fee;
         self
     }
 
@@ -279,6 +287,7 @@ pub struct BlockExecutor {
     store: Arc<dyn BlockchainStore>,
     fee_model: FeeModelV2,
     limits: BlockLimits,
+    token_creation_fee: u64,
     /// When true, skip fee validation for all transactions.
     /// Used during catch-up sync to replay already-committed peer blocks
     /// whose transactions were valid under older fee rules.
@@ -317,18 +326,29 @@ impl<'a> Drop for RollbackGuard<'a> {
 }
 
 impl BlockExecutor {
+    /// Create a new block executor with explicit token creation fee.
+    pub fn new_with_token_creation_fee(
+        store: Arc<dyn BlockchainStore>,
+        fee_model: FeeModelV2,
+        limits: BlockLimits,
+        token_creation_fee: u64,
+    ) -> Self {
+        Self {
+            store,
+            fee_model,
+            limits,
+            token_creation_fee,
+            skip_fee_validation: false,
+        }
+    }
+
     /// Create a new block executor with explicit fee model and limits
     pub fn new(
         store: Arc<dyn BlockchainStore>,
         fee_model: FeeModelV2,
         limits: BlockLimits,
     ) -> Self {
-        Self {
-            store,
-            fee_model,
-            limits,
-            skip_fee_validation: false,
-        }
+        Self::new_with_token_creation_fee(store, fee_model, limits, DEFAULT_TOKEN_CREATION_FEE)
     }
 
     /// Create a block executor that skips fee validation.
@@ -341,10 +361,25 @@ impl BlockExecutor {
         fee_model: FeeModelV2,
         limits: BlockLimits,
     ) -> Self {
+        Self::new_trusted_replay_with_token_creation_fee(
+            store,
+            fee_model,
+            limits,
+            DEFAULT_TOKEN_CREATION_FEE,
+        )
+    }
+
+    pub fn new_trusted_replay_with_token_creation_fee(
+        store: Arc<dyn BlockchainStore>,
+        fee_model: FeeModelV2,
+        limits: BlockLimits,
+        token_creation_fee: u64,
+    ) -> Self {
         Self {
             store,
             fee_model,
             limits,
+            token_creation_fee,
             skip_fee_validation: true,
         }
     }
@@ -356,6 +391,7 @@ impl BlockExecutor {
             store,
             fee_model,
             limits,
+            token_creation_fee: config.token_creation_fee,
             skip_fee_validation: false,
         }
     }
@@ -366,12 +402,16 @@ impl BlockExecutor {
     /// Use this when importing already-committed peer blocks during catch-up
     /// sync; those blocks passed consensus and must be applied regardless of
     /// the local fee schedule.
-    pub fn from_config_trusted_replay(store: Arc<dyn BlockchainStore>, config: ExecutorConfig) -> Self {
+    pub fn from_config_trusted_replay(
+        store: Arc<dyn BlockchainStore>,
+        config: ExecutorConfig,
+    ) -> Self {
         let (fee_model, limits) = config.to_fee_model_and_limits();
         Self {
             store,
             fee_model,
             limits,
+            token_creation_fee: config.token_creation_fee,
             skip_fee_validation: true,
         }
     }
@@ -389,6 +429,10 @@ impl BlockExecutor {
     /// Get reference to the fee model
     pub fn fee_model(&self) -> &FeeModelV2 {
         &self.fee_model
+    }
+
+    pub fn token_creation_fee(&self) -> u64 {
+        self.token_creation_fee
     }
 
     /// Get reference to the block limits
@@ -1069,16 +1113,20 @@ impl BlockExecutor {
             TransactionType::Coinbase => return Ok(()), // Creates value, no fee
             TransactionType::TokenTransfer => return Ok(()), // Phase 2: subsidized
             TransactionType::TokenMint => return Ok(()), // Phase 2: system mint
+            TransactionType::TokenCreation => {
+                if tx.fee != self.token_creation_fee {
+                    return Err(TxApplyError::InvalidType(format!(
+                        "TokenCreation transaction fee must equal {}",
+                        self.token_creation_fee
+                    )));
+                }
+                return Ok(());
+            }
             _ => {}
         }
         // System transactions (empty inputs, excluding typed token ops that must pay fees)
         // are fee-exempt. Mirrors TransactionValidator::validate_transaction() logic.
-        if tx.inputs.is_empty()
-            && !matches!(
-                tx.transaction_type,
-                TransactionType::TokenTransfer | TransactionType::TokenCreation
-            )
-        {
+        if tx.inputs.is_empty() && tx.transaction_type != TransactionType::TokenTransfer {
             return Ok(());
         }
 
@@ -1156,8 +1204,6 @@ impl BlockExecutor {
     /// This is used by BlockAccumulator to track cumulative resource usage
     /// and reject the block if any limit is exceeded.
     fn calculate_tx_resources(&self, tx: &crate::transaction::Transaction) -> (u64, u64, u64, u64) {
-        
-
         // Payload bytes: serialized tx size (excluding witnesses)
         // Approximation: tx size minus signature/proof data
         let payload_bytes = self.estimate_tx_payload_size(tx);
@@ -1264,7 +1310,9 @@ impl BlockExecutor {
     }
 
     /// Decode and validate a ContractExecution memo.
-    fn decode_contract_call_memo(memo: &[u8]) -> Result<DecodedContractExecutionMemo, TxApplyError> {
+    fn decode_contract_call_memo(
+        memo: &[u8],
+    ) -> Result<DecodedContractExecutionMemo, TxApplyError> {
         DecodedContractExecutionMemo::decode_compat(memo)
             .map_err(|e| TxApplyError::InvalidType(format!("Invalid ContractExecution memo: {e}")))
     }
@@ -1305,11 +1353,7 @@ impl BlockExecutor {
 
         let mut index_key = b"proposal_index:".to_vec();
         index_key.extend_from_slice(data.proposal_id.as_bytes());
-        mutator.put_contract_storage(
-            &contract_id,
-            &index_key,
-            data.proposal_id.as_bytes(),
-        )?;
+        mutator.put_contract_storage(&contract_id, &index_key, data.proposal_id.as_bytes())?;
 
         Ok(DaoProposalOutcome {
             proposal_id: data.proposal_id,
@@ -1337,9 +1381,11 @@ impl BlockExecutor {
             })?;
 
         // Validate that the voting period has not expired.
-        let proposal: crate::transaction::DaoProposalData =
-            bincode::deserialize(&proposal_raw).map_err(|e| {
-                TxApplyError::Internal(format!("Failed to deserialize proposal for vote check: {e}"))
+        let proposal: crate::transaction::DaoProposalData = bincode::deserialize(&proposal_raw)
+            .map_err(|e| {
+                TxApplyError::Internal(format!(
+                    "Failed to deserialize proposal for vote check: {e}"
+                ))
             })?;
         let voting_deadline = proposal
             .created_at_height
@@ -1512,12 +1558,11 @@ impl BlockExecutor {
         call_key.extend_from_slice(tx_hash.as_bytes());
         let caller = tx.signature.public_key.key_id;
         let call_record =
-            bincode::serialize(&(block_height, call.method.clone(), caller, call.params))
-                .map_err(|e| {
-                    TxApplyError::Internal(format!(
-                        "Failed to serialize contract call record: {e}"
-                    ))
-                })?;
+            bincode::serialize(&(block_height, call.method.clone(), caller, call.params)).map_err(
+                |e| {
+                    TxApplyError::Internal(format!("Failed to serialize contract call record: {e}"))
+                },
+            )?;
         mutator.put_contract_storage(&contract_id, &call_key, &call_record)?;
         // __last_call_key is a convenience pointer to the most recent call key.
         // It is safe to overwrite on every execution because both writes occur within
@@ -1542,7 +1587,9 @@ impl BlockExecutor {
         block_timestamp: u64,
     ) -> Result<BondingCurveDeployOutcome, TxApplyError> {
         let data = tx.bonding_curve_deploy_data.as_ref().ok_or_else(|| {
-            TxApplyError::InvalidType("BondingCurveDeploy requires bonding_curve_deploy_data field".to_string())
+            TxApplyError::InvalidType(
+                "BondingCurveDeploy requires bonding_curve_deploy_data field".to_string(),
+            )
         })?;
 
         // Executor-level actor check: signer must be the declared creator.
@@ -1555,11 +1602,14 @@ impl BlockExecutor {
 
         // Gate 1: creator must have a registered on-chain identity (DID).
         let creator_addr = Address::new(data.creator);
-        let creator_identity = mutator.get_identity_by_owner(&creator_addr)?.ok_or_else(|| {
-            TxApplyError::InvalidType(
-                "BondingCurveDeploy: creator must have a registered identity (DID) on-chain".to_string(),
-            )
-        })?;
+        let creator_identity = mutator
+            .get_identity_by_owner(&creator_addr)?
+            .ok_or_else(|| {
+                TxApplyError::InvalidType(
+                    "BondingCurveDeploy: creator must have a registered identity (DID) on-chain"
+                        .to_string(),
+                )
+            })?;
         // did_hash is the canonical on-chain identifier; encode as hex for storage.
         let creator_did = format!("did:zhtp:{}", hex::encode(creator_identity.did_hash));
         // NOTE: SOV balance gating for CBE deployment must be enforced against the
@@ -1569,13 +1619,19 @@ impl BlockExecutor {
         // credits, so enforcing the gate here would incorrectly reject valid txs.
         // Generate token ID from name, symbol, and creator
         use lib_crypto::hash_blake3;
-        let input = format!("{}:{}:{}", data.name, data.symbol, hex::encode(&data.creator));
+        let input = format!(
+            "{}:{}:{}",
+            data.name,
+            data.symbol,
+            hex::encode(&data.creator)
+        );
         let token_id_bytes = hash_blake3(input.as_bytes());
         let token_id = TokenId::from(token_id_bytes);
 
         // Create the bonding curve token
         use crate::contracts::bonding_curve::{
-            BondingCurveToken, types::{CurveType, Threshold, Phase}
+            types::{CurveType, Phase, Threshold},
+            BondingCurveToken,
         };
 
         // Convert u8 curve type to CurveType
@@ -1593,7 +1649,12 @@ impl BlockExecutor {
                 midpoint_supply: data.midpoint_supply.unwrap_or(1_000_000_000_000_000),
                 steepness: data.curve_param,
             },
-            _ => return Err(TxApplyError::InvalidType(format!("Invalid curve type: {}", data.curve_type))),
+            _ => {
+                return Err(TxApplyError::InvalidType(format!(
+                    "Invalid curve type: {}",
+                    data.curve_type
+                )))
+            }
         };
 
         // Convert threshold type to Threshold
@@ -1608,7 +1669,12 @@ impl BlockExecutor {
                 min_time_seconds: data.threshold_time_seconds.unwrap_or(0),
                 min_supply: data.threshold_value,
             },
-            _ => return Err(TxApplyError::InvalidType(format!("Invalid threshold type: {}", data.threshold_type))),
+            _ => {
+                return Err(TxApplyError::InvalidType(format!(
+                    "Invalid threshold type: {}",
+                    data.threshold_type
+                )))
+            }
         };
 
         let token = BondingCurveToken {
@@ -1648,7 +1714,9 @@ impl BlockExecutor {
         tx: &crate::transaction::Transaction,
     ) -> Result<BondingCurveBuyOutcome, TxApplyError> {
         let data = tx.bonding_curve_buy_data.as_ref().ok_or_else(|| {
-            TxApplyError::InvalidType("BondingCurveBuy requires bonding_curve_buy_data field".to_string())
+            TxApplyError::InvalidType(
+                "BondingCurveBuy requires bonding_curve_buy_data field".to_string(),
+            )
         })?;
 
         // Executor-level actor check: signer must be the declared buyer.
@@ -1662,25 +1730,29 @@ impl BlockExecutor {
         let buyer = Address(data.buyer);
 
         // Get current token state to calculate tokens out
-        let token = mutator
-            .get_bonding_curve_token(&token_id)?
-            .ok_or_else(|| TxApplyError::InvalidType(format!("Bonding curve token not found: {:?}", token_id)))?;
+        let token = mutator.get_bonding_curve_token(&token_id)?.ok_or_else(|| {
+            TxApplyError::InvalidType(format!("Bonding curve token not found: {:?}", token_id))
+        })?;
 
         // Check token is in Curve phase
         if !token.phase.is_curve_active() {
-            return Err(TxApplyError::InvalidType(
-                format!("Token is not in curve phase (current phase: {:?})", token.phase)
-            ));
+            return Err(TxApplyError::InvalidType(format!(
+                "Token is not in curve phase (current phase: {:?})",
+                token.phase
+            )));
         }
 
         // Calculate tokens out using curve math
-        let tokens_out = token.curve_type.calculate_buy_tokens(token.total_supply, data.stable_amount);
+        let tokens_out = token
+            .curve_type
+            .calculate_buy_tokens(token.total_supply, data.stable_amount);
 
         // Validate slippage protection
         if tokens_out < data.min_tokens_out {
-            return Err(TxApplyError::InvalidType(
-                format!("Slippage exceeded: expected at least {} tokens, got {}", data.min_tokens_out, tokens_out)
-            ));
+            return Err(TxApplyError::InvalidType(format!(
+                "Slippage exceeded: expected at least {} tokens, got {}",
+                data.min_tokens_out, tokens_out
+            )));
         }
 
         tx_apply::apply_bonding_curve_buy(
@@ -1705,7 +1777,9 @@ impl BlockExecutor {
         tx: &crate::transaction::Transaction,
     ) -> Result<BondingCurveSellOutcome, TxApplyError> {
         let data = tx.bonding_curve_sell_data.as_ref().ok_or_else(|| {
-            TxApplyError::InvalidType("BondingCurveSell requires bonding_curve_sell_data field".to_string())
+            TxApplyError::InvalidType(
+                "BondingCurveSell requires bonding_curve_sell_data field".to_string(),
+            )
         })?;
 
         // Executor-level actor check: signer must be the declared seller.
@@ -1719,32 +1793,36 @@ impl BlockExecutor {
         let seller = Address(data.seller);
 
         // Get current token state
-        let token = mutator
-            .get_bonding_curve_token(&token_id)?
-            .ok_or_else(|| TxApplyError::InvalidType(format!("Bonding curve token not found: {:?}", token_id)))?;
+        let token = mutator.get_bonding_curve_token(&token_id)?.ok_or_else(|| {
+            TxApplyError::InvalidType(format!("Bonding curve token not found: {:?}", token_id))
+        })?;
 
         // Check token is in Curve phase
         if !token.phase.is_curve_active() {
-            return Err(TxApplyError::InvalidType(
-                format!("Token is not in curve phase (current phase: {:?})", token.phase)
-            ));
+            return Err(TxApplyError::InvalidType(format!(
+                "Token is not in curve phase (current phase: {:?})",
+                token.phase
+            )));
         }
 
         // Check selling is enabled
         if !token.sell_enabled {
             return Err(TxApplyError::InvalidType(
-                "Selling is disabled for this bonding curve token".to_string()
+                "Selling is disabled for this bonding curve token".to_string(),
             ));
         }
 
         // Calculate stable out using curve math
-        let stable_out = token.curve_type.calculate_sell_stable(token.total_supply, data.token_amount);
+        let stable_out = token
+            .curve_type
+            .calculate_sell_stable(token.total_supply, data.token_amount);
 
         // Validate slippage protection
         if stable_out < data.min_stable_out {
-            return Err(TxApplyError::InvalidType(
-                format!("Slippage exceeded: expected at least {} stable, got {}", data.min_stable_out, stable_out)
-            ));
+            return Err(TxApplyError::InvalidType(format!(
+                "Slippage exceeded: expected at least {} stable, got {}",
+                data.min_stable_out, stable_out
+            )));
         }
 
         tx_apply::apply_bonding_curve_sell(
@@ -1771,19 +1849,28 @@ impl BlockExecutor {
         block_timestamp: u64,
     ) -> Result<BondingCurveGraduateOutcome, TxApplyError> {
         let data = tx.bonding_curve_graduate_data.as_ref().ok_or_else(|| {
-            TxApplyError::InvalidType("BondingCurveGraduate requires bonding_curve_graduate_data field".to_string())
+            TxApplyError::InvalidType(
+                "BondingCurveGraduate requires bonding_curve_graduate_data field".to_string(),
+            )
         })?;
 
         // Executor-level actor check: signer must be the declared graduator.
         if tx.signature.public_key.key_id != data.graduator {
             return Err(TxApplyError::InvalidType(
-                "BondingCurveGraduate: transaction signer does not match graduator field".to_string(),
+                "BondingCurveGraduate: transaction signer does not match graduator field"
+                    .to_string(),
             ));
         }
 
         let token_id = TokenId::from(data.token_id);
 
-        tx_apply::apply_bonding_curve_graduate(mutator, &token_id, &data.pool_id, block_height, block_timestamp)?;
+        tx_apply::apply_bonding_curve_graduate(
+            mutator,
+            &token_id,
+            &data.pool_id,
+            block_height,
+            block_timestamp,
+        )?;
 
         Ok(BondingCurveGraduateOutcome {
             token_id: data.token_id,
@@ -1913,11 +2000,15 @@ impl BlockExecutor {
                     0,
                     creator.clone(),
                 );
-                token.decimals = if payload.decimals == 0 { 8 } else { payload.decimals };
+                token.decimals = if payload.decimals == 0 {
+                    8
+                } else {
+                    payload.decimals
+                };
                 token.max_supply = payload.initial_supply;
-                token
-                    .mint(&creator, creator_allocation)
-                    .map_err(|e| TxApplyError::Internal(format!("TokenCreation mint failed: {e}")))?;
+                token.mint(&creator, creator_allocation).map_err(|e| {
+                    TxApplyError::Internal(format!("TokenCreation mint failed: {e}"))
+                })?;
                 let treasury_pk = lib_crypto::PublicKey {
                     dilithium_pk: vec![],
                     kyber_pk: vec![],
@@ -2003,7 +2094,8 @@ impl BlockExecutor {
 
             // Bonding curve types
             TransactionType::BondingCurveDeploy => {
-                let outcome = self.apply_bonding_curve_deploy(mutator, tx, block_height, block_timestamp)?;
+                let outcome =
+                    self.apply_bonding_curve_deploy(mutator, tx, block_height, block_timestamp)?;
                 Ok(TxOutcome::BondingCurveDeploy(outcome))
             }
             TransactionType::BondingCurveBuy => {
@@ -2015,7 +2107,8 @@ impl BlockExecutor {
                 Ok(TxOutcome::BondingCurveSell(outcome))
             }
             TransactionType::BondingCurveGraduate => {
-                let outcome = self.apply_bonding_curve_graduate(mutator, tx, block_height, block_timestamp)?;
+                let outcome =
+                    self.apply_bonding_curve_graduate(mutator, tx, block_height, block_timestamp)?;
                 Ok(TxOutcome::BondingCurveGraduate(outcome))
             }
 
@@ -2253,7 +2346,12 @@ mod tests {
             block_reward: 50_000_000,
             protocol_params: ProtocolParams::default(),
         };
-        BlockExecutor::new(store, fee_model, BlockLimits::default())
+        BlockExecutor::new_with_token_creation_fee(
+            store,
+            fee_model,
+            BlockLimits::default(),
+            DEFAULT_TOKEN_CREATION_FEE,
+        )
     }
 
     fn create_genesis_block() -> Block {
@@ -2791,11 +2889,12 @@ mod tests {
     use crate::storage::TokenId;
     use crate::transaction::token_creation::TokenCreationPayloadV1;
 
-    fn create_token_creation_tx(
+    fn create_token_creation_tx_with_fee(
         name: &str,
         symbol: &str,
         initial_supply: u64,
         treasury_recipient: [u8; 32],
+        fee: u64,
     ) -> Transaction {
         let payload = TokenCreationPayloadV1 {
             name: name.to_string(),
@@ -2812,7 +2911,7 @@ mod tests {
             transaction_type: TransactionType::TokenCreation,
             inputs: vec![],
             outputs: vec![],
-            fee: 10_000,
+            fee,
             signature: create_dummy_signature(),
             memo,
             identity_data: None,
@@ -2835,6 +2934,21 @@ mod tests {
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
         }
+    }
+
+    fn create_token_creation_tx(
+        name: &str,
+        symbol: &str,
+        initial_supply: u64,
+        treasury_recipient: [u8; 32],
+    ) -> Transaction {
+        create_token_creation_tx_with_fee(
+            name,
+            symbol,
+            initial_supply,
+            treasury_recipient,
+            DEFAULT_TOKEN_CREATION_FEE,
+        )
     }
 
     /// TokenCreation canonical path: token is created and minted to creator.
@@ -2912,7 +3026,10 @@ mod tests {
         let tx2 = create_token_creation_tx("Test Token", "TEST", 500_000, [0xAA; 32]);
         let block2 = create_block_with_txs(2, block1.header.block_hash, vec![tx2]);
         let result = executor.apply_block(&block2);
-        assert!(result.is_err(), "Duplicate TokenCreation should be rejected");
+        assert!(
+            result.is_err(),
+            "Duplicate TokenCreation should be rejected"
+        );
     }
 
     /// TokenCreation with a symbol that differs only in case must be rejected.
@@ -2936,6 +3053,56 @@ mod tests {
         assert!(
             result.is_err(),
             "TokenCreation with case-conflicting symbol should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_token_creation_fee_below_canonical_rejected() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let tx = create_token_creation_tx_with_fee(
+            "Low Fee Token",
+            "LOW",
+            1_000_000,
+            [0xAA; 32],
+            DEFAULT_TOKEN_CREATION_FEE - 1,
+        );
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+
+        let result = executor.apply_block(&block1);
+
+        assert!(
+            result.is_err(),
+            "TokenCreation with low fee should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_token_creation_fee_above_canonical_rejected() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let tx = create_token_creation_tx_with_fee(
+            "High Fee Token",
+            "HIGH",
+            1_000_000,
+            [0xAA; 32],
+            DEFAULT_TOKEN_CREATION_FEE + 1,
+        );
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+
+        let result = executor.apply_block(&block1);
+
+        assert!(
+            result.is_err(),
+            "TokenCreation with non-canonical high fee should be rejected"
         );
     }
 
@@ -3260,17 +3427,23 @@ mod tests {
         // Block 1: submit the proposal
         let proposal_tx = create_dao_proposal_tx(proposal_id);
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
-        executor.apply_block(&block1).expect("Block 1 (proposal) must succeed");
+        executor
+            .apply_block(&block1)
+            .expect("Block 1 (proposal) must succeed");
 
         // Block 2: cast a vote (within the 100-block voting period)
         let vote_tx = create_dao_vote_tx(proposal_id, "alice", "Yes");
         let block2 = create_block_with_txs(2, block1.header.block_hash, vec![vote_tx]);
-        executor.apply_block(&block2).expect("Block 2 (vote) must succeed");
+        executor
+            .apply_block(&block2)
+            .expect("Block 2 (vote) must succeed");
 
         // Block 3: execute the proposal
         let exec_tx = create_dao_execution_tx(proposal_id);
         let block3 = create_block_with_txs(3, block2.header.block_hash, vec![exec_tx]);
-        executor.apply_block(&block3).expect("Block 3 (execution) must succeed");
+        executor
+            .apply_block(&block3)
+            .expect("Block 3 (execution) must succeed");
 
         assert_eq!(store.latest_height().unwrap(), 3);
 
@@ -3299,7 +3472,9 @@ mod tests {
         // Block 1: first proposal succeeds
         let proposal_tx = create_dao_proposal_tx(proposal_id);
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
-        executor.apply_block(&block1).expect("First proposal must succeed");
+        executor
+            .apply_block(&block1)
+            .expect("First proposal must succeed");
 
         // Block 2: same proposal_id must be rejected
         let dup_tx = create_dao_proposal_tx(proposal_id);
@@ -3386,8 +3561,8 @@ mod tests {
     #[test]
     fn test_bonding_curve_tx_constructors_use_version_v3() {
         use crate::transaction::core::{
-            TX_VERSION_V3, BondingCurveDeployData, BondingCurveBuyData,
-            BondingCurveSellData, BondingCurveGraduateData,
+            BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData,
+            BondingCurveSellData, TX_VERSION_V3,
         };
 
         let sig = create_dummy_signature();
@@ -3396,53 +3571,99 @@ mod tests {
         let deploy_tx = Transaction::new_bonding_curve_deploy_with_chain_id(
             1,
             BondingCurveDeployData {
-                name: "Test".into(), symbol: "TST".into(), curve_type: 0,
-                base_price: 1000, curve_param: 100, midpoint_supply: None,
-                threshold_type: 0, threshold_value: 1_000_000, threshold_time_seconds: None,
-                sell_enabled: false, creator, nonce: 1,
+                name: "Test".into(),
+                symbol: "TST".into(),
+                curve_type: 0,
+                base_price: 1000,
+                curve_param: 100,
+                midpoint_supply: None,
+                threshold_type: 0,
+                threshold_value: 1_000_000,
+                threshold_time_seconds: None,
+                sell_enabled: false,
+                creator,
+                nonce: 1,
             },
-            sig.clone(), vec![],
+            sig.clone(),
+            vec![],
         );
-        assert_eq!(deploy_tx.version, TX_VERSION_V3, "deploy tx must be version V3");
-        assert!(deploy_tx.bonding_curve_deploy_data.is_some(), "deploy data must survive serialization gate");
+        assert_eq!(
+            deploy_tx.version, TX_VERSION_V3,
+            "deploy tx must be version V3"
+        );
+        assert!(
+            deploy_tx.bonding_curve_deploy_data.is_some(),
+            "deploy data must survive serialization gate"
+        );
 
         let buy_tx = Transaction::new_bonding_curve_buy_with_chain_id(
             1,
-            BondingCurveBuyData { token_id: [0u8; 32], stable_amount: 1000, min_tokens_out: 0, buyer: creator, nonce: 2 },
-            sig.clone(), vec![],
+            BondingCurveBuyData {
+                token_id: [0u8; 32],
+                stable_amount: 1000,
+                min_tokens_out: 0,
+                buyer: creator,
+                nonce: 2,
+            },
+            sig.clone(),
+            vec![],
         );
         assert_eq!(buy_tx.version, TX_VERSION_V3);
 
         let sell_tx = Transaction::new_bonding_curve_sell_with_chain_id(
             1,
-            BondingCurveSellData { token_id: [0u8; 32], token_amount: 100, min_stable_out: 0, seller: creator, nonce: 3 },
-            sig.clone(), vec![],
+            BondingCurveSellData {
+                token_id: [0u8; 32],
+                token_amount: 100,
+                min_stable_out: 0,
+                seller: creator,
+                nonce: 3,
+            },
+            sig.clone(),
+            vec![],
         );
         assert_eq!(sell_tx.version, TX_VERSION_V3);
 
         let grad_tx = Transaction::new_bonding_curve_graduate_with_chain_id(
             1,
-            BondingCurveGraduateData { token_id: [0u8; 32], pool_id: [0u8; 32], sov_seed_amount: 0, token_seed_amount: 0, graduator: creator, nonce: 4 },
-            sig, vec![],
+            BondingCurveGraduateData {
+                token_id: [0u8; 32],
+                pool_id: [0u8; 32],
+                sov_seed_amount: 0,
+                token_seed_amount: 0,
+                graduator: creator,
+                nonce: 4,
+            },
+            sig,
+            vec![],
         );
         assert_eq!(grad_tx.version, TX_VERSION_V3);
     }
 
     #[test]
     fn test_bonding_curve_tx_v3_roundtrips_data_fields() {
-        use crate::transaction::core::{TX_VERSION_V3, BondingCurveDeployData};
+        use crate::transaction::core::{BondingCurveDeployData, TX_VERSION_V3};
 
         let creator = [7u8; 32];
         let sig = create_dummy_signature();
         let tx = Transaction::new_bonding_curve_deploy_with_chain_id(
             1,
             BondingCurveDeployData {
-                name: "RoundTrip".into(), symbol: "RT".into(), curve_type: 1,
-                base_price: 500, curve_param: 200, midpoint_supply: None,
-                threshold_type: 1, threshold_value: 500_000, threshold_time_seconds: None,
-                sell_enabled: true, creator, nonce: 99,
+                name: "RoundTrip".into(),
+                symbol: "RT".into(),
+                curve_type: 1,
+                base_price: 500,
+                curve_param: 200,
+                midpoint_supply: None,
+                threshold_type: 1,
+                threshold_value: 500_000,
+                threshold_time_seconds: None,
+                sell_enabled: true,
+                creator,
+                nonce: 99,
             },
-            sig, vec![],
+            sig,
+            vec![],
         );
         assert_eq!(tx.version, TX_VERSION_V3);
 
@@ -3450,7 +3671,9 @@ mod tests {
         let bytes = bincode::serialize(&tx).expect("serialize");
         let decoded: Transaction = bincode::deserialize(&bytes).expect("deserialize");
         assert_eq!(decoded.version, TX_VERSION_V3);
-        let data = decoded.bonding_curve_deploy_data.expect("deploy_data must be Some after roundtrip");
+        let data = decoded
+            .bonding_curve_deploy_data
+            .expect("deploy_data must be Some after roundtrip");
         assert_eq!(data.symbol, "RT");
         assert_eq!(data.creator, creator);
     }
@@ -3471,9 +3694,15 @@ mod tests {
             1000,
             500,
         );
-        assert!(result.is_err(), "BondingCurveBuy must be disabled until reserve asset is implemented");
+        assert!(
+            result.is_err(),
+            "BondingCurveBuy must be disabled until reserve asset is implemented"
+        );
         let msg = format!("{:?}", result.unwrap_err());
-        assert!(msg.contains("not yet enabled"), "error must explain why buy is disabled: {msg}");
+        assert!(
+            msg.contains("not yet enabled"),
+            "error must explain why buy is disabled: {msg}"
+        );
     }
 
     #[test]
@@ -3492,14 +3721,23 @@ mod tests {
             100,
             500,
         );
-        assert!(result.is_err(), "BondingCurveSell must be disabled until reserve asset is implemented");
+        assert!(
+            result.is_err(),
+            "BondingCurveSell must be disabled until reserve asset is implemented"
+        );
         let msg = format!("{:?}", result.unwrap_err());
-        assert!(msg.contains("not yet enabled"), "error must explain why sell is disabled: {msg}");
+        assert!(
+            msg.contains("not yet enabled"),
+            "error must explain why sell is disabled: {msg}"
+        );
     }
 
     #[test]
     fn test_bonding_curve_deploy_stores_token_and_symbol_index() {
-        use crate::contracts::bonding_curve::{BondingCurveToken, types::{CurveType, Threshold, Phase}};
+        use crate::contracts::bonding_curve::{
+            types::{CurveType, Phase, Threshold},
+            BondingCurveToken,
+        };
         use crate::execution::tx_apply::{self, StateMutator};
         use crate::storage::TokenId;
         use lib_crypto::hash_blake3;
@@ -3513,14 +3751,27 @@ mod tests {
         let token_id = TokenId::from(token_id_bytes);
         let token = BondingCurveToken {
             token_id: token_id_bytes,
-            name: "TestToken".into(), symbol: "TT".into(), decimals: 8,
-            phase: Phase::Curve, total_supply: 0, reserve_balance: 0,
-            curve_type: CurveType::Linear { base_price: 1000, slope: 10 },
+            name: "TestToken".into(),
+            symbol: "TT".into(),
+            decimals: 8,
+            phase: Phase::Curve,
+            total_supply: 0,
+            reserve_balance: 0,
+            curve_type: CurveType::Linear {
+                base_price: 1000,
+                slope: 10,
+            },
             threshold: Threshold::ReserveAmount(1_000_000),
-            sell_enabled: false, amm_pool_id: None,
-            creator: lib_crypto::PublicKey { dilithium_pk: vec![], kyber_pk: vec![], key_id: creator_key },
+            sell_enabled: false,
+            amm_pool_id: None,
+            creator: lib_crypto::PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: creator_key,
+            },
             creator_did: None,
-            deployed_at_block: 0, deployed_at_timestamp: 12345,
+            deployed_at_block: 0,
+            deployed_at_timestamp: 12345,
         };
 
         let result = tx_apply::apply_bonding_curve_deploy(&mutator, &token_id, &token, "TT");
@@ -3530,12 +3781,19 @@ mod tests {
         store.commit_block().unwrap();
 
         let by_symbol = store.get_bonding_curve_by_symbol("TT").unwrap();
-        assert_eq!(by_symbol, Some(token_id), "symbol index must point to deployed token");
+        assert_eq!(
+            by_symbol,
+            Some(token_id),
+            "symbol index must point to deployed token"
+        );
     }
 
     #[test]
     fn test_bonding_curve_deploy_duplicate_symbol_rejected() {
-        use crate::contracts::bonding_curve::{BondingCurveToken, types::{CurveType, Threshold, Phase}};
+        use crate::contracts::bonding_curve::{
+            types::{CurveType, Phase, Threshold},
+            BondingCurveToken,
+        };
         use crate::execution::tx_apply::{self, StateMutator};
         use crate::storage::TokenId;
         use lib_crypto::hash_blake3;
@@ -3548,18 +3806,35 @@ mod tests {
         let token_id_bytes1 = hash_blake3(b"Alpha:ALP:creator1");
         let make_token = |id_bytes: [u8; 32], key: [u8; 32], block: u64| BondingCurveToken {
             token_id: id_bytes,
-            name: "Alpha".into(), symbol: "ALP".into(), decimals: 8,
-            phase: Phase::Curve, total_supply: 0, reserve_balance: 0,
-            curve_type: CurveType::Linear { base_price: 1000, slope: 10 },
+            name: "Alpha".into(),
+            symbol: "ALP".into(),
+            decimals: 8,
+            phase: Phase::Curve,
+            total_supply: 0,
+            reserve_balance: 0,
+            curve_type: CurveType::Linear {
+                base_price: 1000,
+                slope: 10,
+            },
             threshold: Threshold::ReserveAmount(1_000_000),
-            sell_enabled: false, amm_pool_id: None,
-            creator: lib_crypto::PublicKey { dilithium_pk: vec![], kyber_pk: vec![], key_id: key },
+            sell_enabled: false,
+            amm_pool_id: None,
+            creator: lib_crypto::PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: key,
+            },
             creator_did: None,
-            deployed_at_block: block, deployed_at_timestamp: block * 1000,
+            deployed_at_block: block,
+            deployed_at_timestamp: block * 1000,
         };
         tx_apply::apply_bonding_curve_deploy(
-            &mutator, &TokenId::from(token_id_bytes1), &make_token(token_id_bytes1, [1u8; 32], 0), "ALP",
-        ).expect("first deploy must succeed");
+            &mutator,
+            &TokenId::from(token_id_bytes1),
+            &make_token(token_id_bytes1, [1u8; 32], 0),
+            "ALP",
+        )
+        .expect("first deploy must succeed");
         store.commit_block().unwrap();
 
         // Second deploy with same symbol must be rejected
@@ -3567,10 +3842,16 @@ mod tests {
         let mutator2 = StateMutator::new(store.as_ref());
         let token_id_bytes2 = hash_blake3(b"Beta:ALP:creator2");
         let result = tx_apply::apply_bonding_curve_deploy(
-            &mutator2, &TokenId::from(token_id_bytes2), &make_token(token_id_bytes2, [2u8; 32], 1), "ALP",
+            &mutator2,
+            &TokenId::from(token_id_bytes2),
+            &make_token(token_id_bytes2, [2u8; 32], 1),
+            "ALP",
         );
         assert!(result.is_err(), "duplicate symbol must be rejected");
         let msg = format!("{:?}", result.unwrap_err());
-        assert!(msg.contains("already exists"), "error must mention duplicate: {msg}");
+        assert!(
+            msg.contains("already exists"),
+            "error must mention duplicate: {msg}"
+        );
     }
 }

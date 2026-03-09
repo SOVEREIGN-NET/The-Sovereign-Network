@@ -6,7 +6,7 @@
 
 use thiserror::Error;
 
-use crate::storage::{BlockHash, OutPoint, Address, TokenId, StorageError};
+use crate::storage::{Address, BlockHash, OutPoint, StorageError, TokenId};
 
 /// Error during block application
 #[derive(Error, Debug)]
@@ -15,10 +15,16 @@ pub enum BlockApplyError {
     HeightMismatch { expected: u64, actual: u64 },
 
     #[error("Block hash mismatch: expected {expected}, got {actual}")]
-    HashMismatch { expected: BlockHash, actual: BlockHash },
+    HashMismatch {
+        expected: BlockHash,
+        actual: BlockHash,
+    },
 
     #[error("Invalid previous block hash: expected {expected}, got {actual}")]
-    InvalidPreviousHash { expected: BlockHash, actual: BlockHash },
+    InvalidPreviousHash {
+        expected: BlockHash,
+        actual: BlockHash,
+    },
 
     #[error("Block validation failed: {0}")]
     ValidationFailed(String),
@@ -58,7 +64,6 @@ pub enum TxApplyError {
     // =========================================================================
     // Validation Errors (stateless)
     // =========================================================================
-
     #[error("Invalid transaction version: {0}")]
     InvalidVersion(u32),
 
@@ -86,7 +91,6 @@ pub enum TxApplyError {
     // =========================================================================
     // UTXO Errors (stateful)
     // =========================================================================
-
     #[error("UTXO not found: {0}")]
     UtxoNotFound(OutPoint),
 
@@ -102,9 +106,12 @@ pub enum TxApplyError {
     // =========================================================================
     // Token Errors (stateful)
     // =========================================================================
-
     #[error("Insufficient token balance: have {have}, need {need}, token={token}")]
-    InsufficientBalance { have: u128, need: u128, token: TokenId },
+    InsufficientBalance {
+        have: u128,
+        need: u128,
+        token: TokenId,
+    },
 
     #[error("Token not found: {0}")]
     TokenNotFound(TokenId),
@@ -115,7 +122,6 @@ pub enum TxApplyError {
     // =========================================================================
     // Account Errors
     // =========================================================================
-
     #[error("Invalid nonce: expected {expected}, got {actual}")]
     InvalidNonce { expected: u64, actual: u64 },
 
@@ -125,7 +131,6 @@ pub enum TxApplyError {
     // =========================================================================
     // Authorization Errors
     // =========================================================================
-
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
@@ -135,7 +140,6 @@ pub enum TxApplyError {
     // =========================================================================
     // General Errors
     // =========================================================================
-
     #[error("Storage error: {0}")]
     Storage(String),
 

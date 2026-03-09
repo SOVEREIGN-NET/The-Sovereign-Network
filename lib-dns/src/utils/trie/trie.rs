@@ -2,20 +2,16 @@ use crate::utils::trie::node::{bit, Branch, Leaf, Node};
 
 #[derive(Clone, Debug)]
 pub struct Trie<V> {
-    root: Option<Node<Vec<u8>, V>>
+    root: Option<Node<Vec<u8>, V>>,
 }
 
 impl<V> Default for Trie<V> {
-
     fn default() -> Self {
-        Self {
-            root: None
-        }
+        Self { root: None }
     }
 }
 
 impl<V> Trie<V> {
-
     pub fn new() -> Self {
         Self {
             ..Default::default()
@@ -28,7 +24,11 @@ impl<V> Trie<V> {
         }
 
         let b = key[i / 2];
-        1 + if (i & 1) == 0 { (b >> 4) as usize } else { (b & 0x0F) as usize }
+        1 + if (i & 1) == 0 {
+            (b >> 4) as usize
+        } else {
+            (b & 0x0F) as usize
+        }
     }
 
     fn first_diff_nibble(a: &[u8], b: &[u8]) -> usize {
@@ -104,7 +104,7 @@ impl<V> Trie<V> {
                     let n = Self::nibble(query, br.offset);
                     match br.get_child(n) {
                         Some(child) => node = child,
-                        None => return best
+                        None => return best,
                     }
                 }
                 Node::Leaf(leaf) => {
@@ -136,7 +136,7 @@ impl<V> Trie<V> {
                         let n = Self::nibble(query, br.offset);
                         match br.get_child_mut(n) {
                             Some(child) => node = child,
-                            None => break
+                            None => break,
                         }
                     }
                     Node::Leaf(leaf) => {
@@ -187,7 +187,7 @@ impl<V> Trie<V> {
                     let n = Self::nibble(query, br.offset);
                     match br.get_child(n) {
                         Some(child) => node = child,
-                        None => return None
+                        None => return None,
                     }
                 }
                 Node::Leaf(leaf) => {
@@ -209,9 +209,7 @@ impl<V> Trie<V> {
         if let Some(root) = self.root.as_ref() {
             Entries::push_node(&mut stack, root);
         }
-        Entries {
-            stack
-        }
+        Entries { stack }
     }
 
     /*
@@ -290,7 +288,6 @@ impl<V> Trie<V> {
                         let new_n = Self::nibble(&key, split);
                         br.insert_child(new_n, Node::Leaf(Leaf::new(key, val)));
                         None
-
                     } else {
                         unreachable!()
                     }
@@ -312,7 +309,8 @@ impl<V> Trie<V> {
                     let need_above = new_split < br.offset;
 
                     if need_above {
-                        let old_node = std::mem::replace(node, Node::Branch(Branch::new(new_split)));
+                        let old_node =
+                            std::mem::replace(node, Node::Branch(Branch::new(new_split)));
 
                         if let Node::Branch(new_parent) = node {
                             let old_n = Self::nibble(&rep_key, new_split);
@@ -321,25 +319,24 @@ impl<V> Trie<V> {
                             let new_n = Self::nibble(&key, new_split);
                             new_parent.insert_child(new_n, Node::Leaf(Leaf::new(key, val)));
                             return None;
-
                         } else {
                             unreachable!()
                         }
                     }
 
-                    let n = Self::nibble(&key,  br.offset);
+                    let n = Self::nibble(&key, br.offset);
                     if let Some(child) = br.get_child_mut(n) {
-                        let mut tmp = Some(std::mem::replace(child, Node::Branch(Branch::default())));
+                        let mut tmp =
+                            Some(std::mem::replace(child, Node::Branch(Branch::default())));
                         let ret = Self::insert_at(&mut tmp, key, val);
                         *child = tmp.unwrap();
                         return ret;
-
                     }
 
                     br.insert_child(n, Node::Leaf(Leaf::new(key, val)));
                     None
                 }
-            }
+            },
         }
     }
 
@@ -368,7 +365,9 @@ impl<V> Trie<V> {
             None => None,
             Some(Node::Leaf(leaf)) => {
                 if leaf.key.as_slice() == key {
-                    let Node::Leaf(Leaf { val, .. }) = cur.take().unwrap() else { unreachable!() };
+                    let Node::Leaf(Leaf { val, .. }) = cur.take().unwrap() else {
+                        unreachable!()
+                    };
                     return Some(val);
                 }
 
@@ -385,11 +384,14 @@ impl<V> Trie<V> {
                 let idx = br.idx_of(n).unwrap();
                 let child_slot: &mut Node<Vec<u8>, V> = &mut br.twigs[idx];
 
-                let mut tmp_child = Some(std::mem::replace(child_slot, Node::Branch(Branch {
-                    offset: 0,
-                    bitmap: 0,
-                    twigs: Vec::new()
-                })));
+                let mut tmp_child = Some(std::mem::replace(
+                    child_slot,
+                    Node::Branch(Branch {
+                        offset: 0,
+                        bitmap: 0,
+                        twigs: Vec::new(),
+                    }),
+                ));
 
                 let removed = Self::remove_at(&mut tmp_child, key);
 
@@ -413,12 +415,10 @@ impl<V> Trie<V> {
                         if br.bitmap == 0 {
                             *root = None;
                             removed
-
                         } else if br.bitmap.count_ones() == 1 {
                             let only_child = br.twigs.remove(0);
                             *root = Some(only_child);
                             removed
-
                         } else {
                             *root = cur;
                             removed
@@ -431,26 +431,27 @@ impl<V> Trie<V> {
 }
 
 pub struct Entries<'a, V> {
-    stack: Vec<Frame<'a, V>>
+    stack: Vec<Frame<'a, V>>,
 }
 
 enum Frame<'a, V> {
-    Branch { br: &'a Branch<Vec<u8>, V>, idx: usize },
-    Leaf(&'a Leaf<Vec<u8>, V>)
+    Branch {
+        br: &'a Branch<Vec<u8>, V>,
+        idx: usize,
+    },
+    Leaf(&'a Leaf<Vec<u8>, V>),
 }
 
 impl<V> Entries<'_, V> {
-
     fn push_node<'a>(stack: &mut Vec<Frame<'a, V>>, node: &'a Node<Vec<u8>, V>) {
         match node {
             Node::Leaf(l) => stack.push(Frame::Leaf(l)),
-            Node::Branch(b) => stack.push(Frame::Branch { br: b, idx: 0 })
+            Node::Branch(b) => stack.push(Frame::Branch { br: b, idx: 0 }),
         }
     }
 }
 
 impl<'a, V> Iterator for Entries<'a, V> {
-
     type Item = (&'a [u8], &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -477,8 +478,6 @@ impl<'a, V> Iterator for Entries<'a, V> {
         None
     }
 }
-
-
 
 fn is_apex_key(k: &[u8]) -> bool {
     k.is_empty() || (k.len() == 1 && k[0] == 0)

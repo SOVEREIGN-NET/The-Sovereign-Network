@@ -13,24 +13,23 @@
 //! cargo test --test quic_api_endpoints_test -- --ignored --nocapture
 //! ```
 
-use anyhow::{Result, Context};
-use quinn::{ClientConfig, Endpoint, Connection};
+use anyhow::{Context, Result};
 use quinn::crypto::rustls::QuicClientConfig;
 use quinn::rustls;
-use quinn::rustls::client::danger::{ServerCertVerifier, HandshakeSignatureValid};
+use quinn::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerifier};
 use quinn::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use quinn::rustls::DigitallySignedStruct;
+use quinn::{ClientConfig, Connection, Endpoint};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// Get node address from environment or use default
 fn get_node_address() -> String {
-    std::env::var("ZHTP_NODE_IP")
-        .unwrap_or_else(|_| {
-            eprintln!("⚠️  ZHTP_NODE_IP not set, using localhost:9334");
-            eprintln!("   Set with: export ZHTP_NODE_IP=\"192.168.1.X:9334\"");
-            "127.0.0.1:9334".to_string()
-        })
+    std::env::var("ZHTP_NODE_IP").unwrap_or_else(|_| {
+        eprintln!("⚠️  ZHTP_NODE_IP not set, using localhost:9334");
+        eprintln!("   Set with: export ZHTP_NODE_IP=\"192.168.1.X:9334\"");
+        "127.0.0.1:9334".to_string()
+    })
 }
 
 /// Skip all certificate verification for testing (DANGEROUS - TESTING ONLY)
@@ -90,8 +89,7 @@ fn create_client_config() -> ClientConfig {
 /// Connect to ZHTP node via QUIC
 async fn connect_quic() -> Result<Connection> {
     let node_addr = get_node_address();
-    let addr: SocketAddr = node_addr.parse()
-        .context("Invalid node address format")?;
+    let addr: SocketAddr = node_addr.parse().context("Invalid node address format")?;
 
     let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
     endpoint.set_default_client_config(create_client_config());
@@ -124,7 +122,10 @@ async fn send_http_request(
              Content-Length: {}\r\n\
              \r\n\
              {}",
-            method, path, body_data.len(), body_data
+            method,
+            path,
+            body_data.len(),
+            body_data
         )
     } else {
         format!(
@@ -234,7 +235,8 @@ async fn test_endpoint(
     print!("  Testing {} {} ... ", method, path);
 
     // Use provided body or get mock body for POST endpoints
-    let mock_body = if body.is_none() && (method == "POST" || method == "PUT" || method == "DELETE") {
+    let mock_body = if body.is_none() && (method == "POST" || method == "PUT" || method == "DELETE")
+    {
         get_mock_body(path)
     } else {
         None
@@ -392,7 +394,10 @@ async fn test_all_api_endpoints() -> Result<()> {
     println!("\n✅ Validator Endpoints");
     for (method, path) in [
         ("GET", "/api/v1/validators"),
-        ("GET", "/api/v1/validator/0000000000000000000000000000000000000000000000000000000000000000"),
+        (
+            "GET",
+            "/api/v1/validator/0000000000000000000000000000000000000000000000000000000000000000",
+        ),
     ] {
         let status = test_endpoint(&connection, method, path, None).await?;
         results.push((path, status));
@@ -431,7 +436,10 @@ async fn test_all_api_endpoints() -> Result<()> {
     println!("\n🕸️  Mesh Endpoints");
     for (method, path) in [
         ("POST", "/api/v1/mesh/create"),
-        ("GET", "/api/v1/mesh/0000000000000000000000000000000000000000000000000000000000000000/status"),
+        (
+            "GET",
+            "/api/v1/mesh/0000000000000000000000000000000000000000000000000000000000000000/status",
+        ),
     ] {
         let status = test_endpoint(&connection, method, path, None).await?;
         results.push((path, status));
@@ -455,8 +463,14 @@ async fn test_all_api_endpoints() -> Result<()> {
     println!("📊 Test Results:");
 
     let total = results.len();
-    let success = results.iter().filter(|(_, s)| *s >= 200 && *s < 300).count();
-    let client_error = results.iter().filter(|(_, s)| matches!(*s, 400 | 401 | 403 | 429)).count();
+    let success = results
+        .iter()
+        .filter(|(_, s)| *s >= 200 && *s < 300)
+        .count();
+    let client_error = results
+        .iter()
+        .filter(|(_, s)| matches!(*s, 400 | 401 | 403 | 429))
+        .count();
     let not_found = results.iter().filter(|(_, s)| *s == 404).count();
     let server_error = results.iter().filter(|(_, s)| *s >= 500).count();
 
@@ -473,7 +487,10 @@ async fn test_all_api_endpoints() -> Result<()> {
                 println!("   {} - {}", status, path);
             }
         }
-        Err(anyhow::anyhow!("{} endpoints failed (404 or 500+)", not_found + server_error))
+        Err(anyhow::anyhow!(
+            "{} endpoints failed (404 or 500+)",
+            not_found + server_error
+        ))
     } else {
         println!("\n🎉 All endpoints reachable!");
         Ok(())
@@ -497,8 +514,17 @@ async fn oracle_committee_update_proposal_endpoint_accepts_payload_shape() -> Re
         ]
     }"#;
 
-    let status = test_endpoint(&connection, "POST", "/api/v1/dao/proposal/create", Some(body)).await?;
-    assert!(status != 404 && status < 500, "unexpected status for oracle committee payload: {status}");
+    let status = test_endpoint(
+        &connection,
+        "POST",
+        "/api/v1/dao/proposal/create",
+        Some(body),
+    )
+    .await?;
+    assert!(
+        status != 404 && status < 500,
+        "unexpected status for oracle committee payload: {status}"
+    );
     Ok(())
 }
 
@@ -519,7 +545,16 @@ async fn oracle_config_update_proposal_endpoint_accepts_payload_shape() -> Resul
         "oracle_max_price_staleness_epochs":10
     }"#;
 
-    let status = test_endpoint(&connection, "POST", "/api/v1/dao/proposal/create", Some(body)).await?;
-    assert!(status != 404 && status < 500, "unexpected status for oracle config payload: {status}");
+    let status = test_endpoint(
+        &connection,
+        "POST",
+        "/api/v1/dao/proposal/create",
+        Some(body),
+    )
+    .await?;
+    assert!(
+        status != 404 && status < 500,
+        "unexpected status for oracle config payload: {status}"
+    );
     Ok(())
 }

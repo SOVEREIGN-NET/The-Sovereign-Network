@@ -78,18 +78,7 @@ pub const DEVELOPMENT_GRANTS_ALLOCATION_PERCENT: u64 = 10;
 /// - Energy: Renewable energy and infrastructure
 /// - Housing: Urban development and housing initiatives
 /// - Food: Food security and agricultural programs
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum SectorDao {
     /// Healthcare services and medical infrastructure
@@ -143,7 +132,11 @@ impl fmt::Display for FeeDistributionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FeeDistributionError::ConservationViolated { total, fee } => {
-                write!(f, "Fee distribution conservation violated: total {} exceeds fee {}", total, fee)
+                write!(
+                    f,
+                    "Fee distribution conservation violated: total {} exceeds fee {}",
+                    total, fee
+                )
             }
         }
     }
@@ -300,7 +293,6 @@ impl FeeDistribution {
     pub const fn total_distributed(&self) -> u64 {
         self.ubi + self.sector_dao_total() + self.emergency_reserve + self.development_grants
     }
-
 }
 
 impl fmt::Display for FeeDistribution {
@@ -386,16 +378,12 @@ pub fn distribute_fee(volume: u64) -> Result<FeeDistribution, FeeDistributionErr
     let energy = ((fee_u128 * SECTOR_DAO_INDIVIDUAL_PERCENT as u128) / 100) as u64;
     let housing = ((fee_u128 * SECTOR_DAO_INDIVIDUAL_PERCENT as u128) / 100) as u64;
     let food = ((fee_u128 * SECTOR_DAO_INDIVIDUAL_PERCENT as u128) / 100) as u64;
-    let development_grants = ((fee_u128 * DEVELOPMENT_GRANTS_ALLOCATION_PERCENT as u128) / 100) as u64;
+    let development_grants =
+        ((fee_u128 * DEVELOPMENT_GRANTS_ALLOCATION_PERCENT as u128) / 100) as u64;
 
     // Calculate sum of all allocations
-    let sum_without_emergency = ubi
-        + healthcare
-        + education
-        + energy
-        + housing
-        + food
-        + development_grants;
+    let sum_without_emergency =
+        ubi + healthcare + education + energy + housing + food + development_grants;
 
     // Emergency Reserve gets remainder (for safety and conservation)
     let emergency_reserve = fee.saturating_sub(sum_without_emergency);
@@ -413,81 +401,80 @@ pub fn distribute_fee(volume: u64) -> Result<FeeDistribution, FeeDistributionErr
     )
 }
 
+#[test]
+fn test_overflow_safety_with_large_volumes() {
+    // CRITICAL: Verify that u128 intermediates prevent overflow
+    // for large volume amounts that would overflow with u64-only arithmetic
 
-    #[test]
-    fn test_overflow_safety_with_large_volumes() {
-        // CRITICAL: Verify that u128 intermediates prevent overflow
-        // for large volume amounts that would overflow with u64-only arithmetic
-        
-        // These volumes would overflow if using (volume * percentage) with u64:
-        // volume * 100 (the protocol fee basis points) could exceed u64::MAX
-        // if volume is > u64::MAX / 100 ≈ 1.84 * 10^17
-        
-        // Safe test with very large volume (but not so large as to cause issues with the u128 math itself)
-        // u64::MAX ≈ 1.84 * 10^19
-        // u64::MAX / 100 ≈ 1.84 * 10^17
-        let large_volume = u64::MAX / 200; // Safe for (volume * 100 / 10_000)
-        
-        // This should not panic with overflow
-        let distribution = distribute_fee(large_volume).expect("Should handle large volume");
-        
-        // Verify the fee is correct: large_volume / 100
-        let expected_fee = large_volume / 100;
-        assert_eq!(distribution.fee(), expected_fee);
-        
-        // Verify allocations are reasonable (can't be larger than fee)
-        assert!(distribution.ubi() <= expected_fee);
-        assert!(distribution.emergency_reserve() <= expected_fee);
-        assert!(distribution.development_grants() <= expected_fee);
-        assert!(distribution.sector_dao_total() <= expected_fee);
-        
-        // Verify conservation
-        assert_eq!(distribution.total_distributed(), expected_fee);
-    }
+    // These volumes would overflow if using (volume * percentage) with u64:
+    // volume * 100 (the protocol fee basis points) could exceed u64::MAX
+    // if volume is > u64::MAX / 100 ≈ 1.84 * 10^17
 
-    #[test]
-    fn test_decimal_precision_with_u128_intermediates() {
-        // Verify that using u128 intermediates maintains precision
-        // across the full range of u64 values
-        
-        // Test values that represent different scales of transaction volume
-        let test_volumes = vec![
-            1,                  // Minimum: 1 cent
-            100,                // Small transaction
-            1_000_000,          // $10,000
-            100_000_000,        // $1,000,000
-            10_000_000_000,     // $100,000,000
-            1_000_000_000_000,  // $10,000,000,000
-        ];
-        
-        for volume in test_volumes {
-            let distribution = distribute_fee(volume)
-                .expect(&format!("Should handle volume {}", volume));
-            
-            // Fee should be exactly volume / 100 (with integer division)
-            let expected_fee = volume / 100;
-            assert_eq!(
-                distribution.fee(),
-                expected_fee,
-                "Fee calculation incorrect for volume {}",
-                volume
-            );
-            
-            // Total distributed must equal fee (conservation invariant)
-            assert_eq!(
-                distribution.total_distributed(),
-                expected_fee,
-                "Conservation invariant violated for volume {}",
-                volume
-            );
-            
-            // Each allocation is at most the expected percentage
-            assert_eq!(
-                distribution.ubi(),
-                (expected_fee as u128 * UBI_ALLOCATION_PERCENT as u128 / 100) as u64
-            );
-        }
+    // Safe test with very large volume (but not so large as to cause issues with the u128 math itself)
+    // u64::MAX ≈ 1.84 * 10^19
+    // u64::MAX / 100 ≈ 1.84 * 10^17
+    let large_volume = u64::MAX / 200; // Safe for (volume * 100 / 10_000)
+
+    // This should not panic with overflow
+    let distribution = distribute_fee(large_volume).expect("Should handle large volume");
+
+    // Verify the fee is correct: large_volume / 100
+    let expected_fee = large_volume / 100;
+    assert_eq!(distribution.fee(), expected_fee);
+
+    // Verify allocations are reasonable (can't be larger than fee)
+    assert!(distribution.ubi() <= expected_fee);
+    assert!(distribution.emergency_reserve() <= expected_fee);
+    assert!(distribution.development_grants() <= expected_fee);
+    assert!(distribution.sector_dao_total() <= expected_fee);
+
+    // Verify conservation
+    assert_eq!(distribution.total_distributed(), expected_fee);
+}
+
+#[test]
+fn test_decimal_precision_with_u128_intermediates() {
+    // Verify that using u128 intermediates maintains precision
+    // across the full range of u64 values
+
+    // Test values that represent different scales of transaction volume
+    let test_volumes = vec![
+        1,                 // Minimum: 1 cent
+        100,               // Small transaction
+        1_000_000,         // $10,000
+        100_000_000,       // $1,000,000
+        10_000_000_000,    // $100,000,000
+        1_000_000_000_000, // $10,000,000,000
+    ];
+
+    for volume in test_volumes {
+        let distribution =
+            distribute_fee(volume).expect(&format!("Should handle volume {}", volume));
+
+        // Fee should be exactly volume / 100 (with integer division)
+        let expected_fee = volume / 100;
+        assert_eq!(
+            distribution.fee(),
+            expected_fee,
+            "Fee calculation incorrect for volume {}",
+            volume
+        );
+
+        // Total distributed must equal fee (conservation invariant)
+        assert_eq!(
+            distribution.total_distributed(),
+            expected_fee,
+            "Conservation invariant violated for volume {}",
+            volume
+        );
+
+        // Each allocation is at most the expected percentage
+        assert_eq!(
+            distribution.ubi(),
+            (expected_fee as u128 * UBI_ALLOCATION_PERCENT as u128 / 100) as u64
+        );
     }
+}
 
 #[cfg(test)]
 mod tests {
@@ -513,7 +500,10 @@ mod tests {
     #[test]
     fn test_sector_dao_individual_percentage() {
         assert_eq!(SECTOR_DAO_INDIVIDUAL_PERCENT, 6);
-        assert_eq!(SECTOR_DAO_INDIVIDUAL_PERCENT * SECTOR_DAO_COUNT, SECTOR_DAO_ALLOCATION_PERCENT);
+        assert_eq!(
+            SECTOR_DAO_INDIVIDUAL_PERCENT * SECTOR_DAO_COUNT,
+            SECTOR_DAO_ALLOCATION_PERCENT
+        );
     }
 
     #[test]
@@ -705,10 +695,7 @@ mod tests {
         // Verify no value is created (all must be ≤ fee)
         for volume in [1_000, 10_000, 100_000, 1_000_000] {
             let distribution = distribute_fee(volume).unwrap();
-            assert!(
-                distribution.ubi() <= distribution.fee(),
-                "UBI exceeds fee"
-            );
+            assert!(distribution.ubi() <= distribution.fee(), "UBI exceeds fee");
             assert!(
                 distribution.sector_dao_total() <= distribution.fee(),
                 "DAO allocation exceeds fee"

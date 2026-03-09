@@ -10,9 +10,6 @@ pub mod proof_of_work;
 pub mod sybil_resistance;
 pub mod unified_peer;
 
-pub use proof_of_work::{ProofOfWork, calculate_adaptive_difficulty};
-pub use sybil_resistance::{
-    assert_consensus_sender_is_validator,
-    assert_peer_identity_valid,
-};
-pub use unified_peer::{UnifiedPeerId, PeerIdMapper, PeerMapperConfig};
+pub use proof_of_work::{calculate_adaptive_difficulty, ProofOfWork};
+pub use sybil_resistance::{assert_consensus_sender_is_validator, assert_peer_identity_valid};
+pub use unified_peer::{PeerIdMapper, PeerMapperConfig, UnifiedPeerId};

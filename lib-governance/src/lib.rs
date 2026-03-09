@@ -23,12 +23,12 @@
 //! };
 //! ```
 
-pub mod tx;
+pub mod errors;
 pub mod fields;
 pub mod pending;
-pub mod errors;
+pub mod tx;
 
-pub use tx::GovernanceConfigTx;
+pub use errors::{GovernanceError, GovernanceResult};
 pub use fields::ConfigField;
 pub use pending::{PendingChange, PendingChanges};
-pub use errors::{GovernanceError, GovernanceResult};
+pub use tx::GovernanceConfigTx;

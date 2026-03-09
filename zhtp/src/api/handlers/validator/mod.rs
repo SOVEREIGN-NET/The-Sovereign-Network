@@ -1,16 +1,16 @@
+use chrono;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
-use chrono;
+use tracing::{error, info, warn};
 
-use lib_protocols::{
-    zhtp::{ZhtpResult, ZhtpRequestHandler},
-    types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus},
-};
 use crate::runtime::blockchain_provider::get_global_blockchain;
 use lib_blockchain::Blockchain;
 use lib_crypto::Hash;
+use lib_protocols::{
+    types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus},
+    zhtp::{ZhtpRequestHandler, ZhtpResult},
+};
 
 /// Request payload for validator registration
 #[derive(Debug, Clone, Deserialize)]
@@ -124,21 +124,25 @@ impl ValidatorHandler {
     // Validator registration must go through proper governance channels only.
 
     /// Get list of all validators
-    pub async fn get_validators(&self, page: Option<usize>, page_size: Option<usize>) -> ZhtpResult<ZhtpResponse> {
+    pub async fn get_validators(
+        &self,
+        page: Option<usize>,
+        page_size: Option<usize>,
+    ) -> ZhtpResult<ZhtpResponse> {
         info!("Retrieving validator list");
-        
+
         let blockchain = get_global_blockchain().await?;
         let blockchain_guard = blockchain.read().await;
-        
+
         // Get all validators from registry
         let all_validators = blockchain_guard.get_all_validators();
-        
+
         // Apply pagination
         let page = page.unwrap_or(1);
         let page_size = page_size.unwrap_or(50).min(100); // Max 100 per page
         let start_idx = (page - 1) * page_size;
         let end_idx = (start_idx + page_size).min(all_validators.len());
-        
+
         // Convert validator data to response format
         let validators: Vec<ValidatorInfo> = all_validators
             .iter()
@@ -156,15 +160,20 @@ impl ValidatorHandler {
                 status: format!("{:?}", validator.status),
             })
             .collect();
-        
+
         let response = ValidatorListResponse {
             validators,
             total_count: all_validators.len(),
             page,
             page_size,
         };
-        
-        info!("Retrieved {} validators (page {}/{})", response.validators.len(), page, (all_validators.len() + page_size - 1) / page_size);
+
+        info!(
+            "Retrieved {} validators (page {}/{})",
+            response.validators.len(),
+            page,
+            (all_validators.len() + page_size - 1) / page_size
+        );
         let json_response = serde_json::to_vec(&response)?;
         Ok(ZhtpResponse::success_with_content_type(
             json_response,
@@ -187,7 +196,11 @@ impl ValidatorHandler {
                 hash_bytes.copy_from_slice(&bytes);
                 Hash(hash_bytes)
             }
-            Ok(_) => return Err(anyhow::anyhow!("Invalid hex for validator_id: must be 32 bytes")),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "Invalid hex for validator_id: must be 32 bytes"
+                ))
+            }
             Err(e) => return Err(anyhow::anyhow!("Invalid hex for validator_id: {}", e)),
         };
 
@@ -204,7 +217,7 @@ impl ValidatorHandler {
                     updated_at: validator.last_activity, // Use last_activity instead of updated_at
                     status: format!("{:?}", validator.status),
                 };
-                
+
                 let json_response = serde_json::to_vec(&validator_response)?;
                 Ok(ZhtpResponse::success_with_content_type(
                     json_response,
@@ -223,7 +236,11 @@ impl ValidatorHandler {
     }
 
     /// Update validator information
-    pub async fn update_validator(&self, validator_id: String, request: UpdateValidatorRequest) -> ZhtpResult<ZhtpResponse> {
+    pub async fn update_validator(
+        &self,
+        validator_id: String,
+        request: UpdateValidatorRequest,
+    ) -> ZhtpResult<ZhtpResponse> {
         info!("Updating validator: {}", validator_id);
 
         let blockchain = self.blockchain.clone();
@@ -236,13 +253,18 @@ impl ValidatorHandler {
                 hash_bytes.copy_from_slice(&bytes);
                 Hash(hash_bytes)
             }
-            Ok(_) => return Err(anyhow::anyhow!("Invalid hex for validator_id: must be 32 bytes")),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "Invalid hex for validator_id: must be 32 bytes"
+                ))
+            }
             Err(e) => return Err(anyhow::anyhow!("Invalid hex for validator_id: {}", e)),
         };
 
         // Check if validator exists and get current info
         let identity_id_str = hex::encode(&identity_hash.0);
-        let existing_validator = blockchain_guard.get_validator(&identity_id_str)
+        let existing_validator = blockchain_guard
+            .get_validator(&identity_id_str)
             .ok_or_else(|| anyhow::anyhow!("Validator not found"))?;
 
         // Create updated ValidatorInfo — preserve all three key fields from existing record
@@ -250,17 +272,21 @@ impl ValidatorHandler {
         let updated_info = lib_blockchain::blockchain::ValidatorInfo {
             identity_id: identity_id_str.clone(),
             stake: request.stake.unwrap_or(existing_validator.stake),
-            storage_provided: request.storage_provided.unwrap_or(existing_validator.storage_provided),
+            storage_provided: request
+                .storage_provided
+                .unwrap_or(existing_validator.storage_provided),
             consensus_key: existing_validator.consensus_key.clone(),
             networking_key: existing_validator.networking_key.clone(),
             rewards_key: existing_validator.rewards_key.clone(),
-            network_address: request.endpoints
+            network_address: request
+                .endpoints
                 .as_ref()
                 .and_then(|eps| eps.get(0))
                 .cloned()
                 .unwrap_or_else(|| existing_validator.network_address.clone()),
-            commission_rate: request.commission_rate
-                .map(|rate| rate.min(100) as u8 )
+            commission_rate: request
+                .commission_rate
+                .map(|rate| rate.min(100) as u8)
                 .unwrap_or(existing_validator.commission_rate),
             status: existing_validator.status.clone(),
             registered_at: existing_validator.registered_at,
@@ -311,7 +337,11 @@ impl ValidatorHandler {
                 hash_bytes.copy_from_slice(&bytes);
                 Hash(hash_bytes)
             }
-            Ok(_) => return Err(anyhow::anyhow!("Invalid hex for validator_id: must be 32 bytes")),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "Invalid hex for validator_id: must be 32 bytes"
+                ))
+            }
             Err(e) => return Err(anyhow::anyhow!("Invalid hex for validator_id: {}", e)),
         };
 
@@ -324,7 +354,10 @@ impl ValidatorHandler {
         // Unregister validator through blockchain
         match blockchain_guard.unregister_validator(&identity_id_str) {
             Ok(tx_hash) => {
-                info!(" Validator unregistered successfully: {}", hex::encode(tx_hash));
+                info!(
+                    " Validator unregistered successfully: {}",
+                    hex::encode(tx_hash)
+                );
                 let response = serde_json::json!({
                     "transaction_hash": hex::encode(tx_hash),
                     "validator_id": hex::encode(&identity_hash.0),
@@ -350,22 +383,19 @@ impl ZhtpRequestHandler for ValidatorHandler {
     fn can_handle(&self, request: &ZhtpRequest) -> bool {
         request.uri.starts_with("/api/v1/validator")
     }
-    
+
     fn priority(&self) -> u32 {
         90
     }
 
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         info!("Validator handler: {} {}", request.method, request.uri);
-        
+
         match (request.method, request.uri.as_str()) {
             // REMOVED: Insecure validator registration endpoint
             // Validators should only be added through genesis or proper staking governance
             // (ZhtpMethod::Post, "/api/v1/validator/register") => { ... }
-            
-            (ZhtpMethod::Get, "/api/v1/validators") => {
-                self.handle_get_validators(request).await
-            }
+            (ZhtpMethod::Get, "/api/v1/validators") => self.handle_get_validators(request).await,
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/validator/") => {
                 self.handle_get_validator(request).await
             }
@@ -376,7 +406,10 @@ impl ZhtpRequestHandler for ValidatorHandler {
                 self.handle_unregister_validator(request).await
             }
             _ => {
-                warn!("Validator handler: unsupported route {} {}", request.method, request.uri);
+                warn!(
+                    "Validator handler: unsupported route {} {}",
+                    request.method, request.uri
+                );
                 Err(anyhow::anyhow!("Validator endpoint not found"))
             }
         }
@@ -386,41 +419,41 @@ impl ZhtpRequestHandler for ValidatorHandler {
 impl ValidatorHandler {
     // REMOVED: handle_register_validator() - insecure endpoint
     // Validators must be registered through genesis or governance only
-    
+
     /// Handle GET /api/v1/validators
     async fn handle_get_validators(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         // Parse query parameters
         let query_params = Self::parse_query_params(&request.uri);
         let page = query_params.get("page").and_then(|p| p.parse().ok());
         let page_size = query_params.get("page_size").and_then(|p| p.parse().ok());
-        
+
         self.get_validators(page, page_size).await
     }
-    
+
     /// Handle GET /api/v1/validator/{id}
     async fn handle_get_validator(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let validator_id = Self::extract_path_param(&request.uri, "/api/v1/validator/");
-        
+
         self.get_validator(validator_id).await
     }
-    
+
     /// Handle PUT /api/v1/validator/{id}
     async fn handle_update_validator(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let validator_id = Self::extract_path_param(&request.uri, "/api/v1/validator/");
-        
+
         let update_request: UpdateValidatorRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-        
+
         self.update_validator(validator_id, update_request).await
     }
-    
+
     /// Handle DELETE /api/v1/validator/{id}
     async fn handle_unregister_validator(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         let validator_id = Self::extract_path_param(&request.uri, "/api/v1/validator/");
-        
+
         self.unregister_validator(validator_id).await
     }
-    
+
     /// Helper function to extract path parameter from URI
     fn extract_path_param(uri: &str, prefix: &str) -> String {
         uri.strip_prefix(prefix)
@@ -430,22 +463,24 @@ impl ValidatorHandler {
             .unwrap_or("")
             .to_string()
     }
-    
+
     /// Helper function to parse query parameters from URI
     fn parse_query_params(uri: &str) -> std::collections::HashMap<String, String> {
         let mut params = std::collections::HashMap::new();
-        
+
         if let Some(query_part) = uri.split('?').nth(1) {
             for param in query_part.split('&') {
                 if let Some((key, value)) = param.split_once('=') {
                     params.insert(
                         key.to_string(),
-                        urlencoding::decode(value).unwrap_or(std::borrow::Cow::Borrowed(value)).to_string(),
+                        urlencoding::decode(value)
+                            .unwrap_or(std::borrow::Cow::Borrowed(value))
+                            .to_string(),
                     );
                 }
             }
         }
-        
+
         params
     }
 }

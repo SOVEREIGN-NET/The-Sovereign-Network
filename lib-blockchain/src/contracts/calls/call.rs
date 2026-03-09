@@ -116,14 +116,9 @@ impl CrossContractCall {
         }
 
         // Check for valid identifier characters (alphanumeric + underscore)
-        if !self
-            .method
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_')
-        {
+        if !self.method.chars().all(|c| c.is_alphanumeric() || c == '_') {
             return Err(
-                "Method name must contain only alphanumeric characters and underscores"
-                    .to_string(),
+                "Method name must contain only alphanumeric characters and underscores".to_string(),
             );
         }
 
@@ -156,8 +151,8 @@ mod tests {
         let caller = [1u8; 32];
         let callee = [2u8; 32];
 
-        let call = CrossContractCall::new(caller, callee, "method".to_string(), vec![])
-            .with_depth(5);
+        let call =
+            CrossContractCall::new(caller, callee, "method".to_string(), vec![]).with_depth(5);
 
         assert_eq!(call.depth, 5);
     }
@@ -194,8 +189,7 @@ mod tests {
             CrossContractCall::new(caller, callee, "method".to_string(), vec![1, 2, 3]);
         assert!(call_with_args.has_args());
 
-        let call_no_args =
-            CrossContractCall::new(caller, callee, "method".to_string(), vec![]);
+        let call_no_args = CrossContractCall::new(caller, callee, "method".to_string(), vec![]);
         assert!(!call_no_args.has_args());
     }
 
@@ -355,8 +349,7 @@ mod tests {
         let callee = [2u8; 32];
         let args = vec![1, 2, 3];
 
-        let call = CrossContractCall::new(caller, callee, "method".to_string(), args)
-            .with_depth(3);
+        let call = CrossContractCall::new(caller, callee, "method".to_string(), args).with_depth(3);
 
         let cloned = call.clone();
 
@@ -368,11 +361,11 @@ mod tests {
         let caller = [1u8; 32];
         let callee = [2u8; 32];
 
-        let call1 = CrossContractCall::new(caller, callee, "method".to_string(), vec![1, 2])
-            .with_depth(5);
+        let call1 =
+            CrossContractCall::new(caller, callee, "method".to_string(), vec![1, 2]).with_depth(5);
 
-        let call2 = CrossContractCall::new(caller, callee, "method".to_string(), vec![1, 2])
-            .with_depth(5);
+        let call2 =
+            CrossContractCall::new(caller, callee, "method".to_string(), vec![1, 2]).with_depth(5);
 
         assert_eq!(call1, call2);
     }
@@ -404,10 +397,10 @@ mod tests {
         let caller = [1u8; 32];
         let callee = [2u8; 32];
 
-        let call1 = CrossContractCall::new(caller, callee, "method".to_string(), vec![])
-            .with_depth(1);
-        let call2 = CrossContractCall::new(caller, callee, "method".to_string(), vec![])
-            .with_depth(2);
+        let call1 =
+            CrossContractCall::new(caller, callee, "method".to_string(), vec![]).with_depth(1);
+        let call2 =
+            CrossContractCall::new(caller, callee, "method".to_string(), vec![]).with_depth(2);
 
         assert_ne!(call1, call2);
     }

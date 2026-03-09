@@ -171,14 +171,14 @@ use tokio::sync::mpsc;
 use tokio::time::Sleep;
 
 use crate::byzantine::ByzantineFaultDetector;
-use crate::invariants::{check_invariant, ConsensusInvariant, ConsensusState as InvariantState};
-use crate::dao::DaoEngine;
 use crate::dao::dao_types::{DaoExecutionAction, DaoProposal};
 use crate::dao::dao_types::{GovernanceParameterUpdate, GovernanceParameterValue};
+use crate::dao::DaoEngine;
+use crate::invariants::{check_invariant, ConsensusInvariant, ConsensusState as InvariantState};
 use crate::rewards::RewardCalculator;
 use crate::types::*;
-use crate::validators::ValidatorManager;
 use crate::validators::validator_manager::ValidatorInfo as ValidatorInfoTrait;
+use crate::validators::ValidatorManager;
 use crate::{ConsensusError, ConsensusResult};
 
 // ---------------------------------------------------------------------------
@@ -230,7 +230,8 @@ pub const CONSENSUS_ALGORITHM: &str = "Tendermint-like BFT";
 ///
 /// This is a deterministic round-robin rotation keyed by block height, ensuring
 /// all validators get equal proposer opportunities over time.
-pub const LEADER_ROTATION_RULE: &str = "round-robin by height: proposer = validators[(height + round) % n]";
+pub const LEADER_ROTATION_RULE: &str =
+    "round-robin by height: proposer = validators[(height + round) % n]";
 
 /// Human-readable description of view-change trigger conditions.
 ///
@@ -561,7 +562,10 @@ impl ConsensusEngine {
     /// - Latest block hash (for chain continuity in proposals)
     /// - Pending transactions (for block content)
     /// - Current blockchain height (for validation)
-    pub fn set_blockchain_provider(&mut self, provider: Arc<dyn crate::types::ConsensusBlockchainProvider>) {
+    pub fn set_blockchain_provider(
+        &mut self,
+        provider: Arc<dyn crate::types::ConsensusBlockchainProvider>,
+    ) {
         self.blockchain_provider = Some(provider);
         tracing::info!("📦 Blockchain provider connected to consensus engine");
     }
@@ -573,7 +577,10 @@ impl ConsensusEngine {
     ///
     /// This separates consensus finalization (determining WHEN) from
     /// block storage (determining HOW), maintaining clean layer separation.
-    pub fn set_block_commit_callback(&mut self, callback: Arc<dyn crate::types::BlockCommitCallback>) {
+    pub fn set_block_commit_callback(
+        &mut self,
+        callback: Arc<dyn crate::types::BlockCommitCallback>,
+    ) {
         self.block_commit_callback = Some(callback);
         tracing::info!("🔗 Block commit callback connected to consensus engine");
     }
@@ -584,7 +591,10 @@ impl ConsensusEngine {
     /// higher block height than the local chain, it calls
     /// `trigger.trigger(our_blockchain_height)` so the runtime can schedule
     /// a background block-download task.
-    pub fn set_catch_up_sync_trigger(&mut self, trigger: Arc<dyn crate::types::CatchUpSyncTrigger>) {
+    pub fn set_catch_up_sync_trigger(
+        &mut self,
+        trigger: Arc<dyn crate::types::CatchUpSyncTrigger>,
+    ) {
         self.catch_up_sync_trigger = Some(trigger);
         tracing::info!("🔄 Catch-up sync trigger connected to consensus engine");
     }
@@ -604,7 +614,11 @@ impl ConsensusEngine {
                     let old_height = self.current_round.height;
                     // Consensus proposes for next block, so height = blockchain_height + 1.
                     // If blockchain is at 0 (no blocks yet), start at height 1.
-                    self.current_round.height = if blockchain_height == 0 { 1 } else { blockchain_height + 1 };
+                    self.current_round.height = if blockchain_height == 0 {
+                        1
+                    } else {
+                        blockchain_height + 1
+                    };
                     let new_height = self.current_round.height;
 
                     // BFT-J-1015: enforce monotonic height invariant on sync.
@@ -623,13 +637,21 @@ impl ConsensusEngine {
                     if new_height != old_height {
                         let state = InvariantState {
                             current_height: new_height,
-                            previous_height: if old_height == 0 { None } else { Some(old_height) },
+                            previous_height: if old_height == 0 {
+                                None
+                            } else {
+                                Some(old_height)
+                            },
                             votes_received: 0,
-                            total_validators: self.validator_manager.get_active_validators().len() as u64,
+                            total_validators: self.validator_manager.get_active_validators().len()
+                                as u64,
                             fork_detected: false, // see note above
                             reorg_detected: false,
                         };
-                        for invariant in &[ConsensusInvariant::MonotonicHeight, ConsensusInvariant::NoFork] {
+                        for invariant in &[
+                            ConsensusInvariant::MonotonicHeight,
+                            ConsensusInvariant::NoFork,
+                        ] {
                             if let Err(msg) = check_invariant(invariant, &state) {
                                 tracing::error!("Height sync invariant violated: {}", msg);
                                 return Err(ConsensusError::ValidatorError(msg));
@@ -655,7 +677,10 @@ impl ConsensusEngine {
                 }
             }
         } else {
-            tracing::debug!("No blockchain provider - consensus height unchanged at {}", self.current_round.height);
+            tracing::debug!(
+                "No blockchain provider - consensus height unchanged at {}",
+                self.current_round.height
+            );
             Ok(())
         }
     }
@@ -763,12 +788,15 @@ impl ConsensusEngine {
             )
         })?;
 
-        let validator = self.validator_manager.get_validator(identity).ok_or_else(|| {
-            ConsensusError::ValidatorError(
-                "Cannot load validator signing keypair: local validator is not registered"
-                    .to_string(),
-            )
-        })?;
+        let validator = self
+            .validator_manager
+            .get_validator(identity)
+            .ok_or_else(|| {
+                ConsensusError::ValidatorError(
+                    "Cannot load validator signing keypair: local validator is not registered"
+                        .to_string(),
+                )
+            })?;
 
         if validator.consensus_key != keypair.public_key.dilithium_pk {
             return Err(ConsensusError::ValidatorError(
@@ -784,7 +812,10 @@ impl ConsensusEngine {
     ///
     /// This is the supported way for a node to converge its consensus validator set with
     /// the chain's validator registry without using the queued epoch-change path.
-    pub fn sync_validators_from_list<T>(&mut self, validators: Vec<T>) -> anyhow::Result<(usize, usize)>
+    pub fn sync_validators_from_list<T>(
+        &mut self,
+        validators: Vec<T>,
+    ) -> anyhow::Result<(usize, usize)>
     where
         T: ValidatorInfoTrait,
     {
@@ -810,7 +841,8 @@ impl ConsensusEngine {
         if let Some(kp) = &self.validator_keypair {
             if kp.public_key.dilithium_pk != validator.consensus_key {
                 return Err(ConsensusError::ValidatorError(
-                    "Local validator keypair does not match validator set consensus key".to_string(),
+                    "Local validator keypair does not match validator set consensus key"
+                        .to_string(),
                 ));
             }
         }
@@ -866,9 +898,9 @@ impl ConsensusEngine {
         &mut self,
         proposal: &DaoProposal,
     ) -> ConsensusResult<()> {
-        let params = proposal
-            .execution_params()
-            .ok_or_else(|| ConsensusError::ValidatorError("Proposal missing execution params".to_string()))?;
+        let params = proposal.execution_params().ok_or_else(|| {
+            ConsensusError::ValidatorError("Proposal missing execution params".to_string())
+        })?;
         let decoded = self
             .dao_engine
             .decode_execution_params(params)
@@ -880,8 +912,7 @@ impl ConsensusEngine {
             }
             // Mint/burn authorizations are not consensus parameter updates —
             // they are forwarded to the Treasury Kernel for execution.
-            DaoExecutionAction::MintAuthorization(_)
-            | DaoExecutionAction::BurnAuthorization(_) => {
+            DaoExecutionAction::MintAuthorization(_) | DaoExecutionAction::BurnAuthorization(_) => {
                 Err(ConsensusError::ValidatorError(
                     "Proposal is not a governance parameter update".to_string(),
                 ))
@@ -1038,7 +1069,11 @@ impl ConsensusEngine {
     /// The change takes effect at `next_epoch_start(current_round.height)` and is subject
     /// to the churn cap in `apply_epoch_boundary_changes`.
     fn queue_validator_add(&mut self, pending: PendingValidatorAdd) -> ConsensusResult<()> {
-        if self.validator_manager.get_validator(&pending.identity).is_some() {
+        if self
+            .validator_manager
+            .get_validator(&pending.identity)
+            .is_some()
+        {
             return Err(ConsensusError::ValidatorError(
                 "Validator already registered".to_string(),
             ));
@@ -1046,14 +1081,15 @@ impl ConsensusEngine {
 
         let identity = pending.identity.clone();
         let mut removed_pending_remove = false;
-        self.pending_validator_changes.retain(|entry| match &entry.change {
-            ValidatorSetChange::Remove(existing) if *existing == identity => {
-                removed_pending_remove = true;
-                false
-            }
-            ValidatorSetChange::Add(existing) if existing.identity == identity => false,
-            _ => true,
-        });
+        self.pending_validator_changes
+            .retain(|entry| match &entry.change {
+                ValidatorSetChange::Remove(existing) if *existing == identity => {
+                    removed_pending_remove = true;
+                    false
+                }
+                ValidatorSetChange::Add(existing) if existing.identity == identity => false,
+                _ => true,
+            });
 
         if removed_pending_remove {
             tracing::info!(
@@ -1063,10 +1099,11 @@ impl ConsensusEngine {
         }
 
         let effective_height = self.next_epoch_start(self.current_round.height);
-        self.pending_validator_changes.push_back(PendingValidatorChange {
-            effective_height,
-            change: ValidatorSetChange::Add(pending),
-        });
+        self.pending_validator_changes
+            .push_back(PendingValidatorChange {
+                effective_height,
+                change: ValidatorSetChange::Add(pending),
+            });
 
         Ok(())
     }
@@ -1080,13 +1117,14 @@ impl ConsensusEngine {
     /// Returns an error if the identity is not currently active and has no pending add to cancel.
     fn queue_validator_removal(&mut self, identity: IdentityId) -> ConsensusResult<()> {
         let mut removed_pending_add = false;
-        self.pending_validator_changes.retain(|entry| match &entry.change {
-            ValidatorSetChange::Add(existing) if existing.identity == identity => {
-                removed_pending_add = true;
-                false
-            }
-            _ => true,
-        });
+        self.pending_validator_changes
+            .retain(|entry| match &entry.change {
+                ValidatorSetChange::Add(existing) if existing.identity == identity => {
+                    removed_pending_add = true;
+                    false
+                }
+                _ => true,
+            });
 
         if removed_pending_add {
             tracing::info!(
@@ -1103,10 +1141,11 @@ impl ConsensusEngine {
         }
 
         let effective_height = self.next_epoch_start(self.current_round.height);
-        self.pending_validator_changes.push_back(PendingValidatorChange {
-            effective_height,
-            change: ValidatorSetChange::Remove(identity),
-        });
+        self.pending_validator_changes
+            .push_back(PendingValidatorChange {
+                effective_height,
+                change: ValidatorSetChange::Remove(identity),
+            });
 
         Ok(())
     }
@@ -1191,14 +1230,19 @@ impl ConsensusEngine {
 
         // Enforce churn cap: defer changes that exceed the budget back to next epoch.
         let removals_to_apply = removals.len().min(churn_budget);
-        let additions_to_apply = additions.len().min(churn_budget.saturating_sub(removals_to_apply));
+        let additions_to_apply = additions
+            .len()
+            .min(churn_budget.saturating_sub(removals_to_apply));
 
         // Changes beyond the budget are deferred to the next epoch.
         let deferred_removals = removals.split_off(removals_to_apply);
         let deferred_additions = additions.split_off(additions_to_apply);
 
         let next_epoch = self.next_epoch_start(height);
-        for mut entry in deferred_removals.into_iter().chain(deferred_additions.into_iter()) {
+        for mut entry in deferred_removals
+            .into_iter()
+            .chain(deferred_additions.into_iter())
+        {
             tracing::info!(
                 "Churn budget exceeded at height {}: deferring validator change to epoch at height {}",
                 height,
@@ -1215,7 +1259,11 @@ impl ConsensusEngine {
         for entry in removals.into_iter().chain(additions.into_iter()) {
             match entry.change {
                 ValidatorSetChange::Add(add) => {
-                    if self.validator_manager.get_validator(&add.identity).is_none() {
+                    if self
+                        .validator_manager
+                        .get_validator(&add.identity)
+                        .is_none()
+                    {
                         self.validator_manager
                             .register_validator(
                                 add.identity.clone(),
@@ -1271,7 +1319,8 @@ impl ConsensusEngine {
                 .iter()
                 .map(|v| v.identity.clone())
                 .collect();
-            self.liveness_monitor.update_validator_set(&active_validators);
+            self.liveness_monitor
+                .update_validator_set(&active_validators);
         }
 
         Ok(())
@@ -1303,10 +1352,8 @@ impl ConsensusEngine {
             return;
         }
 
-        self.validator_set_history.push_back(ValidatorSetSnapshot {
-            height,
-            validators,
-        });
+        self.validator_set_history
+            .push_back(ValidatorSetSnapshot { height, validators });
 
         if self.validator_set_history.len() > 100 {
             self.validator_set_history.pop_front();

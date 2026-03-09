@@ -10,7 +10,7 @@
 #[cfg(test)]
 mod red_tests {
     use crate::contracts::abi::schema::*;
-    use crate::contracts::abi::{validation, privilege, codegen};
+    use crate::contracts::abi::{codegen, privilege, validation};
 
     /// RED TEST: Contract methods must record INTENT, not execute effects
     ///
@@ -23,10 +23,8 @@ mod red_tests {
     #[ignore] // Remove when Treasury Kernel validates intent recording
     fn red_kernel_must_enforce_intent_semantics() {
         // GIVEN a UBI contract with a claim method
-        let abi = ContractAbi::new("UBI", "1.0.0").with_method(
-            MethodSchema::new("claim", ReturnType::Void)
-                .kernel_only()
-        );
+        let abi = ContractAbi::new("UBI", "1.0.0")
+            .with_method(MethodSchema::new("claim", ReturnType::Void).kernel_only());
 
         // WHEN someone calls the claim method
         // (This would be through contract executor in real scenario)
@@ -54,10 +52,8 @@ mod red_tests {
     #[ignore] // Remove when access control is fully implemented
     fn red_kernel_only_methods_enforced() {
         // GIVEN a contract with kernel-only methods
-        let abi = ContractAbi::new("Treasury", "1.0.0").with_method(
-            MethodSchema::new("mint", ReturnType::Void)
-                .kernel_only()
-        );
+        let abi = ContractAbi::new("Treasury", "1.0.0")
+            .with_method(MethodSchema::new("mint", ReturnType::Void).kernel_only());
 
         // AND a non-kernel caller
         let caller_privilege = privilege::PrivilegeLevel::Public;
@@ -84,18 +80,14 @@ mod red_tests {
     #[test]
     fn red_abi_hash_deterministic_for_consensus() {
         // GIVEN two identical ABIs
-        let abi1 = ContractAbi::new("UBI", "1.0.0").with_method(
-            MethodSchema::new("claim", ReturnType::Void)
-        );
-        let abi2 = ContractAbi::new("UBI", "1.0.0").with_method(
-            MethodSchema::new("claim", ReturnType::Void)
-        );
+        let abi1 = ContractAbi::new("UBI", "1.0.0")
+            .with_method(MethodSchema::new("claim", ReturnType::Void));
+        let abi2 = ContractAbi::new("UBI", "1.0.0")
+            .with_method(MethodSchema::new("claim", ReturnType::Void));
 
         // WHEN we hash them
-        let hash1 = crate::contracts::abi::codec::AbiEncoder::abi_hash(&abi1)
-            .expect("Should hash");
-        let hash2 = crate::contracts::abi::codec::AbiEncoder::abi_hash(&abi2)
-            .expect("Should hash");
+        let hash1 = crate::contracts::abi::codec::AbiEncoder::abi_hash(&abi1).expect("Should hash");
+        let hash2 = crate::contracts::abi::codec::AbiEncoder::abi_hash(&abi2).expect("Should hash");
 
         // THEN the hashes MUST be identical
         assert_eq!(hash1, hash2, "ABI hashes must be deterministic");
@@ -117,8 +109,8 @@ mod red_tests {
         assert_eq!(pub_method.semantics, ExecutionSemantics::Intent);
 
         // WHEN governance gate is required
-        let _gov_method = MethodSchema::new("vote", ReturnType::Void)
-            .with_privilege(PrivilegeRequirement {
+        let _gov_method =
+            MethodSchema::new("vote", ReturnType::Void).with_privilege(PrivilegeRequirement {
                 kernel_only: false,
                 governance_gated: true,
                 require_role: None,
@@ -150,21 +142,17 @@ mod red_tests {
         // GIVEN a contract with events
         let abi = ContractAbi::new("UBI", "1.0.0")
             .with_method(MethodSchema::new("claim", ReturnType::Void))
-            .with_events(vec![
-                EventSchema {
-                    name: "ClaimRecorded".to_string(),
-                    fields: vec![
-                        EventField {
-                            name: "citizen".to_string(),
-                            r#type: FieldType::Bytes32,
-                            indexed: true,
-                            description: None,
-                        },
-                    ],
-                    description: None,
+            .with_events(vec![EventSchema {
+                name: "ClaimRecorded".to_string(),
+                fields: vec![EventField {
+                    name: "citizen".to_string(),
+                    r#type: FieldType::Bytes32,
                     indexed: true,
-                }
-            ]);
+                    description: None,
+                }],
+                description: None,
+                indexed: true,
+            }]);
 
         // WHEN a method is called
         // (Events would be emitted here)
@@ -188,12 +176,18 @@ mod red_tests {
     fn red_types_must_support_versioning() {
         // GIVEN an ABI with custom types
         let mut types = std::collections::HashMap::new();
-        types.insert("ClaimRequest".to_string(), TypeDefinition::Struct {
-            fields: [
-                ("citizen_id".to_string(), ParameterType::Bytes32),
-                ("amount".to_string(), ParameterType::U64),
-            ].iter().cloned().collect(),
-        });
+        types.insert(
+            "ClaimRequest".to_string(),
+            TypeDefinition::Struct {
+                fields: [
+                    ("citizen_id".to_string(), ParameterType::Bytes32),
+                    ("amount".to_string(), ParameterType::U64),
+                ]
+                .iter()
+                .cloned()
+                .collect(),
+            },
+        );
 
         let abi = ContractAbi::new("UBI", "1.0.0").with_types(types);
 
@@ -220,13 +214,11 @@ mod red_tests {
     #[test]
     fn red_generated_code_production_ready() {
         // GIVEN an ABI
-        let abi = ContractAbi::new("Test", "1.0.0").with_method(
-            MethodSchema::new("test_method", ReturnType::Void)
-        );
+        let abi = ContractAbi::new("Test", "1.0.0")
+            .with_method(MethodSchema::new("test_method", ReturnType::Void));
 
         // WHEN we generate Rust code
-        let rust = codegen::AbiCodegen::generate_rust(&abi)
-            .expect("Should generate");
+        let rust = codegen::AbiCodegen::generate_rust(&abi).expect("Should generate");
 
         // THEN it must compile
         assert!(rust.contains("struct CallTestMethod"));
@@ -234,8 +226,7 @@ mod red_tests {
         assert!(rust.contains("#[derive(Debug, Clone, Serialize, Deserialize)]"));
 
         // AND TypeScript code
-        let ts = codegen::AbiCodegen::generate_typescript(&abi)
-            .expect("Should generate");
+        let ts = codegen::AbiCodegen::generate_typescript(&abi).expect("Should generate");
 
         // THEN it must also be valid
         assert!(ts.contains("interface CallTestMethod"));
@@ -282,9 +273,8 @@ mod red_tests {
     #[test]
     fn red_cross_contract_calls_type_checked() {
         // GIVEN contract A wants to call contract B
-        let contract_b = ContractAbi::new("B", "1.0.0").with_method(
-            MethodSchema::new("transfer", ReturnType::Void)
-        );
+        let contract_b = ContractAbi::new("B", "1.0.0")
+            .with_method(MethodSchema::new("transfer", ReturnType::Void));
 
         // WHEN contract A generates a call
         // (This would use the ABI to construct the call)

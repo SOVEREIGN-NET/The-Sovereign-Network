@@ -1,50 +1,47 @@
-use std::fmt;
-use std::fmt::Formatter;
 use crate::messages::inter::rr_classes::RRClasses;
 use crate::messages::inter::rr_types::RRTypes;
 use crate::messages::wire::{FromWire, FromWireContext, ToWire, ToWireContext, WireError};
 use crate::utils::fqdn_utils::{pack_fqdn, unpack_fqdn};
+use std::fmt;
+use std::fmt::Formatter;
 
 #[derive(Debug, Clone)]
 pub struct RRQuery {
     fqdn: String,
     rtype: RRTypes,
-    class: RRClasses
+    class: RRClasses,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RRQueryError(pub String);
 
 impl fmt::Display for RRQueryError {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
 impl RRQuery {
-
     pub fn new(fqdn: &str, rtype: RRTypes, class: RRClasses) -> Self {
         Self {
             fqdn: fqdn.to_string(),
             rtype,
-            class
+            class,
         }
     }
 
     pub fn from_bytes(buf: &[u8]) -> Result<Self, RRQueryError> {
         let (fqdn, fqdn_length) = unpack_fqdn(buf, 0);
 
-        let rtype = RRTypes::try_from(u16::from_be_bytes([buf[fqdn_length], buf[1+fqdn_length]]))
+        let rtype = RRTypes::try_from(u16::from_be_bytes([buf[fqdn_length], buf[1 + fqdn_length]]))
             .map_err(|e| RRQueryError(e.to_string()))?;
-        let class = RRClasses::try_from(u16::from_be_bytes([buf[2+fqdn_length], buf[3+fqdn_length]]))
-            .map_err(|e| RRQueryError(e.to_string()))?;
+        let class = RRClasses::try_from(u16::from_be_bytes([
+            buf[2 + fqdn_length],
+            buf[3 + fqdn_length],
+        ]))
+        .map_err(|e| RRQueryError(e.to_string()))?;
 
-        Ok(Self {
-            fqdn,
-            rtype,
-            class
-        })
+        Ok(Self { fqdn, rtype, class })
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -90,23 +87,19 @@ impl RRQuery {
 }
 
 impl FromWire for RRQuery {
-
     fn from_wire(context: &mut FromWireContext) -> Result<Self, WireError> {
         let fqdn = context.name()?;
 
-        let rtype = RRTypes::try_from(u16::from_wire(context)?).map_err(|e| WireError::Format(e.to_string()))?;
-        let class = RRClasses::try_from(u16::from_wire(context)?).map_err(|e| WireError::Format(e.to_string()))?;
+        let rtype = RRTypes::try_from(u16::from_wire(context)?)
+            .map_err(|e| WireError::Format(e.to_string()))?;
+        let class = RRClasses::try_from(u16::from_wire(context)?)
+            .map_err(|e| WireError::Format(e.to_string()))?;
 
-        Ok(Self {
-            fqdn,
-            rtype,
-            class
-        })
+        Ok(Self { fqdn, rtype, class })
     }
 }
 
 impl ToWire for RRQuery {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
         context.write_name(self.fqdn(), true)?;
 
@@ -118,8 +111,13 @@ impl ToWire for RRQuery {
 }
 
 impl fmt::Display for RRQuery {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{:<31}{:<8}{}", format!("{}.", self.fqdn), self.class.to_string(), self.rtype)
+        write!(
+            f,
+            "{:<31}{:<8}{}",
+            format!("{}.", self.fqdn),
+            self.class.to_string(),
+            self.rtype
+        )
     }
 }

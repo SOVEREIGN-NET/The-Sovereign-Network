@@ -1,6 +1,6 @@
 //! Compression algorithms
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
 /// Compression algorithm types
@@ -33,7 +33,7 @@ impl Compressor {
     /// Compress data
     pub fn compress(&mut self, data: &[u8]) -> Result<Vec<u8>> {
         let original_size = data.len();
-        
+
         let compressed = match self.algorithm {
             CompressionAlgorithm::None => data.to_vec(),
             CompressionAlgorithm::Lz4 => self.compress_lz4(data)?,
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn test_compression_stats() {
         let mut compressor = Compressor::new(CompressionAlgorithm::Lz4);
-        
+
         compressor.compress(b"test1").unwrap();
         compressor.compress(b"test2").unwrap();
 

@@ -8,11 +8,11 @@
 //! - **Testability**: Output trait injection for testing
 
 use crate::argument_parsing::BackupArgs;
-use crate::error::{CliResult, CliError};
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
 
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -66,9 +66,7 @@ pub fn validate_backup_path(path_str: &str) -> CliResult<PathBuf> {
 
     // Basic sanity checks on path
     if path.as_os_str().is_empty() {
-        return Err(CliError::ConfigError(
-            "Invalid backup path".to_string(),
-        ));
+        return Err(CliError::ConfigError("Invalid backup path".to_string()));
     }
 
     Ok(path)
@@ -115,29 +113,30 @@ pub fn default_backup_dir() -> PathBuf {
 /// Handle backup command with proper error handling and output
 ///
 /// Public entry point that maintains backward compatibility
-pub async fn handle_backup_command(args: BackupArgs, _cli: &crate::argument_parsing::ZhtpCli) -> CliResult<()> {
+pub async fn handle_backup_command(
+    args: BackupArgs,
+    _cli: &crate::argument_parsing::ZhtpCli,
+) -> CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_backup_command_impl(args, &output).await
 }
 
 /// Internal implementation with dependency injection
-async fn handle_backup_command_impl(
-    args: BackupArgs,
-    output: &dyn Output,
-) -> CliResult<()> {
+async fn handle_backup_command_impl(args: BackupArgs, output: &dyn Output) -> CliResult<()> {
     use crate::argument_parsing::BackupAction;
 
     let op = action_to_operation(&args.action);
     output.info(&format!("{}...", op.description()))?;
 
     match args.action {
-        BackupAction::Create { output: output_path, include_config } => {
+        BackupAction::Create {
+            output: output_path,
+            include_config,
+        } => {
             let backup_path = output_path
                 .map(|p| validate_backup_path(&p))
                 .transpose()?
-                .unwrap_or_else(|| {
-                    default_backup_dir().join("backup.zhtp.encrypted")
-                });
+                .unwrap_or_else(|| default_backup_dir().join("backup.zhtp.encrypted"));
 
             output.header("Create Backup")?;
             create_backup_impl(&backup_path, include_config, output).await
@@ -170,10 +169,7 @@ async fn create_backup_impl(
     // Ensure parent directory exists
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
-            CliError::ConfigError(format!(
-                "Failed to create backup directory: {}",
-                e
-            ))
+            CliError::ConfigError(format!("Failed to create backup directory: {}", e))
         })?;
     }
 
@@ -191,23 +187,20 @@ async fn create_backup_impl(
     // 4. Encrypt with ChaCha20-Poly1305
     // 5. Write to output path
 
-    output.success(&format!(
-        "✓ Backup created: {}",
-        output_path.display()
-    ))?;
+    output.success(&format!("✓ Backup created: {}", output_path.display()))?;
 
     output.print("")?;
     output.print("To restore later, use:")?;
-    output.print(&format!("  zhtp-cli backup restore --input {}", output_path.display()))?;
+    output.print(&format!(
+        "  zhtp-cli backup restore --input {}",
+        output_path.display()
+    ))?;
 
     Ok(())
 }
 
 /// Restore from encrypted backup
-async fn restore_backup_impl(
-    input_path: &Path,
-    output: &dyn Output,
-) -> CliResult<()> {
+async fn restore_backup_impl(input_path: &Path, output: &dyn Output) -> CliResult<()> {
     if !input_path.exists() {
         return Err(CliError::ConfigError(format!(
             "Backup file not found: {}",
@@ -247,19 +240,18 @@ async fn list_backups_impl(output: &dyn Output) -> CliResult<()> {
         return Ok(());
     }
 
-    let entries = fs::read_dir(&backup_dir).map_err(|e| {
-        CliError::ConfigError(format!("Failed to read backup directory: {}", e))
-    })?;
+    let entries = fs::read_dir(&backup_dir)
+        .map_err(|e| CliError::ConfigError(format!("Failed to read backup directory: {}", e)))?;
 
     let mut backup_count = 0;
     for entry in entries {
-        let entry = entry.map_err(|e| {
-            CliError::ConfigError(format!("Failed to read entry: {}", e))
-        })?;
+        let entry =
+            entry.map_err(|e| CliError::ConfigError(format!("Failed to read entry: {}", e)))?;
 
         let path = entry.path();
         if path.is_file() && path.extension().map_or(false, |ext| ext == "encrypted") {
-            let file_name = path.file_name()
+            let file_name = path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown");
 
@@ -285,10 +277,7 @@ async fn list_backups_impl(output: &dyn Output) -> CliResult<()> {
 }
 
 /// Delete a backup
-async fn delete_backup_impl(
-    backup_path: &Path,
-    output: &dyn Output,
-) -> CliResult<()> {
+async fn delete_backup_impl(backup_path: &Path, output: &dyn Output) -> CliResult<()> {
     if !backup_path.exists() {
         return Err(CliError::ConfigError(format!(
             "Backup not found: {}",
@@ -298,12 +287,8 @@ async fn delete_backup_impl(
 
     output.print(&format!("Deleting: {}", backup_path.display()))?;
 
-    fs::remove_file(backup_path).map_err(|e| {
-        CliError::ConfigError(format!(
-            "Failed to delete backup: {}",
-            e
-        ))
-    })?;
+    fs::remove_file(backup_path)
+        .map_err(|e| CliError::ConfigError(format!("Failed to delete backup: {}", e)))?;
 
     output.success("✓ Backup deleted")?;
 
@@ -338,7 +323,10 @@ mod tests {
 
     #[test]
     fn test_action_to_operation_list() {
-        assert_eq!(action_to_operation(&BackupAction::List), BackupOperation::List);
+        assert_eq!(
+            action_to_operation(&BackupAction::List),
+            BackupOperation::List
+        );
     }
 
     #[test]
@@ -363,10 +351,7 @@ mod tests {
             BackupOperation::List.description(),
             "List available backups"
         );
-        assert_eq!(
-            BackupOperation::Delete.description(),
-            "Delete a backup"
-        );
+        assert_eq!(BackupOperation::Delete.description(), "Delete a backup");
     }
 
     #[test]

@@ -4,13 +4,13 @@
 //! These operations provide USD-equivalent calculations and governance
 //! integration for SRV updates.
 
+use super::{
+    interface::KernelOpError,
+    srv_types::{SRVError, SRVState, SRVUpdateRecord},
+    KernelState, TreasuryKernel,
+};
 use crate::contracts::tokens::core::TokenContract;
 use crate::integration::crypto_integration::PublicKey;
-use super::{
-    TreasuryKernel, KernelState,
-    interface::KernelOpError,
-    srv_types::{SRVState, SRVError, SRVUpdateRecord},
-};
 
 impl TreasuryKernel {
     // ============================================================================
@@ -180,7 +180,13 @@ impl TreasuryKernel {
         let new_srv = self
             .state
             .srv_state
-            .apply_update(new_committed_value, circulating_supply, proposal_id, height, epoch)
+            .apply_update(
+                new_committed_value,
+                circulating_supply,
+                proposal_id,
+                height,
+                epoch,
+            )
             .map_err(|e| match e {
                 SRVError::ChangeExceedsLimit => KernelOpError::DelayNotElapsed, // Reuse error
                 SRVError::Paused => KernelOpError::Paused,
@@ -296,11 +302,7 @@ mod tests {
     }
 
     fn setup_kernel() -> TreasuryKernel {
-        TreasuryKernel::new(
-            test_governance(),
-            test_kernel_address(),
-            60_480,
-        )
+        TreasuryKernel::new(test_governance(), test_kernel_address(), 60_480)
     }
 
     #[test]
@@ -402,7 +404,8 @@ mod tests {
 
         // Pre-mint some tokens to have non-zero circulating supply
         // Use the kernel address to mint (it has kernel authority)
-        let _ = token.mint_kernel_only(&test_kernel_address(), &test_user(), 50_000_000_000_000_000);
+        let _ =
+            token.mint_kernel_only(&test_kernel_address(), &test_user(), 50_000_000_000_000_000);
         assert_eq!(token.total_supply, 50_000_000_000_000_000); // 50M SOV
 
         // Small increase from 109M to 110M committed value
@@ -437,11 +440,15 @@ mod tests {
         );
 
         // Governance should succeed
-        assert!(kernel.set_srv_emergency_pause(&test_governance(), true).is_ok());
+        assert!(kernel
+            .set_srv_emergency_pause(&test_governance(), true)
+            .is_ok());
         assert!(kernel.is_srv_paused());
 
         // Unpause
-        assert!(kernel.set_srv_emergency_pause(&test_governance(), false).is_ok());
+        assert!(kernel
+            .set_srv_emergency_pause(&test_governance(), false)
+            .is_ok());
         assert!(!kernel.is_srv_paused());
     }
 
@@ -502,9 +509,6 @@ mod tests {
         let mut kernel = setup_kernel();
         kernel.state.srv_state.current_srv = 0;
 
-        assert_eq!(
-            kernel.usd_to_sov(100),
-            Err(KernelOpError::InvalidState)
-        );
+        assert_eq!(kernel.usd_to_sov(100), Err(KernelOpError::InvalidState));
     }
 }

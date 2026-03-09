@@ -79,16 +79,16 @@
 //! }
 //! ```
 
-use anyhow::{Result, Context as AnyhowContext};
-use lib_identity::ZhtpIdentity;
-use lib_crypto::KeyPair;
 use crate::handshake::{
-    ClientHello, ServerHello, ClientFinish, HandshakeContext, HandshakeResult,
-    HandshakeCapabilities, HandshakeRole, HandshakeSessionInfo,
-    derive_channel_binding_from_addrs, compute_transcript_hash,
+    compute_transcript_hash, derive_channel_binding_from_addrs, ClientFinish, ClientHello,
+    HandshakeCapabilities, HandshakeContext, HandshakeResult, HandshakeRole, HandshakeSessionInfo,
+    ServerHello,
 };
-use tokio::net::TcpStream;
+use anyhow::{Context as AnyhowContext, Result};
+use lib_crypto::KeyPair;
+use lib_identity::ZhtpIdentity;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio::time::{timeout, Duration};
 
 // SECURITY (CRIT-2 FIX): Use shared constant for message size limit
@@ -178,24 +178,27 @@ pub async fn handshake_as_initiator(
         let capabilities = create_wifi_direct_capabilities();
         let client_hello = ClientHello::new(identity, capabilities, &ctx)
             .context("Failed to create ClientHello")?;
-        
-        let client_hello_bytes = send_message_with_bytes(stream, &client_hello).await
+
+        let client_hello_bytes = send_message_with_bytes(stream, &client_hello)
+            .await
             .context("Failed to send ClientHello")?;
-        
+
         tracing::debug!(
             node_id = ?identity.node_id,
             "WiFi Direct: ClientHello sent to group owner"
         );
-        
+
         // Step 2: Receive and verify ServerHello
-        let (server_hello, server_hello_bytes): (ServerHello, Vec<u8>) = receive_message_with_bytes(stream).await
-            .context("Failed to receive ServerHello from group owner")?;
-        
+        let (server_hello, server_hello_bytes): (ServerHello, Vec<u8>) =
+            receive_message_with_bytes(stream)
+                .await
+                .context("Failed to receive ServerHello from group owner")?;
+
         tracing::debug!(
             peer_node_id = ?server_hello.identity.node_id,
             "WiFi Direct: ServerHello received from group owner"
         );
-        
+
         let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
         let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
 
@@ -208,10 +211,12 @@ pub async fn handshake_as_initiator(
         // Step 3: Create and send ClientFinish
         let keypair = KeyPair {
             public_key: identity.public_key.clone(),
-            private_key: identity.private_key.clone()
+            private_key: identity
+                .private_key
+                .clone()
                 .ok_or_else(|| anyhow::anyhow!("Identity missing private key"))?,
         };
-        
+
         let (client_finish, pqc_shared_secret) = ClientFinish::new_with_pqc(
             &server_hello,
             &client_hello,
@@ -221,12 +226,13 @@ pub async fn handshake_as_initiator(
             &ctx,
         )
         .context("Failed to create ClientFinish")?;
-        
-        let client_finish_bytes = send_message_with_bytes(stream, &client_finish).await
+
+        let client_finish_bytes = send_message_with_bytes(stream, &client_finish)
+            .await
             .context("Failed to send ClientFinish")?;
-        
+
         tracing::debug!("WiFi Direct: ClientFinish sent, handshake complete");
-        
+
         let transcript_hash = compute_transcript_hash(&[
             &client_hello_bytes,
             &server_hello_bytes,
@@ -246,8 +252,9 @@ pub async fn handshake_as_initiator(
             &session_info,
             pqc_shared_secret.as_ref(),
             transcript_hash,
-        ).context("Failed to derive session key")?;
-        
+        )
+        .context("Failed to derive session key")?;
+
         tracing::info!(
             session_id = ?result.session_id,
             peer = %server_hello.identity.to_compact_string(),
@@ -326,24 +333,27 @@ pub async fn handshake_as_responder(
             .with_channel_binding_required(true);
 
         // Step 1: Receive and verify ClientHello
-        let (client_hello, client_hello_bytes): (ClientHello, Vec<u8>) = receive_message_with_bytes(stream).await
-            .context("Failed to receive ClientHello from WiFi Direct client")?;
-        
+        let (client_hello, client_hello_bytes): (ClientHello, Vec<u8>) =
+            receive_message_with_bytes(stream)
+                .await
+                .context("Failed to receive ClientHello from WiFi Direct client")?;
+
         tracing::debug!(
             peer_node_id = ?client_hello.identity.node_id,
             "WiFi Direct: ClientHello received from client"
         );
-        
+
         // CRITICAL: Verify client's signature
-        client_hello.verify_signature(&ctx)
+        client_hello
+            .verify_signature(&ctx)
             .context("Client signature verification failed - rejecting connection")?;
-        
+
         tracing::info!(
             peer_did = %client_hello.identity.did,
             peer_device = %client_hello.identity.device_id,
             "WiFi Direct: Client verified successfully"
         );
-        
+
         // Step 2: Create and send ServerHello
         let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
 
@@ -356,34 +366,38 @@ pub async fn handshake_as_responder(
             &ctx,
         )
         .context("Failed to create ServerHello")?;
-        
-        let server_hello_bytes = send_message_with_bytes(stream, &server_hello).await
+
+        let server_hello_bytes = send_message_with_bytes(stream, &server_hello)
+            .await
             .context("Failed to send ServerHello")?;
-        
+
         tracing::debug!(
             node_id = ?identity.node_id,
             "WiFi Direct: ServerHello sent to client"
         );
-        
+
         // Step 3: Receive and verify ClientFinish
-        let (client_finish, client_finish_bytes): (ClientFinish, Vec<u8>) = receive_message_with_bytes(stream).await
-            .context("Failed to receive ClientFinish from client")?;
-        
+        let (client_finish, client_finish_bytes): (ClientFinish, Vec<u8>) =
+            receive_message_with_bytes(stream)
+                .await
+                .context("Failed to receive ClientFinish from client")?;
+
         tracing::debug!("WiFi Direct: ClientFinish received");
-        
+
         // CRITICAL: Verify client's signature on server nonce
         let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
 
-        client_finish.verify_signature_with_context(
-            &server_hello.response_nonce,
-            &pre_finish_hash,
-            &client_hello.identity.public_key,
-            &ctx,
-        )
+        client_finish
+            .verify_signature_with_context(
+                &server_hello.response_nonce,
+                &pre_finish_hash,
+                &client_hello.identity.public_key,
+                &ctx,
+            )
             .context("ClientFinish signature verification failed")?;
-        
+
         tracing::debug!("WiFi Direct: ClientFinish verified, handshake complete");
-        
+
         let pqc_shared_secret = match (&client_finish.pqc_ciphertext, &pqc_state) {
             (Some(ciphertext), Some(state)) => {
                 let secret = crate::handshake::decapsulate_pqc(ciphertext, state)
@@ -412,8 +426,9 @@ pub async fn handshake_as_responder(
             &session_info,
             pqc_shared_secret.as_ref(),
             transcript_hash,
-        ).context("Failed to derive session key")?;
-        
+        )
+        .context("Failed to derive session key")?;
+
         tracing::info!(
             session_id = ?result.session_id,
             peer = %client_hello.identity.to_compact_string(),
@@ -445,9 +460,8 @@ pub async fn handshake_as_responder(
 #[allow(dead_code)]
 async fn send_message<T: serde::Serialize>(stream: &mut TcpStream, message: &T) -> Result<()> {
     // Serialize message
-    let bytes = bincode::serialize(message)
-        .context("Failed to serialize handshake message")?;
-    
+    let bytes = bincode::serialize(message).context("Failed to serialize handshake message")?;
+
     // Validate size
     if bytes.len() > MAX_HANDSHAKE_MESSAGE_SIZE {
         return Err(anyhow::anyhow!(
@@ -456,31 +470,36 @@ async fn send_message<T: serde::Serialize>(stream: &mut TcpStream, message: &T) 
             MAX_HANDSHAKE_MESSAGE_SIZE
         ));
     }
-    
+
     // SECURITY (CRIT-1 FIX): Use big-endian (network byte order) to match TCP bootstrap and core UHP
     // This ensures WiFi Direct clients can communicate with TCP bootstrap servers
-    stream.write_u32(bytes.len() as u32).await
+    stream
+        .write_u32(bytes.len() as u32)
+        .await
         .context("Failed to write message length")?;
 
     // Send message payload
-    stream.write_all(&bytes).await
+    stream
+        .write_all(&bytes)
+        .await
         .context("Failed to write message payload")?;
-    
+
     // Flush to ensure immediate transmission (important for handshake timing)
-    stream.flush().await
-        .context("Failed to flush stream")?;
-    
+    stream.flush().await.context("Failed to flush stream")?;
+
     tracing::trace!(
         message_size = bytes.len(),
         "WiFi Direct: Handshake message sent"
     );
-    
+
     Ok(())
 }
 
-async fn send_message_with_bytes<T: serde::Serialize>(stream: &mut TcpStream, message: &T) -> Result<Vec<u8>> {
-    let bytes = bincode::serialize(message)
-        .context("Failed to serialize handshake message")?;
+async fn send_message_with_bytes<T: serde::Serialize>(
+    stream: &mut TcpStream,
+    message: &T,
+) -> Result<Vec<u8>> {
+    let bytes = bincode::serialize(message).context("Failed to serialize handshake message")?;
 
     if bytes.len() > MAX_HANDSHAKE_MESSAGE_SIZE {
         return Err(anyhow::anyhow!(
@@ -490,12 +509,15 @@ async fn send_message_with_bytes<T: serde::Serialize>(stream: &mut TcpStream, me
         ));
     }
 
-    stream.write_u32(bytes.len() as u32).await
+    stream
+        .write_u32(bytes.len() as u32)
+        .await
         .context("Failed to write message length")?;
-    stream.write_all(&bytes).await
+    stream
+        .write_all(&bytes)
+        .await
         .context("Failed to write message payload")?;
-    stream.flush().await
-        .context("Failed to flush stream")?;
+    stream.flush().await.context("Failed to flush stream")?;
 
     tracing::trace!(
         message_size = bytes.len(),
@@ -524,9 +546,12 @@ async fn send_message_with_bytes<T: serde::Serialize>(stream: &mut TcpStream, me
 async fn receive_message<T: serde::de::DeserializeOwned>(stream: &mut TcpStream) -> Result<T> {
     // SECURITY (CRIT-1 FIX): Use big-endian (network byte order) to match TCP bootstrap and core UHP
     // This ensures WiFi Direct clients can communicate with TCP bootstrap servers
-    let len = stream.read_u32().await
-        .context("Failed to read message length - peer disconnected or network error")? as usize;
-    
+    let len = stream
+        .read_u32()
+        .await
+        .context("Failed to read message length - peer disconnected or network error")?
+        as usize;
+
     // Validate message size
     if len > MAX_HANDSHAKE_MESSAGE_SIZE {
         return Err(anyhow::anyhow!(
@@ -535,33 +560,38 @@ async fn receive_message<T: serde::de::DeserializeOwned>(stream: &mut TcpStream)
             MAX_HANDSHAKE_MESSAGE_SIZE
         ));
     }
-    
+
     if len == 0 {
         return Err(anyhow::anyhow!("Empty message received"));
     }
-    
+
     // Read message payload
     let mut buffer = vec![0u8; len];
-    stream.read_exact(&mut buffer).await
+    stream
+        .read_exact(&mut buffer)
+        .await
         .context("Failed to read message payload - incomplete transmission")?;
-    
+
     // Deserialize
     let message = bincode::deserialize(&buffer)
         .context("Failed to deserialize handshake message - protocol mismatch")?;
-    
+
     tracing::trace!(
         message_size = len,
         "WiFi Direct: Handshake message received"
     );
-    
+
     Ok(message)
 }
 
 async fn receive_message_with_bytes<T: serde::de::DeserializeOwned>(
     stream: &mut TcpStream,
 ) -> Result<(T, Vec<u8>)> {
-    let len = stream.read_u32().await
-        .context("Failed to read message length - peer disconnected or network error")? as usize;
+    let len = stream
+        .read_u32()
+        .await
+        .context("Failed to read message length - peer disconnected or network error")?
+        as usize;
 
     if len > MAX_HANDSHAKE_MESSAGE_SIZE {
         return Err(anyhow::anyhow!(
@@ -576,7 +606,9 @@ async fn receive_message_with_bytes<T: serde::de::DeserializeOwned>(
     }
 
     let mut buffer = vec![0u8; len];
-    stream.read_exact(&mut buffer).await
+    stream
+        .read_exact(&mut buffer)
+        .await
         .context("Failed to read message payload - incomplete transmission")?;
 
     let message = bincode::deserialize(&buffer)
@@ -611,17 +643,14 @@ fn create_wifi_direct_capabilities() -> HandshakeCapabilities {
     HandshakeCapabilities {
         protocols: vec!["wifi-direct".to_string(), "tcp".to_string()],
         max_throughput: 100_000_000, // 100 Mbps (practical WiFi Direct throughput)
-        max_message_size: 1_048_576,  // 1 MB (WiFi Direct can handle large messages)
+        max_message_size: 1_048_576, // 1 MB (WiFi Direct can handle large messages)
         encryption_methods: vec!["chacha20-poly1305".to_string()],
         pqc_capability: PqcCapability::Kyber1024Dilithium5,
-        dht_capable: true,  // WiFi Direct nodes can participate in DHT
+        dht_capable: true,   // WiFi Direct nodes can participate in DHT
         relay_capable: true, // WiFi Direct group owners can relay traffic
         storage_capacity: 0, // No storage guarantee over WiFi Direct
         web4_capable: false, // Web4 serving typically over stable connections
-        custom_features: vec![
-            "wifi-direct-p2p".to_string(),
-            "mobile-mesh".to_string(),
-        ],
+        custom_features: vec!["wifi-direct-p2p".to_string(), "mobile-mesh".to_string()],
     }
 }
 
@@ -632,8 +661,8 @@ fn create_wifi_direct_capabilities() -> HandshakeCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::handshake::{HandshakeContext, HandshakeRole, NonceCache};
     use lib_identity::ZhtpIdentity;
-    use crate::handshake::{NonceCache, HandshakeContext, HandshakeRole};
     use tokio::net::{TcpListener, TcpStream};
 
     /// Helper to create test identity
@@ -644,7 +673,8 @@ mod tests {
             Some("US".to_string()),
             device_name,
             None,
-        ).expect("Failed to create test identity")
+        )
+        .expect("Failed to create test identity")
     }
 
     fn net_tests_disabled() -> bool {
@@ -679,56 +709,57 @@ mod tests {
         // Create identities for group owner and client
         let group_owner_identity = create_test_identity("wifi-group-owner");
         let client_identity = create_test_identity("wifi-client");
-        
+
         // Start TCP listener (simulates WiFi Direct group owner)
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        
+
         // Spawn group owner task
         let group_owner_identity_clone = group_owner_identity.clone();
         let server_task = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            
+
             let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
             let nonce_cache = NonceCache::new_test(300, 1000, epoch);
             let ctx = HandshakeContext::new(nonce_cache);
-            
-            handshake_as_responder(&mut stream, &group_owner_identity_clone, &ctx).await.unwrap()
+
+            handshake_as_responder(&mut stream, &group_owner_identity_clone, &ctx)
+                .await
+                .unwrap()
         });
-        
+
         // Give server time to start
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        
+
         // Connect as WiFi Direct client
         let mut client_stream = TcpStream::connect(addr).await.unwrap();
-        
+
         let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
         let nonce_cache = NonceCache::new_test(300, 1000, epoch);
         let ctx = HandshakeContext::new(nonce_cache);
-        
-        let client_result = handshake_as_initiator(&mut client_stream, &client_identity, &ctx).await.unwrap();
+
+        let client_result = handshake_as_initiator(&mut client_stream, &client_identity, &ctx)
+            .await
+            .unwrap();
         let server_result = server_task.await.unwrap();
-        
+
         // Verify session keys match
         assert_eq!(
-            client_result.session_key,
-            server_result.session_key,
+            client_result.session_key, server_result.session_key,
             "Session keys must match on both sides"
         );
-        
+
         // Verify peer identities
         assert_eq!(
-            client_result.peer_identity.node_id,
-            group_owner_identity.node_id,
+            client_result.peer_identity.node_id, group_owner_identity.node_id,
             "Client should see group owner's identity"
         );
 
         assert_eq!(
-            server_result.peer_identity.node_id,
-            client_identity.node_id,
+            server_result.peer_identity.node_id, client_identity.node_id,
             "Group owner should see client's identity"
         );
-        
+
         println!("✓ WiFi Direct handshake test passed");
     }
 
@@ -738,19 +769,27 @@ mod tests {
     #[tokio::test]
     async fn test_replay_attack_prevention() {
         let identity = create_test_identity("replay-test");
-        
+
         // Create two handshakes - second should succeed (different nonces)
         let (client_ctx, server_ctx) = test_ctx_pair();
 
-        let hello1 = ClientHello::new(&identity, create_wifi_direct_capabilities(), &client_ctx).unwrap();
-        let hello2 = ClientHello::new(&identity, create_wifi_direct_capabilities(), &client_ctx).unwrap();
-        
+        let hello1 =
+            ClientHello::new(&identity, create_wifi_direct_capabilities(), &client_ctx).unwrap();
+        let hello2 =
+            ClientHello::new(&identity, create_wifi_direct_capabilities(), &client_ctx).unwrap();
+
         // First verification should succeed
-        assert!(hello1.verify_signature(&server_ctx).is_ok(), "First handshake should succeed");
-        
+        assert!(
+            hello1.verify_signature(&server_ctx).is_ok(),
+            "First handshake should succeed"
+        );
+
         // Second verification should succeed (different nonce)
-        assert!(hello2.verify_signature(&server_ctx).is_ok(), "Second handshake with new nonce should succeed");
-        
+        assert!(
+            hello2.verify_signature(&server_ctx).is_ok(),
+            "Second handshake with new nonce should succeed"
+        );
+
         println!("✓ Replay attack prevention test passed");
     }
 
@@ -764,18 +803,20 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        
+
         let server_task = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let msg: String = receive_message(&mut stream).await.unwrap();
             assert_eq!(msg, "test message");
         });
-        
+
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        
+
         let mut client_stream = TcpStream::connect(addr).await.unwrap();
-        send_message(&mut client_stream, &"test message".to_string()).await.unwrap();
-        
+        send_message(&mut client_stream, &"test message".to_string())
+            .await
+            .unwrap();
+
         server_task.await.unwrap();
         println!("✓ Message framing test passed");
     }
@@ -790,24 +831,24 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        
+
         let server_task = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            
+
             // Try to receive oversized message
             let result: Result<Vec<u8>> = receive_message(&mut stream).await;
             assert!(result.is_err(), "Should reject oversized message");
         });
-        
+
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        
+
         let mut client_stream = TcpStream::connect(addr).await.unwrap();
-        
+
         // Send fake oversized message (length prefix indicates 20 MB)
         let fake_len = (20 * 1024 * 1024u32).to_le_bytes();
         client_stream.write_all(&fake_len).await.unwrap();
         client_stream.flush().await.unwrap();
-        
+
         server_task.await.unwrap();
         println!("✓ Oversized message rejection test passed");
     }
@@ -818,19 +859,24 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_peer_rejection() {
         let valid_identity = create_test_identity("valid-peer");
-        
+
         // Create ClientHello with valid identity
         let (client_ctx, server_ctx) = test_ctx_pair();
 
-        let mut hello = ClientHello::new(&valid_identity, create_wifi_direct_capabilities(), &client_ctx).unwrap();
-        
+        let mut hello = ClientHello::new(
+            &valid_identity,
+            create_wifi_direct_capabilities(),
+            &client_ctx,
+        )
+        .unwrap();
+
         // Corrupt the NodeId (simulates collision attack or invalid identity)
         hello.identity.node_id = lib_identity::NodeId::from_bytes([0xFF; 32]);
-        
+
         // Verification should fail due to invalid NodeId
         let result = hello.verify_signature(&server_ctx);
         assert!(result.is_err(), "Should reject peer with invalid NodeId");
-        
+
         println!("✓ Invalid peer rejection test passed");
     }
 }

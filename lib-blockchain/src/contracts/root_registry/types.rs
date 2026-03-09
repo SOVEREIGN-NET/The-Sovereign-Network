@@ -28,7 +28,6 @@ pub type NameHash = [u8; 32];
 /// DAO identifier
 pub type DaoId = [u8; 32];
 
-
 /// Unix timestamp in seconds
 pub type Timestamp = u64;
 
@@ -112,7 +111,10 @@ impl VerificationProof {
     ) -> Self {
         Self {
             credential_ref,
-            zk_proof: ZkProofData { proof_data, public_inputs },
+            zk_proof: ZkProofData {
+                proof_data,
+                public_inputs,
+            },
             context,
             nonce,
         }
@@ -128,10 +130,17 @@ impl VerificationProof {
 /// [Phase 5] Explicit, typed errors for verification failures.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerificationError {
-    InsufficientLevel { required: VerificationLevel, provided: VerificationLevel },
+    InsufficientLevel {
+        required: VerificationLevel,
+        provided: VerificationLevel,
+    },
     MissingProof,
-    InvalidProof { reason: String },
-    CredentialExpired { expired_at: Timestamp },
+    InvalidProof {
+        reason: String,
+    },
+    CredentialExpired {
+        expired_at: Timestamp,
+    },
     ContextMismatch,
     L0NotAllowedForSov,
 }
@@ -140,10 +149,17 @@ impl std::fmt::Display for VerificationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VerificationError::InsufficientLevel { required, provided } => {
-                write!(f, "Insufficient verification level: required {:?}, provided {:?}", required, provided)
+                write!(
+                    f,
+                    "Insufficient verification level: required {:?}, provided {:?}",
+                    required, provided
+                )
             }
             VerificationError::MissingProof => {
-                write!(f, "Verification proof required for .sov domain registration")
+                write!(
+                    f,
+                    "Verification proof required for .sov domain registration"
+                )
             }
             VerificationError::InvalidProof { reason } => {
                 write!(f, "Invalid verification proof: {}", reason)
@@ -233,13 +249,19 @@ pub enum ReservedReason {
 /// Alternative name classification used by RootRegistry core
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NameClass {
-    Reserved { reason: ReservedReason },
-    Commercial { min_verification: VerificationLevel },
+    Reserved {
+        reason: ReservedReason,
+    },
+    Commercial {
+        min_verification: VerificationLevel,
+    },
     WelfareChild {
         sector: WelfareSector,
         zone_root_hash: NameHash,
     },
-    DaoPrefixed { parent_hash: NameHash },
+    DaoPrefixed {
+        parent_hash: NameHash,
+    },
 }
 
 // ============================================================================
@@ -299,7 +321,10 @@ pub enum AppealStatus {
     /// Appeal approved, domain restored
     Approved { decided_at: Timestamp },
     /// Appeal rejected
-    Rejected { decided_at: Timestamp, reason: String },
+    Rejected {
+        decided_at: Timestamp,
+        reason: String,
+    },
     /// Appeal withdrawn by owner
     Withdrawn { withdrawn_at: Timestamp },
 }
@@ -443,7 +468,10 @@ impl EffectiveStatus {
 
     /// Check if domain can be renewed
     pub fn can_renew(&self) -> bool {
-        matches!(self, EffectiveStatus::Active | EffectiveStatus::ExpiredInGrace)
+        matches!(
+            self,
+            EffectiveStatus::Active | EffectiveStatus::ExpiredInGrace
+        )
     }
 
     /// Check if domain can be transferred
@@ -453,7 +481,10 @@ impl EffectiveStatus {
 
     /// Check if domain is in a terminal state
     pub fn is_terminal(&self) -> bool {
-        matches!(self, EffectiveStatus::Released | EffectiveStatus::ReturnedToGovernance)
+        matches!(
+            self,
+            EffectiveStatus::Released | EffectiveStatus::ReturnedToGovernance
+        )
     }
 
     /// Check if domain is available for new registration
@@ -523,7 +554,10 @@ pub trait LifecycleFields {
         }
 
         // 3. Suspension dominates resolution (may also be expired)
-        if matches!(self.status(), NameStatus::Suspended { .. } | NameStatus::SuspendedByParent) {
+        if matches!(
+            self.status(),
+            NameStatus::Suspended { .. } | NameStatus::SuspendedByParent
+        ) {
             return EffectiveStatus::Suspended;
         }
 
@@ -552,8 +586,7 @@ pub trait LifecycleFields {
     /// Check if domain can be renewed at current height
     fn can_renew_at(&self, current_height: BlockHeight) -> bool {
         let effective = self.effective_status(current_height);
-        effective.can_renew()
-            && current_height >= self.renewal_window_start_height()
+        effective.can_renew() && current_height >= self.renewal_window_start_height()
     }
 
     /// Calculate renewal fee with optional late penalty
@@ -721,8 +754,10 @@ impl LifecycleParams {
         Self {
             renewal_window_blocks,
             expiry_grace_blocks: expiry_grace_blocks.max(timing::MIN_EXPIRATION_GRACE_BLOCKS),
-            revocation_grace_blocks: revocation_grace_blocks.max(timing::MIN_REVOCATION_GRACE_BLOCKS),
-            late_renewal_penalty_percent: late_renewal_penalty_percent.min(timing::MAX_LATE_RENEWAL_PENALTY_PERCENT),
+            revocation_grace_blocks: revocation_grace_blocks
+                .max(timing::MIN_REVOCATION_GRACE_BLOCKS),
+            late_renewal_penalty_percent: late_renewal_penalty_percent
+                .min(timing::MAX_LATE_RENEWAL_PENALTY_PERCENT),
         }
     }
 
@@ -1160,7 +1195,8 @@ impl NameRecord {
         self.renew_grace_until_height = new_expiry.saturating_add(params.expiry_grace_blocks);
 
         // Reset transfer lock
-        self.transfer_lock_until = Some(current_height.saturating_add(timing::TRANSFER_LOCK_BLOCKS));
+        self.transfer_lock_until =
+            Some(current_height.saturating_add(timing::TRANSFER_LOCK_BLOCKS));
 
         // Clear expired state if was in grace
         if matches!(self.status, NameStatus::Expired { .. }) {
@@ -1234,7 +1270,9 @@ pub enum WelfareSector {
     Housing,
     Energy,
     /// Extended sector (governance-added)
-    Extended { sector_id: u32 },
+    Extended {
+        sector_id: u32,
+    },
 }
 
 impl WelfareSector {
@@ -1415,10 +1453,16 @@ mod tests {
 
     #[test]
     fn test_verification_level_ordering() {
-        assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L0Unverified));
-        assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L1BasicDID));
-        assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L2VerifiedEntity));
-        assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L3ConstitutionalActor));
+        assert!(
+            VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L0Unverified)
+        );
+        assert!(
+            VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L1BasicDID)
+        );
+        assert!(VerificationLevel::L3ConstitutionalActor
+            .meets_minimum(VerificationLevel::L2VerifiedEntity));
+        assert!(VerificationLevel::L3ConstitutionalActor
+            .meets_minimum(VerificationLevel::L3ConstitutionalActor));
 
         assert!(!VerificationLevel::L1BasicDID.meets_minimum(VerificationLevel::L2VerifiedEntity));
         assert!(!VerificationLevel::L0Unverified.meets_minimum(VerificationLevel::L1BasicDID));
@@ -1454,7 +1498,9 @@ mod tests {
         assert!(!expired.can_transfer());
 
         let suspended = NameStatus::Suspended {
-            reason: SuspensionReason::Emergency { reason: "test".into() },
+            reason: SuspensionReason::Emergency {
+                reason: "test".into(),
+            },
         };
         assert!(!suspended.can_renew());
         assert!(!suspended.can_transfer());
@@ -1472,10 +1518,7 @@ mod tests {
             WelfareSector::from_subdomain("food"),
             Some(WelfareSector::Food)
         );
-        assert_eq!(
-            WelfareSector::from_subdomain("unknown"),
-            None
-        );
+        assert_eq!(WelfareSector::from_subdomain("unknown"), None);
     }
 
     #[test]
@@ -1558,13 +1601,19 @@ mod tests {
 
         // After expiry but in grace: ExpiredInGrace
         let in_grace = record.expires_at_height + 1000;
-        assert_eq!(record.effective_status(in_grace), EffectiveStatus::ExpiredInGrace);
+        assert_eq!(
+            record.effective_status(in_grace),
+            EffectiveStatus::ExpiredInGrace
+        );
         assert!(!record.effective_status(in_grace).is_content_enabled());
         assert!(record.effective_status(in_grace).can_renew());
 
         // Past grace: Released (commercial)
         let past_grace = record.renew_grace_until_height + 1;
-        assert_eq!(record.effective_status(past_grace), EffectiveStatus::Released);
+        assert_eq!(
+            record.effective_status(past_grace),
+            EffectiveStatus::Released
+        );
     }
 
     #[test]
@@ -1603,7 +1652,10 @@ mod tests {
 
         // Past grace: ReturnedToGovernance (welfare)
         let past_grace = record.renew_grace_until_height + 1;
-        assert_eq!(record.effective_status(past_grace), EffectiveStatus::ReturnedToGovernance);
+        assert_eq!(
+            record.effective_status(past_grace),
+            EffectiveStatus::ReturnedToGovernance
+        );
     }
 
     #[test]
@@ -1644,15 +1696,24 @@ mod tests {
         let penalty = 20; // 20%
 
         // Before expiry: base fee only
-        assert_eq!(record.calculate_renewal_fee(500000, base_fee, penalty), 1000);
+        assert_eq!(
+            record.calculate_renewal_fee(500000, base_fee, penalty),
+            1000
+        );
 
         // In grace period: base + penalty (1000 + 200 = 1200)
         let in_grace = record.expires_at_height + 1000;
-        assert_eq!(record.calculate_renewal_fee(in_grace, base_fee, penalty), 1200);
+        assert_eq!(
+            record.calculate_renewal_fee(in_grace, base_fee, penalty),
+            1200
+        );
 
         // Past grace: cannot renew (returns 0)
         let past_grace = record.renew_grace_until_height + 1;
-        assert_eq!(record.calculate_renewal_fee(past_grace, base_fee, penalty), 0);
+        assert_eq!(
+            record.calculate_renewal_fee(past_grace, base_fee, penalty),
+            0
+        );
     }
 
     #[test]
@@ -1668,9 +1729,18 @@ mod tests {
             1000, // Below MIN_REVOCATION_GRACE_BLOCKS
             100,  // Above MAX_LATE_RENEWAL_PENALTY_PERCENT
         );
-        assert_eq!(clamped.expiry_grace_blocks, timing::MIN_EXPIRATION_GRACE_BLOCKS);
-        assert_eq!(clamped.revocation_grace_blocks, timing::MIN_REVOCATION_GRACE_BLOCKS);
-        assert_eq!(clamped.late_renewal_penalty_percent, timing::MAX_LATE_RENEWAL_PENALTY_PERCENT);
+        assert_eq!(
+            clamped.expiry_grace_blocks,
+            timing::MIN_EXPIRATION_GRACE_BLOCKS
+        );
+        assert_eq!(
+            clamped.revocation_grace_blocks,
+            timing::MIN_REVOCATION_GRACE_BLOCKS
+        );
+        assert_eq!(
+            clamped.late_renewal_penalty_percent,
+            timing::MAX_LATE_RENEWAL_PENALTY_PERCENT
+        );
     }
 
     #[test]

@@ -1,22 +1,22 @@
 #[cfg(test)]
 mod api_integration_tests {
-    
-    use crate::runtime::{RuntimeOrchestrator, Component, ApiComponent};
-    use crate::config::NodeConfig;
-    use crate::api::handlers::identity::IdentityHandler;
-    use crate::api::middleware::{RateLimiter, CsrfProtection};
-    use crate::session_manager::SessionManager;
+
     use crate::api::handlers::identity::login_handlers::AccountLockout;
-    use lib_identity::{IdentityManager, RecoveryPhraseManager, economics::EconomicModel as IdentityEconomicModel};
-    use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZHTP_VERSION, ZhtpStatus};
+    use crate::api::handlers::identity::IdentityHandler;
+    use crate::api::middleware::{CsrfProtection, RateLimiter};
+    use crate::config::NodeConfig;
+    use crate::runtime::{ApiComponent, Component, RuntimeOrchestrator};
+    use crate::session_manager::SessionManager;
+    use base64::Engine as _;
+    use lib_identity::{
+        economics::EconomicModel as IdentityEconomicModel, IdentityManager, RecoveryPhraseManager,
+    };
+    use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpStatus, ZHTP_VERSION};
     use lib_protocols::zhtp::ZhtpRequestHandler;
     use lib_storage::{UnifiedStorageConfig, UnifiedStorageSystem};
     use std::sync::Arc;
     use tokio::sync::RwLock;
-    use base64::Engine as _;
-    
-    
-    
+
     fn create_test_config() -> NodeConfig {
         let mut config = NodeConfig::default();
         // Customize for testing
@@ -28,49 +28,70 @@ mod api_integration_tests {
         config.network_config.bootstrap_peers = vec![]; // No bootstrap peers for tests
         config
     }
-    
+
     #[tokio::test]
     async fn test_api_component_integration() {
         // Initialize runtime with test config
         let config = create_test_config();
         let runtime_result = RuntimeOrchestrator::new(config).await;
-        assert!(runtime_result.is_ok(), "Runtime should initialize successfully");
-        
+        assert!(
+            runtime_result.is_ok(),
+            "Runtime should initialize successfully"
+        );
+
         let runtime = runtime_result.unwrap();
-        
+
         // Register all components including API
         let register_result = runtime.register_all_components().await;
-        assert!(register_result.is_ok(), "Runtime should register components successfully");
-        
+        assert!(
+            register_result.is_ok(),
+            "Runtime should register components successfully"
+        );
+
         // Test basic runtime functionality without starting components
         // (starting components requires actual network resources and can timeout in CI)
         let status_result = runtime.get_component_status().await;
-        assert!(status_result.is_ok(), "Should be able to get component status");
-        
+        assert!(
+            status_result.is_ok(),
+            "Should be able to get component status"
+        );
+
         // Test getting detailed health (components will be uninitialized but method should work)
         let health_result = runtime.get_detailed_health().await;
-        assert!(health_result.is_ok(), "Should be able to get detailed health status");
-        
+        assert!(
+            health_result.is_ok(),
+            "Should be able to get detailed health status"
+        );
+
         // This proves the API component is properly integrated into the runtime system
         println!("API component successfully integrated into runtime orchestrator");
     }
-    
+
     #[tokio::test]
     async fn test_api_component_lifecycle() {
         // Test individual API component lifecycle
         let api_component = ApiComponent::new();
-        
+
         // Test start
         let start_result = api_component.start().await;
-        assert!(start_result.is_ok(), "API component should start successfully");
-        
+        assert!(
+            start_result.is_ok(),
+            "API component should start successfully"
+        );
+
         // Test health check
         let health_result = api_component.health_check().await;
-        assert!(health_result.is_ok(), "API component should be healthy after start");
-        
+        assert!(
+            health_result.is_ok(),
+            "API component should be healthy after start"
+        );
+
         // Test stop
         let stop_result = api_component.stop().await;
-        assert!(stop_result.is_ok(), "API component should stop successfully");
+        assert!(
+            stop_result.is_ok(),
+            "API component should stop successfully"
+        );
     }
 
     #[tokio::test]
@@ -110,12 +131,14 @@ mod api_integration_tests {
             .as_secs();
 
         let keypair = lib_crypto::KeyPair::generate().expect("keypair generation failed");
-        let public_key_b64 = base64::engine::general_purpose::STANDARD.encode(&keypair.public_key.dilithium_pk);
+        let public_key_b64 =
+            base64::engine::general_purpose::STANDARD.encode(&keypair.public_key.dilithium_pk);
 
         let signed_message = format!("ZHTP_REGISTER:{}", timestamp);
-        let signature = lib_crypto::sign_message(&keypair, signed_message.as_bytes())
-            .expect("sign failed");
-        let registration_proof_b64 = base64::engine::general_purpose::STANDARD.encode(&signature.signature);
+        let signature =
+            lib_crypto::sign_message(&keypair, signed_message.as_bytes()).expect("sign failed");
+        let registration_proof_b64 =
+            base64::engine::general_purpose::STANDARD.encode(&signature.signature);
 
         let body = serde_json::to_vec(&serde_json::json!({
             "public_key": public_key_b64,
@@ -123,7 +146,8 @@ mod api_integration_tests {
             "identity_type": "human",
             "registration_proof": registration_proof_b64,
             "timestamp": timestamp
-        })).expect("serialize request");
+        }))
+        .expect("serialize request");
 
         let request = ZhtpRequest {
             method: ZhtpMethod::Post,
@@ -136,17 +160,31 @@ mod api_integration_tests {
             auth_proof: None,
         };
 
-        let response = handler.handle_request(request).await.expect("handler failed");
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("handler failed");
         assert_eq!(response.status, ZhtpStatus::Ok);
 
         let json: serde_json::Value = serde_json::from_slice(&response.body).expect("invalid json");
-        let did = json.get("did").and_then(|v| v.as_str()).expect("missing did");
-        let node_id = json.get("node_id").and_then(|v| v.as_str()).expect("missing node_id");
-        let identity_id = json.get("identity_id").and_then(|v| v.as_str()).expect("missing identity_id");
+        let did = json
+            .get("did")
+            .and_then(|v| v.as_str())
+            .expect("missing did");
+        let node_id = json
+            .get("node_id")
+            .and_then(|v| v.as_str())
+            .expect("missing node_id");
+        let identity_id = json
+            .get("identity_id")
+            .and_then(|v| v.as_str())
+            .expect("missing identity_id");
 
         let expected_key_id = lib_crypto::hash_blake3(&keypair.public_key.dilithium_pk);
         let expected_did = format!("did:zhtp:{}", hex::encode(expected_key_id));
-        let expected_node_id = hex::encode(lib_crypto::hash_blake3(format!("{}{}", expected_did, device_id).as_bytes()));
+        let expected_node_id = hex::encode(lib_crypto::hash_blake3(
+            format!("{}{}", expected_did, device_id).as_bytes(),
+        ));
         let expected_identity_id = hex::encode(expected_key_id);
 
         assert_eq!(did, expected_did);

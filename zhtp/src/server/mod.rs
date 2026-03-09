@@ -43,19 +43,21 @@ pub mod https_gateway;
 
 // Layer modules
 pub mod http;
-pub mod monitoring;
 pub mod mesh;
+pub mod monitoring;
 pub mod protocols;
 
 // Re-export for convenience
-pub use protocol_detection::IncomingProtocol;
-pub use quic_handler::QuicHandler;
-pub use http::middleware::{Middleware, CorsMiddleware, RateLimitMiddleware, AuthMiddleware};
-pub use monitoring::reputation::{PeerReputation, PeerRateLimit, PeerPerformanceStats};
-pub use monitoring::metrics::{SyncPerformanceMetrics, BroadcastMetrics, MetricsSnapshot, MetricsHistory};
-pub use monitoring::alerts::{AlertLevel, SyncAlert, AlertThresholds};
+pub use http::middleware::{AuthMiddleware, CorsMiddleware, Middleware, RateLimitMiddleware};
 pub use mesh::core::MeshRouter;
-pub use protocols::{WiFiRouter, BluetoothRouter, BluetoothClassicRouter, ClassicProtocol};
+pub use monitoring::alerts::{AlertLevel, AlertThresholds, SyncAlert};
+pub use monitoring::metrics::{
+    BroadcastMetrics, MetricsHistory, MetricsSnapshot, SyncPerformanceMetrics,
+};
+pub use monitoring::reputation::{PeerPerformanceStats, PeerRateLimit, PeerReputation};
+pub use protocol_detection::IncomingProtocol;
+pub use protocols::{BluetoothClassicRouter, BluetoothRouter, ClassicProtocol, WiFiRouter};
+pub use quic_handler::QuicHandler;
 
 // HTTPS Gateway exports
-pub use https_gateway::{HttpsGateway, GatewayTlsConfig, TlsMode};
+pub use https_gateway::{GatewayTlsConfig, HttpsGateway, TlsMode};

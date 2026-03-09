@@ -70,17 +70,17 @@ mod tests {
     #[test]
     fn test_lfu_cache() {
         let mut cache = LfuCache::new(2);
-        
+
         cache.insert("a", 1);
         cache.insert("b", 2);
-        
+
         // Access "a" multiple times
         cache.get(&"a");
         cache.get(&"a");
         cache.get(&"b");
-        
+
         cache.insert("c", 3); // Should evict "b" (lower frequency)
-        
+
         assert_eq!(cache.get(&"b"), None);
         assert_eq!(cache.get(&"a"), Some(&1));
         assert_eq!(cache.get(&"c"), Some(&3));

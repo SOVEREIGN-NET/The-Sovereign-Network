@@ -1,5 +1,4 @@
 pub trait Hash {
-
     type Output: AsRef<[u8]>;
     const BLOCK_SIZE: usize;
 

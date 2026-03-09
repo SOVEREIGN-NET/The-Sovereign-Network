@@ -1,7 +1,7 @@
+use anyhow::Result;
+use lib_identity::IdentityManager;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
-use lib_identity::IdentityManager;
-use anyhow::Result;
 use tracing::info;
 
 /// Global identity manager provider for shared access across components
@@ -21,7 +21,10 @@ impl IdentityManagerProvider {
     }
 
     /// Set the identity manager instance
-    pub async fn set_identity_manager(&self, identity_manager: Arc<RwLock<IdentityManager>>) -> Result<()> {
+    pub async fn set_identity_manager(
+        &self,
+        identity_manager: Arc<RwLock<IdentityManager>>,
+    ) -> Result<()> {
         *self.identity_manager.write().await = Some(identity_manager);
         info!("Global identity manager instance set");
         Ok(())
@@ -29,7 +32,9 @@ impl IdentityManagerProvider {
 
     /// Get the identity manager instance
     pub async fn get_identity_manager(&self) -> Result<Arc<RwLock<IdentityManager>>> {
-        self.identity_manager.read().await
+        self.identity_manager
+            .read()
+            .await
             .as_ref()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Identity manager not available"))
@@ -54,13 +59,15 @@ pub fn initialize_global_identity_manager_provider() -> &'static IdentityManager
 
 /// Get the global identity manager provider
 pub fn get_global_identity_manager_provider() -> &'static IdentityManagerProvider {
-    GLOBAL_IDENTITY_MANAGER_PROVIDER.get().unwrap_or_else(|| {
-        initialize_global_identity_manager_provider()
-    })
+    GLOBAL_IDENTITY_MANAGER_PROVIDER
+        .get()
+        .unwrap_or_else(|| initialize_global_identity_manager_provider())
 }
 
 /// Set the global identity manager instance (called by IdentityComponent)
-pub async fn set_global_identity_manager(identity_manager: Arc<RwLock<IdentityManager>>) -> Result<()> {
+pub async fn set_global_identity_manager(
+    identity_manager: Arc<RwLock<IdentityManager>>,
+) -> Result<()> {
     let provider = get_global_identity_manager_provider();
     provider.set_identity_manager(identity_manager).await
 }

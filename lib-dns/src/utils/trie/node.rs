@@ -1,29 +1,27 @@
 #[derive(Clone, Debug)]
 pub enum Node<K, V> {
     Branch(Branch<K, V>),
-    Leaf(Leaf<K, V>)
+    Leaf(Leaf<K, V>),
 }
 
 #[derive(Clone, Debug)]
 pub struct Branch<K, V> {
     pub(crate) offset: usize,
     pub(crate) bitmap: u32,
-    pub(crate) twigs: Vec<Node<K, V>>
+    pub(crate) twigs: Vec<Node<K, V>>,
 }
 
 impl<K, V> Default for Branch<K, V> {
-
     fn default() -> Self {
         Self {
             offset: 0,
             bitmap: 0,
-            twigs: Vec::new()
+            twigs: Vec::new(),
         }
     }
 }
 
 impl<K, V> Branch<K, V> {
-
     pub fn new(offset: usize) -> Self {
         Self {
             offset,
@@ -70,16 +68,12 @@ impl<K, V> Branch<K, V> {
 #[derive(Clone, Debug, Default)]
 pub struct Leaf<K, V> {
     pub(crate) key: K,
-    pub(crate) val: V
+    pub(crate) val: V,
 }
 
 impl<K, V> Leaf<K, V> {
-
     pub fn new(key: K, val: V) -> Self {
-        Self {
-            key,
-            val
-        }
+        Self { key, val }
     }
 }
 

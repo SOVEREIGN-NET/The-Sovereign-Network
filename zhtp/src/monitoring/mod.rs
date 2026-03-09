@@ -2,20 +2,20 @@
 //!
 //! Provides comprehensive monitoring, logging, and metrics for all ZHTP components
 
-pub mod metrics;
-pub mod health_check;
 pub mod alerting;
 pub mod dashboard;
+pub mod health_check;
+pub mod metrics;
 
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tracing::info;
 
-pub use metrics::*;
-pub use health_check::*;
 pub use alerting::*;
 pub use dashboard::*;
+pub use health_check::*;
+pub use metrics::*;
 
 // **Restart-safe global alert manager**
 //
@@ -96,13 +96,12 @@ impl MonitoringSystem {
     /// Create a new monitoring system
     pub async fn new() -> Result<Self> {
         let metrics_collector = Arc::new(MetricsCollector::new().await?);
-        let alert_manager = Arc::new(
-            AlertManager::with_thresholds(alerting::AlertThresholds::default()).await?,
-        );
+        let alert_manager =
+            Arc::new(AlertManager::with_thresholds(alerting::AlertThresholds::default()).await?);
         let mut health_monitor = HealthMonitor::new().await?;
         health_monitor.set_alert_manager(alert_manager.clone());
         let health_monitor = Arc::new(health_monitor);
-        
+
         Ok(Self {
             metrics_collector,
             health_monitor,
@@ -169,8 +168,15 @@ impl MonitoringSystem {
     }
 
     /// Record a custom metric
-    pub async fn record_metric(&self, name: &str, value: f64, tags: HashMap<String, String>) -> Result<()> {
-        self.metrics_collector.record_metric(name, value, tags).await
+    pub async fn record_metric(
+        &self,
+        name: &str,
+        value: f64,
+        tags: HashMap<String, String>,
+    ) -> Result<()> {
+        self.metrics_collector
+            .record_metric(name, value, tags)
+            .await
     }
 
     /// Trigger an alert
@@ -222,11 +228,11 @@ pub struct AlertThresholds {
 impl Default for AlertThresholds {
     fn default() -> Self {
         Self {
-            cpu_usage: 80.0,              // 80% CPU usage
-            memory_usage: 85.0,           // 85% memory usage
-            disk_usage: 90.0,             // 90% disk usage
-            network_errors: 100,          // 100 network errors per minute
-            peer_count_min: 3,            // Minimum 3 peers
+            cpu_usage: 80.0,                                          // 80% CPU usage
+            memory_usage: 85.0,                                       // 85% memory usage
+            disk_usage: 90.0,                                         // 90% disk usage
+            network_errors: 100, // 100 network errors per minute
+            peer_count_min: 3,   // Minimum 3 peers
             block_time_max: std::time::Duration::from_secs(30), // 30 second block time
             transaction_timeout: std::time::Duration::from_secs(300), // 5 minute transaction timeout
         }

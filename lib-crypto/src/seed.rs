@@ -3,7 +3,7 @@
 //! Provides secure seed generation for deterministic identity derivation.
 
 use anyhow::Result;
-use rand::{RngCore, rngs::OsRng};
+use rand::{rngs::OsRng, RngCore};
 
 /// Generate a cryptographically secure 64-byte identity seed
 ///

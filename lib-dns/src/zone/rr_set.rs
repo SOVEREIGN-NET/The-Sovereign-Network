@@ -5,16 +5,15 @@ use crate::rr_data::inter::rr_data::RRData;
 pub struct RRSet {
     rtype: RRTypes,
     ttl: u32,
-    data: Vec<Box<dyn RRData>>
+    data: Vec<Box<dyn RRData>>,
 }
 
 impl RRSet {
-
     pub fn new(rtype: RRTypes, ttl: u32) -> Self {
         Self {
             rtype,
             ttl,
-            data: Vec::new()
+            data: Vec::new(),
         }
     }
 

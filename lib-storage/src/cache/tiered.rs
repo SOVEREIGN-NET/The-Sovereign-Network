@@ -50,8 +50,8 @@ impl TieredCache {
             warm_size: 0,
             cold_size: 0,
             access_counts: HashMap::new(),
-            hot_threshold: 10,   // Promote to hot after 10 accesses
-            warm_threshold: 3,   // Promote to warm after 3 accesses
+            hot_threshold: 10, // Promote to hot after 10 accesses
+            warm_threshold: 3, // Promote to warm after 3 accesses
         }
     }
 
@@ -222,14 +222,14 @@ mod tests {
     #[test]
     fn test_tiered_cache() {
         let mut cache = TieredCache::new(100, 200, 300);
-        
+
         cache.insert("key1".to_string(), vec![1, 2, 3]);
-        
+
         // Access multiple times to promote
         for _ in 0..15 {
             cache.get("key1");
         }
-        
+
         let stats = cache.get_tier_stats();
         assert_eq!(stats.hot_entries, 1);
     }

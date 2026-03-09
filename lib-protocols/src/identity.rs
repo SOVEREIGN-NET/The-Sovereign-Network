@@ -1,5 +1,5 @@
 //! ZHTP Identity Integration
-//! 
+//!
 //! Bridge module for integrating lib-identity package with ZHTP protocols.
 //! Provides protocol-level identity management, authentication, and zero-knowledge
 //! identity proofs for Web4 applications.
@@ -11,9 +11,8 @@ use std::collections::HashMap;
 
 // Use actual lib-identity types
 use lib_identity::{
-    IdentityManager, AccessLevel, IdentityVerification, IdentityProofParams,
-    ZkCredential, CredentialType, IdentityAttestation, AttestationType,
-    IdentityId, CitizenshipResult
+    AccessLevel, AttestationType, CitizenshipResult, CredentialType, IdentityAttestation,
+    IdentityId, IdentityManager, IdentityProofParams, IdentityVerification, ZkCredential,
 };
 use lib_proofs::ZkProof;
 
@@ -40,7 +39,10 @@ pub enum CoreIdentityError {
     #[error("Invalid proof: {0}")]
     InvalidProof(String),
     #[error("Insufficient access level: required {required}, have {current}")]
-    InsufficientAccess { required: AccessLevel, current: AccessLevel },
+    InsufficientAccess {
+        required: AccessLevel,
+        current: AccessLevel,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,7 +201,10 @@ impl ProtocolIdentityService {
     }
 
     /// Authenticate identity from ZHTP request
-    pub async fn authenticate_request(&mut self, request: &ZhtpRequest) -> Result<Option<IdentitySession>> {
+    pub async fn authenticate_request(
+        &mut self,
+        request: &ZhtpRequest,
+    ) -> Result<Option<IdentitySession>> {
         // Extract authentication headers
         let auth_header = request.headers.get("Authorization");
         let session_token = request.headers.get("X-Session-Token");
@@ -218,14 +223,19 @@ impl ProtocolIdentityService {
 
         // Try authorization header
         if let Some(auth) = auth_header {
-            return self.authenticate_with_header(&auth, zk_proof_header.as_ref(), request).await;
+            return self
+                .authenticate_with_header(&auth, zk_proof_header.as_ref(), request)
+                .await;
         }
 
         Ok(None)
     }
 
     /// Create new identity session
-    pub async fn create_session(&mut self, auth_request: IdentityAuthRequest) -> Result<IdentityAuthResponse> {
+    pub async fn create_session(
+        &mut self,
+        auth_request: IdentityAuthRequest,
+    ) -> Result<IdentityAuthResponse> {
         // Use actual identity verification from lib-identity
         let verification_params = IdentityProofParams {
             min_age: None,
@@ -234,26 +244,37 @@ impl ProtocolIdentityService {
             privacy_level: 50,
             min_reputation: Some(50),
             proof_type: "protocol_auth".to_string(),
-            require_citizenship: matches!(auth_request.requested_access_level, AccessLevel::FullCitizen),
+            require_citizenship: matches!(
+                auth_request.requested_access_level,
+                AccessLevel::FullCitizen
+            ),
             required_location: None,
         };
 
-        let identity_verification = self.identity_manager
+        let identity_verification = self
+            .identity_manager
             .verify_identity(&auth_request.credential.subject, &verification_params)
             .await
-            .map_err(|e| ProtocolError::IdentityError(format!("Identity verification failed: {}", e)))?;
+            .map_err(|e| {
+                ProtocolError::IdentityError(format!("Identity verification failed: {}", e))
+            })?;
 
         if !identity_verification.verified {
             return Ok(IdentityAuthResponse {
                 success: false,
                 session_token: None,
                 session: None,
-                error: Some(format!("Identity verification failed: {}", 
-                    if identity_verification.requirements_failed.is_empty() { 
-                        "Unknown verification error".to_string() 
-                    } else { 
-                        format!("Failed requirements: {:?}", identity_verification.requirements_failed) 
-                    })),
+                error: Some(format!(
+                    "Identity verification failed: {}",
+                    if identity_verification.requirements_failed.is_empty() {
+                        "Unknown verification error".to_string()
+                    } else {
+                        format!(
+                            "Failed requirements: {:?}",
+                            identity_verification.requirements_failed
+                        )
+                    }
+                )),
                 metadata: AuthMetadata {
                     timestamp: chrono::Utc::now(),
                     auth_method: "credential".to_string(),
@@ -270,7 +291,7 @@ impl ProtocolIdentityService {
             if self.config.require_zk_proofs {
                 // Basic ZK proof validation (check non-empty structure)
                 let zk_result = !zk_proof.zk_proof.is_empty();
-                
+
                 if !zk_result {
                     return Ok(IdentityAuthResponse {
                         success: false,
@@ -306,17 +327,19 @@ impl ProtocolIdentityService {
 
         // Determine user's access level based on verification results
         let user_access_level = self.determine_access_level(&identity_verification);
-        
+
         // Check access level authorization
-        if !self.check_access_permission(user_access_level.clone(), auth_request.requested_access_level.clone()) {
+        if !self.check_access_permission(
+            user_access_level.clone(),
+            auth_request.requested_access_level.clone(),
+        ) {
             return Ok(IdentityAuthResponse {
                 success: false,
                 session_token: None,
                 session: None,
                 error: Some(format!(
                     "Insufficient access level: required {:?}, have {:?}",
-                    auth_request.requested_access_level,
-                    user_access_level
+                    auth_request.requested_access_level, user_access_level
                 )),
                 metadata: AuthMetadata {
                     timestamp: chrono::Utc::now(),
@@ -330,7 +353,8 @@ impl ProtocolIdentityService {
 
         // Create session
         let session_id = uuid::Uuid::new_v4().to_string();
-        let session_duration = auth_request.session_duration
+        let session_duration = auth_request
+            .session_duration
             .unwrap_or(self.config.max_session_duration)
             .min(self.config.max_session_duration);
 
@@ -342,14 +366,26 @@ impl ProtocolIdentityService {
             access_level: user_access_level.clone(),
             session_proof: auth_request.zk_proof.clone(),
             metadata: SessionMetadata {
-                client_ip: auth_request.client_metadata.as_ref().map(|m| m.ip_address.clone()),
-                user_agent: auth_request.client_metadata.as_ref().map(|m| m.user_agent.clone()),
+                client_ip: auth_request
+                    .client_metadata
+                    .as_ref()
+                    .map(|m| m.ip_address.clone()),
+                user_agent: auth_request
+                    .client_metadata
+                    .as_ref()
+                    .map(|m| m.user_agent.clone()),
                 geo_location: None, // TODO: Implement geo lookup
-                device_fingerprint: auth_request.client_metadata.as_ref().and_then(|m| m.device_info.clone()),
+                device_fingerprint: auth_request
+                    .client_metadata
+                    .as_ref()
+                    .and_then(|m| m.device_info.clone()),
                 activity_log: vec![SessionActivity {
                     timestamp: chrono::Utc::now(),
                     activity_type: "session_created".to_string(),
-                    details: format!("Identity session created with access level {:?}", user_access_level.clone()),
+                    details: format!(
+                        "Identity session created with access level {:?}",
+                        user_access_level.clone()
+                    ),
                     resource: None,
                 }],
             },
@@ -367,7 +403,12 @@ impl ProtocolIdentityService {
             error: None,
             metadata: AuthMetadata {
                 timestamp: chrono::Utc::now(),
-                auth_method: if zk_verified { "credential+zk" } else { "credential" }.to_string(),
+                auth_method: if zk_verified {
+                    "credential+zk"
+                } else {
+                    "credential"
+                }
+                .to_string(),
                 zk_verified,
                 mfa_used: false, // TODO: Implement MFA
                 reputation_score: Some(identity_verification.privacy_score as f64),
@@ -417,9 +458,9 @@ impl ProtocolIdentityService {
         let mut sessions = self.sessions.write().unwrap();
         let initial_count = sessions.len();
         let now = chrono::Utc::now();
-        
+
         sessions.retain(|_, session| session.expires_at > now);
-        
+
         Ok(initial_count - sessions.len())
     }
 
@@ -427,13 +468,11 @@ impl ProtocolIdentityService {
     pub async fn get_session_stats(&self) -> SessionStats {
         let sessions = self.sessions.read().unwrap();
         let now = chrono::Utc::now();
-        
+
         let total_sessions = sessions.len();
-        let active_sessions = sessions.values()
-            .filter(|s| s.expires_at > now)
-            .count();
+        let active_sessions = sessions.values().filter(|s| s.expires_at > now).count();
         let expired_sessions = total_sessions - active_sessions;
-        
+
         SessionStats {
             total_sessions,
             active_sessions,
@@ -459,7 +498,7 @@ impl ProtocolIdentityService {
             };
 
             let client_metadata = self.extract_client_metadata(request);
-            
+
             let auth_request = IdentityAuthRequest {
                 credential,
                 zk_proof,
@@ -469,12 +508,14 @@ impl ProtocolIdentityService {
             };
 
             let auth_response = self.create_session(auth_request).await?;
-            
+
             if auth_response.success {
                 Ok(auth_response.session)
             } else {
                 Err(ProtocolError::IdentityError(
-                    auth_response.error.unwrap_or_else(|| "Authentication failed".to_string())
+                    auth_response
+                        .error
+                        .unwrap_or_else(|| "Authentication failed".to_string()),
                 ))
             }
         } else {
@@ -485,19 +526,24 @@ impl ProtocolIdentityService {
     fn parse_auth_header(&self, auth_header: &str) -> Result<Option<ZkCredential>> {
         // Parse different authentication header formats
         if auth_header.starts_with("Bearer ") {
-            let token = auth_header.split_whitespace().nth(1)
-                .ok_or_else(|| ProtocolError::IdentityError("Invalid Bearer token format".to_string()))?;
-            
+            let token = auth_header.split_whitespace().nth(1).ok_or_else(|| {
+                ProtocolError::IdentityError("Invalid Bearer token format".to_string())
+            })?;
+
             // Create ZkCredential from bearer token
             Ok(Some(ZkCredential::from_bearer_token(token)?))
         } else if auth_header.starts_with("ZHTP ") {
-            let credential_data = auth_header.split_whitespace().nth(1)
-                .ok_or_else(|| ProtocolError::IdentityError("Invalid ZHTP auth format".to_string()))?;
-            
+            let credential_data = auth_header.split_whitespace().nth(1).ok_or_else(|| {
+                ProtocolError::IdentityError("Invalid ZHTP auth format".to_string())
+            })?;
+
             // Parse ZkCredential from ZHTP format
             match serde_json::from_str(credential_data) {
                 Ok(credential) => Ok(Some(credential)),
-                Err(e) => Err(ProtocolError::IdentityError(format!("Failed to parse ZHTP credential: {}", e))),
+                Err(e) => Err(ProtocolError::IdentityError(format!(
+                    "Failed to parse ZHTP credential: {}",
+                    e
+                ))),
             }
         } else {
             Ok(None)
@@ -516,11 +562,15 @@ impl ProtocolIdentityService {
     }
 
     fn extract_client_metadata(&self, request: &ZhtpRequest) -> Option<ClientMetadata> {
-        let ip_address = request.headers.get("X-Forwarded-For")
+        let ip_address = request
+            .headers
+            .get("X-Forwarded-For")
             .or_else(|| request.headers.get("X-Real-IP"))
             .unwrap_or_else(|| "unknown".to_string());
-        
-        let user_agent = request.headers.get("User-Agent")
+
+        let user_agent = request
+            .headers
+            .get("User-Agent")
             .unwrap_or_else(|| "unknown".to_string());
 
         Some(ClientMetadata {
@@ -531,12 +581,16 @@ impl ProtocolIdentityService {
         })
     }
 
-    fn calculate_average_session_duration(&self, sessions: &HashMap<String, IdentitySession>) -> f64 {
+    fn calculate_average_session_duration(
+        &self,
+        sessions: &HashMap<String, IdentitySession>,
+    ) -> f64 {
         if sessions.is_empty() {
             return 0.0;
         }
 
-        let total_duration: i64 = sessions.values()
+        let total_duration: i64 = sessions
+            .values()
             .map(|s| (s.expires_at - s.created_at).num_seconds())
             .sum();
 
@@ -546,11 +600,20 @@ impl ProtocolIdentityService {
     /// Determine access level based on verification results
     fn determine_access_level(&self, verification: &IdentityVerification) -> AccessLevel {
         // Determine access level based on verification requirements met
-        if verification.requirements_met.contains(&CredentialType::Custom("Citizenship".to_string())) {
+        if verification
+            .requirements_met
+            .contains(&CredentialType::Custom("Citizenship".to_string()))
+        {
             AccessLevel::FullCitizen
-        } else if verification.requirements_met.contains(&CredentialType::Custom("Organization".to_string())) {
+        } else if verification
+            .requirements_met
+            .contains(&CredentialType::Custom("Organization".to_string()))
+        {
             AccessLevel::Organization
-        } else if verification.requirements_met.contains(&CredentialType::Custom("Device".to_string())) {
+        } else if verification
+            .requirements_met
+            .contains(&CredentialType::Custom("Device".to_string()))
+        {
             AccessLevel::Device
         } else if verification.privacy_score < 30 {
             AccessLevel::Restricted
@@ -560,7 +623,11 @@ impl ProtocolIdentityService {
     }
 
     /// Check if user has permission for requested access level
-    fn check_access_permission(&self, user_level: AccessLevel, requested_level: AccessLevel) -> bool {
+    fn check_access_permission(
+        &self,
+        user_level: AccessLevel,
+        requested_level: AccessLevel,
+    ) -> bool {
         match (user_level, requested_level) {
             // FullCitizen can access everything
             (AccessLevel::FullCitizen, _) => true,
@@ -617,17 +684,17 @@ impl ZkCredentialExt for ZkCredential {
         use lib_crypto::Hash;
         use lib_proofs::ZeroKnowledgeProof;
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         // Create a basic credential from bearer token
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         // Create dummy identity IDs for issuer and subject
         let issuer = Hash::from_bytes(&lib_crypto::hash_blake3(b"protocol_issuer"));
         let subject = Hash::from_bytes(&lib_crypto::hash_blake3(token.as_bytes()));
-        
+
         // Create a basic ZK proof structure (this would be replaced with proof)
         let proof = ZeroKnowledgeProof::new(
             "Bearer".to_string(),
@@ -636,14 +703,14 @@ impl ZkCredentialExt for ZkCredential {
             Vec::new(),
             None, // No Plonky2 proof for bearer tokens
         );
-        
+
         Ok(ZkCredential::new(
             CredentialType::Custom("BearerToken".to_string()),
             issuer,
             subject,
             proof,
-            Some(current_time + 3600),           // expires_at (1 hour expiration)
-            token.as_bytes().to_vec(),           // metadata (token data)
+            Some(current_time + 3600), // expires_at (1 hour expiration)
+            token.as_bytes().to_vec(), // metadata (token data)
         ))
     }
 }
@@ -657,7 +724,7 @@ mod tests {
         let identity_manager = IdentityManager::new();
         let config = IdentityServiceConfig::default();
         let service = ProtocolIdentityService::new(identity_manager, config);
-        
+
         let stats = service.get_session_stats().await;
         assert_eq!(stats.total_sessions, 0);
     }
@@ -667,7 +734,7 @@ mod tests {
         let identity_manager = IdentityManager::new();
         let config = IdentityServiceConfig::default();
         let service = ProtocolIdentityService::new(identity_manager, config);
-        
+
         let cleaned = service.cleanup_expired_sessions().await.unwrap();
         assert_eq!(cleaned, 0);
     }

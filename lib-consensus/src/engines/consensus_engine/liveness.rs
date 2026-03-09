@@ -24,7 +24,8 @@ impl ConsensusEngine {
             .iter()
             .map(|v| v.identity.clone())
             .collect();
-        self.liveness_monitor.update_validator_set(&active_validators);
+        self.liveness_monitor
+            .update_validator_set(&active_validators);
     }
 
     /// Check if a validator is currently alive based on heartbeat presence

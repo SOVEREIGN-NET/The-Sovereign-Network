@@ -1,5 +1,5 @@
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::mem;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn gen<T>() -> T
 where

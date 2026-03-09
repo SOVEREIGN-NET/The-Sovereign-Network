@@ -17,8 +17,8 @@
 //! to start a server that isn't running, and stopping a server via its own API
 //! is architecturally unsound.
 
+use crate::argument_parsing::{ServerAction, ServerArgs, ZhtpCli};
 use anyhow::Result;
-use crate::argument_parsing::{ServerArgs, ServerAction, ZhtpCli};
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -117,36 +117,63 @@ mod tests {
 
     #[test]
     fn test_action_to_operation_start() {
-        assert_eq!(action_to_operation(&ServerAction::Start), ServerOperation::Start);
+        assert_eq!(
+            action_to_operation(&ServerAction::Start),
+            ServerOperation::Start
+        );
     }
 
     #[test]
     fn test_action_to_operation_stop() {
-        assert_eq!(action_to_operation(&ServerAction::Stop), ServerOperation::Stop);
+        assert_eq!(
+            action_to_operation(&ServerAction::Stop),
+            ServerOperation::Stop
+        );
     }
 
     #[test]
     fn test_action_to_operation_restart() {
-        assert_eq!(action_to_operation(&ServerAction::Restart), ServerOperation::Restart);
+        assert_eq!(
+            action_to_operation(&ServerAction::Restart),
+            ServerOperation::Restart
+        );
     }
 
     #[test]
     fn test_action_to_operation_status() {
-        assert_eq!(action_to_operation(&ServerAction::Status), ServerOperation::Status);
+        assert_eq!(
+            action_to_operation(&ServerAction::Status),
+            ServerOperation::Status
+        );
     }
 
     #[test]
     fn test_action_to_operation_config() {
-        assert_eq!(action_to_operation(&ServerAction::Config), ServerOperation::Config);
+        assert_eq!(
+            action_to_operation(&ServerAction::Config),
+            ServerOperation::Config
+        );
     }
 
     #[test]
     fn test_operation_description() {
-        assert_eq!(ServerOperation::Start.description(), "Start orchestrator server");
-        assert_eq!(ServerOperation::Stop.description(), "Stop orchestrator server");
-        assert_eq!(ServerOperation::Restart.description(), "Restart orchestrator server");
+        assert_eq!(
+            ServerOperation::Start.description(),
+            "Start orchestrator server"
+        );
+        assert_eq!(
+            ServerOperation::Stop.description(),
+            "Stop orchestrator server"
+        );
+        assert_eq!(
+            ServerOperation::Restart.description(),
+            "Restart orchestrator server"
+        );
         assert_eq!(ServerOperation::Status.description(), "Get server status");
-        assert_eq!(ServerOperation::Config.description(), "Get server configuration");
+        assert_eq!(
+            ServerOperation::Config.description(),
+            "Get server configuration"
+        );
     }
 
     #[test]

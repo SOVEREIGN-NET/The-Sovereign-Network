@@ -3,9 +3,9 @@
 //! Contains all configuration-related types for the storage system including
 //! storage configuration, erasure coding configuration, and system parameters.
 
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
-use serde::{Serialize, Deserialize};
 
 /// Storage system configuration
 #[derive(Debug, Clone)]
@@ -161,11 +161,12 @@ impl ZkVerificationMetrics {
         }
 
         // Update rolling average using incremental average formula
-        let completed = self.successful_verifications.saturating_add(self.failed_verifications);
+        let completed = self
+            .successful_verifications
+            .saturating_add(self.failed_verifications);
         if completed > 0 {
-            self.avg_verification_time_ms =
-                self.avg_verification_time_ms
-                    + (duration_ms as f64 - self.avg_verification_time_ms) / completed as f64;
+            self.avg_verification_time_ms = self.avg_verification_time_ms
+                + (duration_ms as f64 - self.avg_verification_time_ms) / completed as f64;
         }
     }
 

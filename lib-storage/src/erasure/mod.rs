@@ -1,12 +1,12 @@
 //! Reed-Solomon Erasure Coding Implementation
-//! 
+//!
 //! Provides fault-tolerant storage through Reed-Solomon erasure coding with:
 //! - Galois field arithmetic operations
 //! - Data encoding into multiple shards
 //! - Missing shard reconstruction
 //! - Data integrity verification
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
 /// Galois field for Reed-Solomon operations
@@ -104,7 +104,7 @@ impl GaloisField {
             exp_table[i] = x as u8;
             exp_table[i + 255] = x as u8;
             log_table[x] = i as u8;
-            
+
             x = x << 1;
             if x & 0x100 != 0 {
                 x ^= primitive_poly;
@@ -282,16 +282,16 @@ impl ErasureCoding {
 
         for parity_idx in 0..self.parity_shards {
             let matrix_row = &self.encoding_matrix[self.data_shards + parity_idx];
-            
+
             for data_idx in 0..self.data_shards {
                 let coefficient = matrix_row[data_idx];
-                
+
                 for byte_idx in 0..shard_size {
-                    let product = self.field.multiply(coefficient, data_shards[data_idx][byte_idx]);
-                    parity_shards[parity_idx][byte_idx] = self.field.add(
-                        parity_shards[parity_idx][byte_idx],
-                        product,
-                    );
+                    let product = self
+                        .field
+                        .multiply(coefficient, data_shards[data_idx][byte_idx]);
+                    parity_shards[parity_idx][byte_idx] =
+                        self.field.add(parity_shards[parity_idx][byte_idx], product);
                 }
             }
         }
@@ -341,13 +341,14 @@ impl ErasureCoding {
         for data_idx in 0..self.data_shards {
             for shard_idx in 0..self.data_shards {
                 let coefficient = inverted_matrix[data_idx][shard_idx];
-                
+
                 for byte_idx in 0..shard_size {
-                    let product = self.field.multiply(coefficient, reconstruction_shards[shard_idx][byte_idx]);
-                    reconstructed_data[data_idx][byte_idx] = self.field.add(
-                        reconstructed_data[data_idx][byte_idx],
-                        product,
-                    );
+                    let product = self
+                        .field
+                        .multiply(coefficient, reconstruction_shards[shard_idx][byte_idx]);
+                    reconstructed_data[data_idx][byte_idx] = self
+                        .field
+                        .add(reconstructed_data[data_idx][byte_idx], product);
                 }
             }
         }
@@ -371,7 +372,9 @@ impl ErasureCoding {
     /// Get reconstruction information
     pub fn get_reconstruction_info(&self, available_shards: &[usize]) -> ReconstructionInfo {
         let mut missing_shards = Vec::new();
-        let available_set = available_shards.iter().collect::<std::collections::HashSet<_>>();
+        let available_set = available_shards
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
 
         for i in 0..self.total_shards {
             if !available_set.contains(&i) {
@@ -416,7 +419,11 @@ impl ErasureCoding {
     }
 
     /// Build Vandermonde matrix for encoding
-    fn build_vandermonde_matrix(field: &GaloisField, data_shards: usize, total_shards: usize) -> Result<Vec<Vec<u8>>> {
+    fn build_vandermonde_matrix(
+        field: &GaloisField,
+        data_shards: usize,
+        total_shards: usize,
+    ) -> Result<Vec<Vec<u8>>> {
         let mut matrix = vec![vec![0u8; data_shards]; total_shards];
 
         // Identity matrix for data shards
@@ -443,7 +450,7 @@ impl ErasureCoding {
 
         // Create augmented matrix [A|I]
         let mut augmented = vec![vec![0u8; 2 * size]; size];
-        
+
         for i in 0..size {
             for j in 0..size {
                 augmented[i][j] = matrix[i][j];
@@ -474,7 +481,7 @@ impl ErasureCoding {
             // Scale pivot row
             let pivot = augmented[i][i];
             let inv_pivot = self.field.inverse(pivot)?;
-            
+
             for j in 0..2 * size {
                 augmented[i][j] = self.field.multiply(augmented[i][j], inv_pivot);
             }
@@ -508,7 +515,11 @@ impl ErasureCoding {
     }
 
     /// Repair missing shards from available ones
-    pub fn repair_shards(&self, shards: &mut EncodedShards, missing_indices: &[usize]) -> Result<()> {
+    pub fn repair_shards(
+        &self,
+        shards: &mut EncodedShards,
+        missing_indices: &[usize],
+    ) -> Result<()> {
         if missing_indices.is_empty() {
             return Ok(());
         }
@@ -537,7 +548,8 @@ impl ErasureCoding {
                 shards.data_shards[missing_idx] = repaired_shards.data_shards[missing_idx].clone();
             } else if missing_idx < self.total_shards {
                 let parity_idx = missing_idx - self.data_shards;
-                shards.parity_shards[parity_idx] = repaired_shards.parity_shards[parity_idx].clone();
+                shards.parity_shards[parity_idx] =
+                    repaired_shards.parity_shards[parity_idx].clone();
             }
         }
 
@@ -545,22 +557,26 @@ impl ErasureCoding {
     }
 
     /// Calculate optimal shard distribution for given constraints
-    pub fn calculate_optimal_distribution(&self, total_storage: usize, node_count: usize) -> Result<Vec<usize>> {
+    pub fn calculate_optimal_distribution(
+        &self,
+        total_storage: usize,
+        node_count: usize,
+    ) -> Result<Vec<usize>> {
         if node_count < self.total_shards {
             return Err(anyhow!("Not enough nodes for shard distribution"));
         }
 
         // Calculate storage per shard for capacity-aware distribution
         let storage_per_shard = total_storage / self.total_shards;
-        
+
         // Minimum storage threshold per node (10MB)
         let min_storage_per_node = 10 * 1024 * 1024;
-        
+
         let base_shards_per_node = self.total_shards / node_count;
         let extra_shards = self.total_shards % node_count;
 
         let mut distribution = vec![base_shards_per_node; node_count];
-        
+
         // Distribute extra shards based on storage capacity constraints
         for i in 0..extra_shards {
             let projected_storage = (distribution[i] + 1) * storage_per_shard;
@@ -589,11 +605,11 @@ impl ErasureCoding {
 
         // Test field properties
         let mut is_valid_field = true;
-        
+
         // Test if generator generates all non-zero elements
         let mut generated_elements = std::collections::HashSet::new();
         let mut current = 1;
-        
+
         for _ in 0..255 {
             generated_elements.insert(current);
             current = self.field.multiply(current, generator);
@@ -665,15 +681,15 @@ mod tests {
     #[test]
     fn test_galois_field_operations() {
         let field = GaloisField::new();
-        
+
         // Test multiplication
         assert_eq!(field.multiply(3, 5), 15);
         assert_eq!(field.multiply(0, 5), 0);
-        
+
         // Test division
         assert_eq!(field.divide(15, 3).unwrap(), 5);
         assert_eq!(field.divide(0, 5).unwrap(), 0);
-        
+
         // Test inverse
         let a = 7;
         let inv_a = field.inverse(a).unwrap();
@@ -704,7 +720,7 @@ mod tests {
     #[test]
     fn test_erasure_coding_reconstruction_info() {
         let ec = ErasureCoding::new(4, 2).unwrap();
-        
+
         let available = vec![0, 1, 2, 3];
         let info = ec.get_reconstruction_info(&available);
         assert!(info.can_reconstruct);
@@ -732,19 +748,19 @@ mod tests {
     #[test]
     fn test_galois_field_properties() {
         let field = GaloisField::new();
-        
+
         // Test field size and primitive polynomial access
         assert_eq!(field.size(), 256);
         assert_eq!(field.primitive_polynomial(), 0x11D);
-        
+
         // Test element validity
         assert!(field.is_valid_element(255));
         assert!(field.is_valid_element(0));
-        
+
         // Test generator
         let gen = field.generator();
         assert_eq!(gen, 2);
-        
+
         // Test polynomial evaluation
         let coeffs = vec![1, 2, 3]; // 1 + 2x + 3x^2
         let result = field.evaluate_polynomial(&coeffs, 2);
@@ -759,13 +775,13 @@ mod tests {
         let field = GaloisField::new();
         let points = vec![1, 2, 3];
         let matrix = field.vandermonde_matrix(&points, 3);
-        
+
         assert_eq!(matrix.len(), 3);
         assert_eq!(matrix[0].len(), 3);
-        
+
         // First row should be [1, 1, 1]
         assert_eq!(matrix[0][0], 1);
-        
+
         // Second row should be [1, 2, 4] in regular arithmetic
         // In GF(2^8), 2^2 = 4
         assert_eq!(matrix[1][0], 1);
@@ -798,10 +814,12 @@ mod tests {
         let total_storage = 100 * 1024 * 1024; // 100MB to satisfy min per-node threshold
 
         // Test with more nodes than shards
-        let distribution = ec.calculate_optimal_distribution(total_storage, 10).unwrap();
+        let distribution = ec
+            .calculate_optimal_distribution(total_storage, 10)
+            .unwrap();
         assert_eq!(distribution.len(), 10);
         assert_eq!(distribution.iter().sum::<usize>(), 6); // Total shards distributed
-        
+
         // Test with exact number of nodes
         let distribution = ec.calculate_optimal_distribution(total_storage, 6).unwrap();
         assert_eq!(distribution.len(), 6);
@@ -812,7 +830,7 @@ mod tests {
     fn test_field_analysis() {
         let ec = ErasureCoding::new(3, 2).unwrap();
         let analysis = ec.analyze_field();
-        
+
         assert_eq!(analysis.field_size, 256);
         assert_eq!(analysis.primitive_polynomial, 0x11D);
         assert_eq!(analysis.generator_element, 2);
@@ -824,15 +842,17 @@ mod tests {
     fn test_operation_benchmark() {
         let ec = ErasureCoding::new(2, 1).unwrap();
         let benchmark = ec.benchmark_operations(1000);
-        
+
         assert_eq!(benchmark.iterations, 1000);
         assert!(benchmark.multiply_time_ns > 0);
         assert!(benchmark.divide_time_ns > 0);
         assert!(benchmark.power_time_ns > 0);
-        
+
         // Division should generally be slower than multiplication
         // (though this might not always be true with optimized tables)
-        println!("Benchmark results: multiply={}ns, divide={}ns, power={}ns", 
-                benchmark.multiply_time_ns, benchmark.divide_time_ns, benchmark.power_time_ns);
+        println!(
+            "Benchmark results: multiply={}ns, divide={}ns, power={}ns",
+            benchmark.multiply_time_ns, benchmark.divide_time_ns, benchmark.power_time_ns
+        );
     }
 }

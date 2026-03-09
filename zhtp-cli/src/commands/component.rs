@@ -7,9 +7,9 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for request building and validation
 
-use crate::argument_parsing::{ComponentArgs, ComponentAction, ZhtpCli, format_output};
+use crate::argument_parsing::{format_output, ComponentAction, ComponentArgs, ZhtpCli};
 use crate::commands::web4_utils::connect_default;
-use crate::error::{CliResult, CliError};
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_network::client::ZhtpClient;
 use serde_json::{json, Value};
@@ -118,10 +118,7 @@ pub fn validate_component_name(name: &str) -> CliResult<()> {
 /// Build request body for component operation
 ///
 /// Pure function - JSON construction only
-pub fn build_request_body(
-    operation: ComponentOperation,
-    component_name: Option<&str>,
-) -> Value {
+pub fn build_request_body(operation: ComponentOperation, component_name: Option<&str>) -> Value {
     match operation {
         ComponentOperation::List => json!({
             "orchestrated": true
@@ -140,16 +137,28 @@ pub fn build_request_body(
 pub fn get_operation_message(operation: ComponentOperation, component: Option<&str>) -> String {
     match operation {
         ComponentOperation::Start => {
-            format!("Orchestrating component start: {}", component.unwrap_or("unknown"))
+            format!(
+                "Orchestrating component start: {}",
+                component.unwrap_or("unknown")
+            )
         }
         ComponentOperation::Stop => {
-            format!("Orchestrating component stop: {}", component.unwrap_or("unknown"))
+            format!(
+                "Orchestrating component stop: {}",
+                component.unwrap_or("unknown")
+            )
         }
         ComponentOperation::Status => {
-            format!("Orchestrating component status: {}", component.unwrap_or("unknown"))
+            format!(
+                "Orchestrating component status: {}",
+                component.unwrap_or("unknown")
+            )
         }
         ComponentOperation::Restart => {
-            format!("Orchestrating component restart: {}", component.unwrap_or("unknown"))
+            format!(
+                "Orchestrating component restart: {}",
+                component.unwrap_or("unknown")
+            )
         }
         ComponentOperation::List => "Orchestrating component list...".to_string(),
     }
@@ -226,7 +235,11 @@ async fn fetch_and_display_component_result(
 ) -> CliResult<()> {
     let response = match operation.method() {
         "GET" => client.get(operation.endpoint_path()).await,
-        "POST" => client.post_json(operation.endpoint_path(), request_body).await,
+        "POST" => {
+            client
+                .post_json(operation.endpoint_path(), request_body)
+                .await
+        }
         _ => client.get(operation.endpoint_path()).await,
     }
     .map_err(|e| CliError::ApiCallFailed {
@@ -235,8 +248,8 @@ async fn fetch_and_display_component_result(
         reason: e.to_string(),
     })?;
 
-    let result: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
+    let result: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: operation.endpoint_path().to_string(),
             status: 0,
             reason: format!("Failed to parse response: {}", e),
@@ -289,15 +302,24 @@ mod tests {
 
     #[test]
     fn test_action_to_operation_list() {
-        assert_eq!(action_to_operation(&ComponentAction::List), ComponentOperation::List);
+        assert_eq!(
+            action_to_operation(&ComponentAction::List),
+            ComponentOperation::List
+        );
     }
 
     #[test]
     fn test_operation_description() {
         assert_eq!(ComponentOperation::Start.description(), "Start component");
         assert_eq!(ComponentOperation::Stop.description(), "Stop component");
-        assert_eq!(ComponentOperation::Status.description(), "Get component status");
-        assert_eq!(ComponentOperation::Restart.description(), "Restart component");
+        assert_eq!(
+            ComponentOperation::Status.description(),
+            "Get component status"
+        );
+        assert_eq!(
+            ComponentOperation::Restart.description(),
+            "Restart component"
+        );
         assert_eq!(ComponentOperation::List.description(), "List components");
     }
 
@@ -310,11 +332,26 @@ mod tests {
 
     #[test]
     fn test_operation_endpoint_path() {
-        assert_eq!(ComponentOperation::Start.endpoint_path(), "/api/v1/component/start");
-        assert_eq!(ComponentOperation::Stop.endpoint_path(), "/api/v1/component/stop");
-        assert_eq!(ComponentOperation::Status.endpoint_path(), "/api/v1/component/status");
-        assert_eq!(ComponentOperation::Restart.endpoint_path(), "/api/v1/component/restart");
-        assert_eq!(ComponentOperation::List.endpoint_path(), "/api/v1/component/list");
+        assert_eq!(
+            ComponentOperation::Start.endpoint_path(),
+            "/api/v1/component/start"
+        );
+        assert_eq!(
+            ComponentOperation::Stop.endpoint_path(),
+            "/api/v1/component/stop"
+        );
+        assert_eq!(
+            ComponentOperation::Status.endpoint_path(),
+            "/api/v1/component/status"
+        );
+        assert_eq!(
+            ComponentOperation::Restart.endpoint_path(),
+            "/api/v1/component/restart"
+        );
+        assert_eq!(
+            ComponentOperation::List.endpoint_path(),
+            "/api/v1/component/list"
+        );
     }
 
     #[test]
@@ -346,8 +383,14 @@ mod tests {
     #[test]
     fn test_build_request_body_start() {
         let body = build_request_body(ComponentOperation::Start, Some("consensus"));
-        assert_eq!(body.get("component").and_then(|v| v.as_str()), Some("consensus"));
-        assert_eq!(body.get("orchestrated").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            body.get("component").and_then(|v| v.as_str()),
+            Some("consensus")
+        );
+        assert_eq!(
+            body.get("orchestrated").and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 
     #[test]

@@ -5,9 +5,9 @@
 //! - oracle configuration
 //! - per-epoch finalized prices
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 /// Fixed-point scale for SOV/USD oracle prices (8 decimals).
@@ -49,7 +49,10 @@ pub enum OracleAttestationAdmission {
     /// Accepted for aggregation but threshold not yet reached.
     Accepted,
     /// Ignored because message epoch is outside the current epoch.
-    IgnoredOutsideCurrentEpoch { current_epoch: u64, attested_epoch: u64 },
+    IgnoredOutsideCurrentEpoch {
+        current_epoch: u64,
+        attested_epoch: u64,
+    },
     /// Duplicate signer for the same epoch/price; ignored.
     IgnoredDuplicateSigner([u8; 32]),
     /// Epoch already finalized with same price; ignored.
@@ -194,7 +197,10 @@ pub enum OracleConfigError {
     /// Individual field validation failure.
     InvalidField { field: String, message: String },
     /// Cross-field consistency failure.
-    Inconsistent { fields: Vec<String>, message: String },
+    Inconsistent {
+        fields: Vec<String>,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for OracleConfigError {
@@ -262,7 +268,8 @@ impl OracleConfig {
         if self.max_deviation_bps > 10_000 {
             return Err(OracleConfigError::InvalidField {
                 field: "max_deviation_bps".to_string(),
-                message: "must be <= 10000 (100%) — higher values defeat price aggregation".to_string(),
+                message: "must be <= 10000 (100%) — higher values defeat price aggregation"
+                    .to_string(),
             });
         }
 
@@ -373,25 +380,25 @@ impl OracleCommitteeState {
     }
 
     /// Set committee members — **genesis bootstrap only**.
-    /// 
+    ///
     /// This method is restricted to `pub(crate)` to enforce that committee membership
     /// changes in production MUST go through the governance-gated path:
     /// `schedule_committee_update()` → `apply_pending_updates()`.
-    /// 
+    ///
     /// # Security Warning
     /// Direct calls to this method bypass governance consensus. Use only for:
     /// - Genesis block initialization (when no prior committee exists)
     /// - Unit tests with `#[cfg(test)]` guards
-    /// 
+    ///
     /// # Compile-Time Enforcement
-    /// 
+    ///
     /// The `pub(crate)` visibility ensures external crates cannot call this method.
     /// The following code will fail to compile:
     ///
     /// ```compile_fail,E0599
     /// // This code fails to compile because set_members_genesis_only is pub(crate)
     /// use lib_blockchain::oracle::OracleCommitteeState;
-    /// 
+    ///
     /// let mut committee = OracleCommitteeState::default();
     /// // ERROR: method `set_members_genesis_only` is private
     /// committee.set_members_genesis_only(vec![[1u8; 32]]);
@@ -416,10 +423,10 @@ impl OracleCommitteeState {
     }
 
     /// Remove a member from the committee immediately.
-    /// 
+    ///
     /// This is used for slashing — the slashed validator is removed from the
     /// committee for the remainder of the epoch and all future epochs.
-    /// 
+    ///
     /// # Security
     /// This is `pub(crate)` to restrict usage to slashing within lib-blockchain.
     pub(crate) fn remove_member(&mut self, key_id: [u8; 32]) {
@@ -485,10 +492,10 @@ pub struct OracleState {
     #[serde(default)]
     pub protocol_config: protocol::OracleProtocolConfig,
     /// ORACLE-R4: Epoch tracking format version.
-    /// 
+    ///
     /// Version 0 (legacy): last_oracle_timestamp_processed stored epoch IDs
     /// Version 1 (current): last_oracle_timestamp_processed stores timestamps
-    /// 
+    ///
     /// Used for migration to ensure consistent semantics after epoch_duration changes.
     #[serde(default = "default_epoch_tracking_version")]
     pub epoch_tracking_version: u8,
@@ -532,7 +539,7 @@ impl OracleState {
     ///
     /// **Warning**: Never call this directly from API handlers or external code.
     /// Committee changes must only occur through approved governance proposals.
-    /// 
+    ///
     /// # Arguments
     /// * `members` - New committee members (must be non-empty, no duplicates)
     /// * `activate_at_epoch` - Epoch when update becomes active (must be > current_epoch)
@@ -560,7 +567,7 @@ impl OracleState {
 
         // Calculate expiry: if not activated by activate_at_epoch + 2, auto-cancel
         let expires_at_epoch = activate_at_epoch.saturating_add(2);
-        
+
         self.committee.pending_update = Some(PendingCommitteeUpdate {
             activate_at_epoch,
             members: normalize_members(members),
@@ -583,7 +590,7 @@ impl OracleState {
     ///
     /// **Warning**: Never call this directly from API handlers or external code.
     /// Config changes must only occur through approved governance proposals.
-    /// 
+    ///
     /// # Arguments
     /// * `config` - New oracle configuration
     /// * `activate_at_epoch` - Epoch when update becomes active (must be > current_epoch)
@@ -606,7 +613,7 @@ impl OracleState {
 
         // Calculate expiry: if not activated by activate_at_epoch + 2, auto-cancel
         let expires_at_epoch = activate_at_epoch.saturating_add(2);
-        
+
         self.pending_config_update = Some(PendingConfigUpdate {
             activate_at_epoch,
             config,
@@ -656,7 +663,7 @@ impl OracleState {
     }
 
     /// Apply pending committee/config updates once activation epoch is reached.
-    /// 
+    ///
     /// Also handles auto-expiry: if current_epoch >= expires_at_epoch, the pending
     /// update is discarded without activation (ORACLE-11).
     pub fn apply_pending_updates(&mut self, current_epoch: u64) {
@@ -675,8 +682,7 @@ impl OracleState {
                 // Activate the update
                 info!(
                     "🔮 Activating oracle committee update at epoch {} (scheduled: {})",
-                    current_epoch,
-                    pending.scheduled_at_epoch
+                    current_epoch, pending.scheduled_at_epoch
                 );
                 self.committee.members = normalize_members(pending.members);
             } else {
@@ -699,8 +705,7 @@ impl OracleState {
                 // Activate the update
                 info!(
                     "🔮 Activating oracle config update at epoch {} (scheduled: {})",
-                    current_epoch,
-                    pending.scheduled_at_epoch
+                    current_epoch, pending.scheduled_at_epoch
                 );
                 self.config = pending.config;
             } else {
@@ -711,24 +716,24 @@ impl OracleState {
     }
 
     /// Cancel pending oracle updates (ORACLE-11).
-    /// 
+    ///
     /// Called when a CancelOracleUpdate governance proposal is approved.
     /// Returns true if any update was cancelled.
     pub fn cancel_pending_updates(&mut self, cancel_committee: bool, cancel_config: bool) -> bool {
         let mut cancelled = false;
-        
+
         if cancel_committee && self.committee.pending_update.is_some() {
             info!("🔮 Pending oracle committee update cancelled by governance");
             self.committee.pending_update = None;
             cancelled = true;
         }
-        
+
         if cancel_config && self.pending_config_update.is_some() {
             info!("🔮 Pending oracle config update cancelled by governance");
             self.pending_config_update = None;
             cancelled = true;
         }
-        
+
         cancelled
     }
 
@@ -755,17 +760,20 @@ impl OracleState {
 
     /// Returns the most recently finalized price with epoch_id <= `epoch`.
     pub fn latest_finalized_price_at_or_before(&self, epoch: u64) -> Option<&FinalizedOraclePrice> {
-        self.finalized_prices.range(..=epoch).next_back().map(|(_, v)| v)
+        self.finalized_prices
+            .range(..=epoch)
+            .next_back()
+            .map(|(_, v)| v)
     }
 
     /// Returns the latest finalized price only if it is within `max_price_staleness_epochs`
     /// of `current_epoch`. Returns None if no fresh price exists.
-    /// 
+    ///
     /// This enforces Oracle Spec v1 §11 — Staleness.
     pub fn latest_fresh_price(&self, current_epoch: u64) -> Option<&FinalizedOraclePrice> {
         let max_staleness = self.config.max_price_staleness_epochs;
         let oldest_acceptable = current_epoch.saturating_sub(max_staleness);
-        
+
         self.finalized_prices
             .range(..=current_epoch)
             .next_back()
@@ -975,7 +983,8 @@ impl OracleState {
                     });
                 }
             } else {
-                self.finalized_prices.insert(current_epoch, finalized.clone());
+                self.finalized_prices
+                    .insert(current_epoch, finalized.clone());
             }
 
             return Ok(OracleAttestationAdmission::Finalized(finalized));
@@ -1033,8 +1042,12 @@ impl OracleState {
     /// Apply pending protocol activation if the activation height has been reached.
     ///
     /// Returns the new version if activation occurred, None otherwise.
-    pub fn apply_pending_protocol_activation(&mut self, current_height: u64) -> Option<protocol::OracleProtocolVersion> {
-        self.protocol_config.apply_pending_activation(current_height)
+    pub fn apply_pending_protocol_activation(
+        &mut self,
+        current_height: u64,
+    ) -> Option<protocol::OracleProtocolVersion> {
+        self.protocol_config
+            .apply_pending_activation(current_height)
     }
 
     /// Cancel any pending protocol activation.
@@ -1074,15 +1087,15 @@ impl OracleState {
         // Convert to timestamp: epoch_id * epoch_duration_secs
         let epoch_id = last_timestamp_processed;
         let timestamp = epoch_id.saturating_mul(self.config.epoch_duration_secs);
-        
+
         self.epoch_tracking_version = 1;
-        
+
         tracing::info!(
             "🔮 ORACLE-R4: Migrated epoch tracking from epoch {} to timestamp {} (version 0 -> 1)",
             epoch_id,
             timestamp
         );
-        
+
         timestamp
     }
 
@@ -1090,10 +1103,14 @@ impl OracleState {
     ///
     /// ORACLE-R4: Uses timestamp comparison to handle epoch_duration changes correctly.
     /// Returns true if the current block timestamp indicates a new epoch.
-    pub fn should_process_epoch(&self, block_timestamp: u64, last_timestamp_processed: u64) -> bool {
+    pub fn should_process_epoch(
+        &self,
+        block_timestamp: u64,
+        last_timestamp_processed: u64,
+    ) -> bool {
         let current_epoch = self.epoch_id(block_timestamp);
         let last_processed_epoch = self.epoch_id(last_timestamp_processed);
-        
+
         current_epoch > last_processed_epoch
     }
 
@@ -1275,16 +1292,24 @@ mod tests {
     #[test]
     fn pending_committee_update_activates_at_next_epoch() {
         let mut state = OracleState::default();
-        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        state
+            .committee
+            .set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         state
             .schedule_committee_update(vec![[9u8; 32], [8u8; 32], [7u8; 32]], 13, 12, None)
             .expect("schedule must succeed");
 
         state.apply_pending_updates(12);
-        assert_eq!(state.committee.members(), &[[1u8; 32], [2u8; 32], [3u8; 32]]);
+        assert_eq!(
+            state.committee.members(),
+            &[[1u8; 32], [2u8; 32], [3u8; 32]]
+        );
 
         state.apply_pending_updates(13);
-        assert_eq!(state.committee.members(), &[[7u8; 32], [8u8; 32], [9u8; 32]]);
+        assert_eq!(
+            state.committee.members(),
+            &[[7u8; 32], [8u8; 32], [9u8; 32]]
+        );
         assert!(state.committee.pending_update().is_none());
     }
 
@@ -1548,7 +1573,11 @@ mod tests {
         let k3 = lib_crypto::keypair::generation::KeyPair::generate().expect("k3");
 
         let mut state = OracleState::default();
-        state.committee.members = vec![k1.public_key.key_id, k2.public_key.key_id, k3.public_key.key_id];
+        state.committee.members = vec![
+            k1.public_key.key_id,
+            k2.public_key.key_id,
+            k3.public_key.key_id,
+        ];
         let epoch = 13;
 
         let mut att = OraclePriceAttestation {
@@ -1588,7 +1617,11 @@ mod tests {
         let k2 = lib_crypto::keypair::generation::KeyPair::generate().expect("k2");
         let k3 = lib_crypto::keypair::generation::KeyPair::generate().expect("k3");
 
-        let committee = vec![k1.public_key.key_id, k2.public_key.key_id, k3.public_key.key_id];
+        let committee = vec![
+            k1.public_key.key_id,
+            k2.public_key.key_id,
+            k3.public_key.key_id,
+        ];
         let epoch = 22;
         let price = 250_000_000u128;
 
@@ -1621,11 +1654,13 @@ mod tests {
         let mut a = OracleState::default();
         a.committee.members = committee.clone();
         for att in &attestations {
-            a.process_attestation(att, epoch, resolver).expect("process");
+            a.process_attestation(att, epoch, resolver)
+                .expect("process");
         }
 
         let snapshot = bincode::serialize(&a).expect("serialize oracle state");
-        let restored: OracleState = bincode::deserialize(&snapshot).expect("deserialize oracle state");
+        let restored: OracleState =
+            bincode::deserialize(&snapshot).expect("deserialize oracle state");
 
         let mut b = OracleState::default();
         b.committee.members = committee;
@@ -1641,25 +1676,35 @@ mod tests {
     #[test]
     fn committee_for_epoch_returns_correct_committee() {
         let mut state = OracleState::default();
-        
+
         // Set initial committee
-        state.committee.set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
-        
+        state
+            .committee
+            .set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+
         // Schedule an update for epoch 10
-        state.schedule_committee_update(
-            vec![[4u8; 32], [5u8; 32]],
-            10, // activate_at_epoch
-            0,  // current_epoch
-            None, // source_proposal_id
-        ).expect("schedule must succeed");
-        
+        state
+            .schedule_committee_update(
+                vec![[4u8; 32], [5u8; 32]],
+                10,   // activate_at_epoch
+                0,    // current_epoch
+                None, // source_proposal_id
+            )
+            .expect("schedule must succeed");
+
         // Before the update activates, should return old committee
-        assert_eq!(state.committee_for_epoch(5), vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
-        assert_eq!(state.committee_for_epoch(9), vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
-        
+        assert_eq!(
+            state.committee_for_epoch(5),
+            vec![[1u8; 32], [2u8; 32], [3u8; 32]]
+        );
+        assert_eq!(
+            state.committee_for_epoch(9),
+            vec![[1u8; 32], [2u8; 32], [3u8; 32]]
+        );
+
         // At activate_at_epoch, should return new committee
         assert_eq!(state.committee_for_epoch(10), vec![[4u8; 32], [5u8; 32]]);
-        
+
         // After activate_at_epoch, should still return new committee
         assert_eq!(state.committee_for_epoch(15), vec![[4u8; 32], [5u8; 32]]);
     }
@@ -1668,26 +1713,30 @@ mod tests {
     #[test]
     fn committee_is_locked_at_epoch_start() {
         let mut state = OracleState::default();
-        
+
         // Set initial committee
-        state.committee.set_members_for_test(vec![[1u8; 32], [2u8; 32]]);
-        
+        state
+            .committee
+            .set_members_for_test(vec![[1u8; 32], [2u8; 32]]);
+
         // Get committee for epoch 5
         let epoch_5_committee = state.committee_for_epoch(5);
         assert_eq!(epoch_5_committee, vec![[1u8; 32], [2u8; 32]]);
-        
+
         // Even if we schedule an update for epoch 3 (which should have already activated),
         // the committee for epoch 5 should remain the same
-        state.schedule_committee_update(
-            vec![[3u8; 32]],
-            3, // activate_at_epoch (in the past)
-            0, // current_epoch
-            None, // source_proposal_id
-        ).expect("schedule must succeed");
-        
+        state
+            .schedule_committee_update(
+                vec![[3u8; 32]],
+                3,    // activate_at_epoch (in the past)
+                0,    // current_epoch
+                None, // source_proposal_id
+            )
+            .expect("schedule must succeed");
+
         // The pending update should now be the one scheduled
         assert!(state.committee.pending_update.is_some());
-        
+
         // But committee_for_epoch(5) should still return the NEW committee
         // because the pending update is for epoch 3 which is <= 5
         let new_committee = state.committee_for_epoch(5);
@@ -1698,17 +1747,20 @@ mod tests {
     #[test]
     fn committee_update_auto_expires_when_not_activated() {
         let mut state = OracleState::default();
-        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
-        
+        state
+            .committee
+            .set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+
         // Schedule update for epoch 10 (expires at epoch 12)
-        state.schedule_committee_update(vec![[7u8; 32], [8u8; 32]], 10, 0, None)
+        state
+            .schedule_committee_update(vec![[7u8; 32], [8u8; 32]], 10, 0, None)
             .expect("schedule must succeed");
-        
+
         assert!(state.committee.pending_update().is_some());
-        
+
         // Apply at epoch 12 - should expire without activating
         state.apply_pending_updates(12);
-        
+
         // Committee unchanged, pending cleared
         assert_eq!(state.committee.members().len(), 3);
         assert!(state.committee.pending_update().is_none());
@@ -1719,16 +1771,17 @@ mod tests {
         let mut state = OracleState::default();
         let mut new_config = state.config.clone();
         new_config.max_price_staleness_epochs = 5;
-        
+
         // Schedule update for epoch 10 (expires at epoch 12)
-        state.schedule_config_update(new_config, 10, 0, None)
+        state
+            .schedule_config_update(new_config, 10, 0, None)
             .expect("schedule must succeed");
-        
+
         assert!(state.pending_config_update.is_some());
-        
+
         // Apply at epoch 12 - should expire without activating
         state.apply_pending_updates(12);
-        
+
         // Config unchanged, pending cleared
         assert_ne!(state.config.max_price_staleness_epochs, 5);
         assert!(state.pending_config_update.is_none());
@@ -1738,14 +1791,15 @@ mod tests {
     fn expired_update_does_not_activate() {
         let mut state = OracleState::default();
         state.committee.set_members_genesis_only(vec![[1u8; 32]]);
-        
+
         // Schedule update for epoch 10 (expires at epoch 12)
-        state.schedule_committee_update(vec![[2u8; 32]], 10, 0, None)
+        state
+            .schedule_committee_update(vec![[2u8; 32]], 10, 0, None)
             .expect("schedule must succeed");
-        
+
         // Apply at epoch 15 - well past both activation and expiry
         state.apply_pending_updates(15);
-        
+
         // Should expire, not activate
         assert_eq!(state.committee.members().len(), 1);
         assert_eq!(state.committee.members()[0], [1u8; 32]);
@@ -1756,16 +1810,17 @@ mod tests {
     fn cancel_pending_updates_returns_true_when_committee_cancelled() {
         let mut state = OracleState::default();
         state.committee.set_members_genesis_only(vec![[1u8; 32]]);
-        
+
         // Schedule a committee update
-        state.schedule_committee_update(vec![[2u8; 32]], 10, 0, None)
+        state
+            .schedule_committee_update(vec![[2u8; 32]], 10, 0, None)
             .expect("schedule must succeed");
-        
+
         assert!(state.committee.pending_update().is_some());
-        
+
         // Cancel committee update only
         let cancelled = state.cancel_pending_updates(true, false);
-        
+
         assert!(cancelled);
         assert!(state.committee.pending_update().is_none());
     }
@@ -1775,16 +1830,17 @@ mod tests {
         let mut state = OracleState::default();
         let mut new_config = state.config.clone();
         new_config.max_price_staleness_epochs = 5;
-        
+
         // Schedule a config update
-        state.schedule_config_update(new_config, 10, 0, None)
+        state
+            .schedule_config_update(new_config, 10, 0, None)
             .expect("schedule must succeed");
-        
+
         assert!(state.pending_config_update.is_some());
-        
+
         // Cancel config update only
         let cancelled = state.cancel_pending_updates(false, true);
-        
+
         assert!(cancelled);
         assert!(state.pending_config_update.is_none());
     }
@@ -1793,18 +1849,20 @@ mod tests {
     fn cancel_pending_updates_returns_true_when_both_cancelled() {
         let mut state = OracleState::default();
         state.committee.set_members_genesis_only(vec![[1u8; 32]]);
-        
+
         // Schedule both updates
-        state.schedule_committee_update(vec![[2u8; 32]], 10, 0, None)
+        state
+            .schedule_committee_update(vec![[2u8; 32]], 10, 0, None)
             .expect("schedule must succeed");
         let mut new_config = state.config.clone();
         new_config.max_price_staleness_epochs = 5;
-        state.schedule_config_update(new_config, 10, 0, None)
+        state
+            .schedule_config_update(new_config, 10, 0, None)
             .expect("schedule must succeed");
-        
+
         // Cancel both
         let cancelled = state.cancel_pending_updates(true, true);
-        
+
         assert!(cancelled);
         assert!(state.committee.pending_update().is_none());
         assert!(state.pending_config_update.is_none());
@@ -1814,10 +1872,10 @@ mod tests {
     fn cancel_pending_updates_returns_false_when_nothing_to_cancel() {
         let mut state = OracleState::default();
         state.committee.set_members_genesis_only(vec![[1u8; 32]]);
-        
+
         // No pending updates scheduled
         let cancelled = state.cancel_pending_updates(true, true);
-        
+
         assert!(!cancelled);
     }
 
@@ -1825,10 +1883,10 @@ mod tests {
     fn schedule_committee_update_rejects_activate_at_past_epoch() {
         let mut state = OracleState::default();
         state.committee.set_members_genesis_only(vec![[1u8; 32]]);
-        
+
         // Try to schedule for epoch 5 when current epoch is 10
         let result = state.schedule_committee_update(vec![[2u8; 32]], 5, 10, None);
-        
+
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must be > current_epoch"));
     }
@@ -1838,9 +1896,9 @@ mod tests {
         let mut state = OracleState::default();
         let mut new_config = state.config.clone();
         new_config.max_price_staleness_epochs = 0; // Invalid
-        
+
         let result = state.schedule_config_update(new_config, 10, 0, None);
-        
+
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
@@ -1854,42 +1912,47 @@ mod tests {
     #[test]
     fn test_pending_committee_update_bincode_serialization() {
         let mut state = OracleState::default();
-        state.committee.set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
-        
+        state
+            .committee
+            .set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
+
         // Schedule update
-        let result = state.schedule_committee_update(vec![[5u8; 32], [6u8; 32], [7u8; 32]], 10, 0, None);
+        let result =
+            state.schedule_committee_update(vec![[5u8; 32], [6u8; 32], [7u8; 32]], 10, 0, None);
         assert!(result.is_ok());
-        
-        println!("Before: pending_update = {:?}", state.committee.pending_update());
-        
+
+        println!(
+            "Before: pending_update = {:?}",
+            state.committee.pending_update()
+        );
+
         // Serialize to bincode (like save_to_file does)
         let encoded = bincode::serialize(&state).unwrap();
         println!("Serialized {} bytes", encoded.len());
-        
+
         // Deserialize
         let decoded: OracleState = bincode::deserialize(&encoded).unwrap();
-        println!("After: pending_update = {:?}", decoded.committee.pending_update());
-        
-        assert!(decoded.committee.pending_update().is_some(), "pending_update should survive bincode serialization");
+        println!(
+            "After: pending_update = {:?}",
+            decoded.committee.pending_update()
+        );
+
+        assert!(
+            decoded.committee.pending_update().is_some(),
+            "pending_update should survive bincode serialization"
+        );
     }
 }
 
 // ORACLE-4: Slashing module
 pub mod slashing;
 
-pub use slashing::{
-    OracleSlashEvent,
-    OracleSlashReason,
-    OracleSlashingConfig,
-};
+pub use slashing::{OracleSlashEvent, OracleSlashReason, OracleSlashingConfig};
 
 // ORACLE-R6: Protocol version and activation gate
 pub mod protocol;
 
 pub use protocol::{
-    OracleProtocolConfig,
-    OracleProtocolVersion,
-    OracleFeatureFlags,
-    PendingProtocolActivation,
+    OracleFeatureFlags, OracleProtocolConfig, OracleProtocolVersion, PendingProtocolActivation,
     ProtocolScheduleError,
 };

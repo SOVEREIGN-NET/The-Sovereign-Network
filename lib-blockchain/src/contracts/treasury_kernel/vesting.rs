@@ -21,12 +21,12 @@
 //! All vesting state is deterministically serializable.
 //! Calculations use integer math only.
 
-use std::collections::BTreeMap;
+use super::interface::{KernelOpError, LockReason, ReleaseReason};
+use super::vesting_types::{VestingId, VestingLock, VestingSchedule, VestingStatus};
+use super::TreasuryKernel;
 use crate::contracts::tokens::core::TokenContract;
 use crate::integration::crypto_integration::PublicKey;
-use super::TreasuryKernel;
-use super::interface::{KernelOpError, LockReason, ReleaseReason};
-use super::vesting_types::{VestingId, VestingSchedule, VestingLock, VestingStatus};
+use std::collections::BTreeMap;
 
 /// Vesting state stored in the Treasury Kernel
 ///
@@ -702,19 +702,37 @@ mod tests {
 
         // First release at 25%
         let r1 = kernel
-            .release_vested(&mut token, &beneficiary, &vesting_id, 125, &mut vesting_state)
+            .release_vested(
+                &mut token,
+                &beneficiary,
+                &vesting_id,
+                125,
+                &mut vesting_state,
+            )
             .unwrap();
         assert_eq!(r1, 2500);
 
         // Second release at 50%
         let r2 = kernel
-            .release_vested(&mut token, &beneficiary, &vesting_id, 150, &mut vesting_state)
+            .release_vested(
+                &mut token,
+                &beneficiary,
+                &vesting_id,
+                150,
+                &mut vesting_state,
+            )
             .unwrap();
         assert_eq!(r2, 2500); // Additional 2500 vested
 
         // Third release at 100%
         let r3 = kernel
-            .release_vested(&mut token, &beneficiary, &vesting_id, 200, &mut vesting_state)
+            .release_vested(
+                &mut token,
+                &beneficiary,
+                &vesting_id,
+                200,
+                &mut vesting_state,
+            )
             .unwrap();
         assert_eq!(r3, 5000); // Remaining 5000
 
@@ -896,7 +914,8 @@ mod tests {
             )
             .unwrap();
 
-        let total = kernel.total_releasable_for_beneficiary(&beneficiary.key_id, 150, &vesting_state);
+        let total =
+            kernel.total_releasable_for_beneficiary(&beneficiary.key_id, 150, &vesting_state);
         assert_eq!(total, 10000); // 5000 + 5000
     }
 
@@ -928,7 +947,13 @@ mod tests {
 
         // At epoch 125, 25% (2500) is vested. Release it.
         let released = kernel
-            .release_vested(&mut token, &beneficiary, &vesting_id, 125, &mut vesting_state)
+            .release_vested(
+                &mut token,
+                &beneficiary,
+                &vesting_id,
+                125,
+                &mut vesting_state,
+            )
             .unwrap();
         assert_eq!(released, 2500);
         assert_eq!(token.available_balance(&beneficiary), 2500); // 2500 unlocked
@@ -953,7 +978,13 @@ mod tests {
 
         // Beneficiary should still be able to claim the remaining vested amount (2500)
         let remaining = kernel
-            .release_vested(&mut token, &beneficiary, &vesting_id, 200, &mut vesting_state)
+            .release_vested(
+                &mut token,
+                &beneficiary,
+                &vesting_id,
+                200,
+                &mut vesting_state,
+            )
             .unwrap();
         assert_eq!(remaining, 2500); // Remaining vested-but-unreleased
     }

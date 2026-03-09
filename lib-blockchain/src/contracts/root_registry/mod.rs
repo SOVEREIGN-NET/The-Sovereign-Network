@@ -40,84 +40,101 @@
 //! - `welfare_dao_registry`: Per-sector registries
 //! - `verification_module`: VC anchoring, attestations
 
+pub mod core;
+pub mod dao_prefix_router;
+pub mod delegation_tree;
+pub mod namespace_policy;
+pub mod operations;
 pub mod types;
 pub mod validation;
-pub mod operations;
-pub mod core;
-pub mod namespace_policy;
-pub mod delegation_tree;
-pub mod dao_prefix_router;
 pub mod welfare_issuer_adapter;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export core registry
-pub use core::{RootRegistry, CoreNameRecord, CoreStoredRecord};
+pub use core::{CoreNameRecord, CoreStoredRecord, RootRegistry};
 
 // Re-export core types
 pub use types::{
-    // Core identity types
-    PublicKey, Address, NameHash, DaoId, BlockHeight, Timestamp,
+    hash_name,
+    is_zero_name_hash,
 
-    // Verification
-    VerificationLevel,
-    VerificationProof, VerificationError, ZkProofData,
+    limits,
+    // Utility functions
+    normalize_name,
+    // Constants
+    timing,
+    Address,
+    AppealStatus,
+    BlockHeight,
+    CustodianId,
+    DaoId,
+    DelegateTarget,
+    EffectiveStatus,
+    GovernanceDelegation,
+    GovernancePointer,
+    // Governance (Phase 2: Issue #657)
+    GovernanceRecord,
+    GovernanceResolution,
+    GovernanceStatus,
+    // Legacy/Storage
+    LegacyDomainRecord,
+    LifecycleFields,
 
+    LifecycleParams,
+    NameClass,
     // Classification
     NameClassification,
-    NameClass, ReservedReason,
+    NameHash,
+    // Core record
+    NameRecord,
 
     // Status and lifecycle
-    NameStatus, SuspensionReason, SuspensionAuthority,
-    ReasonCode, AppealStatus, RevokedRecord,
-    EffectiveStatus, CustodianId,
-    LifecycleParams, LifecycleFields,
+    NameStatus,
+    // Core identity types
+    PublicKey,
+    ReasonCode,
+    RenewalRecord,
 
-    // Governance (Phase 2: Issue #657)
-    GovernanceRecord, VCReference,
-    GovernancePointer, GovernanceDelegation, DelegateTarget,
-    GovernanceStatus, GovernanceResolution,
+    ReservedReason,
+
     ResolutionResult as TypesResolutionResult,
 
+    RevokedRecord,
+    StoredRecord,
+
+    SuspensionAuthority,
+    SuspensionReason,
+    Timestamp,
+
     // History
-    TransferRecord, RenewalRecord,
+    TransferRecord,
+    VCReference,
+    VerificationError,
+    // Verification
+    VerificationLevel,
+    VerificationProof,
+    // Welfare
+    WelfareSector,
+    ZkProofData,
 
     // Zone controller
     ZoneController,
 
-    // Core record
-    NameRecord,
-
-    // Legacy/Storage
-    LegacyDomainRecord, StoredRecord,
-
-    // Welfare
-    WelfareSector, WELFARE_SECTORS,
-
-    // Utility functions
-    normalize_name, hash_name, is_zero_name_hash,
-
-    // Constants
-    timing, limits,
+    WELFARE_SECTORS,
 };
 
 // Re-export validation functions
 pub use validation::{
-    ValidationError, ValidationResult,
-    ParsedName,
-    parse_and_validate,
-    validate_verification_level,
-    is_high_risk_label,
-    check_high_risk_labels,
-    compute_name_hash,
+    check_high_risk_labels, compute_name_hash, is_high_risk_label, parse_and_validate,
+    validate_verification_level, ParsedName, ValidationError, ValidationResult,
 };
 
 // Re-export operations
 pub use operations::{
-    OperationError, OperationResult,
-    RegisterGuard, RenewGuard, TransferGuard, DelegateGuard, RevokeGuard,
-    RevocationRequester, ResolutionResult,
+    DelegateGuard, OperationError, OperationResult, RegisterGuard, RenewGuard, ResolutionResult,
+    RevocationRequester, RevokeGuard, TransferGuard,
 };
 
 // Re-export namespace policy
@@ -127,11 +144,11 @@ pub use namespace_policy::NamespacePolicy;
 pub use delegation_tree::DelegationTree;
 
 // Re-export dao prefix router (Phase 2: Issue #657)
-pub use dao_prefix_router::{DaoPrefixRouter, DaoPrefixRegistrationError};
+pub use dao_prefix_router::{DaoPrefixRegistrationError, DaoPrefixRouter};
 
 // Re-export welfare issuer adapter (Phase 3: Issue #658)
 pub use welfare_issuer_adapter::{
-    WelfareIssuerAdapter, WelfareIssuerError, WelfareMetadata,
-    SectorBinding, PendingClaim, DaoVerificationPolicy, IssuanceResult,
-    BindingStatus, SuspensionReason as WelfareSuspensionReason,
+    BindingStatus, DaoVerificationPolicy, IssuanceResult, PendingClaim, SectorBinding,
+    SuspensionReason as WelfareSuspensionReason, WelfareIssuerAdapter, WelfareIssuerError,
+    WelfareMetadata,
 };

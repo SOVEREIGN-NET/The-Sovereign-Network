@@ -1,11 +1,11 @@
 //! UBI registration system from the original identity.rs
 
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use crate::constants::{SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV};
+use crate::economics::{EconomicModel, Priority, Transaction, TransactionType};
 use crate::types::IdentityId;
 use crate::wallets::WalletId;
-use crate::economics::{EconomicModel, Transaction, TransactionType, Priority};
-use crate::constants::{SOV_ATOMIC_UNITS, SOV_UBI_MONTHLY_SOV};
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Blocks per day (assuming ~10 second block time)
 /// At 10s/block: 24 hours = 86,400 seconds ÷ 10 = 8,640 blocks
@@ -68,7 +68,7 @@ impl UbiRegistration {
             remainder_balance: remainder,
         }
     }
-    
+
     /// Register identity for Universal Basic Income payouts - IMPLEMENTATION FROM ORIGINAL
     pub async fn register_for_ubi_payouts(
         identity_id: &IdentityId,
@@ -100,7 +100,8 @@ impl UbiRegistration {
                 ubi_wallet_id.0.as_slice(),
                 &daily_ubi_amount.to_le_bytes(),
                 &current_block.to_le_bytes(),
-            ].concat()
+            ]
+            .concat(),
         );
 
         tracing::info!(
@@ -123,12 +124,12 @@ impl UbiRegistration {
             0,
         ))
     }
-    
+
     /// Check if eligible for UBI payout
     pub fn is_eligible_for_payout(&self) -> bool {
         self.eligibility_proof != [0u8; 32] && self.daily_amount > 0
     }
-    
+
     /// Check if due for daily payout (requires being called with current block height)
     pub fn is_due_for_daily_payout(&self, current_block: u64) -> bool {
         if let Some(last_payout_block) = self.last_payout_block {
@@ -139,7 +140,7 @@ impl UbiRegistration {
             true
         }
     }
-    
+
     /// Record a UBI payout with block height (deterministic)
     /// Accumulates remainder and distributes when threshold reached
     pub fn record_payout(&mut self, amount: u64, block_height: u64) -> u64 {
@@ -147,7 +148,9 @@ impl UbiRegistration {
 
         // Add remainder accumulation - distribute remainder every DAYS_PER_MONTH payouts
         // The remainder comes from the monthly amount / DAYS_PER_MONTH division (e.g., 1000 / 30 = 33 remainder 10)
-        self.remainder_balance = self.remainder_balance.saturating_add(self.daily_amount % DAYS_PER_MONTH);
+        self.remainder_balance = self
+            .remainder_balance
+            .saturating_add(self.daily_amount % DAYS_PER_MONTH);
         if self.remainder_balance >= DAYS_PER_MONTH {
             actual_payout = amount + (self.remainder_balance / DAYS_PER_MONTH);
             self.remainder_balance %= DAYS_PER_MONTH;
@@ -157,7 +160,7 @@ impl UbiRegistration {
         self.total_received = self.total_received.saturating_add(actual_payout);
         actual_payout
     }
-    
+
     /// Get blocks since registration (at ~10 seconds per block, ~8640 blocks per day)
     pub fn blocks_since_registration(&self, current_block: u64) -> u64 {
         current_block.saturating_sub(self.registered_at_block)
@@ -167,10 +170,11 @@ impl UbiRegistration {
     pub fn days_since_registration(&self, current_block: u64) -> u64 {
         self.blocks_since_registration(current_block) / BLOCKS_PER_DAY
     }
-    
+
     /// Calculate expected total UBI based on blocks since registration
     pub fn expected_total_ubi(&self, current_block: u64) -> u64 {
-        self.days_since_registration(current_block).saturating_mul(self.daily_amount)
+        self.days_since_registration(current_block)
+            .saturating_mul(self.daily_amount)
     }
 
     /// Check if citizen is up to date with UBI payouts

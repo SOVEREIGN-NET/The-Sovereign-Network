@@ -1,14 +1,17 @@
 //! Alert Management and Notification System
-//! 
+//!
 //! Handles alerts, notifications, and incident management for ZHTP node
 
-use anyhow::{Result, Context};
-use serde::{Serialize, Deserialize};
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
-use tokio::sync::{RwLock, mpsc};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::Duration;
-use tracing::{info, error, debug};
+use tracing::{debug, error, info};
 
 use crate::monitoring::metrics::SystemMetrics;
 
@@ -131,10 +134,10 @@ impl Default for AlertConfig {
 pub trait NotificationChannel: Send + Sync {
     /// Send a notification
     async fn send_notification(&self, alert: &Alert) -> Result<()>;
-    
+
     /// Channel name for identification
     fn name(&self) -> &str;
-    
+
     /// Check if channel is enabled
     fn is_enabled(&self) -> bool;
 }
@@ -168,10 +171,15 @@ impl NotificationChannel for ConsoleNotificationChannel {
             .unwrap_or_else(|| chrono::Utc::now())
             .format("%Y-%m-%d %H:%M:%S UTC");
 
-        println!("\n{} SOV ALERT [{}] {}", level_emoji, alert.level_str(), timestamp);
+        println!(
+            "\n{} SOV ALERT [{}] {}",
+            level_emoji,
+            alert.level_str(),
+            timestamp
+        );
         println!("{}: {}", alert.title, alert.message);
         println!("Source: {} | ID: {}", alert.source, alert.id);
-        
+
         if !alert.metadata.is_empty() {
             println!("Metadata:");
             for (key, value) in &alert.metadata {
@@ -211,7 +219,10 @@ pub struct SmtpConfig {
 
 impl EmailNotificationChannel {
     pub fn new(enabled: bool, smtp_config: Option<SmtpConfig>) -> Self {
-        Self { enabled, smtp_config }
+        Self {
+            enabled,
+            smtp_config,
+        }
     }
 }
 
@@ -225,22 +236,33 @@ impl NotificationChannel for EmailNotificationChannel {
         // email sending implementation
         if let Some(config) = &self.smtp_config {
             // Removed unused std::process::Command import
-            
+
             // Create email content
             let subject = format!("ZHTP Alert: {}", alert.title);
-            let body = format!("Alert Details:\nTitle: {}\nLevel: {:?}\nMessage: {}\nTime: {}", 
-                alert.title, alert.level, alert.message, alert.timestamp);
-            
+            let body = format!(
+                "Alert Details:\nTitle: {}\nLevel: {:?}\nMessage: {}\nTime: {}",
+                alert.title, alert.level, alert.message, alert.timestamp
+            );
+
             // Log the email (in production, this would send via SMTP)
-            info!("📧 Email notification prepared for alert: {} - Subject: {} - Recipients: {:?}", 
-                alert.id, subject, config.to_addresses);
-            
+            info!(
+                "📧 Email notification prepared for alert: {} - Subject: {} - Recipients: {:?}",
+                alert.id, subject, config.to_addresses
+            );
+
             // For now, write to a notification log file instead of sending email
-            tokio::fs::write("./zhtp_alert_notifications.log", 
-                format!("Time: {:?}\nSubject: {}\nBody: {}\n\n", 
-                    std::time::SystemTime::now(), subject, body)).await?;
+            tokio::fs::write(
+                "./zhtp_alert_notifications.log",
+                format!(
+                    "Time: {:?}\nSubject: {}\nBody: {}\n\n",
+                    std::time::SystemTime::now(),
+                    subject,
+                    body
+                ),
+            )
+            .await?;
         }
-        
+
         debug!("📧 Email notification processed for alert: {}", alert.id);
         Ok(())
     }
@@ -263,7 +285,11 @@ pub struct WebhookNotificationChannel {
 
 impl WebhookNotificationChannel {
     pub fn new(enabled: bool, webhook_url: String, timeout: Duration) -> Self {
-        Self { enabled, webhook_url, timeout }
+        Self {
+            enabled,
+            webhook_url,
+            timeout,
+        }
     }
 }
 
@@ -289,19 +315,26 @@ impl NotificationChannel for WebhookNotificationChannel {
 
         // Attempt to send webhook with timeout
         let client = reqwest::Client::new();
-        let response = tokio::time::timeout(self.timeout,
-            client.post(&self.webhook_url)
-                .json(&payload)
-                .send()
-        ).await;
+        let response = tokio::time::timeout(
+            self.timeout,
+            client.post(&self.webhook_url).json(&payload).send(),
+        )
+        .await;
 
         match response {
             Ok(Ok(resp)) if resp.status().is_success() => {
-                info!("Webhook notification sent successfully to {} for alert: {}", self.webhook_url, alert.id);
+                info!(
+                    "Webhook notification sent successfully to {} for alert: {}",
+                    self.webhook_url, alert.id
+                );
                 Ok(())
             }
             Ok(Ok(resp)) => {
-                let error_msg = format!("Webhook responded with error status {}: {}", resp.status(), self.webhook_url);
+                let error_msg = format!(
+                    "Webhook responded with error status {}: {}",
+                    resp.status(),
+                    self.webhook_url
+                );
                 error!("{}", error_msg);
                 Err(anyhow::anyhow!(error_msg))
             }
@@ -357,7 +390,7 @@ impl AlertManager {
     /// Create a new alert manager
     pub async fn new() -> Result<Self> {
         let (alert_tx, alert_rx) = mpsc::unbounded_channel();
-        
+
         Ok(Self {
             alerts: Arc::new(RwLock::new(VecDeque::new())),
             alert_rules: Arc::new(RwLock::new(Vec::new())),
@@ -376,55 +409,65 @@ impl AlertManager {
         // Store the custom thresholds for use in monitoring
         // Note: AlertConfig doesn't have threshold fields, so we store them separately
         // In a production system, we'd extend AlertConfig or store thresholds in the manager
-        tracing::info!("Alert manager initialized with custom thresholds: CPU={}, Memory={}, Disk={}", 
-            thresholds.cpu_usage, thresholds.memory_usage, thresholds.disk_usage);
-        
+        tracing::info!(
+            "Alert manager initialized with custom thresholds: CPU={}, Memory={}, Disk={}",
+            thresholds.cpu_usage,
+            thresholds.memory_usage,
+            thresholds.disk_usage
+        );
+
         // Apply thresholds by creating rules with the specified values
-        manager.add_alert_rule(AlertRule {
-            id: "cpu_threshold".to_string(),
-            name: "CPU Usage Monitor".to_string(),
-            condition: AlertCondition::MetricThreshold {
-                metric_name: "cpu_usage".to_string(),
-                operator: ComparisonOperator::GreaterThan,
-                threshold: thresholds.cpu_usage,
-                duration: Duration::from_secs(60), // 1 minute sustained
-            },
-            level: AlertLevel::Warning,
-            enabled: true,
-            cooldown: manager.config.default_cooldown,
-            last_triggered: None,
-        }).await?;
-        
-        manager.add_alert_rule(AlertRule {
-            id: "memory_threshold".to_string(),
-            name: "Memory Usage Monitor".to_string(),
-            condition: AlertCondition::MetricThreshold {
-                metric_name: "memory_usage".to_string(),
-                operator: ComparisonOperator::GreaterThan,
-                threshold: thresholds.memory_usage,
-                duration: Duration::from_secs(60),
-            },
-            level: AlertLevel::Warning,
-            enabled: true,
-            cooldown: manager.config.default_cooldown,
-            last_triggered: None,
-        }).await?;
-        
-        manager.add_alert_rule(AlertRule {
-            id: "disk_threshold".to_string(),
-            name: "Disk Usage Monitor".to_string(),
-            condition: AlertCondition::MetricThreshold {
-                metric_name: "disk_usage".to_string(),
-                operator: ComparisonOperator::GreaterThan,
-                threshold: thresholds.disk_usage,
-                duration: Duration::from_secs(30), // Shorter for critical disk alerts
-            },
-            level: AlertLevel::Critical,
-            enabled: true,
-            cooldown: manager.config.default_cooldown,
-            last_triggered: None,
-        }).await?;
-        
+        manager
+            .add_alert_rule(AlertRule {
+                id: "cpu_threshold".to_string(),
+                name: "CPU Usage Monitor".to_string(),
+                condition: AlertCondition::MetricThreshold {
+                    metric_name: "cpu_usage".to_string(),
+                    operator: ComparisonOperator::GreaterThan,
+                    threshold: thresholds.cpu_usage,
+                    duration: Duration::from_secs(60), // 1 minute sustained
+                },
+                level: AlertLevel::Warning,
+                enabled: true,
+                cooldown: manager.config.default_cooldown,
+                last_triggered: None,
+            })
+            .await?;
+
+        manager
+            .add_alert_rule(AlertRule {
+                id: "memory_threshold".to_string(),
+                name: "Memory Usage Monitor".to_string(),
+                condition: AlertCondition::MetricThreshold {
+                    metric_name: "memory_usage".to_string(),
+                    operator: ComparisonOperator::GreaterThan,
+                    threshold: thresholds.memory_usage,
+                    duration: Duration::from_secs(60),
+                },
+                level: AlertLevel::Warning,
+                enabled: true,
+                cooldown: manager.config.default_cooldown,
+                last_triggered: None,
+            })
+            .await?;
+
+        manager
+            .add_alert_rule(AlertRule {
+                id: "disk_threshold".to_string(),
+                name: "Disk Usage Monitor".to_string(),
+                condition: AlertCondition::MetricThreshold {
+                    metric_name: "disk_usage".to_string(),
+                    operator: ComparisonOperator::GreaterThan,
+                    threshold: thresholds.disk_usage,
+                    duration: Duration::from_secs(30), // Shorter for critical disk alerts
+                },
+                level: AlertLevel::Critical,
+                enabled: true,
+                cooldown: manager.config.default_cooldown,
+                last_triggered: None,
+            })
+            .await?;
+
         Ok(manager)
     }
 
@@ -441,9 +484,13 @@ impl AlertManager {
         self.setup_default_channels().await?;
 
         // Start alert processing loop
-        let alert_rx = self.alert_rx.write().await.take()
+        let alert_rx = self
+            .alert_rx
+            .write()
+            .await
+            .take()
             .ok_or_else(|| anyhow::anyhow!("Alert receiver already taken"))?;
-        
+
         let alerts = self.alerts.clone();
         let channels = self.notification_channels.clone();
         let running = self.running.clone();
@@ -468,14 +515,15 @@ impl AlertManager {
     pub async fn trigger_alert(&self, alert: Alert) -> Result<()> {
         let alert_id = self.alert_counter.fetch_add(1, Ordering::SeqCst);
         let mut enhanced_alert = alert;
-        
+
         // Add alert ID if not provided
         if enhanced_alert.id.is_empty() {
             enhanced_alert.id = format!("alert_{}", alert_id);
         }
 
         // Send alert for processing
-        self.alert_tx.send(enhanced_alert)
+        self.alert_tx
+            .send(enhanced_alert)
             .context("Failed to queue alert")?;
 
         Ok(())
@@ -489,7 +537,10 @@ impl AlertManager {
     }
 
     /// Add a notification channel
-    pub async fn add_notification_channel(&self, channel: Box<dyn NotificationChannel>) -> Result<()> {
+    pub async fn add_notification_channel(
+        &self,
+        channel: Box<dyn NotificationChannel>,
+    ) -> Result<()> {
         let mut channels = self.notification_channels.write().await;
         channels.push(channel);
         Ok(())
@@ -505,7 +556,7 @@ impl AlertManager {
     pub async fn get_alert_stats(&self) -> Result<AlertStats> {
         let alerts = self.alerts.read().await;
         let total_alerts = alerts.len();
-        
+
         let mut stats_by_level = HashMap::new();
         let mut recent_alerts = 0;
         let now = chrono::Utc::now().timestamp() as u64;
@@ -539,7 +590,8 @@ impl AlertManager {
     /// Get alerts by level
     pub async fn get_alerts_by_level(&self, level: AlertLevel) -> Result<Vec<Alert>> {
         let alerts = self.alerts.read().await;
-        Ok(alerts.iter()
+        Ok(alerts
+            .iter()
             .filter(|alert| alert.level == level)
             .cloned()
             .collect())
@@ -569,7 +621,8 @@ impl AlertManager {
         }
 
         // Check memory threshold
-        let memory_percent = (metrics.memory_usage_bytes as f64 / metrics.memory_total_bytes as f64) * 100.0;
+        let memory_percent =
+            (metrics.memory_usage_bytes as f64 / metrics.memory_total_bytes as f64) * 100.0;
         if memory_percent > 85.0 {
             let alert = Alert::new(
                 AlertLevel::Warning,
@@ -586,7 +639,7 @@ impl AlertManager {
     /// Setup default notification channels
     async fn setup_default_channels(&self) -> Result<()> {
         let mut channels = self.notification_channels.write().await;
-        
+
         // Add console channel
         if self.config.enable_console {
             channels.push(Box::new(ConsoleNotificationChannel::new(true)));
@@ -626,7 +679,7 @@ impl AlertManager {
                 {
                     let mut alerts_guard = alerts.write().await;
                     alerts_guard.push_back(alert.clone());
-                    
+
                     // Maintain maximum alert count
                     while alerts_guard.len() > config.max_alerts {
                         alerts_guard.pop_front();
@@ -719,7 +772,7 @@ impl AlertManager {
 
         let mut rules = self.alert_rules.write().await;
         rules.extend(default_rules);
-        
+
         info!("Setup {} default alert rules", rules.len());
         Ok(())
     }
@@ -736,12 +789,7 @@ pub struct AlertStats {
 
 impl Alert {
     /// Create a new alert
-    pub fn new(
-        level: AlertLevel,
-        title: String,
-        message: String,
-        source: String,
-    ) -> Self {
+    pub fn new(level: AlertLevel, title: String, message: String, source: String) -> Self {
         Self {
             id: String::new(), // Will be set by alert manager
             level,

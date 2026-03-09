@@ -3,30 +3,27 @@
 //! Implements proof-of-storage and proof-of-retrieval mechanisms for the DHT.
 //! Integrates with lib-proofs for Merkle tree functionality and lib-crypto for hashing.
 
-use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::types::ContentHash;
+use anyhow::{anyhow, Result};
 use lib_crypto::hashing::hash_blake3;
 use lib_proofs::merkle::tree::{hash_merkle_pair, ZkMerkleTree};
-use crate::types::ContentHash;
+use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-pub mod challenge;
-pub mod verification;
-pub mod manager;
 pub mod attestation;
+pub mod challenge;
+pub mod manager;
 pub mod provider;
+pub mod verification;
 
 // Re-export key types
-pub use challenge::{StorageChallenge, ChallengeType};
-pub use verification::{ProofVerifier, VerificationResult};
-pub use manager::ProofManager;
 pub use attestation::{
-    StorageCapacityAttestation,
-    StorageProofProvider,
-    StorageProofSummary,
-    ChallengeResult,
+    ChallengeResult, StorageCapacityAttestation, StorageProofProvider, StorageProofSummary,
 };
+pub use challenge::{ChallengeType, StorageChallenge};
+pub use manager::ProofManager;
 pub use provider::InMemoryStorageProofProvider;
+pub use verification::{ProofVerifier, VerificationResult};
 
 /// Proof of storage using Merkle tree verification
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,10 +179,8 @@ pub fn generate_storage_proof(
         .map(|block| hash_blake3(block))
         .collect();
 
-    let merkle_tree = ZkMerkleTree::with_leaves(
-        calculate_tree_height(block_hashes.len()),
-        block_hashes,
-    )?;
+    let merkle_tree =
+        ZkMerkleTree::with_leaves(calculate_tree_height(block_hashes.len()), block_hashes)?;
 
     // Generate Merkle proof for the challenged block
     let merkle_path = generate_merkle_path(&merkle_tree, block_index)?;
@@ -283,17 +278,17 @@ fn generate_merkle_path(tree: &ZkMerkleTree, leaf_index: usize) -> Result<Vec<[u
 /// Generate random indices for sampling
 fn generate_random_indices(max: usize, count: usize, seed: u64) -> Vec<usize> {
     use std::collections::HashSet;
-    
+
     let mut indices = HashSet::new();
     let mut rng_state = seed;
-    
+
     while indices.len() < count {
         // Simple LCG random number generator
         rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
         let index = (rng_state as usize) % max;
         indices.insert(index);
     }
-    
+
     let mut result: Vec<usize> = indices.into_iter().collect();
     result.sort_unstable();
     result
@@ -311,19 +306,9 @@ mod tests {
     #[test]
     fn test_storage_proof_creation() {
         let content_hash = content_hash("test_content");
-        let blocks = vec![
-            b"block0".to_vec(),
-            b"block1".to_vec(),
-            b"block2".to_vec(),
-        ];
+        let blocks = vec![b"block0".to_vec(), b"block1".to_vec(), b"block2".to_vec()];
 
-        let proof = generate_storage_proof(
-            content_hash,
-            &blocks,
-            12345,
-            1,
-            "node1".to_string(),
-        );
+        let proof = generate_storage_proof(content_hash, &blocks, 12345, 1, "node1".to_string());
 
         assert!(proof.is_ok());
         let proof = proof.unwrap();
@@ -341,13 +326,7 @@ mod tests {
             b"block3".to_vec(),
         ];
 
-        let proof = generate_retrieval_proof(
-            content_hash,
-            &blocks,
-            2,
-            54321,
-            "node1".to_string(),
-        );
+        let proof = generate_retrieval_proof(content_hash, &blocks, 2, 54321, "node1".to_string());
 
         assert!(proof.is_ok());
         let proof = proof.unwrap();
@@ -371,11 +350,11 @@ mod tests {
     fn test_random_indices_generation() {
         let indices = generate_random_indices(100, 10, 42);
         assert_eq!(indices.len(), 10);
-        
+
         // Check all indices are unique
         let unique_count: std::collections::HashSet<_> = indices.iter().collect();
         assert_eq!(unique_count.len(), 10);
-        
+
         // Check all indices are in range
         for &idx in &indices {
             assert!(idx < 100);

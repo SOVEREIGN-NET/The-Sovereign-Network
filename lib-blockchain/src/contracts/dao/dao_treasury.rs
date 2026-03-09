@@ -97,30 +97,24 @@ pub enum DaoTreasuryError {
 impl std::fmt::Display for DaoTreasuryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DaoTreasuryError::NotInitialized =>
-                write!(f, "DAO Treasury not yet initialized"),
-            DaoTreasuryError::AlreadyInitialized =>
-                write!(f, "DAO Treasury already initialized"),
-            DaoTreasuryError::Unauthorized =>
-                write!(f, "Unauthorized operation"),
-            DaoTreasuryError::InsufficientVotingPower =>
-                write!(f, "Insufficient voting power for proposal"),
-            DaoTreasuryError::ProposalNotFound =>
-                write!(f, "Spending proposal not found"),
-            DaoTreasuryError::InvalidProposalState =>
-                write!(f, "Proposal is not in the correct state"),
-            DaoTreasuryError::TimelockNotExpired =>
-                write!(f, "Timelock has not expired"),
-            DaoTreasuryError::InsufficientBalance =>
-                write!(f, "Insufficient balance for spending"),
-            DaoTreasuryError::ZeroAmount =>
-                write!(f, "Amount cannot be zero"),
-            DaoTreasuryError::Overflow =>
-                write!(f, "Arithmetic overflow"),
-            DaoTreasuryError::InvalidSpendingCategory =>
-                write!(f, "Invalid spending category"),
-            DaoTreasuryError::TreasuryFrozen =>
-                write!(f, "Treasury is frozen - no spending allowed"),
+            DaoTreasuryError::NotInitialized => write!(f, "DAO Treasury not yet initialized"),
+            DaoTreasuryError::AlreadyInitialized => write!(f, "DAO Treasury already initialized"),
+            DaoTreasuryError::Unauthorized => write!(f, "Unauthorized operation"),
+            DaoTreasuryError::InsufficientVotingPower => {
+                write!(f, "Insufficient voting power for proposal")
+            }
+            DaoTreasuryError::ProposalNotFound => write!(f, "Spending proposal not found"),
+            DaoTreasuryError::InvalidProposalState => {
+                write!(f, "Proposal is not in the correct state")
+            }
+            DaoTreasuryError::TimelockNotExpired => write!(f, "Timelock has not expired"),
+            DaoTreasuryError::InsufficientBalance => write!(f, "Insufficient balance for spending"),
+            DaoTreasuryError::ZeroAmount => write!(f, "Amount cannot be zero"),
+            DaoTreasuryError::Overflow => write!(f, "Arithmetic overflow"),
+            DaoTreasuryError::InvalidSpendingCategory => write!(f, "Invalid spending category"),
+            DaoTreasuryError::TreasuryFrozen => {
+                write!(f, "Treasury is frozen - no spending allowed")
+            }
         }
     }
 }
@@ -380,7 +374,11 @@ impl DaoTreasury {
     /// - `NotInitialized` if treasury is not initialized
     /// - `ZeroAmount` if amount is zero
     /// - `Overflow` if balance would exceed u64::MAX
-    pub fn receive_allocation(&mut self, amount: u64, _sender: [u8; 32]) -> Result<(), DaoTreasuryError> {
+    pub fn receive_allocation(
+        &mut self,
+        amount: u64,
+        _sender: [u8; 32],
+    ) -> Result<(), DaoTreasuryError> {
         if !self.initialized {
             return Err(DaoTreasuryError::NotInitialized);
         }
@@ -389,10 +387,14 @@ impl DaoTreasury {
             return Err(DaoTreasuryError::ZeroAmount);
         }
 
-        self.balance = self.balance.checked_add(amount)
+        self.balance = self
+            .balance
+            .checked_add(amount)
             .ok_or(DaoTreasuryError::Overflow)?;
 
-        self.total_received = self.total_received.checked_add(amount)
+        self.total_received = self
+            .total_received
+            .checked_add(amount)
             .ok_or(DaoTreasuryError::Overflow)?;
 
         Ok(())
@@ -447,9 +449,11 @@ impl DaoTreasury {
 
         let proposal_id = self.next_proposal_id;
         let voting_start = self.current_timestamp;
-        let voting_end = voting_start.checked_add(7 * 24 * 60 * 60) // 7 days
+        let voting_end = voting_start
+            .checked_add(7 * 24 * 60 * 60) // 7 days
             .ok_or(DaoTreasuryError::Overflow)?;
-        let execution_time = voting_end.checked_add(DAO_TIMELOCK_SECONDS)
+        let execution_time = voting_end
+            .checked_add(DAO_TIMELOCK_SECONDS)
             .ok_or(DaoTreasuryError::Overflow)?;
 
         let proposal = SpendingProposal {
@@ -471,7 +475,9 @@ impl DaoTreasury {
         };
 
         self.proposals.insert(proposal_id, proposal);
-        self.next_proposal_id = self.next_proposal_id.checked_add(1)
+        self.next_proposal_id = self
+            .next_proposal_id
+            .checked_add(1)
             .ok_or(DaoTreasuryError::Overflow)?;
 
         Ok(proposal_id)
@@ -502,7 +508,9 @@ impl DaoTreasury {
             return Err(DaoTreasuryError::NotInitialized);
         }
 
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or(DaoTreasuryError::ProposalNotFound)?;
 
         if proposal.status != ProposalStatus::Active {
@@ -510,15 +518,20 @@ impl DaoTreasury {
         }
 
         if self.current_timestamp < proposal.voting_start_at
-            || self.current_timestamp >= proposal.voting_end_at {
+            || self.current_timestamp >= proposal.voting_end_at
+        {
             return Err(DaoTreasuryError::InvalidProposalState);
         }
 
         if vote_for {
-            proposal.votes_for = proposal.votes_for.checked_add(voting_power)
+            proposal.votes_for = proposal
+                .votes_for
+                .checked_add(voting_power)
                 .ok_or(DaoTreasuryError::Overflow)?;
         } else {
-            proposal.votes_against = proposal.votes_against.checked_add(voting_power)
+            proposal.votes_against = proposal
+                .votes_against
+                .checked_add(voting_power)
                 .ok_or(DaoTreasuryError::Overflow)?;
         }
 
@@ -541,14 +554,18 @@ impl DaoTreasury {
             return Err(DaoTreasuryError::NotInitialized);
         }
 
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or(DaoTreasuryError::ProposalNotFound)?;
 
         if self.current_timestamp < proposal.voting_end_at {
             return Err(DaoTreasuryError::InvalidProposalState);
         }
 
-        let total_votes = proposal.votes_for.checked_add(proposal.votes_against)
+        let total_votes = proposal
+            .votes_for
+            .checked_add(proposal.votes_against)
             .ok_or(DaoTreasuryError::Overflow)?;
 
         if total_votes == 0 {
@@ -600,7 +617,9 @@ impl DaoTreasury {
             return Err(DaoTreasuryError::TreasuryFrozen);
         }
 
-        let proposal = self.proposals.get_mut(&proposal_id)
+        let proposal = self
+            .proposals
+            .get_mut(&proposal_id)
             .ok_or(DaoTreasuryError::ProposalNotFound)?;
 
         if proposal.status != ProposalStatus::Approved {
@@ -616,10 +635,14 @@ impl DaoTreasury {
         }
 
         // Transfer funds
-        self.balance = self.balance.checked_sub(proposal.amount)
+        self.balance = self
+            .balance
+            .checked_sub(proposal.amount)
             .ok_or(DaoTreasuryError::InsufficientBalance)?;
 
-        self.total_spent = self.total_spent.checked_add(proposal.amount)
+        self.total_spent = self
+            .total_spent
+            .checked_add(proposal.amount)
             .ok_or(DaoTreasuryError::Overflow)?;
 
         // Record spending
@@ -632,8 +655,11 @@ impl DaoTreasury {
             timestamp: self.current_timestamp,
         };
 
-        self.spending_records.insert(self.next_spending_id, spending_record);
-        self.next_spending_id = self.next_spending_id.checked_add(1)
+        self.spending_records
+            .insert(self.next_spending_id, spending_record);
+        self.next_spending_id = self
+            .next_spending_id
+            .checked_add(1)
             .ok_or(DaoTreasuryError::Overflow)?;
 
         // Mark proposal as executed

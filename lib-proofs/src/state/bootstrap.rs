@@ -3,10 +3,10 @@
 //! Provides functionality for generating proofs on-demand when new nodes
 //! join the network, enabling fast bootstrapping without full chain sync.
 
-use crate::state::{AggregatedStateProof, StateCommitment, NetworkStateInfo, NetworkId};
-use crate::state::aggregation::StateProofAggregator;
-use crate::types::{VerificationResult, ZkProof};
 use crate::plonky2::Plonky2Proof;
+use crate::state::aggregation::StateProofAggregator;
+use crate::state::{AggregatedStateProof, NetworkId, NetworkStateInfo, StateCommitment};
+use crate::types::{VerificationResult, ZkProof};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -16,16 +16,16 @@ use std::time::Instant;
 pub struct BootstrapConfig {
     /// Maximum time to spend generating a proof (in seconds)
     pub max_generation_time_secs: u64,
-    
+
     /// Whether to include recent transaction batches
     pub include_recent_batches: bool,
-    
+
     /// Number of recent blocks to include for consensus participation
     pub recent_blocks_count: u32,
-    
+
     /// Cache duration for generated proofs (in seconds)
     pub proof_cache_duration_secs: u64,
-    
+
     /// Maximum number of cached proofs to keep
     pub max_cached_proofs: usize,
 }
@@ -50,26 +50,27 @@ struct ProofCacheEntry {
     generated_at: Instant,
 }
 
-    /// Bootstrap-specific metadata
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct BootstrapMetadata {
-        /// When this bootstrap proof was generated
-        pub generated_at: u64,
-        
-        /// Size estimate of the proof in bytes
-        pub proof_size_bytes: usize,
-        
-        /// Target network this proof is for
-        pub target_network: NetworkId,
-    }/// Network topology information for bootstrapping
+/// Bootstrap-specific metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootstrapMetadata {
+    /// When this bootstrap proof was generated
+    pub generated_at: u64,
+
+    /// Size estimate of the proof in bytes
+    pub proof_size_bytes: usize,
+
+    /// Target network this proof is for
+    pub target_network: NetworkId,
+}
+/// Network topology information for bootstrapping
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkTopology {
     /// Total number of meshes in the network
     pub total_meshes: u32,
-    
+
     /// Network depth (hierarchy levels)
     pub network_depth: u32,
-    
+
     /// Average connectivity (connections per mesh)
     pub avg_connectivity: f32,
 }
@@ -79,19 +80,19 @@ pub struct NetworkTopology {
 pub struct BootstrapProof {
     /// The main aggregated state proof
     pub state_proof: AggregatedStateProof,
-    
+
     /// Genesis state for verification
     pub genesis_state: StateCommitment,
-    
+
     /// Additional checkpoint proofs for verification
     pub checkpoint_proofs: Vec<ZkProof>,
-    
+
     /// Recent blocks for consensus participation
     pub recent_blocks: Vec<u64>,
-    
+
     /// Network topology information
     pub mesh_topology: NetworkTopology,
-    
+
     /// Bootstrap-specific metadata
     pub bootstrap_metadata: BootstrapMetadata,
 }
@@ -112,12 +113,12 @@ impl BootstrapProofGenerator {
             proof_cache: Vec::new(),
         }
     }
-    
+
     /// Create with default configuration
     pub fn new_default() -> Self {
         Self::new(BootstrapConfig::default())
     }
-    
+
     /// Generate bootstrap proof for a target network
     pub async fn generate_bootstrap_proof(
         &mut self,
@@ -129,25 +130,27 @@ impl BootstrapProofGenerator {
         if let Some(cached_proof) = self.get_cached_proof(target_network_id) {
             return Ok(cached_proof);
         }
-        
+
         let start_time = Instant::now();
-        
+
         // Generate new proof
-        let proof = self.generate_proof_internal(target_network_id, current_state, genesis_state).await?;
-        
+        let proof = self
+            .generate_proof_internal(target_network_id, current_state, genesis_state)
+            .await?;
+
         // Cache the generated proof
         self.cache_proof(proof.clone(), target_network_id);
-        
+
         let generation_time = start_time.elapsed();
         tracing::info!(
             "Generated bootstrap proof for network {:?} in {:?}",
             &target_network_id[..8],
             generation_time
         );
-        
+
         Ok(proof)
     }
-    
+
     /// Generate bootstrap proof for the current network (simple case)
     pub async fn generate_local_bootstrap_proof(
         &mut self,
@@ -156,7 +159,7 @@ impl BootstrapProofGenerator {
         genesis_state: StateCommitment,
     ) -> Result<BootstrapProof> {
         let network_id = network_state.network_id;
-        
+
         // Create a simple aggregated proof for this mesh
         let state_proof = AggregatedStateProof {
             state: current_state.clone(),
@@ -180,15 +183,14 @@ impl BootstrapProofGenerator {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-
         };
-        
+
         let topology = NetworkTopology {
             total_meshes: 1,
             network_depth: 0,
             avg_connectivity: 0.0,
         };
-        
+
         let metadata = BootstrapMetadata {
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -197,7 +199,7 @@ impl BootstrapProofGenerator {
             proof_size_bytes: 1024,
             target_network: network_id,
         };
-        
+
         Ok(BootstrapProof {
             state_proof,
             genesis_state,
@@ -207,7 +209,7 @@ impl BootstrapProofGenerator {
             bootstrap_metadata: metadata,
         })
     }
-    
+
     /// Internal proof generation logic
     async fn generate_proof_internal(
         &mut self,
@@ -223,17 +225,18 @@ impl BootstrapProofGenerator {
         };
 
         // Use the aggregator to create a proper single network proof
-        let state_proof = self.aggregator.create_single_network_proof(
-            current_state.clone(),
-            network_state,
-        ).await.map_err(|e| anyhow::anyhow!("Failed to create single network proof: {}", e))?;
-        
+        let state_proof = self
+            .aggregator
+            .create_single_network_proof(current_state.clone(), network_state)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create single network proof: {}", e))?;
+
         let topology = NetworkTopology {
             total_meshes: 1,
             network_depth: 1,
             avg_connectivity: 0.0,
         };
-        
+
         let metadata = BootstrapMetadata {
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -242,7 +245,7 @@ impl BootstrapProofGenerator {
             proof_size_bytes: 2048,
             target_network: target_network_id,
         };
-        
+
         Ok(BootstrapProof {
             state_proof,
             genesis_state,
@@ -252,31 +255,31 @@ impl BootstrapProofGenerator {
             bootstrap_metadata: metadata,
         })
     }
-    
+
     /// Check if we have a cached proof for the given network
     fn get_cached_proof(&mut self, network_id: NetworkId) -> Option<BootstrapProof> {
         let now = Instant::now();
         self.proof_cache.retain(|entry| {
             now.duration_since(entry.generated_at).as_secs() < self.config.proof_cache_duration_secs
         });
-        
+
         self.proof_cache
             .iter()
             .find(|entry| entry.network_id == network_id)
             .map(|entry| entry.proof.clone())
     }
-    
+
     /// Cache a newly generated proof
     fn cache_proof(&mut self, proof: BootstrapProof, network_id: NetworkId) {
         if self.proof_cache.len() >= self.config.max_cached_proofs {
             self.proof_cache.remove(0);
         }
-        
+
         let now = Instant::now();
         self.proof_cache.retain(|entry| {
             now.duration_since(entry.generated_at).as_secs() < self.config.proof_cache_duration_secs
         });
-        
+
         self.proof_cache.push(ProofCacheEntry {
             network_id,
             proof,
@@ -294,22 +297,22 @@ impl BootstrapProof {
             public_inputs: vec![],
         })
     }
-    
+
     /// Get the estimated size of this bootstrap proof in bytes
     pub fn size_bytes(&self) -> usize {
-        std::mem::size_of::<BootstrapProof>() + 
-        self.state_proof.plonky2_proof.proof.len() +
-        self.checkpoint_proofs.len() * 256 +
-        self.recent_blocks.len() * 8
+        std::mem::size_of::<BootstrapProof>()
+            + self.state_proof.plonky2_proof.proof.len()
+            + self.checkpoint_proofs.len() * 256
+            + self.recent_blocks.len() * 8
     }
-    
+
     /// Check if this bootstrap proof is still valid (not expired)
     pub fn is_valid_for_bootstrap(&self) -> bool {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let max_age = 3600;
         current_time.saturating_sub(self.bootstrap_metadata.generated_at) < max_age
     }

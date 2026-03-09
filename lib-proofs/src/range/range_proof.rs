@@ -1,12 +1,12 @@
 //! Zero-knowledge range proof implementation for unified ZK system
-//! 
+//!
 //! Zero-knowledge range proofs that allow proving a committed value lies within
 //! a specified range without revealing the exact value, using unified Plonky2 backend.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use lib_crypto::hashing::hash_blake3;
 use crate::types::zk_proof::ZkProof;
+use anyhow::Result;
+use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
 
 /// Zero-knowledge range proof using unified Plonky2 system
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,9 +23,19 @@ pub struct ZkRangeProof {
 
 impl ZkRangeProof {
     /// Generate a range proof for a value using unified ZK system
-    pub fn generate(value: u64, min_value: u64, max_value: u64, blinding: [u8; 32]) -> Result<Self> {
+    pub fn generate(
+        value: u64,
+        min_value: u64,
+        max_value: u64,
+        blinding: [u8; 32],
+    ) -> Result<Self> {
         if value < min_value || value > max_value {
-            return Err(anyhow::anyhow!("Value out of range: {} not in [{}, {}]", value, min_value, max_value));
+            return Err(anyhow::anyhow!(
+                "Value out of range: {} not in [{}, {}]",
+                value,
+                min_value,
+                max_value
+            ));
         }
 
         // Generate commitment to the value
@@ -33,8 +43,16 @@ impl ZkRangeProof {
 
         // Use Plonky2 range proof system (not transaction proof system)
         let zk_system = crate::plonky2::ZkProofSystem::new()?;
-        let blinding_u64 = u64::from_le_bytes([blinding[0], blinding[1], blinding[2], blinding[3],
-                                                blinding[4], blinding[5], blinding[6], blinding[7]]);
+        let blinding_u64 = u64::from_le_bytes([
+            blinding[0],
+            blinding[1],
+            blinding[2],
+            blinding[3],
+            blinding[4],
+            blinding[5],
+            blinding[6],
+            blinding[7],
+        ]);
         let plonky2_proof = zk_system.prove_range(value, blinding_u64, min_value, max_value)?;
         let proof = ZkProof::from_plonky2(plonky2_proof);
 
@@ -51,7 +69,7 @@ impl ZkRangeProof {
         use lib_crypto::random::SecureRng;
         let mut rng = SecureRng::new();
         let blinding = rng.generate_key_material();
-        
+
         Self::generate(value, min_value, max_value, blinding)
     }
 
@@ -130,7 +148,7 @@ impl RangeProofParams {
         } else {
             (1u64 << bits) - 1
         };
-        
+
         // Standard Bulletproof sizes
         let proof_size = match bits {
             1..=8 => 320,
@@ -148,10 +166,18 @@ impl RangeProofParams {
     }
 
     /// Get parameters for common ranges
-    pub fn for_u8() -> Self { Self::for_bits(8) }
-    pub fn for_u16() -> Self { Self::for_bits(16) }
-    pub fn for_u32() -> Self { Self::for_bits(32) }
-    pub fn for_u64() -> Self { Self::for_bits(64) }
+    pub fn for_u8() -> Self {
+        Self::for_bits(8)
+    }
+    pub fn for_u16() -> Self {
+        Self::for_bits(16)
+    }
+    pub fn for_u32() -> Self {
+        Self::for_bits(32)
+    }
+    pub fn for_u64() -> Self {
+        Self::for_bits(64)
+    }
 }
 
 /// Batch range proof for multiple values
@@ -225,9 +251,9 @@ mod tests {
     fn test_generate_valid_range_proof() {
         let value = 100u64;
         let blinding = [1u8; 32];
-        
+
         let proof = ZkRangeProof::generate(value, 0, 1000, blinding).unwrap();
-        
+
         assert_eq!(proof.min_value, 0);
         assert_eq!(proof.max_value, 1000);
         assert_eq!(proof.range_size(), 1001);
@@ -238,7 +264,7 @@ mod tests {
     fn test_generate_out_of_range() {
         let value = 1500u64;
         let blinding = [1u8; 32];
-        
+
         let result = ZkRangeProof::generate(value, 0, 1000, blinding);
         assert!(result.is_err());
     }
@@ -247,7 +273,7 @@ mod tests {
     fn test_generate_simple() {
         let value = 50u64;
         let proof = ZkRangeProof::generate_simple(value, 0, 100).unwrap();
-        
+
         assert_eq!(proof.min_value, 0);
         assert_eq!(proof.max_value, 100);
     }
@@ -256,9 +282,9 @@ mod tests {
     fn test_generate_positive() {
         let value = 42u64;
         let blinding = [2u8; 32];
-        
+
         let proof = ZkRangeProof::generate_positive(value, blinding).unwrap();
-        
+
         assert_eq!(proof.min_value, 1);
         assert_eq!(proof.max_value, (1u64 << 63) - 1);
     }
@@ -267,9 +293,9 @@ mod tests {
     fn test_generate_bounded_pow2() {
         let value = 15u64; // Fits in 4 bits
         let blinding = [3u8; 32];
-        
+
         let proof = ZkRangeProof::generate_bounded_pow2(value, 4, blinding).unwrap();
-        
+
         assert_eq!(proof.min_value, 0);
         assert_eq!(proof.max_value, 15); // 2^4 - 1
         assert!(proof.is_power_of_2_range());
@@ -290,9 +316,9 @@ mod tests {
     fn test_batch_range_proof() {
         let values = vec![10u64, 20u64, 30u64];
         let blindings = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
-        
+
         let batch_proof = BatchRangeProof::generate(values, 0, 100, blindings).unwrap();
-        
+
         assert_eq!(batch_proof.batch_size(), 3);
         assert_eq!(batch_proof.min_value, 0);
         assert_eq!(batch_proof.max_value, 100);
@@ -304,7 +330,7 @@ mod tests {
     fn test_batch_proof_validation() {
         let values = vec![150u64]; // Out of range
         let blindings = vec![[1u8; 32]];
-        
+
         let result = BatchRangeProof::generate(values, 0, 100, blindings);
         assert!(result.is_err());
     }
@@ -313,7 +339,7 @@ mod tests {
     fn test_empty_batch_proof() {
         let values = vec![];
         let blindings = vec![];
-        
+
         let result = BatchRangeProof::generate(values, 0, 100, blindings);
         assert!(result.is_err());
     }
@@ -321,7 +347,7 @@ mod tests {
     #[test]
     fn test_range_properties() {
         let proof = ZkRangeProof::generate_simple(10, 0, 15).unwrap();
-        
+
         assert_eq!(proof.range_size(), 16);
         assert!(proof.is_power_of_2_range());
         assert_eq!(proof.range_bits(), 4);

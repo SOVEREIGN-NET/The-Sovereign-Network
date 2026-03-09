@@ -1,8 +1,10 @@
 //! DAO Phase Transition tests (dao-3)
 
-use lib_blockchain::Blockchain;
-use lib_blockchain::dao::{GovernancePhase, PhaseTransitionConfig, CouncilBootstrapConfig, CouncilBootstrapEntry};
 use anyhow::Result;
+use lib_blockchain::dao::{
+    CouncilBootstrapConfig, CouncilBootstrapEntry, GovernancePhase, PhaseTransitionConfig,
+};
+use lib_blockchain::Blockchain;
 
 fn two_member_council() -> CouncilBootstrapConfig {
     CouncilBootstrapConfig {
@@ -62,7 +64,10 @@ fn test_phase0_to_phase1_time_window_trigger() {
     // Set a small duration so it triggers immediately at height 0
     bc.phase_transition_config.phase0_max_duration_blocks = Some(0);
 
-    assert!(bc.check_phase0_to_phase1(), "condition C: time window at height 0 >= 0");
+    assert!(
+        bc.check_phase0_to_phase1(),
+        "condition C: time window at height 0 >= 0"
+    );
 }
 
 #[test]
@@ -101,7 +106,11 @@ fn test_try_advance_phase_hybrid_to_fullDao_requires_all_conditions() {
     // Default Phase 2 requires 50_000 citizens + low concentration + 3 quorum cycles.
     // None of these are met at genesis, so it should NOT advance.
     bc.try_advance_governance_phase();
-    assert_eq!(bc.governance_phase, GovernancePhase::Hybrid, "should stay Hybrid");
+    assert_eq!(
+        bc.governance_phase,
+        GovernancePhase::Hybrid,
+        "should stay Hybrid"
+    );
 }
 
 #[test]
@@ -145,7 +154,9 @@ fn test_decentralization_snapshot_persists() -> Result<()> {
     bc.save_to_file(tmp.path())?;
     let loaded = Blockchain::load_from_file(tmp.path())?;
 
-    let saved = loaded.last_decentralization_snapshot.expect("snapshot should persist");
+    let saved = loaded
+        .last_decentralization_snapshot
+        .expect("snapshot should persist");
     assert_eq!(saved.snapshot_height, snap.snapshot_height);
     Ok(())
 }

@@ -1,7 +1,9 @@
 //! Integration tests for the main consensus engine
 
 use anyhow::Result;
-use lib_consensus::{ConsensusConfig, ConsensusEngine, ConsensusError, ConsensusType, NoOpBroadcaster};
+use lib_consensus::{
+    ConsensusConfig, ConsensusEngine, ConsensusError, ConsensusType, NoOpBroadcaster,
+};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::sync::Arc;
@@ -397,7 +399,12 @@ async fn test_maximum_validator_limit() -> Result<()> {
                 i == 1,
             )
             .await;
-        assert!(result.is_ok(), "Expected validator {} registration to succeed: {:?}", i, result);
+        assert!(
+            result.is_ok(),
+            "Expected validator {} registration to succeed: {:?}",
+            i,
+            result
+        );
     }
 
     // Try to register one more (should fail — max limit reached)

@@ -1,19 +1,19 @@
 //! Web4 Content Publishing System
-//! 
+//!
 //! Provides content publishing capabilities for registered Web4 domains,
 //! with domain ownership verification and DHT integration.
 
+use crate::storage_stub::UnifiedStorage;
 use anyhow::{anyhow, Result};
+use lib_identity::ZhtpIdentity;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
-use lib_identity::ZhtpIdentity;
-use crate::storage_stub::UnifiedStorage;
 
-use crate::dht::ZkDHTIntegration;
-use super::types::*;
 use super::domain_registry::DomainRegistry;
+use super::types::*;
+use crate::dht::ZkDHTIntegration;
 
 /// Web4 content publisher
 pub struct ContentPublisher {
@@ -57,7 +57,11 @@ impl ContentPublisher {
     }
 
     /// Create new content publisher with optional DHT client
-    pub fn new_with_dht(domain_registry: Arc<DomainRegistry>, storage: Arc<dyn UnifiedStorage>, dht_client: Option<ZkDHTIntegration>) -> Self {
+    pub fn new_with_dht(
+        domain_registry: Arc<DomainRegistry>,
+        storage: Arc<dyn UnifiedStorage>,
+        dht_client: Option<ZkDHTIntegration>,
+    ) -> Self {
         Self {
             domain_registry,
             dht_client: Arc::new(RwLock::new(dht_client)),
@@ -67,7 +71,10 @@ impl ContentPublisher {
     }
 
     /// Publish content to Web4 domain
-    pub async fn publish_content(&self, request: ContentPublishRequest) -> Result<ContentPublishResponse> {
+    pub async fn publish_content(
+        &self,
+        request: ContentPublishRequest,
+    ) -> Result<ContentPublishResponse> {
         info!("Publishing content to {}{}", request.domain, request.path);
 
         // Verify domain ownership
@@ -84,11 +91,14 @@ impl ContentPublisher {
         }
 
         let domain_record = domain_info.record.unwrap();
-        
+
         // Verify publisher is domain owner
         if domain_record.owner != request.publisher.id {
             // Also check if ownership proof is valid (allows delegation)
-            if !self.verify_publishing_authorization(&request, &domain_record).await? {
+            if !self
+                .verify_publishing_authorization(&request, &domain_record)
+                .await?
+            {
                 return Ok(ContentPublishResponse {
                     success: false,
                     content_hash: String::new(),
@@ -111,7 +121,13 @@ impl ContentPublisher {
                 drop(dht_client_guard);
                 let mut dht_client_mut = self.dht_client.write().await;
                 if let Some(dht) = dht_client_mut.as_mut() {
-                    dht.store_content(&request.domain, &request.path, request.content.clone(), 86400).await?;
+                    dht.store_content(
+                        &request.domain,
+                        &request.path,
+                        request.content.clone(),
+                        86400,
+                    )
+                    .await?;
                     // Return content hash after storing
                     let hash = lib_crypto::hash_blake3(&request.content);
                     hex::encode(hash)
@@ -134,7 +150,8 @@ impl ContentPublisher {
         let zhtp_url = format!("zhtp://{}{}", request.domain, request.path);
 
         // Update domain content mappings
-        self.update_domain_content_mapping(&request.domain, &request.path, &content_hash).await?;
+        self.update_domain_content_mapping(&request.domain, &request.path, &content_hash)
+            .await?;
 
         // Update statistics
         self.update_publishing_stats(&request, storage_fees).await?;
@@ -143,7 +160,10 @@ impl ContentPublisher {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
-        info!(" Content published successfully: {} -> {}", zhtp_url, content_hash);
+        info!(
+            " Content published successfully: {} -> {}",
+            zhtp_url, content_hash
+        );
 
         Ok(ContentPublishResponse {
             success: true,
@@ -156,12 +176,15 @@ impl ContentPublisher {
     }
 
     /// Update existing content
-    pub async fn update_content(&self, request: ContentPublishRequest) -> Result<ContentPublishResponse> {
+    pub async fn update_content(
+        &self,
+        request: ContentPublishRequest,
+    ) -> Result<ContentPublishResponse> {
         info!(" Updating content at {}{}", request.domain, request.path);
 
         // Reuse publish logic but add versioning info
         let response = self.publish_content(request).await?;
-        
+
         if response.success {
             // Update metadata to indicate this is an update
             info!("Content updated successfully at {}", response.zhtp_url);
@@ -186,7 +209,7 @@ impl ContentPublisher {
         }
 
         let domain_record = domain_info.record.unwrap();
-        
+
         // Verify requester is domain owner
         if domain_record.owner != requester.id {
             return Err(anyhow!("Not authorized to delete content from this domain"));
@@ -199,7 +222,7 @@ impl ContentPublisher {
         {
             let mut stats = self.stats.write().await;
             stats.total_published = stats.total_published.saturating_sub(1);
-            
+
             if let Some(count) = stats.content_by_domain.get_mut(domain) {
                 *count = count.saturating_sub(1);
             }
@@ -217,7 +240,7 @@ impl ContentPublisher {
     ) -> Result<Option<ContentMetadata>> {
         // Look up domain to get content mappings
         let domain_info = self.domain_registry.lookup_domain(domain).await?;
-        
+
         if !domain_info.found {
             return Ok(None);
         }
@@ -243,7 +266,7 @@ impl ContentPublisher {
     /// List all content for a domain
     pub async fn list_domain_content(&self, domain: &str) -> Result<HashMap<String, String>> {
         let domain_info = self.domain_registry.lookup_domain(domain).await?;
-        
+
         if domain_info.found {
             Ok(domain_info.content_mappings)
         } else {
@@ -260,7 +283,8 @@ impl ContentPublisher {
     /// Validate content before publishing
     async fn validate_content(&self, request: &ContentPublishRequest) -> Result<()> {
         // Check content size limits
-        if request.content.len() > 10 * 1024 * 1024 { // 10MB limit
+        if request.content.len() > 10 * 1024 * 1024 {
+            // 10MB limit
             return Err(anyhow!("Content exceeds 10MB limit"));
         }
 
@@ -285,18 +309,18 @@ impl ContentPublisher {
     ) -> Result<bool> {
         // In production, this would verify ZK proofs for delegated publishing
         // For now, just verify the ownership proof is valid format
-        Ok(!request.ownership_proof.proof_data.is_empty() &&
-           !request.ownership_proof.verification_key.is_empty())
+        Ok(!request.ownership_proof.proof_data.is_empty()
+            && !request.ownership_proof.verification_key.is_empty())
     }
 
     /// Calculate storage fees
     async fn calculate_storage_fees(&self, request: &ContentPublishRequest) -> Result<f64> {
         let base_fee = 0.1; // 0.1 SOV base fee
         let per_kb_fee = 0.001; // 0.001 SOV per KB
-        
+
         let size_kb = (request.content.len() as f64) / 1024.0;
         let size_fee = size_kb * per_kb_fee;
-        
+
         Ok(base_fee + size_fee)
     }
 
@@ -309,7 +333,10 @@ impl ContentPublisher {
     ) -> Result<()> {
         // This would update the domain record's content mappings
         // For now, we'll rely on the DHT to handle the mapping
-        info!("Content mapping updated: {}{} -> {}", domain, path, content_hash);
+        info!(
+            "Content mapping updated: {}{} -> {}",
+            domain, path, content_hash
+        );
         Ok(())
     }
 
@@ -320,17 +347,23 @@ impl ContentPublisher {
         storage_fees: f64,
     ) -> Result<()> {
         let mut stats = self.stats.write().await;
-        
+
         stats.total_published += 1;
         stats.storage_bytes += request.content.len() as u64;
         stats.publishing_fees += storage_fees;
-        
+
         // Update domain stats
-        *stats.content_by_domain.entry(request.domain.clone()).or_insert(0) += 1;
-        
+        *stats
+            .content_by_domain
+            .entry(request.domain.clone())
+            .or_insert(0) += 1;
+
         // Update content type stats
-        *stats.content_by_type.entry(request.content_type.clone()).or_insert(0) += 1;
-        
+        *stats
+            .content_by_type
+            .entry(request.content_type.clone())
+            .or_insert(0) += 1;
+
         Ok(())
     }
 }

@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use lib_blockchain::block::{Block, BlockHeader};
-use lib_blockchain::execution::{BlockExecutor, ExecutorConfig, BlockApplyError};
-use lib_blockchain::protocol::{ProtocolParams, fee_model};
+use lib_blockchain::execution::{BlockApplyError, BlockExecutor, ExecutorConfig};
+use lib_blockchain::protocol::{fee_model, ProtocolParams};
 use lib_blockchain::storage::{BlockchainStore, SledStore};
 use lib_blockchain::sync::ChainSync;
 use lib_blockchain::types::{Difficulty, Hash};
@@ -26,7 +26,10 @@ fn create_test_store() -> (TempDir, Arc<dyn BlockchainStore>) {
     (dir, store)
 }
 
-fn create_executor_with_activation(store: Arc<dyn BlockchainStore>, activation_height: u64) -> BlockExecutor {
+fn create_executor_with_activation(
+    store: Arc<dyn BlockchainStore>,
+    activation_height: u64,
+) -> BlockExecutor {
     let protocol_params = ProtocolParams::new_with_v2_activation(activation_height);
     let mut config = ExecutorConfig::default();
     config.protocol_params = protocol_params;
@@ -93,13 +96,17 @@ fn test_v1_accepted_before_activation() {
 
     // Genesis with v1
     let genesis = create_genesis_block(fee_model::VERSION_1);
-    executor.apply_block(&genesis).expect("Genesis should be accepted");
+    executor
+        .apply_block(&genesis)
+        .expect("Genesis should be accepted");
 
     // Build chain up to H-1 (height 4) with v1
     let mut prev_hash = genesis.hash();
     for h in 1..activation_height {
         let block = create_block_at_height(h, prev_hash, fee_model::VERSION_1);
-        executor.apply_block(&block).expect(&format!("Block at height {} with v1 should be accepted", h));
+        executor
+            .apply_block(&block)
+            .expect(&format!("Block at height {} with v1 should be accepted", h));
         prev_hash = block.hash();
     }
 
@@ -116,13 +123,17 @@ fn test_v2_rejected_before_activation() {
 
     // Genesis with v1 (correct for height 0 before activation)
     let genesis = create_genesis_block(fee_model::VERSION_1);
-    executor.apply_block(&genesis).expect("Genesis should be accepted");
+    executor
+        .apply_block(&genesis)
+        .expect("Genesis should be accepted");
 
     // Build chain up to H-2 with v1
     let mut prev_hash = genesis.hash();
     for h in 1..(activation_height - 1) {
         let block = create_block_at_height(h, prev_hash, fee_model::VERSION_1);
-        executor.apply_block(&block).expect(&format!("Block at height {} with v1 should be accepted", h));
+        executor
+            .apply_block(&block)
+            .expect(&format!("Block at height {} with v1 should be accepted", h));
         prev_hash = block.hash();
     }
 
@@ -133,7 +144,11 @@ fn test_v2_rejected_before_activation() {
 
     assert!(result.is_err(), "Block at H-1 with v2 should be rejected");
     match result {
-        Err(BlockApplyError::InvalidFeeModelVersion { height, actual, expected }) => {
+        Err(BlockApplyError::InvalidFeeModelVersion {
+            height,
+            actual,
+            expected,
+        }) => {
             assert_eq!(height, h_minus_1);
             assert_eq!(actual, fee_model::VERSION_2);
             assert_eq!(expected, fee_model::VERSION_1);
@@ -151,19 +166,25 @@ fn test_v2_accepted_at_activation() {
 
     // Genesis with v1
     let genesis = create_genesis_block(fee_model::VERSION_1);
-    executor.apply_block(&genesis).expect("Genesis should be accepted");
+    executor
+        .apply_block(&genesis)
+        .expect("Genesis should be accepted");
 
     // Build chain up to H-1 with v1
     let mut prev_hash = genesis.hash();
     for h in 1..activation_height {
         let block = create_block_at_height(h, prev_hash, fee_model::VERSION_1);
-        executor.apply_block(&block).expect(&format!("Block at height {} with v1 should be accepted", h));
+        executor
+            .apply_block(&block)
+            .expect(&format!("Block at height {} with v1 should be accepted", h));
         prev_hash = block.hash();
     }
 
     // Apply block at H with v2 (should be accepted)
     let block_at_h = create_block_at_height(activation_height, prev_hash, fee_model::VERSION_2);
-    executor.apply_block(&block_at_h).expect("Block at H with v2 should be accepted");
+    executor
+        .apply_block(&block_at_h)
+        .expect("Block at H with v2 should be accepted");
 
     // Verify chain height
     assert_eq!(store.latest_height().unwrap(), activation_height);
@@ -178,13 +199,17 @@ fn test_v1_rejected_at_activation() {
 
     // Genesis with v1
     let genesis = create_genesis_block(fee_model::VERSION_1);
-    executor.apply_block(&genesis).expect("Genesis should be accepted");
+    executor
+        .apply_block(&genesis)
+        .expect("Genesis should be accepted");
 
     // Build chain up to H-1 with v1
     let mut prev_hash = genesis.hash();
     for h in 1..activation_height {
         let block = create_block_at_height(h, prev_hash, fee_model::VERSION_1);
-        executor.apply_block(&block).expect(&format!("Block at height {} with v1 should be accepted", h));
+        executor
+            .apply_block(&block)
+            .expect(&format!("Block at height {} with v1 should be accepted", h));
         prev_hash = block.hash();
     }
 
@@ -194,7 +219,11 @@ fn test_v1_rejected_at_activation() {
 
     assert!(result.is_err(), "Block at H with v1 should be rejected");
     match result {
-        Err(BlockApplyError::InvalidFeeModelVersion { height, actual, expected }) => {
+        Err(BlockApplyError::InvalidFeeModelVersion {
+            height,
+            actual,
+            expected,
+        }) => {
             assert_eq!(height, activation_height);
             assert_eq!(actual, fee_model::VERSION_1);
             assert_eq!(expected, fee_model::VERSION_2);
@@ -212,7 +241,9 @@ fn test_v2_accepted_after_activation() {
 
     // Genesis with v1
     let genesis = create_genesis_block(fee_model::VERSION_1);
-    executor.apply_block(&genesis).expect("Genesis should be accepted");
+    executor
+        .apply_block(&genesis)
+        .expect("Genesis should be accepted");
 
     // Build chain through activation
     let mut prev_hash = genesis.hash();
@@ -225,7 +256,9 @@ fn test_v2_accepted_after_activation() {
     // Apply blocks after activation with v2
     for h in activation_height..activation_height + 3 {
         let block = create_block_at_height(h, prev_hash, fee_model::VERSION_2);
-        executor.apply_block(&block).expect(&format!("Block at height {} with v2 should be accepted", h));
+        executor
+            .apply_block(&block)
+            .expect(&format!("Block at height {} with v2 should be accepted", h));
         prev_hash = block.hash();
     }
 
@@ -241,7 +274,9 @@ fn test_v1_rejected_after_activation() {
 
     // Genesis with v1
     let genesis = create_genesis_block(fee_model::VERSION_1);
-    executor.apply_block(&genesis).expect("Genesis should be accepted");
+    executor
+        .apply_block(&genesis)
+        .expect("Genesis should be accepted");
 
     // Build chain through activation
     let mut prev_hash = genesis.hash();
@@ -263,7 +298,11 @@ fn test_v1_rejected_after_activation() {
 
     assert!(result.is_err(), "Block after H with v1 should be rejected");
     match result {
-        Err(BlockApplyError::InvalidFeeModelVersion { height, actual, expected }) => {
+        Err(BlockApplyError::InvalidFeeModelVersion {
+            height,
+            actual,
+            expected,
+        }) => {
             assert_eq!(height, after_h);
             assert_eq!(actual, fee_model::VERSION_1);
             assert_eq!(expected, fee_model::VERSION_2);
@@ -311,7 +350,9 @@ fn test_chain_import_validates_v1_before_activation() {
     let protocol_params = ProtocolParams::new_with_v2_activation(activation_height);
     let dest_sync = ChainSync::with_protocol_params(dest_store.clone(), protocol_params);
 
-    dest_sync.import_blocks(blocks).expect("Import should succeed with correct versions");
+    dest_sync
+        .import_blocks(blocks)
+        .expect("Import should succeed with correct versions");
     assert_eq!(dest_store.latest_height().unwrap(), activation_height - 1);
 }
 
@@ -335,7 +376,10 @@ fn test_chain_import_rejects_v2_before_activation() {
     let dest_sync = ChainSync::with_protocol_params(dest_store.clone(), protocol_params);
 
     let result = dest_sync.import_blocks(blocks);
-    assert!(result.is_err(), "Import should fail with wrong version at H-1");
+    assert!(
+        result.is_err(),
+        "Import should fail with wrong version at H-1"
+    );
 }
 
 /// Test: Chain import validates v2 at H accepted
@@ -357,7 +401,9 @@ fn test_chain_import_validates_v2_at_activation() {
     let protocol_params = ProtocolParams::new_with_v2_activation(activation_height);
     let dest_sync = ChainSync::with_protocol_params(dest_store.clone(), protocol_params);
 
-    dest_sync.import_blocks(blocks).expect("Import should succeed");
+    dest_sync
+        .import_blocks(blocks)
+        .expect("Import should succeed");
     assert_eq!(dest_store.latest_height().unwrap(), activation_height);
 }
 
@@ -379,7 +425,10 @@ fn test_chain_import_rejects_v1_at_activation() {
     let dest_sync = ChainSync::with_protocol_params(dest_store.clone(), protocol_params);
 
     let result = dest_sync.import_blocks(blocks);
-    assert!(result.is_err(), "Import should fail with wrong version at H");
+    assert!(
+        result.is_err(),
+        "Import should fail with wrong version at H"
+    );
 }
 
 // =============================================================================
@@ -394,7 +443,9 @@ fn test_v2_from_genesis() {
 
     // Genesis must be v2
     let genesis_v2 = create_genesis_block(fee_model::VERSION_2);
-    executor.apply_block(&genesis_v2).expect("Genesis with v2 should be accepted");
+    executor
+        .apply_block(&genesis_v2)
+        .expect("Genesis with v2 should be accepted");
 
     // Genesis with v1 should be rejected
     let (_dir2, store2) = create_test_store();
@@ -402,7 +453,10 @@ fn test_v2_from_genesis() {
 
     let genesis_v1 = create_genesis_block(fee_model::VERSION_1);
     let result = executor2.apply_block(&genesis_v1);
-    assert!(result.is_err(), "Genesis with v1 should be rejected when activation is at height 0");
+    assert!(
+        result.is_err(),
+        "Genesis with v1 should be rejected when activation is at height 0"
+    );
 }
 
 /// Test: ProtocolParams deterministically computes version
@@ -416,7 +470,8 @@ fn test_protocol_params_deterministic() {
         assert_eq!(
             params1.active_fee_model_version(h),
             params2.active_fee_model_version(h),
-            "Version should be deterministic at height {}", h
+            "Version should be deterministic at height {}",
+            h
         );
     }
 
@@ -433,6 +488,12 @@ fn test_different_activation_heights() {
     let params_late = ProtocolParams::new_with_v2_activation(100);
 
     // At height 75: early has v2, late has v1
-    assert_eq!(params_early.active_fee_model_version(75), fee_model::VERSION_2);
-    assert_eq!(params_late.active_fee_model_version(75), fee_model::VERSION_1);
+    assert_eq!(
+        params_early.active_fee_model_version(75),
+        fee_model::VERSION_2
+    );
+    assert_eq!(
+        params_late.active_fee_model_version(75),
+        fee_model::VERSION_1
+    );
 }

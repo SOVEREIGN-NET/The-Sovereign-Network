@@ -1,8 +1,8 @@
 //! DAO Bootstrap Council tests (dao-1)
 
-use lib_blockchain::Blockchain;
-use lib_blockchain::dao::{GovernancePhase, CouncilBootstrapConfig, CouncilBootstrapEntry};
 use anyhow::Result;
+use lib_blockchain::dao::{CouncilBootstrapConfig, CouncilBootstrapEntry, GovernancePhase};
+use lib_blockchain::Blockchain;
 
 fn make_entry(did: &str, wallet: &str) -> CouncilBootstrapEntry {
     CouncilBootstrapEntry {

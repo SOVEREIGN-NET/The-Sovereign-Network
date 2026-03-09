@@ -177,7 +177,10 @@ impl BlockchainComponent {
             return false;
         };
         Self::local_did_is_bootstrap_validator(&wallet.user_identity.did, &bootstrap_validators)
-            || Self::local_did_is_bootstrap_validator(&wallet.node_identity.did, &bootstrap_validators)
+            || Self::local_did_is_bootstrap_validator(
+                &wallet.node_identity.did,
+                &bootstrap_validators,
+            )
     }
 
     pub async fn set_validator_manager(&self, validator_manager: Arc<RwLock<ValidatorManager>>) {
@@ -1039,9 +1042,7 @@ impl Component for BlockchainComponent {
 
         let bootstrap_mining_authority = self.is_bootstrap_mining_authority().await;
         if !bootstrap_mining_authority {
-            info!(
-                "⛏️ Bootstrap mining disabled for this validator (non-bootstrap authority node)"
-            );
+            info!("⛏️ Bootstrap mining disabled for this validator (non-bootstrap authority node)");
         }
 
         // Start mining loop

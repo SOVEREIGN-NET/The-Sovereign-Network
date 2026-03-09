@@ -27,10 +27,7 @@ impl DeployMode {
             "static" => Ok(DeployMode::Static),
             other => Err(CliError::DeploymentFailed {
                 domain: "unknown".to_string(),
-                reason: format!(
-                    "Unknown deploy mode: '{}'. Supported: spa, static",
-                    other
-                ),
+                reason: format!("Unknown deploy mode: '{}'. Supported: spa, static", other),
             }),
         }
     }

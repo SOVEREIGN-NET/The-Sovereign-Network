@@ -1,12 +1,12 @@
 //! Transaction circuit implementation
-//! 
+//!
 //! Implements zero-knowledge circuits for transaction validation
 //! proving balance constraints without revealing actual values.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use lib_crypto::hashing::hash_blake3;
 use crate::plonky2::{CircuitBuilder, CircuitConfig, ZkCircuit};
+use anyhow::Result;
+use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
 
 /// Transaction witness data
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,7 +62,8 @@ impl TransactionWitness {
         let data = [
             &self.sender_balance.to_le_bytes()[..],
             &self.sender_blinding[..],
-        ].concat();
+        ]
+        .concat();
         hash_blake3(&data)
     }
 
@@ -71,7 +72,8 @@ impl TransactionWitness {
         let data = [
             &self.receiver_balance.to_le_bytes()[..],
             &self.receiver_blinding[..],
-        ].concat();
+        ]
+        .concat();
         hash_blake3(&data)
     }
 
@@ -81,7 +83,8 @@ impl TransactionWitness {
             &self.amount.to_le_bytes()[..],
             &self.fee.to_le_bytes()[..],
             &self.nullifier[..],
-        ].concat();
+        ]
+        .concat();
         hash_blake3(&data)
     }
 }
@@ -127,16 +130,18 @@ impl TransactionCircuit {
         let receiver_blinding_wire = builder.add_private_input(None);
 
         // Verify sender balance commitment
-        let sender_commitment_calc = builder.add_hash(vec![sender_balance_wire, sender_blinding_wire]);
+        let sender_commitment_calc =
+            builder.add_hash(vec![sender_balance_wire, sender_blinding_wire]);
         builder.add_equality_constraint(sender_commitment_calc, sender_commitment_wire);
 
         // Verify receiver balance commitment
-        let receiver_commitment_calc = builder.add_hash(vec![receiver_balance_wire, receiver_blinding_wire]);
+        let receiver_commitment_calc =
+            builder.add_hash(vec![receiver_balance_wire, receiver_blinding_wire]);
         builder.add_equality_constraint(receiver_commitment_calc, receiver_commitment_wire);
 
         // Verify balance constraint: sender_balance >= amount + fee
         let amount_plus_fee = builder.add_addition(amount_wire, fee_wire);
-        
+
         // Convert to range constraint (sender_balance - (amount + fee) >= 0)
         // This is simplified - implementation would use proper subtraction
         builder.add_range_constraint(sender_balance_wire, 0, u64::MAX);
@@ -165,12 +170,14 @@ impl TransactionCircuit {
     /// Generate proof for a transaction
     pub fn prove(&self, witness: &TransactionWitness) -> Result<TransactionProof> {
         witness.validate()?;
-        
-        let circuit = self.circuit.as_ref()
+
+        let circuit = self
+            .circuit
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Circuit not built"))?;
 
         let proof_data = self.generate_proof_data(witness);
-        
+
         Ok(TransactionProof {
             sender_commitment: witness.sender_commitment(),
             receiver_commitment: witness.receiver_commitment(),
@@ -196,8 +203,10 @@ impl TransactionCircuit {
         };
 
         // Extract parameters for prove_transaction
-        let sender_secret = u64::from_le_bytes(witness.sender_blinding[0..8].try_into().unwrap_or([0; 8]));
-        let nullifier_seed = u64::from_le_bytes(witness.nullifier[0..8].try_into().unwrap_or([0; 8]));
+        let sender_secret =
+            u64::from_le_bytes(witness.sender_blinding[0..8].try_into().unwrap_or([0; 8]));
+        let nullifier_seed =
+            u64::from_le_bytes(witness.nullifier[0..8].try_into().unwrap_or([0; 8]));
 
         // Generate transaction proof with correct format
         // prove_transaction(sender_balance, amount, fee, sender_secret, nullifier_seed)
@@ -209,9 +218,12 @@ impl TransactionCircuit {
             nullifier_seed,
         ) {
             Ok(plonky2_proof) => {
-                tracing::info!("Generated PURE ZK transaction proof: {} bytes", plonky2_proof.proof.len());
+                tracing::info!(
+                    "Generated PURE ZK transaction proof: {} bytes",
+                    plonky2_proof.proof.len()
+                );
                 plonky2_proof.proof
-            },
+            }
             Err(e) => {
                 tracing::error!("ZK proof generation failed: {:?}", e);
                 // NO FALLBACK - fail hard if ZK proof generation fails
@@ -223,8 +235,10 @@ impl TransactionCircuit {
     /// Verify a transaction proof using PURE ZK circuit verification only
     pub fn verify(&self, proof: &TransactionProof) -> Result<bool> {
         tracing::info!("Using PURE ZK transaction proof verification - NO FALLBACKS");
-        
-        let circuit = self.circuit.as_ref()
+
+        let circuit = self
+            .circuit
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Circuit not built"))?;
 
         // Verify circuit hash matches
@@ -236,15 +250,18 @@ impl TransactionCircuit {
         // Initialize ZK proof system - MUST succeed
         let zk_system = crate::plonky2::ZkProofSystem::new()
             .map_err(|e| anyhow::anyhow!("Failed to initialize ZK system: {:?}", e))?;
-        
+
         // Extract nullifier from proof data for ZK verification
         let nullifier_u64 = if proof.proof_data.len() >= 8 {
             // For pure ZK proofs, extract nullifier from the proof structure
             u64::from_le_bytes(proof.nullifier[0..8].try_into().unwrap_or([0; 8]))
         } else {
-            return Err(anyhow::anyhow!("Invalid proof data length: {}", proof.proof_data.len()));
+            return Err(anyhow::anyhow!(
+                "Invalid proof data length: {}",
+                proof.proof_data.len()
+            ));
         };
-        
+
         // Create ZK proof structure for verification
         let zk_proof = crate::plonky2::Plonky2Proof {
             proof: proof.proof_data.clone(),
@@ -258,7 +275,7 @@ impl TransactionCircuit {
             circuit_id: "transaction_v1".to_string(),
             private_input_commitment: lib_crypto::hashing::hash_blake3(&proof.proof_data),
         };
-        
+
         // PURE ZK verification - NO FALLBACKS
         match zk_system.verify_transaction(&zk_proof) {
             Ok(result) => {
@@ -268,11 +285,14 @@ impl TransactionCircuit {
                     tracing::error!("ZK circuit verification failed - proof is invalid");
                 }
                 Ok(result)
-            },
+            }
             Err(e) => {
                 tracing::error!("ZK verification system error: {:?}", e);
                 // NO FALLBACK - fail hard if ZK verification fails
-                Err(anyhow::anyhow!("ZK verification failed - no fallbacks allowed: {:?}", e))
+                Err(anyhow::anyhow!(
+                    "ZK verification failed - no fallbacks allowed: {:?}",
+                    e
+                ))
             }
         }
     }
@@ -311,7 +331,7 @@ impl TransactionProof {
         8 +  // fee
         32 + // nullifier
         self.proof_data.len() + // proof_data
-        32   // circuit_hash
+        32 // circuit_hash
     }
 
     /// Validate proof structure
@@ -319,15 +339,15 @@ impl TransactionProof {
         if self.proof_data.is_empty() {
             return Err(anyhow::anyhow!("Empty proof data"));
         }
-        
+
         if self.sender_commitment == [0u8; 32] {
             return Err(anyhow::anyhow!("Invalid sender commitment"));
         }
-        
+
         if self.receiver_commitment == [0u8; 32] {
             return Err(anyhow::anyhow!("Invalid receiver commitment"));
         }
-        
+
         Ok(())
     }
 }
@@ -339,10 +359,10 @@ mod tests {
     #[test]
     fn test_transaction_witness() {
         let witness = TransactionWitness::new(
-            1000, // sender_balance
-            500,  // receiver_balance
-            100,  // amount
-            10,   // fee
+            1000,      // sender_balance
+            500,       // receiver_balance
+            100,       // amount
+            10,        // fee
             [1u8; 32], // sender_blinding
             [2u8; 32], // receiver_blinding
             [3u8; 32], // nullifier
@@ -361,9 +381,7 @@ mod tests {
             500, // receiver_balance
             150, // amount (too large)
             10,  // fee
-            [1u8; 32],
-            [2u8; 32],
-            [3u8; 32],
+            [1u8; 32], [2u8; 32], [3u8; 32],
         );
 
         assert!(witness.validate().is_err());
@@ -374,7 +392,7 @@ mod tests {
         let mut circuit = TransactionCircuit::standard();
         assert!(circuit.build().is_ok());
         assert!(circuit.circuit.is_some());
-        
+
         let stats = circuit.get_circuit_stats().unwrap();
         assert!(stats.gate_count > 0);
         assert!(stats.depth > 0);
@@ -386,15 +404,7 @@ mod tests {
         let mut circuit = TransactionCircuit::standard();
         circuit.build().unwrap();
 
-        let witness = TransactionWitness::new(
-            1000,
-            500,
-            100,
-            10,
-            [1u8; 32],
-            [2u8; 32],
-            [3u8; 32],
-        );
+        let witness = TransactionWitness::new(1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32]);
 
         let proof = circuit.prove(&witness).unwrap();
         assert!(proof.validate().is_ok());
@@ -408,15 +418,7 @@ mod tests {
         let mut circuit = TransactionCircuit::standard();
         circuit.build().unwrap();
 
-        let witness = TransactionWitness::new(
-            1000,
-            500,
-            100,
-            10,
-            [1u8; 32],
-            [2u8; 32],
-            [3u8; 32],
-        );
+        let witness = TransactionWitness::new(1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32]);
 
         let proof = circuit.prove(&witness).unwrap();
         let is_valid = circuit.verify(&proof).unwrap();
@@ -428,21 +430,13 @@ mod tests {
         let mut circuit = TransactionCircuit::standard();
         circuit.build().unwrap();
 
-        let witness = TransactionWitness::new(
-            1000,
-            500,
-            100,
-            10,
-            [1u8; 32],
-            [2u8; 32],
-            [3u8; 32],
-        );
+        let witness = TransactionWitness::new(1000, 500, 100, 10, [1u8; 32], [2u8; 32], [3u8; 32]);
 
         let mut proof = circuit.prove(&witness).unwrap();
-        
+
         // Corrupt the proof
         proof.amount = 200; // Different from witness
-        
+
         let is_valid = circuit.verify(&proof).unwrap();
         assert!(!is_valid);
     }

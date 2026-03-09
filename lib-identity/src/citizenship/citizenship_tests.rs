@@ -80,11 +80,14 @@ impl CitizenshipManager {
             return Err(anyhow::anyhow!("Identity already registered as citizen"));
         }
 
-        let citizenship_id = Hash::from_bytes(&lib_crypto::hash_blake3(&[
-            identity_id.as_bytes(),
-            &verification_data.verification_timestamp.to_le_bytes(),
-            b"citizenship_registration",
-        ].concat()));
+        let citizenship_id = Hash::from_bytes(&lib_crypto::hash_blake3(
+            &[
+                identity_id.as_bytes(),
+                &verification_data.verification_timestamp.to_le_bytes(),
+                b"citizenship_registration",
+            ]
+            .concat(),
+        ));
 
         let record = CitizenshipRecord {
             citizenship_id: citizenship_id.clone(),
@@ -115,15 +118,23 @@ impl CitizenshipManager {
         self.citizens.get(identity_id)
     }
 
-    pub fn verify_citizenship(&self, identity_id: &Hash) -> anyhow::Result<CitizenshipVerification> {
-        let record = self.citizens.get(identity_id)
+    pub fn verify_citizenship(
+        &self,
+        identity_id: &Hash,
+    ) -> anyhow::Result<CitizenshipVerification> {
+        let record = self
+            .citizens
+            .get(identity_id)
             .ok_or_else(|| anyhow::anyhow!("Citizenship record not found"))?;
 
-        let verification_hash = Hash::from_bytes(&lib_crypto::hash_blake3(&[
-            identity_id.as_bytes(),
-            &record.citizenship_id.as_bytes(),
-            &record.registration_timestamp.to_le_bytes(),
-        ].concat()));
+        let verification_hash = Hash::from_bytes(&lib_crypto::hash_blake3(
+            &[
+                identity_id.as_bytes(),
+                &record.citizenship_id.as_bytes(),
+                &record.registration_timestamp.to_le_bytes(),
+            ]
+            .concat(),
+        ));
 
         Ok(CitizenshipVerification {
             is_valid: true,
@@ -147,7 +158,7 @@ impl CitizenshipManager {
                 CitizenshipStatus::Active => active += 1,
                 CitizenshipStatus::Suspended => suspended += 1,
                 CitizenshipStatus::Revoked => revoked += 1,
-                CitizenshipStatus::Pending => {},
+                CitizenshipStatus::Pending => {}
             }
         }
 
@@ -193,11 +204,13 @@ mod tests {
         let identity_id = create_test_identity();
         let verification_data = create_test_verification_data();
 
-        let citizenship_id = manager.register_citizen(&identity_id, verification_data).unwrap();
+        let citizenship_id = manager
+            .register_citizen(&identity_id, verification_data)
+            .unwrap();
 
         assert!(!citizenship_id.0.is_empty());
         assert!(manager.is_citizen(&identity_id));
-        
+
         let record = manager.get_citizenship_record(&identity_id).unwrap();
         assert_eq!(record.identity_id, identity_id);
         assert_eq!(record.status, CitizenshipStatus::Active);
@@ -209,7 +222,9 @@ mod tests {
         let identity_id = create_test_identity();
         let verification_data = create_test_verification_data();
 
-        manager.register_citizen(&identity_id, verification_data).unwrap();
+        manager
+            .register_citizen(&identity_id, verification_data)
+            .unwrap();
 
         let verification = manager.verify_citizenship(&identity_id).unwrap();
         assert!(verification.is_valid);
@@ -220,12 +235,14 @@ mod tests {
     #[test]
     fn test_citizenship_metrics() {
         let mut manager = create_test_manager();
-        
+
         // Register multiple citizens
         for i in 0..3 {
             let identity_id = Hash([i as u8; 32]);
             let verification_data = create_test_verification_data();
-            manager.register_citizen(&identity_id, verification_data).unwrap();
+            manager
+                .register_citizen(&identity_id, verification_data)
+                .unwrap();
         }
 
         let metrics = manager.get_citizenship_metrics();
@@ -241,12 +258,17 @@ mod tests {
         let verification_data = create_test_verification_data();
 
         // First registration should succeed
-        manager.register_citizen(&identity_id, verification_data.clone()).unwrap();
+        manager
+            .register_citizen(&identity_id, verification_data.clone())
+            .unwrap();
 
         // Second registration should fail
         let result = manager.register_citizen(&identity_id, verification_data);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("already registered"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("already registered"));
     }
 
     #[test]

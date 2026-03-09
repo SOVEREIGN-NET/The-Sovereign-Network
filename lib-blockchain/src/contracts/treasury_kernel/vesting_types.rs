@@ -114,9 +114,8 @@ impl VestingSchedule {
         }
 
         // Calculate with u128 to prevent overflow
-        let vested = (self.total_amount as u128)
-            .saturating_mul(elapsed as u128)
-            / (duration as u128);
+        let vested =
+            (self.total_amount as u128).saturating_mul(elapsed as u128) / (duration as u128);
 
         vested as u64
     }
@@ -332,7 +331,9 @@ impl VestingLock {
 
     /// Get remaining locked amount
     pub fn remaining_locked(&self) -> u64 {
-        self.schedule.total_amount.saturating_sub(self.amount_released)
+        self.schedule
+            .total_amount
+            .saturating_sub(self.amount_released)
     }
 
     /// Check if fully vested and released

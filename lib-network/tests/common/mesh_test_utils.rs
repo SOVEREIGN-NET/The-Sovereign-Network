@@ -1,11 +1,11 @@
 use blake3::hash;
 use hex;
-use rand::{rngs::StdRng, SeedableRng, RngCore};
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
-use std::str::FromStr;
-use std::time::Duration;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]

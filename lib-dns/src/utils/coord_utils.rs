@@ -5,7 +5,6 @@ use std::fmt::Formatter;
 pub struct CoordError(String);
 
 pub trait CoordUtils: Sized {
-
     fn to_coord(&self, is_lat: bool) -> (u8, u8, f64, char);
 
     fn from_coord(degrees: u8, minutes: u8, seconds: f64, dir: char) -> Result<Self, CoordError>;
@@ -14,29 +13,25 @@ pub trait CoordUtils: Sized {
 }
 
 impl fmt::Display for CoordError {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
 impl CoordUtils for u32 {
-
     fn to_coord(&self, is_lat: bool) -> (u8, u8, f64, char) {
         let mut val = *self as i64 - (1 << 31);
         let dir = if is_lat {
             if val < 0 {
                 val = -val;
                 'S'
-
             } else {
                 'N'
             }
-
         } else {
             if val < 0 {
-                val = -val; 'W'
-
+                val = -val;
+                'W'
             } else {
                 'E'
             }
@@ -56,7 +51,7 @@ impl CoordUtils for u32 {
         match dir {
             'S' | 'W' => val = -val,
             'N' | 'E' => {}
-            _ => return Err(CoordError(format!("invalid direction: {}", dir)))
+            _ => return Err(CoordError(format!("invalid direction: {}", dir))),
         }
 
         Ok((val + (1 << 31)) as Self)
@@ -68,25 +63,43 @@ impl CoordUtils for u32 {
             return Err(CoordError("length is too short".to_string()));
         }
 
-        let degrees = parts[0].parse::<u8>().map_err(|_| CoordError("invalid degrees".to_string()))?;
-        let minutes = parts[1].parse::<u8>().map_err(|_| CoordError("invalid degrees".to_string()))?;
-        let seconds = parts[2].parse::<f64>().map_err(|_| CoordError("invalid seconds".to_string()))?;
-        let dir = parts[3].chars().next().ok_or(CoordError("invalid direction".to_string()))?;
+        let degrees = parts[0]
+            .parse::<u8>()
+            .map_err(|_| CoordError("invalid degrees".to_string()))?;
+        let minutes = parts[1]
+            .parse::<u8>()
+            .map_err(|_| CoordError("invalid degrees".to_string()))?;
+        let seconds = parts[2]
+            .parse::<f64>()
+            .map_err(|_| CoordError("invalid seconds".to_string()))?;
+        let dir = parts[3]
+            .chars()
+            .next()
+            .ok_or(CoordError("invalid direction".to_string()))?;
 
         Self::from_coord(degrees, minutes, seconds, dir)
     }
 }
 
 pub fn encode_loc_precision(s: &str) -> Result<u8, CoordError> {
-    let val = s.strip_suffix('m').unwrap_or(s).parse::<f64>().map_err(|e| CoordError(e.to_string()))?;
+    let val = s
+        .strip_suffix('m')
+        .unwrap_or(s)
+        .parse::<f64>()
+        .map_err(|e| CoordError(e.to_string()))?;
     for exp in 0..=9 {
         for base in 0..=9 {
             let encoded = (base as f64) * 10f64.powi(exp);
             if (val - encoded).abs() < 0.5 {
-                return Ok(((base << 4) | exp).try_into().map_err(|_| CoordError("unable to parse into u8".to_string()))?);
+                return Ok(((base << 4) | exp)
+                    .try_into()
+                    .map_err(|_| CoordError("unable to parse into u8".to_string()))?);
             }
         }
     }
 
-    Err(CoordError(format!("cannot encode LOC precision from value: {}", s)))
+    Err(CoordError(format!(
+        "cannot encode LOC precision from value: {}",
+        s
+    )))
 }

@@ -53,7 +53,12 @@ impl SledEventIndexer {
         let counter = self
             .event_counter
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        format!("{}/{}/{}", hex::encode(&token_id[..8]), block_height, counter)
+        format!(
+            "{}/{}/{}",
+            hex::encode(&token_id[..8]),
+            block_height,
+            counter
+        )
     }
 
     fn save_counter(&self) -> Result<(), sled::Error> {
@@ -94,17 +99,26 @@ impl SledEventIndexer {
         }
 
         let token_idx_key = format!("{}/{}", hex::encode(&token_id), &event_key);
-        if let Err(e) = self.token_index.insert(token_idx_key.as_bytes(), event_key.as_bytes()) {
+        if let Err(e) = self
+            .token_index
+            .insert(token_idx_key.as_bytes(), event_key.as_bytes())
+        {
             tracing::error!("Failed to update token index: {}", e);
         }
 
         let block_idx_key = format!("{}/{}", block_height, &event_key);
-        if let Err(e) = self.block_index.insert(block_idx_key.as_bytes(), event_key.as_bytes()) {
+        if let Err(e) = self
+            .block_index
+            .insert(block_idx_key.as_bytes(), event_key.as_bytes())
+        {
             tracing::error!("Failed to update block index: {}", e);
         }
 
         let type_idx_key = format!("{}/{}", event_type, &event_key);
-        if let Err(e) = self.type_index.insert(type_idx_key.as_bytes(), event_key.as_bytes()) {
+        if let Err(e) = self
+            .type_index
+            .insert(type_idx_key.as_bytes(), event_key.as_bytes())
+        {
             tracing::error!("Failed to update type index: {}", e);
         }
     }
@@ -132,7 +146,11 @@ impl SledEventIndexer {
         events
     }
 
-    pub fn get_token_events_by_type(&self, token_id: [u8; 32], event_type: &str) -> Vec<BondingCurveEvent> {
+    pub fn get_token_events_by_type(
+        &self,
+        token_id: [u8; 32],
+        event_type: &str,
+    ) -> Vec<BondingCurveEvent> {
         let mut events = Vec::new();
 
         for result in self.type_index.scan_prefix(event_type.as_bytes()) {
@@ -242,11 +260,15 @@ impl EventIndexer for SledEventIndexer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::events::{BondingCurveEvent, ReserveUpdateReason};
+    use super::*;
     use tempfile::TempDir;
 
-    fn create_test_event(token_id: [u8; 32], block_height: u64, event_type: &str) -> BondingCurveEvent {
+    fn create_test_event(
+        token_id: [u8; 32],
+        block_height: u64,
+        event_type: &str,
+    ) -> BondingCurveEvent {
         match event_type {
             "token_purchased" => BondingCurveEvent::TokenPurchased {
                 token_id,

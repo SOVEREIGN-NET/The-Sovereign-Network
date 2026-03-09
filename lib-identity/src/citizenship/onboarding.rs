@@ -1,11 +1,10 @@
 //! Complete citizenship onboarding from the original identity.rs
 
-
-use serde::{Deserialize, Serialize};
-use crate::types::{IdentityId, AccessLevel};
-use crate::wallets::WalletId;
 use super::{DaoRegistration, UbiRegistration, Web4Access, WelcomeBonus};
 use crate::credentials::ZkCredential;
+use crate::types::{AccessLevel, IdentityId};
+use crate::wallets::WalletId;
+use serde::{Deserialize, Serialize};
 
 /// Complete result of citizen onboarding process
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,7 +81,7 @@ impl CitizenshipResult {
             welcome_bonus,
         }
     }
-    
+
     /// Get summary of citizen benefits
     pub fn get_benefits_summary(&self) -> CitizenBenefitsSummary {
         CitizenBenefitsSummary {
@@ -98,13 +97,13 @@ impl CitizenshipResult {
             registration_timestamp: self.dao_registration.registered_at,
         }
     }
-    
+
     /// Check if citizen has full access rights
     pub fn has_full_access(&self) -> bool {
-        self.web4_access.access_level == AccessLevel::FullCitizen &&
-        self.dao_registration.voting_eligibility &&
-        self.dao_registration.proposal_eligibility &&
-        !self.ubi_registration.eligibility_proof.is_empty()
+        self.web4_access.access_level == AccessLevel::FullCitizen
+            && self.dao_registration.voting_eligibility
+            && self.dao_registration.proposal_eligibility
+            && !self.ubi_registration.eligibility_proof.is_empty()
     }
 }
 
@@ -130,29 +129,34 @@ impl PrivacyCredentials {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         Self {
             identity_id,
             credentials,
             created_at: current_time,
         }
     }
-    
+
     /// Add a new credential
     pub fn add_credential(&mut self, credential: ZkCredential) {
         self.credentials.push(credential);
     }
-    
+
     /// Get credentials by type
-    pub fn get_credentials_by_type(&self, credential_type: &crate::types::CredentialType) -> Vec<&ZkCredential> {
-        self.credentials.iter()
+    pub fn get_credentials_by_type(
+        &self,
+        credential_type: &crate::types::CredentialType,
+    ) -> Vec<&ZkCredential> {
+        self.credentials
+            .iter()
             .filter(|cred| &cred.credential_type == credential_type)
             .collect()
     }
-    
+
     /// Count valid (non-expired) credentials
     pub fn count_valid_credentials(&self) -> usize {
-        self.credentials.iter()
+        self.credentials
+            .iter()
             .filter(|cred| cred.is_valid())
             .count()
     }

@@ -1,17 +1,16 @@
 //! Penalty System for Storage Contracts
-//! 
+//!
 //! Implements automated penalty enforcement for storage contract violations:
 //! - Data loss penalties
 //! - Availability penalties
 //! - Performance penalties
 //! - Contract breach penalties
 
-use crate::types::{NodeId, PenaltyType, PenaltyClause};
-use anyhow::{Result, anyhow};
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
+use crate::types::{NodeId, PenaltyClause, PenaltyType};
+use anyhow::{anyhow, Result};
 use lib_crypto::Hash;
-
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Storage performance metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,11 +78,19 @@ impl PenaltyEnforcer {
     }
 
     /// Check for penalty violations
-    pub fn check_violations(&self, contract_id: &Hash, node_id: &NodeId) -> Result<Vec<PenaltyType>> {
-        let penalties = self.penalty_clauses.get(contract_id)
+    pub fn check_violations(
+        &self,
+        contract_id: &Hash,
+        node_id: &NodeId,
+    ) -> Result<Vec<PenaltyType>> {
+        let penalties = self
+            .penalty_clauses
+            .get(contract_id)
             .ok_or_else(|| anyhow!("Contract not found"))?;
 
-        let metrics = self.node_metrics.get(node_id)
+        let metrics = self
+            .node_metrics
+            .get(node_id)
             .ok_or_else(|| anyhow!("Node metrics not found"))?;
 
         let mut violations = Vec::new();
@@ -98,7 +105,11 @@ impl PenaltyEnforcer {
     }
 
     /// Check if metrics constitute a violation
-    fn is_violation(&self, penalty_type: &PenaltyType, metrics: &PenaltyPerformanceMetrics) -> Result<bool> {
+    fn is_violation(
+        &self,
+        penalty_type: &PenaltyType,
+        metrics: &PenaltyPerformanceMetrics,
+    ) -> Result<bool> {
         match penalty_type {
             PenaltyType::DataLoss => Ok(metrics.data_integrity < 0.99),
             PenaltyType::Unavailability => Ok(metrics.uptime < 0.95),
@@ -106,10 +117,13 @@ impl PenaltyEnforcer {
             PenaltyType::ContractBreach => Ok(metrics.bandwidth_ratio < 0.8),
             PenaltyType::QualityDegradation => {
                 // Calculate overall performance from available metrics
-                let overall_performance = (metrics.data_integrity + metrics.uptime + 
-                                         (1.0 - metrics.error_rate) + metrics.bandwidth_ratio) / 4.0;
+                let overall_performance = (metrics.data_integrity
+                    + metrics.uptime
+                    + (1.0 - metrics.error_rate)
+                    + metrics.bandwidth_ratio)
+                    / 4.0;
                 Ok(overall_performance < 0.7)
-            },
+            }
         }
     }
 
@@ -168,14 +182,17 @@ impl PenaltyEnforcer {
     /// Get penalty statistics
     pub fn get_penalty_stats(&self) -> PenaltyStats {
         let total_penalties = self.penalty_history.len() as u64;
-        let total_amount = self.penalty_history
+        let total_amount = self
+            .penalty_history
             .iter()
             .map(|event| event.penalty_amount)
             .sum();
 
         let mut penalty_counts = HashMap::new();
         for event in &self.penalty_history {
-            *penalty_counts.entry(event.penalty_type.clone()).or_insert(0) += 1;
+            *penalty_counts
+                .entry(event.penalty_type.clone())
+                .or_insert(0) += 1;
         }
 
         PenaltyStats {
@@ -218,7 +235,7 @@ mod tests {
     #[test]
     fn test_violation_detection() {
         let enforcer = PenaltyEnforcer::new();
-        
+
         let metrics = PenaltyPerformanceMetrics {
             data_integrity: 0.98, // Below threshold
             uptime: 0.99,
@@ -227,8 +244,12 @@ mod tests {
             error_rate: 0.01,
         };
 
-        assert!(enforcer.is_violation(&PenaltyType::DataLoss, &metrics).unwrap());
-        assert!(!enforcer.is_violation(&PenaltyType::Unavailability, &metrics).unwrap());
+        assert!(enforcer
+            .is_violation(&PenaltyType::DataLoss, &metrics)
+            .unwrap());
+        assert!(!enforcer
+            .is_violation(&PenaltyType::Unavailability, &metrics)
+            .unwrap());
     }
 
     #[test]
@@ -237,13 +258,15 @@ mod tests {
         let contract_id = Hash::from_bytes(&[1u8; 32]);
         let node_id = NodeId::from_bytes([2u8; 32]);
 
-        let event = enforcer.enforce_penalty(
-            contract_id,
-            node_id,
-            PenaltyType::DataLoss,
-            1000,
-            "Data integrity below threshold".to_string(),
-        ).unwrap();
+        let event = enforcer
+            .enforce_penalty(
+                contract_id,
+                node_id,
+                PenaltyType::DataLoss,
+                1000,
+                "Data integrity below threshold".to_string(),
+            )
+            .unwrap();
 
         assert_eq!(event.penalty_amount, 1000);
         assert_eq!(enforcer.penalty_history.len(), 1);

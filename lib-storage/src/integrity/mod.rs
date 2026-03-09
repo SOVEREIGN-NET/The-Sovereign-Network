@@ -3,11 +3,11 @@
 //! Provides checksum management, corruption detection, and self-healing mechanisms
 //! for stored data using lib-crypto hashing and erasure codes.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use lib_crypto::hashing::{hash_blake3, hash_blake3_multiple};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use lib_crypto::hashing::{hash_blake3, hash_blake3_multiple};
 
 pub mod checksum;
 pub mod corruption;
@@ -15,9 +15,9 @@ pub mod healing;
 pub mod verification;
 
 // Re-export key types
-pub use checksum::{ChecksumAlgorithm, ChecksumManager, Checksum};
+pub use checksum::{Checksum, ChecksumAlgorithm, ChecksumManager};
 pub use corruption::{CorruptionDetector, CorruptionReport};
-pub use healing::{SelfHealing, HealingResult};
+pub use healing::{HealingResult, SelfHealing};
 pub use verification::{IntegrityVerifier, VerificationReport};
 
 /// Integrity check result for a piece of data
@@ -107,24 +107,19 @@ pub struct ErasureParams {
 
 impl IntegrityMetadata {
     /// Create new integrity metadata
-    pub fn new(
-        content_id: String,
-        blocks: &[Vec<u8>],
-        algorithm: ChecksumAlgorithm,
-    ) -> Self {
-        let block_checksums: Vec<[u8; 32]> = blocks
-            .iter()
-            .map(|block| hash_blake3(block))
-            .collect();
+    pub fn new(content_id: String, blocks: &[Vec<u8>], algorithm: ChecksumAlgorithm) -> Self {
+        let block_checksums: Vec<[u8; 32]> =
+            blocks.iter().map(|block| hash_blake3(block)).collect();
 
         // Compute overall content checksum from all block checksums
-        let all_checksums: Vec<&[u8]> = block_checksums
-            .iter()
-            .map(|c| c.as_slice())
-            .collect();
+        let all_checksums: Vec<&[u8]> = block_checksums.iter().map(|c| c.as_slice()).collect();
         let content_checksum = hash_blake3_multiple(&all_checksums);
 
-        let block_size = if blocks.is_empty() { 0 } else { blocks[0].len() };
+        let block_size = if blocks.is_empty() {
+            0
+        } else {
+            blocks[0].len()
+        };
 
         Self {
             content_id,
@@ -230,7 +225,8 @@ impl IntegrityManager {
         content_id: &str,
         blocks: &[Vec<u8>],
     ) -> Result<IntegrityStatus> {
-        let metadata = self.metadata
+        let metadata = self
+            .metadata
             .get(content_id)
             .ok_or_else(|| anyhow!("Content not registered"))?;
 
@@ -274,7 +270,8 @@ impl IntegrityManager {
         parity_blocks: &[Vec<u8>],
     ) -> Result<HealingResult> {
         // Get metadata and check erasure coding in separate scope
-        let has_erasure = self.metadata
+        let has_erasure = self
+            .metadata
             .get(content_id)
             .ok_or_else(|| anyhow!("Content not registered"))?
             .has_erasure_coding();
@@ -285,18 +282,17 @@ impl IntegrityManager {
 
         // Detect corrupted blocks
         let status = self.verify_content(content_id, blocks)?;
-        
+
         match status {
             IntegrityStatus::Valid => Ok(HealingResult::NoHealingNeeded),
             IntegrityStatus::Corrupted(issues) => {
                 // Extract corrupted block indices
-                let corrupted_indices: Vec<usize> = issues
-                    .iter()
-                    .map(|issue| issue.block_index)
-                    .collect();
+                let corrupted_indices: Vec<usize> =
+                    issues.iter().map(|issue| issue.block_index).collect();
 
                 // Get erasure params (need to clone to avoid borrow issues)
-                let erasure_params = self.metadata
+                let erasure_params = self
+                    .metadata
                     .get(content_id)
                     .unwrap()
                     .erasure_params
@@ -338,7 +334,8 @@ impl IntegrityManager {
     /// Get integrity statistics
     pub fn get_stats(&self) -> IntegrityStats {
         let total_content = self.metadata.len();
-        let with_erasure = self.metadata
+        let with_erasure = self
+            .metadata
             .values()
             .filter(|m| m.has_erasure_coding())
             .count();
@@ -347,7 +344,8 @@ impl IntegrityManager {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let needs_check = self.metadata
+        let needs_check = self
+            .metadata
             .values()
             .filter(|m| now > m.last_check + self.check_interval)
             .count();
@@ -387,11 +385,7 @@ mod tests {
 
     #[test]
     fn test_integrity_metadata_creation() {
-        let blocks = vec![
-            b"block0".to_vec(),
-            b"block1".to_vec(),
-            b"block2".to_vec(),
-        ];
+        let blocks = vec![b"block0".to_vec(), b"block1".to_vec(), b"block2".to_vec()];
 
         let metadata = IntegrityMetadata::new(
             "test_content".to_string(),
@@ -407,12 +401,9 @@ mod tests {
     #[test]
     fn test_integrity_metadata_with_erasure() {
         let blocks = vec![b"block0".to_vec()];
-        let metadata = IntegrityMetadata::new(
-            "test".to_string(),
-            &blocks,
-            ChecksumAlgorithm::Blake3,
-        )
-        .with_erasure_params(4, 2);
+        let metadata =
+            IntegrityMetadata::new("test".to_string(), &blocks, ChecksumAlgorithm::Blake3)
+                .with_erasure_params(4, 2);
 
         assert!(metadata.has_erasure_coding());
         assert_eq!(metadata.erasure_params.as_ref().unwrap().data_shards, 4);
@@ -467,10 +458,10 @@ mod tests {
 
         let status = manager.verify_content("test_content", &corrupted_blocks);
         assert!(status.is_ok());
-        
+
         let status = status.unwrap();
         assert!(status.is_corrupted());
-        
+
         if let IntegrityStatus::Corrupted(issues) = status {
             assert_eq!(issues.len(), 1);
             assert_eq!(issues[0].block_index, 1);
@@ -480,7 +471,7 @@ mod tests {
     #[test]
     fn test_integrity_stats() {
         let mut manager = IntegrityManager::default();
-        
+
         manager.register_content(
             "content1".to_string(),
             &vec![b"block".to_vec()],

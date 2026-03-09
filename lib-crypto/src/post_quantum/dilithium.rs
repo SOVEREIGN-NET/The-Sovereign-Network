@@ -1,11 +1,11 @@
 //! CRYSTALS-Dilithium wrapper functions - preserving post-quantum signatures
-//! 
+//!
 //! implementation wrappers from crypto.rs for CRYSTALS-Dilithium
 
 use anyhow::Result;
 use pqcrypto_dilithium::{dilithium2, dilithium5};
-use pqcrypto_traits::{
-    sign::{PublicKey as SignPublicKey, SecretKey as SignSecretKey, SignedMessage, DetachedSignature},
+use pqcrypto_traits::sign::{
+    DetachedSignature, PublicKey as SignPublicKey, SecretKey as SignSecretKey, SignedMessage,
 };
 
 /// Generate Dilithium2 keypair (Level 2 security)
@@ -24,7 +24,7 @@ pub fn dilithium5_keypair() -> (Vec<u8>, Vec<u8>) {
 pub fn dilithium2_sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
     let sk = dilithium2::SecretKey::from_bytes(secret_key)
         .map_err(|_| anyhow::anyhow!("Invalid Dilithium2 secret key"))?;
-    
+
     let signature = dilithium2::sign(message, &sk);
     Ok(signature.as_bytes().to_vec())
 }
@@ -50,7 +50,9 @@ pub fn dilithium5_sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
 
     Err(anyhow::anyhow!(
         "Invalid Dilithium5 secret key size: {} bytes (expected {} or {})",
-        secret_key.len(), DILITHIUM5_SECRETKEY_BYTES_CRYSTALS, DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO
+        secret_key.len(),
+        DILITHIUM5_SECRETKEY_BYTES_CRYSTALS,
+        DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO
     ))
 }
 
@@ -60,7 +62,7 @@ pub fn dilithium2_verify(message: &[u8], signature: &[u8], public_key: &[u8]) ->
         .map_err(|_| anyhow::anyhow!("Invalid Dilithium2 public key"))?;
     let sig = dilithium2::SignedMessage::from_bytes(signature)
         .map_err(|_| anyhow::anyhow!("Invalid Dilithium2 signature"))?;
-    
+
     match dilithium2::open(&sig, &pk) {
         Ok(verified_message) => Ok(verified_message == message),
         Err(_) => Ok(false),
@@ -88,8 +90,11 @@ pub fn dilithium5_verify(message: &[u8], signature: &[u8], public_key: &[u8]) ->
     // Fall back to pqcrypto-dilithium SignedMessage format (message embedded in signature)
     let pk = dilithium5::PublicKey::from_bytes(public_key)
         .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 public key"))?;
-    let sig = dilithium5::SignedMessage::from_bytes(signature)
-        .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 signature (not 4595-byte detached, not valid SignedMessage)"))?;
+    let sig = dilithium5::SignedMessage::from_bytes(signature).map_err(|_| {
+        anyhow::anyhow!(
+            "Invalid Dilithium5 signature (not 4595-byte detached, not valid SignedMessage)"
+        )
+    })?;
 
     match dilithium5::open(&sig, &pk) {
         Ok(verified_message) => Ok(verified_message == message),
@@ -100,7 +105,11 @@ pub fn dilithium5_verify(message: &[u8], signature: &[u8], public_key: &[u8]) ->
 /// Verify Dilithium5 detached signature using pqcrypto-dilithium
 /// NOTE: This is NOT compatible with signatures from crystals-dilithium!
 /// Use dilithium5_verify_crystals() for lib-client/seed-derived signatures.
-pub fn dilithium5_verify_detached(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
+pub fn dilithium5_verify_detached(
+    message: &[u8],
+    signature: &[u8],
+    public_key: &[u8],
+) -> Result<bool> {
     let pk = dilithium5::PublicKey::from_bytes(public_key)
         .map_err(|_| anyhow::anyhow!("Invalid Dilithium5 public key"))?;
 
@@ -116,14 +125,26 @@ pub fn dilithium5_verify_detached(message: &[u8], signature: &[u8], public_key: 
 /// Verify Dilithium5 signature using crystals-dilithium (pure Rust)
 /// Use this for signatures from lib-client with seed-derived keys (4864-byte SK)
 /// This is compatible with crystals-dilithium signatures from mobile/WASM clients.
-pub fn dilithium5_verify_crystals(message: &[u8], signature: &[u8], public_key: &[u8]) -> Result<bool> {
+pub fn dilithium5_verify_crystals(
+    message: &[u8],
+    signature: &[u8],
+    public_key: &[u8],
+) -> Result<bool> {
     use crystals_dilithium::dilithium5::{PublicKey, SIGNBYTES};
 
     if public_key.len() != DILITHIUM5_PUBLICKEY_BYTES {
-        return Err(anyhow::anyhow!("Invalid Dilithium5 public key length: {} (expected {})", public_key.len(), DILITHIUM5_PUBLICKEY_BYTES));
+        return Err(anyhow::anyhow!(
+            "Invalid Dilithium5 public key length: {} (expected {})",
+            public_key.len(),
+            DILITHIUM5_PUBLICKEY_BYTES
+        ));
     }
     if signature.len() != SIGNBYTES {
-        return Err(anyhow::anyhow!("Invalid Dilithium5 signature length: {} (expected {})", signature.len(), SIGNBYTES));
+        return Err(anyhow::anyhow!(
+            "Invalid Dilithium5 signature length: {} (expected {})",
+            signature.len(),
+            SIGNBYTES
+        ));
     }
 
     let pk = PublicKey::from_bytes(public_key);
@@ -136,8 +157,8 @@ pub fn dilithium5_verify_crystals(message: &[u8], signature: &[u8], public_key: 
 
 // Key size constants imported from constants.rs (single source of truth)
 use super::constants::{
-    DILITHIUM2_PUBLICKEY_BYTES, DILITHIUM5_PUBLICKEY_BYTES,
-    DILITHIUM2_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO, DILITHIUM5_SECRETKEY_BYTES_CRYSTALS
+    DILITHIUM2_PUBLICKEY_BYTES, DILITHIUM2_SECRETKEY_BYTES, DILITHIUM5_PUBLICKEY_BYTES,
+    DILITHIUM5_SECRETKEY_BYTES_CRYSTALS, DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO,
 };
 
 /// Auto-detecting Dilithium signing
@@ -146,13 +167,18 @@ use super::constants::{
 pub fn dilithium_sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
     if secret_key.len() == DILITHIUM2_SECRETKEY_BYTES {
         dilithium2_sign(message, secret_key)
-    } else if secret_key.len() == DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO || secret_key.len() == DILITHIUM5_SECRETKEY_BYTES_CRYSTALS {
+    } else if secret_key.len() == DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO
+        || secret_key.len() == DILITHIUM5_SECRETKEY_BYTES_CRYSTALS
+    {
         // Both pqcrypto (4896) and crystals (4864) are Dilithium5 - dilithium5_sign handles both
         dilithium5_sign(message, secret_key)
     } else {
         Err(anyhow::anyhow!(
             "Unknown Dilithium secret key size: {} (expected {} for D2, {} or {} for D5)",
-            secret_key.len(), DILITHIUM2_SECRETKEY_BYTES, DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO, DILITHIUM5_SECRETKEY_BYTES_CRYSTALS
+            secret_key.len(),
+            DILITHIUM2_SECRETKEY_BYTES,
+            DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO,
+            DILITHIUM5_SECRETKEY_BYTES_CRYSTALS
         ))
     }
 }
@@ -167,7 +193,9 @@ pub fn dilithium_verify(message: &[u8], signature: &[u8], public_key: &[u8]) -> 
     } else {
         Err(anyhow::anyhow!(
             "Unknown Dilithium public key size: {} (expected {} for D2 or {} for D5)",
-            public_key.len(), DILITHIUM2_PUBLICKEY_BYTES, DILITHIUM5_PUBLICKEY_BYTES
+            public_key.len(),
+            DILITHIUM2_PUBLICKEY_BYTES,
+            DILITHIUM5_PUBLICKEY_BYTES
         ))
     }
 }
@@ -181,16 +209,36 @@ mod tests {
     #[test]
     fn test_dilithium2_key_sizes() {
         let (pk, sk) = dilithium2_keypair();
-        assert_eq!(pk.len(), DILITHIUM2_PUBLICKEY_BYTES, "D2 public key should be {} bytes", DILITHIUM2_PUBLICKEY_BYTES);
-        assert_eq!(sk.len(), DILITHIUM2_SECRETKEY_BYTES, "D2 secret key should be {} bytes", DILITHIUM2_SECRETKEY_BYTES);
+        assert_eq!(
+            pk.len(),
+            DILITHIUM2_PUBLICKEY_BYTES,
+            "D2 public key should be {} bytes",
+            DILITHIUM2_PUBLICKEY_BYTES
+        );
+        assert_eq!(
+            sk.len(),
+            DILITHIUM2_SECRETKEY_BYTES,
+            "D2 secret key should be {} bytes",
+            DILITHIUM2_SECRETKEY_BYTES
+        );
     }
 
     #[test]
     fn test_dilithium5_key_sizes() {
         let (pk, sk) = dilithium5_keypair();
-        assert_eq!(pk.len(), DILITHIUM5_PUBLICKEY_BYTES, "D5 public key should be {} bytes", DILITHIUM5_PUBLICKEY_BYTES);
+        assert_eq!(
+            pk.len(),
+            DILITHIUM5_PUBLICKEY_BYTES,
+            "D5 public key should be {} bytes",
+            DILITHIUM5_PUBLICKEY_BYTES
+        );
         // dilithium5_keypair uses pqcrypto which produces 4896-byte keys
-        assert_eq!(sk.len(), DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO, "D5 secret key should be {} bytes", DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO);
+        assert_eq!(
+            sk.len(),
+            DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO,
+            "D5 secret key should be {} bytes",
+            DILITHIUM5_SECRETKEY_BYTES_PQCRYPTO
+        );
     }
 
     // ==================== DILITHIUM2 SIGN/VERIFY TESTS ====================
@@ -201,7 +249,8 @@ mod tests {
         let message = b"Test message for Dilithium2 signing";
 
         let signature = dilithium2_sign(message, &sk).expect("D2 signing should succeed");
-        let valid = dilithium2_verify(message, &signature, &pk).expect("D2 verification should succeed");
+        let valid =
+            dilithium2_verify(message, &signature, &pk).expect("D2 verification should succeed");
 
         assert!(valid, "D2 signature should be valid");
     }
@@ -213,7 +262,8 @@ mod tests {
         let wrong_message = b"Wrong message";
 
         let signature = dilithium2_sign(message, &sk).expect("D2 signing should succeed");
-        let valid = dilithium2_verify(wrong_message, &signature, &pk).expect("D2 verification should succeed");
+        let valid = dilithium2_verify(wrong_message, &signature, &pk)
+            .expect("D2 verification should succeed");
 
         assert!(!valid, "D2 signature should be invalid for wrong message");
     }
@@ -225,9 +275,13 @@ mod tests {
         let message = b"Test message";
 
         let signature = dilithium2_sign(message, &sk).expect("D2 signing should succeed");
-        let valid = dilithium2_verify(message, &signature, &wrong_pk).expect("D2 verification should succeed");
+        let valid = dilithium2_verify(message, &signature, &wrong_pk)
+            .expect("D2 verification should succeed");
 
-        assert!(!valid, "D2 signature should be invalid for wrong public key");
+        assert!(
+            !valid,
+            "D2 signature should be invalid for wrong public key"
+        );
     }
 
     // ==================== DILITHIUM5 SIGN/VERIFY TESTS ====================
@@ -238,7 +292,8 @@ mod tests {
         let message = b"Test message for Dilithium5 signing";
 
         let signature = dilithium5_sign(message, &sk).expect("D5 signing should succeed");
-        let valid = dilithium5_verify(message, &signature, &pk).expect("D5 verification should succeed");
+        let valid =
+            dilithium5_verify(message, &signature, &pk).expect("D5 verification should succeed");
 
         assert!(valid, "D5 signature should be valid");
     }
@@ -250,7 +305,8 @@ mod tests {
         let wrong_message = b"Wrong message";
 
         let signature = dilithium5_sign(message, &sk).expect("D5 signing should succeed");
-        let valid = dilithium5_verify(wrong_message, &signature, &pk).expect("D5 verification should succeed");
+        let valid = dilithium5_verify(wrong_message, &signature, &pk)
+            .expect("D5 verification should succeed");
 
         assert!(!valid, "D5 signature should be invalid for wrong message");
     }
@@ -263,10 +319,12 @@ mod tests {
         let message = b"Auto-detect D2 signing test";
 
         // Use auto-detecting sign
-        let signature = dilithium_sign(message, &sk).expect("Auto-sign should detect D2 and succeed");
+        let signature =
+            dilithium_sign(message, &sk).expect("Auto-sign should detect D2 and succeed");
 
         // Verify with explicit D2 verify
-        let valid = dilithium2_verify(message, &signature, &pk).expect("D2 verification should succeed");
+        let valid =
+            dilithium2_verify(message, &signature, &pk).expect("D2 verification should succeed");
         assert!(valid, "Auto-signed D2 signature should be valid");
     }
 
@@ -276,10 +334,12 @@ mod tests {
         let message = b"Auto-detect D5 signing test";
 
         // Use auto-detecting sign
-        let signature = dilithium_sign(message, &sk).expect("Auto-sign should detect D5 and succeed");
+        let signature =
+            dilithium_sign(message, &sk).expect("Auto-sign should detect D5 and succeed");
 
         // Verify with explicit D5 verify
-        let valid = dilithium5_verify(message, &signature, &pk).expect("D5 verification should succeed");
+        let valid =
+            dilithium5_verify(message, &signature, &pk).expect("D5 verification should succeed");
         assert!(valid, "Auto-signed D5 signature should be valid");
     }
 
@@ -292,7 +352,10 @@ mod tests {
         assert!(result.is_err(), "Auto-sign should reject invalid key size");
 
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Unknown Dilithium secret key size"), "Error should mention key size");
+        assert!(
+            err_msg.contains("Unknown Dilithium secret key size"),
+            "Error should mention key size"
+        );
     }
 
     // ==================== AUTO-DETECT VERIFY TESTS ====================
@@ -306,7 +369,8 @@ mod tests {
         let signature = dilithium2_sign(message, &sk).expect("D2 signing should succeed");
 
         // Verify with auto-detecting verify
-        let valid = dilithium_verify(message, &signature, &pk).expect("Auto-verify should detect D2 and succeed");
+        let valid = dilithium_verify(message, &signature, &pk)
+            .expect("Auto-verify should detect D2 and succeed");
         assert!(valid, "Auto-verified D2 signature should be valid");
     }
 
@@ -319,7 +383,8 @@ mod tests {
         let signature = dilithium5_sign(message, &sk).expect("D5 signing should succeed");
 
         // Verify with auto-detecting verify
-        let valid = dilithium_verify(message, &signature, &pk).expect("Auto-verify should detect D5 and succeed");
+        let valid = dilithium_verify(message, &signature, &pk)
+            .expect("Auto-verify should detect D5 and succeed");
         assert!(valid, "Auto-verified D5 signature should be valid");
     }
 
@@ -330,10 +395,16 @@ mod tests {
         let message = b"Test message";
 
         let result = dilithium_verify(message, &signature, &invalid_pk);
-        assert!(result.is_err(), "Auto-verify should reject invalid key size");
+        assert!(
+            result.is_err(),
+            "Auto-verify should reject invalid key size"
+        );
 
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Unknown Dilithium public key size"), "Error should mention key size");
+        assert!(
+            err_msg.contains("Unknown Dilithium public key size"),
+            "Error should mention key size"
+        );
     }
 
     // ==================== FULL AUTO-DETECT ROUNDTRIP TESTS ====================
@@ -413,7 +484,10 @@ mod tests {
         let valid = dilithium_verify(message, &signature, &ios_pk)
             .expect("Server auto-detect should handle iOS D5 signature");
 
-        assert!(valid, "iOS D5 signature should be verified by server auto-detect");
+        assert!(
+            valid,
+            "iOS D5 signature should be verified by server auto-detect"
+        );
     }
 
     // ==================== INTEROP: CLI (D2) <-> Server (auto-detect) ====================
@@ -431,7 +505,10 @@ mod tests {
         let valid = dilithium_verify(message, &signature, &cli_pk)
             .expect("Server auto-detect should handle CLI D2 signature");
 
-        assert!(valid, "CLI D2 signature should be verified by server auto-detect");
+        assert!(
+            valid,
+            "CLI D2 signature should be verified by server auto-detect"
+        );
     }
 
     // ==================== SIGNATURE SIZE TESTS ====================
@@ -444,8 +521,12 @@ mod tests {
 
         // D2 SignedMessage = message + 2420 bytes
         let expected_size = message.len() + 2420;
-        assert_eq!(signature.len(), expected_size,
-            "D2 signature size should be message_len + 2420 = {}", expected_size);
+        assert_eq!(
+            signature.len(),
+            expected_size,
+            "D2 signature size should be message_len + 2420 = {}",
+            expected_size
+        );
     }
 
     #[test]
@@ -456,8 +537,12 @@ mod tests {
 
         // D5 SignedMessage = message + 4627 bytes
         let expected_size = message.len() + 4627;
-        assert_eq!(signature.len(), expected_size,
-            "D5 signature size should be message_len + 4627 = {}", expected_size);
+        assert_eq!(
+            signature.len(),
+            expected_size,
+            "D5 signature size should be message_len + 4627 = {}",
+            expected_size
+        );
     }
 
     #[test]
@@ -468,15 +553,20 @@ mod tests {
         // Secret key sizes
         let legacy_sk = vec![0u8; 4864];
         let current_sk = vec![0u8; 4896];
-        println!("Secret key 4864 bytes accepted: {}",
-            pqcrypto_dilithium::dilithium5::SecretKey::from_bytes(&legacy_sk).is_ok());
-        println!("Secret key 4896 bytes accepted: {}",
-            pqcrypto_dilithium::dilithium5::SecretKey::from_bytes(&current_sk).is_ok());
+        println!(
+            "Secret key 4864 bytes accepted: {}",
+            pqcrypto_dilithium::dilithium5::SecretKey::from_bytes(&legacy_sk).is_ok()
+        );
+        println!(
+            "Secret key 4896 bytes accepted: {}",
+            pqcrypto_dilithium::dilithium5::SecretKey::from_bytes(&current_sk).is_ok()
+        );
 
         // Public key - should be same size (2592) regardless of library version
         let pk = vec![0u8; 2592];
-        println!("Public key 2592 bytes accepted: {}",
-            pqcrypto_dilithium::dilithium5::PublicKey::from_bytes(&pk).is_ok());
+        println!(
+            "Public key 2592 bytes accepted: {}",
+            pqcrypto_dilithium::dilithium5::PublicKey::from_bytes(&pk).is_ok()
+        );
     }
-
 }

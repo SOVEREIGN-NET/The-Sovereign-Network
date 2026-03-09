@@ -1,15 +1,14 @@
-use std::any::Any;
-use crate::utils::uid::UID;
-use std::net::SocketAddr;
-use rlibbencode::variables::bencode_object::BencodeObject;
 use crate::kad::server::TID_LENGTH;
 use crate::messages::inter::message_exception::MessageException;
 use crate::messages::inter::message_type::MessageType;
+use crate::utils::uid::UID;
+use rlibbencode::variables::bencode_object::BencodeObject;
+use std::any::Any;
+use std::net::SocketAddr;
 
 pub const TID_KEY: &str = "t";
 
 pub trait MessageBase: Send {
-
     fn set_uid(&mut self, uid: UID);
 
     fn get_uid(&self) -> Option<UID>;

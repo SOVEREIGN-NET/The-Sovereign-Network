@@ -42,9 +42,7 @@ pub enum ValidationResult {
         parameter_count: usize,
     },
     /// Validation failed with a reason
-    Invalid {
-        reason: String,
-    },
+    Invalid { reason: String },
 }
 
 impl CallValidator {
@@ -181,7 +179,10 @@ impl CallValidator {
         if callee_parts.1 < caller_parts.1 {
             return Err(anyhow!(
                 "ABI version incompatibility: caller expects {}.{}.x but callee is {}.{}.x",
-                caller_parts.0, caller_parts.1, callee_parts.0, callee_parts.1
+                caller_parts.0,
+                caller_parts.1,
+                callee_parts.0,
+                callee_parts.1
             ));
         }
 
@@ -385,26 +386,14 @@ mod tests {
 
     #[test]
     fn test_is_compatible_type_result() {
-        assert!(CallValidator::is_compatible_type(
-            "Result<u64>",
-            "u64"
-        ));
-        assert!(!CallValidator::is_compatible_type(
-            "Result<u32>",
-            "u64"
-        ));
+        assert!(CallValidator::is_compatible_type("Result<u64>", "u64"));
+        assert!(!CallValidator::is_compatible_type("Result<u32>", "u64"));
     }
 
     #[test]
     fn test_is_compatible_type_option() {
-        assert!(CallValidator::is_compatible_type(
-            "Option<u64>",
-            "u64"
-        ));
-        assert!(!CallValidator::is_compatible_type(
-            "Option<u32>",
-            "u64"
-        ));
+        assert!(CallValidator::is_compatible_type("Option<u64>", "u64"));
+        assert!(!CallValidator::is_compatible_type("Option<u32>", "u64"));
     }
 
     #[test]
@@ -445,29 +434,25 @@ mod tests {
 
     #[test]
     fn test_validate_version_compatibility_matching() {
-        let result =
-            CallValidator::validate_version_compatibility("1.0.0", "1.0.0");
+        let result = CallValidator::validate_version_compatibility("1.0.0", "1.0.0");
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_version_compatibility_minor_upgrade() {
-        let result =
-            CallValidator::validate_version_compatibility("1.0.0", "1.1.0");
+        let result = CallValidator::validate_version_compatibility("1.0.0", "1.1.0");
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_version_compatibility_patch_upgrade() {
-        let result =
-            CallValidator::validate_version_compatibility("1.0.0", "1.0.5");
+        let result = CallValidator::validate_version_compatibility("1.0.0", "1.0.5");
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_version_compatibility_major_mismatch() {
-        let result =
-            CallValidator::validate_version_compatibility("1.0.0", "2.0.0");
+        let result = CallValidator::validate_version_compatibility("1.0.0", "2.0.0");
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -478,8 +463,7 @@ mod tests {
 
     #[test]
     fn test_validate_version_compatibility_minor_downgrade() {
-        let result =
-            CallValidator::validate_version_compatibility("1.1.0", "1.0.0");
+        let result = CallValidator::validate_version_compatibility("1.1.0", "1.0.0");
         assert!(result.is_err());
     }
 
@@ -489,16 +473,17 @@ mod tests {
         let methods = vec![create_test_signature("transfer", 2)];
 
         let result = CallValidator::validate_call(
-            &call,
-            &methods,
-            2,           // param count
-            "u64",       // return type
-            "1.0.0",     // caller version
+            &call, &methods, 2,       // param count
+            "u64",   // return type
+            "1.0.0", // caller version
         );
 
         assert!(result.is_ok());
         match result.unwrap() {
-            ValidationResult::Valid { method, parameter_count } => {
+            ValidationResult::Valid {
+                method,
+                parameter_count,
+            } => {
                 assert_eq!(method, "transfer");
                 assert_eq!(parameter_count, 2);
             }
@@ -511,13 +496,7 @@ mod tests {
         let call = create_test_call("unknown");
         let methods = vec![create_test_signature("transfer", 2)];
 
-        let result = CallValidator::validate_call(
-            &call,
-            &methods,
-            2,
-            "u64",
-            "1.0.0",
-        );
+        let result = CallValidator::validate_call(&call, &methods, 2, "u64", "1.0.0");
 
         assert!(result.is_err());
     }
@@ -528,11 +507,8 @@ mod tests {
         let methods = vec![create_test_signature("transfer", 2)];
 
         let result = CallValidator::validate_call(
-            &call,
-            &methods,
-            3,  // Wrong count
-            "u64",
-            "1.0.0",
+            &call, &methods, 3, // Wrong count
+            "u64", "1.0.0",
         );
 
         assert!(result.is_err());
@@ -544,10 +520,7 @@ mod tests {
         let methods = vec![create_test_signature("transfer", 2)];
 
         let result = CallValidator::validate_call(
-            &call,
-            &methods,
-            2,
-            "u32", // Wrong type
+            &call, &methods, 2, "u32", // Wrong type
             "1.0.0",
         );
 
@@ -565,11 +538,7 @@ mod tests {
         }];
 
         let result = CallValidator::validate_call(
-            &call,
-            &methods,
-            2,
-            "u64",
-            "1.0.0", // Caller expects v1
+            &call, &methods, 2, "u64", "1.0.0", // Caller expects v1
         );
 
         assert!(result.is_err());
@@ -598,7 +567,10 @@ mod tests {
         };
 
         match result {
-            ValidationResult::Valid { method, parameter_count } => {
+            ValidationResult::Valid {
+                method,
+                parameter_count,
+            } => {
                 assert_eq!(method, "transfer");
                 assert_eq!(parameter_count, 2);
             }

@@ -1,11 +1,11 @@
 //! Quorum-based consistency
 
 use crate::types::NodeId;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use lib_crypto::types::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
-use lib_crypto::types::{PublicKey, Signature};
 
 /// Quorum configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,7 +22,9 @@ impl QuorumConfig {
     /// Create a new quorum configuration
     pub fn new(n: usize, r: usize, w: usize) -> Result<Self> {
         if r + w <= n {
-            return Err(anyhow!("Invalid quorum: r + w must be > n for strong consistency"));
+            return Err(anyhow!(
+                "Invalid quorum: r + w must be > n for strong consistency"
+            ));
         }
         if r == 0 || w == 0 {
             return Err(anyhow!("Quorum sizes must be positive"));
@@ -148,7 +150,9 @@ impl QuorumManager {
             self.nodes.remove(&node_id);
             return Err(anyhow!(
                 "Adding node would violate quorum invariants: r={}, w={}, n={}",
-                self.config.r, self.config.w, n
+                self.config.r,
+                self.config.w,
+                n
             ));
         }
         self.config.n = n;
@@ -164,7 +168,9 @@ impl QuorumManager {
         if self.config.r > n_after || self.config.w > n_after {
             return Err(anyhow!(
                 "Removing node would violate quorum invariants: r={}, w={}, remaining={}",
-                self.config.r, self.config.w, n_after
+                self.config.r,
+                self.config.w,
+                n_after
             ));
         }
         let removed = self.nodes.remove(node_id);
@@ -178,13 +184,16 @@ impl QuorumManager {
         if new_config.n != current_n {
             return Err(anyhow!(
                 "Config node count mismatch: config.n={}, members={}",
-                new_config.n, current_n
+                new_config.n,
+                current_n
             ));
         }
         if new_config.r > current_n || new_config.w > current_n {
             return Err(anyhow!(
                 "Quorum sizes exceed member count: r={}, w={}, n={}",
-                new_config.r, new_config.w, current_n
+                new_config.r,
+                new_config.w,
+                current_n
             ));
         }
         if !new_config.is_strongly_consistent() {
@@ -314,9 +323,7 @@ impl QuorumResult {
     /// Get the required quorum size
     pub fn required(&self) -> usize {
         match self {
-            QuorumResult::Met { required, .. } | QuorumResult::NotMet { required, .. } => {
-                *required
-            }
+            QuorumResult::Met { required, .. } | QuorumResult::NotMet { required, .. } => *required,
         }
     }
 
@@ -331,9 +338,9 @@ impl QuorumResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use lib_crypto::keypair::KeyPair;
     use lib_identity::NodeId as IdentityNodeId;
+    use std::collections::HashMap;
 
     fn node(id: u8) -> IdentityNodeId {
         IdentityNodeId::from_bytes([id; 32])
@@ -359,13 +366,7 @@ mod tests {
     #[test]
     fn test_read_quorum() {
         let config = QuorumConfig::new(5, 3, 3).unwrap();
-        let nodes = vec![
-            node(1),
-            node(2),
-            node(3),
-            node(4),
-            node(5),
-        ];
+        let nodes = vec![node(1), node(2), node(3), node(4), node(5)];
         let manager = QuorumManager::new(config, nodes).unwrap();
 
         let responding = vec![node(1), node(2), node(3)];
@@ -378,21 +379,10 @@ mod tests {
     #[test]
     fn test_write_quorum() {
         let config = QuorumConfig::new(5, 3, 3).unwrap();
-        let nodes = vec![
-            node(1),
-            node(2),
-            node(3),
-            node(4),
-            node(5),
-        ];
+        let nodes = vec![node(1), node(2), node(3), node(4), node(5)];
         let manager = QuorumManager::new(config, nodes).unwrap();
 
-        let responding = vec![
-            node(1),
-            node(2),
-            node(3),
-            node(4),
-        ];
+        let responding = vec![node(1), node(2), node(3), node(4)];
         assert!(manager.check_write_quorum(&responding).is_met());
     }
 

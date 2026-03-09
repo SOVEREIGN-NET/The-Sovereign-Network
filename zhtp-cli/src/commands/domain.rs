@@ -7,13 +7,16 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{DomainArgs, DomainAction, ZhtpCli};
-use crate::commands::web4_utils::{build_trust_config, connect_client, load_identity_from_keystore, resolve_keystore_path, validate_domain};
-use crate::error::{CliResult, CliError};
+use crate::argument_parsing::{DomainAction, DomainArgs, ZhtpCli};
+use crate::commands::web4_utils::{
+    build_trust_config, connect_client, load_identity_from_keystore, resolve_keystore_path,
+    validate_domain,
+};
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
 
-use std::collections::HashMap;
 use lib_crypto::sign_message;
+use std::collections::HashMap;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -76,7 +79,7 @@ fn minimum_registration_fee() -> u64 {
     if estimated_tx_size > threshold_bytes {
         size_fee *= 2;
     }
-    base_fee + size_fee  // = 1000 + 90 = 1090 SOV for 9000-byte estimate
+    base_fee + size_fee // = 1000 + 90 = 1090 SOV for 9000-byte estimate
 }
 
 // ============================================================================
@@ -86,10 +89,7 @@ fn minimum_registration_fee() -> u64 {
 /// Handle domain command with proper error handling and output
 ///
 /// Public entry point that maintains backward compatibility
-pub async fn handle_domain_command(
-    args: DomainArgs,
-    cli: &ZhtpCli,
-) -> crate::error::CliResult<()> {
+pub async fn handle_domain_command(args: DomainArgs, cli: &ZhtpCli) -> crate::error::CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_domain_command_impl(args, cli, &output).await
 }
@@ -264,7 +264,10 @@ async fn register_domain_impl(
     server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    output.info(&format!("Registering domain '{}' for {} days...", domain, duration))?;
+    output.info(&format!(
+        "Registering domain '{}' for {} days...",
+        domain, duration
+    ))?;
 
     let keystore_path = resolve_keystore_path(keystore)?;
 
@@ -282,8 +285,10 @@ async fn register_domain_impl(
         .map_err(|e| CliError::ConfigError(format!("Failed to sign registration: {}", e)))?;
 
     let metadata_json = match metadata {
-        Some(raw) => Some(serde_json::from_str::<serde_json::Value>(raw)
-            .map_err(|e| CliError::ConfigError(format!("Invalid metadata JSON: {}", e)))?),
+        Some(raw) => Some(
+            serde_json::from_str::<serde_json::Value>(raw)
+                .map_err(|e| CliError::ConfigError(format!("Invalid metadata JSON: {}", e)))?,
+        ),
         None => None,
     };
 
@@ -301,12 +306,17 @@ async fn register_domain_impl(
         .post_json("/api/v1/web4/domains/register", &body)
         .await
         .map_err(|e| CliError::ConfigError(format!("Failed to register domain: {}", e)))?;
-    let _: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ConfigError(format!("Failed to parse registration response: {}", e)))?;
+    let _: serde_json::Value =
+        lib_network::client::ZhtpClient::parse_json(&response).map_err(|e| {
+            CliError::ConfigError(format!("Failed to parse registration response: {}", e))
+        })?;
 
     output.success(&format!("✓ Domain '{}' registered successfully", domain))?;
     output.print(&format!("Registration period: {} days", duration))?;
-    output.print(&format!("Use 'zhtp-cli domain info {}' to view details", domain))?;
+    output.print(&format!(
+        "Use 'zhtp-cli domain info {}' to view details",
+        domain
+    ))?;
 
     Ok(())
 }
@@ -424,7 +434,11 @@ async fn transfer_domain_impl(
     let result: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
         .map_err(|e| CliError::ConfigError(format!("Failed to parse transfer response: {}", e)))?;
 
-    if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if result
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         output.success(&format!(
             "✓ Domain '{}' transfer initiated to '{}'",
             domain, new_owner
@@ -433,9 +447,7 @@ async fn transfer_domain_impl(
         return Ok(());
     }
 
-    Err(CliError::ConfigError(
-        "Domain transfer failed".to_string(),
-    ))
+    Err(CliError::ConfigError("Domain transfer failed".to_string()))
 }
 
 /// Release domain from use
@@ -469,15 +481,17 @@ async fn release_domain_impl(
     let result: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
         .map_err(|e| CliError::ConfigError(format!("Failed to parse release response: {}", e)))?;
 
-    if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if result
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         output.success(&format!("✓ Domain '{}' released successfully", domain))?;
         output.print("This domain is now available for registration by others")?;
         return Ok(());
     }
 
-    Err(CliError::ConfigError(
-        "Domain release failed".to_string(),
-    ))
+    Err(CliError::ConfigError("Domain release failed".to_string()))
 }
 
 /// Admin: migrate legacy domain records
@@ -496,7 +510,10 @@ async fn migrate_domains_impl(
     let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
 
     let response = client
-        .post_json("/api/v1/web4/domains/admin/migrate-domains", &serde_json::json!({}))
+        .post_json(
+            "/api/v1/web4/domains/admin/migrate-domains",
+            &serde_json::json!({}),
+        )
         .await
         .map_err(|e| CliError::ConfigError(format!("Failed to migrate domains: {}", e)))?;
 
@@ -581,7 +598,10 @@ mod tests {
 
     #[test]
     fn test_operation_description() {
-        assert_eq!(DomainOperation::Register.description(), "Register a new domain");
+        assert_eq!(
+            DomainOperation::Register.description(),
+            "Register a new domain"
+        );
         assert_eq!(
             DomainOperation::Check.description(),
             "Check domain availability"

@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use super::token_id::derive_token_id;
 use crate::integration::crypto_integration::PublicKey;
 use crate::types::dao::{DAOType, EconomicPeriod};
-use super::token_id::derive_token_id;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Core DAO token contract with locked-down invariants
 ///
@@ -45,7 +45,7 @@ pub struct DAOToken {
     decimals: u8,
     total_supply: u64,
     balances: HashMap<PublicKey, u64>,
-    
+
     // Economic period scheduling (Invariants B1-B4)
     allocation_period: Option<EconomicPeriod>,
     next_disbursement_height: Option<u64>,
@@ -105,10 +105,12 @@ impl DAOToken {
         if staking_contract_addr.as_bytes().iter().all(|b| *b == 0) {
             return Err("Staking contract address cannot be zero".to_string());
         }
-        
+
         // For FP tokens: validate caller is non-zero (becomes initial_holder)
         if dao_type.is_for_profit() && caller.as_bytes().iter().all(|b| *b == 0) {
-            return Err("For-profit DAO: initial_holder (caller) cannot be zero address".to_string());
+            return Err(
+                "For-profit DAO: initial_holder (caller) cannot be zero address".to_string(),
+            );
         }
 
         // Generate token_id using canonical derivation function
@@ -116,7 +118,7 @@ impl DAOToken {
         // - name, symbol, dao_type (prevents NP/FP collision)
         // - decimals (prevents precision confusion)
         let token_id = derive_token_id(&name, &symbol, dao_type, decimals);
-        
+
         // Calculate initial next disbursement height if period is set (Invariant B1)
         // CRITICAL: Compute from current_height, not genesis (height 0)
         // This supports post-genesis initialization (new DAOs, upgrades, redeployments)
@@ -237,7 +239,12 @@ impl DAOToken {
     }
 
     /// Burn tokens (only callable by staking contract)
-    pub fn burn(&mut self, caller: &PublicKey, from: &PublicKey, amount: u64) -> Result<(), String> {
+    pub fn burn(
+        &mut self,
+        caller: &PublicKey,
+        from: &PublicKey,
+        amount: u64,
+    ) -> Result<(), String> {
         // Validate authorization
         self.require_staking_auth(caller)?;
 
@@ -264,7 +271,12 @@ impl DAOToken {
 
     /// Transfer tokens between accounts (no authorization required)
     /// State-atomic: validates all preconditions before any mutation.
-    pub fn transfer(&mut self, from: &PublicKey, to: &PublicKey, amount: u64) -> Result<(), String> {
+    pub fn transfer(
+        &mut self,
+        from: &PublicKey,
+        to: &PublicKey,
+        amount: u64,
+    ) -> Result<(), String> {
         if amount == 0 {
             return Err("Cannot transfer zero amount".to_string());
         }
@@ -357,7 +369,10 @@ impl DAOToken {
     /// Returns true only if current_height == next_disbursement_height (exact match).
     /// Not >=, not approximate.
     pub fn is_disbursement_due(&self, current_height: u64) -> bool {
-        match (self.next_disbursement_height, self.last_executed_disbursement_height) {
+        match (
+            self.next_disbursement_height,
+            self.last_executed_disbursement_height,
+        ) {
             (Some(next_height), Some(last_height)) => {
                 // Invariant B4: Already executed this height
                 if last_height == current_height {
@@ -467,8 +482,6 @@ impl DAOToken {
     pub fn last_executed_disbursement_height(&self) -> Option<u64> {
         self.last_executed_disbursement_height
     }
-
-
 }
 
 #[cfg(test)]
@@ -499,7 +512,7 @@ mod tests {
             staking,
             caller,
             None, // No scheduled disbursement
-            0, // genesis height
+            0,    // genesis height
         )
         .unwrap();
 
@@ -553,7 +566,7 @@ mod tests {
 
         let caller_balance = token.balance_of(&caller);
         let treasury_balance = token.balance_of(&treasury);
-        
+
         // Caller should get 80% = 800_000
         assert_eq!(caller_balance, 800_000);
         // Total should still equal supply
@@ -583,7 +596,7 @@ mod tests {
 
         let treasury_balance = token.balance_of(&treasury);
         let caller_balance = token.balance_of(&caller);
-        
+
         // 1_000_001 * 20 / 100 = 200_000 (integer division)
         assert_eq!(treasury_balance, 200_000);
         // Remainder goes to caller: 1_000_001 - 200_000 = 800_001
@@ -613,7 +626,9 @@ mod tests {
         );
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Treasury address cannot be zero"));
+        assert!(result
+            .unwrap_err()
+            .contains("Treasury address cannot be zero"));
     }
 
     #[test]
@@ -636,7 +651,9 @@ mod tests {
         );
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Staking contract address cannot be zero"));
+        assert!(result
+            .unwrap_err()
+            .contains("Staking contract address cannot be zero"));
     }
 
     #[test]
@@ -706,7 +723,9 @@ mod tests {
 
         let result = token.mint(&attacker, &recipient, 1000);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Only staking contract can mint"));
+        assert!(result
+            .unwrap_err()
+            .contains("Only staking contract can mint"));
     }
 
     #[test]
@@ -732,7 +751,7 @@ mod tests {
 
         let initial_supply = token.total_supply();
         let result = token.mint(&staking, &recipient, 1000);
-        
+
         assert!(result.is_ok());
         assert_eq!(token.balance_of(&recipient), 1000);
         assert_eq!(token.total_supply(), initial_supply + 1000);
@@ -818,7 +837,7 @@ mod tests {
         let initial_balance = token.balance_of(&treasury);
 
         let result = token.burn(&staking, &treasury, 100_000);
-        
+
         assert!(result.is_ok());
         assert_eq!(token.balance_of(&treasury), initial_balance - 100_000);
         assert_eq!(token.total_supply(), initial_supply - 100_000);
@@ -847,7 +866,9 @@ mod tests {
 
         let result = token.burn(&attacker, &treasury, 100_000);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Only staking contract can mint"));
+        assert!(result
+            .unwrap_err()
+            .contains("Only staking contract can mint"));
     }
 
     #[test]
@@ -1064,7 +1085,7 @@ mod tests {
         let caller = create_test_public_key(3);
         let user_a = create_test_public_key(5);
         let user_b = create_test_public_key(6);
-        
+
         let mut token = DAOToken::init_dao_token(
             DAOType::NP,
             "Token".to_string(),
@@ -1081,7 +1102,7 @@ mod tests {
 
         // Transfer some tokens to user_a
         token.transfer(&treasury, &user_a, 100_000).unwrap();
-        
+
         let user_a_before = token.balance_of(&user_a);
         let user_b_before = token.balance_of(&user_b);
         let supply_before = token.total_supply();
@@ -1096,7 +1117,7 @@ mod tests {
         assert_eq!(token.balance_of(&user_a), user_a_before);
         assert_eq!(token.balance_of(&user_b), user_b_before);
         assert_eq!(token.total_supply(), supply_before);
-        
+
         // CRITICAL: All other balances unchanged (supply invariant still holds)
         let sum: u64 = token.all_balances().values().sum();
         assert_eq!(sum, token.total_supply());
@@ -1192,7 +1213,7 @@ mod tests {
     fn test_fp_init_rejects_zero_caller_address() {
         // CRITICAL: FP token must validate initial_holder (caller)
         // Cannot silently burn 80% of supply to zero address
-        
+
         let treasury = create_test_public_key(1);
         let staking = create_test_public_key(2);
         let zero_caller = PublicKey::new(vec![0u8; 1312]);
@@ -1224,7 +1245,7 @@ mod tests {
         // - no partial initialization
         // - no re-entry
         // - safe upgrades/migrations
-        
+
         let treasury = create_test_public_key(1);
         let staking = create_test_public_key(2);
         let caller = create_test_public_key(3);
@@ -1246,7 +1267,7 @@ mod tests {
 
         // Verify initialized flag is set to true
         assert!(token.is_initialized());
-        
+
         // Token is immutable after successful init.
         // Re-initialization is prevented by the lack of a re-init method
         // and the initialized flag being set.
@@ -1357,10 +1378,10 @@ mod tests {
 
         // Not at boundary yet
         assert!(!token.is_disbursement_due(8_639));
-        
+
         // Exact boundary
         assert!(token.is_disbursement_due(8_600));
-        
+
         // Past boundary (but next disbursement not yet recorded)
         assert!(!token.is_disbursement_due(8_641));
     }
@@ -1466,7 +1487,9 @@ mod tests {
         let result = token.record_disbursement_executed(8_639);
         assert!(result.is_err());
         // Will fail B3 check first (8639 != 17280 which is current due height)
-        assert!(result.unwrap_err().contains("Disbursement not due at height"));
+        assert!(result
+            .unwrap_err()
+            .contains("Disbursement not due at height"));
     }
 
     #[test]
@@ -1526,7 +1549,7 @@ mod tests {
             staking,
             caller,
             None, // No schedule
-            0, // genesis height
+            0,    // genesis height
         )
         .unwrap();
 
@@ -1589,7 +1612,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Daily), // First boundary: 8640
-            0, // genesis height
+            0,                           // genesis height
         )
         .unwrap();
 
@@ -1629,7 +1652,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Daily), // First boundary: 8640
-            0, // genesis height
+            0,                           // genesis height
         )
         .unwrap();
 
@@ -1668,7 +1691,7 @@ mod tests {
             staking,
             caller,
             Some(EconomicPeriod::Daily), // First boundary: 8640
-            0, // genesis height
+            0,                           // genesis height
         )
         .unwrap();
 

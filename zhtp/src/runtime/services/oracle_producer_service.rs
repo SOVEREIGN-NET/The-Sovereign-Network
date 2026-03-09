@@ -8,7 +8,7 @@ const MIN_SOURCES_REQUIRED: usize = 3;
 const MIN_VALID_SOURCES_TO_ATTEST: usize = 2;
 
 /// ORACLE-R8: Producer configuration derived from on-chain oracle config.
-/// 
+///
 /// This ensures the producer's filtering rules match the consensus expectations,
 /// preventing attestations that would be rejected by the chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,7 +21,7 @@ pub struct OracleProducerConfig {
 
 impl OracleProducerConfig {
     /// Create producer config from on-chain oracle config.
-    /// 
+    ///
     /// ORACLE-R8: Producer policy is sourced from on-chain config to ensure
     /// consistency with consensus validation rules.
     pub fn from_on_chain_config(config: &OracleConfig) -> Self {
@@ -71,7 +71,7 @@ impl OracleProducerService {
     }
 
     /// ORACLE-R8: Update config from on-chain oracle state.
-    /// 
+    ///
     /// This should be called periodically by the runtime to ensure
     /// the producer's filtering rules stay in sync with on-chain config.
     pub fn update_config(&mut self, on_chain_config: &OracleConfig) {

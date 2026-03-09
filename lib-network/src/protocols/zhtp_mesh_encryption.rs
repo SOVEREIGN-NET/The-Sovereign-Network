@@ -35,7 +35,7 @@
 //! "zhtp-mesh\0v1\0node_discovery\0<32-byte session_id>"
 //! ```
 
-use crate::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption, EncryptionStats};
+use crate::encryption::{ChaCha20Poly1305Encryption, EncryptionStats, ProtocolEncryption};
 use anyhow::Result;
 use tracing::debug;
 
@@ -51,13 +51,13 @@ mod core {
     /// This ensures different message types and sessions produce different AAD.
     pub fn build_aad(message_type: &str, session_id: &[u8]) -> Vec<u8> {
         let mut aad = Vec::new();
-        aad.extend_from_slice(b"zhtp-mesh");      // protocol_id
-        aad.push(0x00);                            // separator
-        aad.extend_from_slice(b"v1");              // version
-        aad.push(0x00);                            // separator
+        aad.extend_from_slice(b"zhtp-mesh"); // protocol_id
+        aad.push(0x00); // separator
+        aad.extend_from_slice(b"v1"); // version
+        aad.push(0x00); // separator
         aad.extend_from_slice(message_type.as_bytes()); // message_type
-        aad.push(0x00);                            // separator
-        aad.extend_from_slice(session_id);         // session_id
+        aad.push(0x00); // separator
+        aad.extend_from_slice(session_id); // session_id
         aad
     }
 }
@@ -207,7 +207,10 @@ mod tests {
 
         // Different message types should produce different AAD
         let aad2 = core::build_aad("route_update", &session_id);
-        assert_ne!(aad, aad2, "Different message types must produce different AAD");
+        assert_ne!(
+            aad, aad2,
+            "Different message types must produce different AAD"
+        );
     }
 
     #[test]
@@ -260,7 +263,10 @@ mod tests {
 
         // Try to decrypt with different message type (should fail)
         let result = enc.decrypt_message(&ciphertext, "route_update");
-        assert!(result.is_err(), "Different message type should fail decryption");
+        assert!(
+            result.is_err(),
+            "Different message type should fail decryption"
+        );
     }
 
     #[test]
@@ -310,7 +316,10 @@ mod tests {
 
         // Encrypt empty message
         let ciphertext = enc.encrypt_message(b"", "node_discovery").unwrap();
-        assert!(!ciphertext.is_empty(), "Even empty message produces ciphertext (tag)");
+        assert!(
+            !ciphertext.is_empty(),
+            "Even empty message produces ciphertext (tag)"
+        );
 
         let decrypted = enc.decrypt_message(&ciphertext, "node_discovery").unwrap();
         assert_eq!(decrypted.len(), 0, "Empty message should decrypt to empty");
@@ -326,10 +335,15 @@ mod tests {
         // Create 1MB message
         let large_message = vec![0x42u8; 1024 * 1024];
 
-        let ciphertext = enc.encrypt_message(&large_message, "node_discovery").unwrap();
+        let ciphertext = enc
+            .encrypt_message(&large_message, "node_discovery")
+            .unwrap();
         let decrypted = enc.decrypt_message(&ciphertext, "node_discovery").unwrap();
 
-        assert_eq!(large_message, decrypted, "Large message should round-trip correctly");
+        assert_eq!(
+            large_message, decrypted,
+            "Large message should round-trip correctly"
+        );
     }
 
     #[test]

@@ -26,9 +26,9 @@
 //! - **I4**: CBE cannot receive nonprofit earnings directly
 //! - **I5**: Entity types and roles are immutable after initialization
 
+use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use crate::integration::crypto_integration::PublicKey;
 
 /// Entity type classification
 ///
@@ -167,20 +167,21 @@ pub enum EntityRegistryError {
 impl std::fmt::Display for EntityRegistryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EntityRegistryError::AlreadyInitialized =>
-                write!(f, "Entity registry already initialized"),
-            EntityRegistryError::TreasuriesNotDistinct =>
-                write!(f, "CBE and Nonprofit treasury addresses must be distinct"),
-            EntityRegistryError::ZeroAddress =>
-                write!(f, "Address cannot be zero"),
-            EntityRegistryError::EntityNotFound =>
-                write!(f, "Entity not found in registry"),
-            EntityRegistryError::InvalidRoleForEntityType =>
-                write!(f, "Role not valid for this entity type"),
-            EntityRegistryError::NotInitialized =>
-                write!(f, "Registry not initialized"),
-            EntityRegistryError::RegistryImmutable =>
-                write!(f, "Registry is immutable after initialization"),
+            EntityRegistryError::AlreadyInitialized => {
+                write!(f, "Entity registry already initialized")
+            }
+            EntityRegistryError::TreasuriesNotDistinct => {
+                write!(f, "CBE and Nonprofit treasury addresses must be distinct")
+            }
+            EntityRegistryError::ZeroAddress => write!(f, "Address cannot be zero"),
+            EntityRegistryError::EntityNotFound => write!(f, "Entity not found in registry"),
+            EntityRegistryError::InvalidRoleForEntityType => {
+                write!(f, "Role not valid for this entity type")
+            }
+            EntityRegistryError::NotInitialized => write!(f, "Registry not initialized"),
+            EntityRegistryError::RegistryImmutable => {
+                write!(f, "Registry is immutable after initialization")
+            }
         }
     }
 }
@@ -250,7 +251,8 @@ impl EntityRegistry {
         self.nonprofit_treasury = nonprofit_treasury.clone();
 
         // Register CBE as ForProfit with appropriate roles
-        self.entity_types.insert(cbe_treasury.key_id, EntityType::ForProfit);
+        self.entity_types
+            .insert(cbe_treasury.key_id, EntityType::ForProfit);
         let mut cbe_roles = HashSet::new();
         cbe_roles.insert(Role::Operator);
         cbe_roles.insert(Role::ProfitDeclarer);
@@ -258,11 +260,13 @@ impl EntityRegistry {
         self.roles.insert(cbe_treasury.key_id, cbe_roles);
 
         // Register Nonprofit with appropriate roles
-        self.entity_types.insert(nonprofit_treasury.key_id, EntityType::Nonprofit);
+        self.entity_types
+            .insert(nonprofit_treasury.key_id, EntityType::Nonprofit);
         let mut nonprofit_roles = HashSet::new();
         nonprofit_roles.insert(Role::MissionCustodian);
         nonprofit_roles.insert(Role::TreasuryHolder);
-        self.roles.insert(nonprofit_treasury.key_id, nonprofit_roles);
+        self.roles
+            .insert(nonprofit_treasury.key_id, nonprofit_roles);
 
         // Lock the registry (immutable after init)
         self.initialized = true;
@@ -352,10 +356,7 @@ impl EntityRegistry {
     /// - Set of roles if address is registered
     /// - Empty set if address is not registered
     pub fn get_roles(&self, address: &PublicKey) -> HashSet<Role> {
-        self.roles
-            .get(&address.key_id)
-            .cloned()
-            .unwrap_or_default()
+        self.roles.get(&address.key_id).cloned().unwrap_or_default()
     }
 
     /// Validate that a transfer respects treasury isolation rules
@@ -477,7 +478,10 @@ mod tests {
         assert!(result.is_ok());
         assert!(registry.is_initialized());
         assert_eq!(registry.cbe_treasury().unwrap().key_id, cbe.key_id);
-        assert_eq!(registry.nonprofit_treasury().unwrap().key_id, nonprofit.key_id);
+        assert_eq!(
+            registry.nonprofit_treasury().unwrap().key_id,
+            nonprofit.key_id
+        );
     }
 
     #[test]
@@ -545,7 +549,10 @@ mod tests {
         let nonprofit = create_test_public_key(2);
         registry.init(cbe, nonprofit.clone()).unwrap();
 
-        assert_eq!(registry.get_entity_type(&nonprofit), Some(EntityType::Nonprofit));
+        assert_eq!(
+            registry.get_entity_type(&nonprofit),
+            Some(EntityType::Nonprofit)
+        );
     }
 
     #[test]

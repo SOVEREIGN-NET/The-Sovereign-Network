@@ -2,18 +2,18 @@
 //!
 //! Provides recovery phrase-based password reset functionality
 
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
 // ZHTP protocol imports
-use lib_protocols::zhtp::ZhtpResult;
 use lib_protocols::types::{ZhtpResponse, ZhtpStatus};
+use lib_protocols::zhtp::ZhtpResult;
 
 // Identity management imports
-use lib_identity::IdentityManager;
 use lib_identity::recovery::RecoveryPhraseManager;
+use lib_identity::IdentityManager;
 
 // Session management
 use crate::session_manager::SessionManager;
@@ -153,7 +153,8 @@ pub async fn handle_password_recovery(
 
             let response = PasswordRecoveryResponse {
                 status: "success".to_string(),
-                message: "Password reset successful. All sessions have been invalidated.".to_string(),
+                message: "Password reset successful. All sessions have been invalidated."
+                    .to_string(),
             };
 
             let json_response = serde_json::to_vec(&response)?;
@@ -187,7 +188,8 @@ mod tests {
         assert_eq!(req.new_password, "newpass123");
 
         // Test with DID
-        let json = r#"{"did": "did:zhtp:abc123", "recovery_phrase": "words", "new_password": "newpass"}"#;
+        let json =
+            r#"{"did": "did:zhtp:abc123", "recovery_phrase": "words", "new_password": "newpass"}"#;
         let req: PasswordRecoveryRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.identity_id, Some("did:zhtp:abc123".to_string()));
     }

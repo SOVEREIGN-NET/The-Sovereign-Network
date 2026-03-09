@@ -115,7 +115,11 @@ impl CompensationEngine {
     }
 
     /// Validate all input metrics
-    fn validate_inputs(&self, metrics: &[MetricRecord], epoch: u64) -> Result<(), CompensationError> {
+    fn validate_inputs(
+        &self,
+        metrics: &[MetricRecord],
+        epoch: u64,
+    ) -> Result<(), CompensationError> {
         for metric in metrics {
             // Check finalized
             if !metric.finalized {
@@ -195,7 +199,9 @@ impl CompensationEngine {
         }
 
         // Check against remaining annual cap
-        let remaining_annual = assignment.snap_annual_cap.saturating_sub(assignment.current_year_paid);
+        let remaining_annual = assignment
+            .snap_annual_cap
+            .saturating_sub(assignment.current_year_paid);
         if result > remaining_annual {
             cap_applied = Some(CapApplication {
                 cap_type: CapType::AssignmentAnnual,
@@ -440,7 +446,10 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(CompensationError::EpochMismatch { expected: 2, found: 1 })
+            Err(CompensationError::EpochMismatch {
+                expected: 2,
+                found: 1
+            })
         ));
     }
 

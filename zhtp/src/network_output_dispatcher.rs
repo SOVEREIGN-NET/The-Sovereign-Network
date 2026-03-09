@@ -1,16 +1,14 @@
-use std::time::Duration;
 use crate::storage_network_integration::{
-    channel_handler,
-    spawn_network_output_processor,
-    NetworkOutputHandler,
+    channel_handler, spawn_network_output_processor, NetworkOutputHandler,
 };
-use lib_network::NetworkOutput;
-use lib_crypto::PublicKey;
-use lib_network::types::mesh_message::{BlockchainRequestType, ZhtpMeshMessage};
-use lib_network::protocols::bluetooth::gatt::EdgeSyncMessage;
 use async_trait::async_trait;
+use lib_crypto::PublicKey;
+use lib_network::protocols::bluetooth::gatt::EdgeSyncMessage;
+use lib_network::types::mesh_message::{BlockchainRequestType, ZhtpMeshMessage};
+use lib_network::NetworkOutput;
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 /// Application-level handler mapping NetworkOutput to storage/blockchain actions.
 ///
@@ -34,7 +32,8 @@ impl AppNetworkOutputHandler {
         data: Vec<u8>,
     ) -> anyhow::Result<()> {
         // Get global mesh router
-        let mesh_router = crate::runtime::mesh_router_provider::get_global_mesh_router().await
+        let mesh_router = crate::runtime::mesh_router_provider::get_global_mesh_router()
+            .await
             .map_err(|e| anyhow::anyhow!("Mesh router not available: {}", e))?;
 
         // Create sender PublicKey from server_id UUID
@@ -47,8 +46,7 @@ impl AppNetworkOutputHandler {
 
         // Calculate complete data hash using lib_crypto
         let hash_bytes = lib_crypto::hash_blake3(&data);
-        let complete_data_hash: [u8; 32] = hash_bytes[..32].try_into()
-            .unwrap_or([0u8; 32]);
+        let complete_data_hash: [u8; 32] = hash_bytes[..32].try_into().unwrap_or([0u8; 32]);
 
         // Chunk size for mesh messages (conservative for BLE compatibility)
         const CHUNK_SIZE: usize = 512;
@@ -74,7 +72,12 @@ impl AppNetworkOutputHandler {
             };
 
             if let Err(e) = mesh_router.send_to_peer(requester, message).await {
-                warn!("Failed to send chunk {}/{} to peer: {}", i + 1, total_chunks, e);
+                warn!(
+                    "Failed to send chunk {}/{} to peer: {}",
+                    i + 1,
+                    total_chunks,
+                    e
+                );
                 // Continue trying to send remaining chunks
             } else {
                 debug!("Sent chunk {}/{}", i + 1, total_chunks);
@@ -119,11 +122,16 @@ impl NetworkOutputHandler for AppNetworkOutputHandler {
 
         match request {
             BlockchainRequestType::FullChain => {
-                info!("Serving full blockchain ({} blocks)", blockchain_guard.height);
+                info!(
+                    "Serving full blockchain ({} blocks)",
+                    blockchain_guard.height
+                );
                 match bincode::serialize(&blockchain_guard.blocks) {
                     Ok(data) => {
                         drop(blockchain_guard);
-                        if let Err(e) = Self::send_blockchain_data(&requester, request_id, data).await {
+                        if let Err(e) =
+                            Self::send_blockchain_data(&requester, request_id, data).await
+                        {
                             error!("Failed to send full chain: {}", e);
                         }
                     }
@@ -135,22 +143,32 @@ impl NetworkOutputHandler for AppNetworkOutputHandler {
             BlockchainRequestType::BlocksAfter(height) => {
                 let current_height = blockchain_guard.height;
                 if height >= current_height {
-                    info!("Peer already up to date (requested after {}, current {})", height, current_height);
+                    info!(
+                        "Peer already up to date (requested after {}, current {})",
+                        height, current_height
+                    );
                     return;
                 }
 
                 let start_idx = (height + 1) as usize;
-                let blocks_to_send: Vec<_> = blockchain_guard.blocks
+                let blocks_to_send: Vec<_> = blockchain_guard
+                    .blocks
                     .iter()
                     .skip(start_idx)
                     .cloned()
                     .collect();
 
-                info!("Serving {} blocks after height {}", blocks_to_send.len(), height);
+                info!(
+                    "Serving {} blocks after height {}",
+                    blocks_to_send.len(),
+                    height
+                );
                 match bincode::serialize(&blocks_to_send) {
                     Ok(data) => {
                         drop(blockchain_guard);
-                        if let Err(e) = Self::send_blockchain_data(&requester, request_id, data).await {
+                        if let Err(e) =
+                            Self::send_blockchain_data(&requester, request_id, data).await
+                        {
                             error!("Failed to send blocks: {}", e);
                         }
                     }
@@ -165,7 +183,9 @@ impl NetworkOutputHandler for AppNetworkOutputHandler {
                     match bincode::serialize(block) {
                         Ok(data) => {
                             drop(blockchain_guard);
-                            if let Err(e) = Self::send_blockchain_data(&requester, request_id, data).await {
+                            if let Err(e) =
+                                Self::send_blockchain_data(&requester, request_id, data).await
+                            {
                                 error!("Failed to send block: {}", e);
                             }
                         }
@@ -187,7 +207,10 @@ impl NetworkOutputHandler for AppNetworkOutputHandler {
                             match bincode::serialize(tx) {
                                 Ok(data) => {
                                     drop(blockchain_guard);
-                                    if let Err(e) = Self::send_blockchain_data(&requester, request_id, data).await {
+                                    if let Err(e) =
+                                        Self::send_blockchain_data(&requester, request_id, data)
+                                            .await
+                                    {
                                         error!("Failed to send transaction: {}", e);
                                     }
                                     return;
@@ -203,11 +226,16 @@ impl NetworkOutputHandler for AppNetworkOutputHandler {
                 warn!("Transaction {} not found", tx_id);
             }
             BlockchainRequestType::Mempool => {
-                info!("Serving mempool ({} pending transactions)", blockchain_guard.pending_transactions.len());
+                info!(
+                    "Serving mempool ({} pending transactions)",
+                    blockchain_guard.pending_transactions.len()
+                );
                 match bincode::serialize(&blockchain_guard.pending_transactions) {
                     Ok(data) => {
                         drop(blockchain_guard);
-                        if let Err(e) = Self::send_blockchain_data(&requester, request_id, data).await {
+                        if let Err(e) =
+                            Self::send_blockchain_data(&requester, request_id, data).await
+                        {
                             error!("Failed to send mempool: {}", e);
                         }
                     }
@@ -216,20 +244,30 @@ impl NetworkOutputHandler for AppNetworkOutputHandler {
                     }
                 }
             }
-            BlockchainRequestType::HeadersOnly { start_height, count } => {
+            BlockchainRequestType::HeadersOnly {
+                start_height,
+                count,
+            } => {
                 let _end_height = (start_height + count as u64).min(blockchain_guard.height);
-                let headers: Vec<_> = blockchain_guard.blocks
+                let headers: Vec<_> = blockchain_guard
+                    .blocks
                     .iter()
                     .skip(start_height as usize)
                     .take(count as usize)
                     .map(|b| b.header.clone())
                     .collect();
 
-                info!("Serving {} headers from height {}", headers.len(), start_height);
+                info!(
+                    "Serving {} headers from height {}",
+                    headers.len(),
+                    start_height
+                );
                 match bincode::serialize(&headers) {
                     Ok(data) => {
                         drop(blockchain_guard);
-                        if let Err(e) = Self::send_blockchain_data(&requester, request_id, data).await {
+                        if let Err(e) =
+                            Self::send_blockchain_data(&requester, request_id, data).await
+                        {
                             error!("Failed to send headers: {}", e);
                         }
                     }
@@ -262,12 +300,11 @@ impl NetworkOutputHandler for AppNetworkOutputHandler {
         warn!("BootstrapProofRequest not yet implemented (edge node ZK proof sync)");
     }
 
-    async fn handle_edge_sync_request(
-        &self,
-        peer: String,
-        message: EdgeSyncMessage,
-    ) {
-        warn!("EdgeSyncRequest from {} message {:?} (not implemented)", peer, message);
+    async fn handle_edge_sync_request(&self, peer: String, message: EdgeSyncMessage) {
+        warn!(
+            "EdgeSyncRequest from {} message {:?} (not implemented)",
+            peer, message
+        );
         // TODO: Forward to edge sync subsystem
     }
 }

@@ -1,10 +1,10 @@
 //! Storage layer type definitions
-//! 
+//!
 //! Contains all types related to the economic storage layer built on top of the DHT,
 //! including content metadata, chunks, tiers, and access patterns.
 
+use crate::types::dht_types::{AccessLevel, StorageTier};
 use crate::types::{ContentHash, NodeId};
-use crate::types::dht_types::{StorageTier, AccessLevel};
 use lib_crypto::Hash;
 use lib_identity::ZhtpIdentity;
 use serde::{Deserialize, Serialize};

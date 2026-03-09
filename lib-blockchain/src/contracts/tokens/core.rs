@@ -1,8 +1,8 @@
+use crate::contracts::executor::{CallOrigin, ExecutionContext};
+use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use crate::integration::crypto_integration::PublicKey;
-use crate::contracts::executor::{ExecutionContext, CallOrigin};
 
 /// Errors for token contract operations
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,8 +140,8 @@ impl TokenContract {
             "SOV".to_string(),
             8,
             1_000_000_000 * 100_000_000, // 1B SOV with 8 decimals
-            false, // SOV is not deflationary
-            0,     // No burn rate for SOV
+            false,                       // SOV is not deflationary
+            0,                           // No burn rate for SOV
             creator,
         );
         token.kernel_mint_authority = Some(kernel_authority);
@@ -160,18 +160,18 @@ impl TokenContract {
             token_id,
             name,
             symbol,
-            8, // Default 8 decimals
+            8,        // Default 8 decimals
             u64::MAX, // Very large max supply
-            false, // Not deflationary by default
-            0,     // No burn rate
+            false,    // Not deflationary by default
+            0,        // No burn rate
             creator.clone(),
         );
-        
+
         // Mint initial supply to creator
         if initial_supply > 0 {
             let _ = token.mint(&creator, initial_supply);
         }
-        
+
         token
     }
 
@@ -206,7 +206,12 @@ impl TokenContract {
     /// # Errors
     /// - `Error::Unauthorized`: If call_origin is System (reserved)
     /// - `Error::InsufficientBalance`: If source account has insufficient balance
-    pub fn transfer(&mut self, ctx: &ExecutionContext, to: &PublicKey, amount: u64) -> Result<u64, Error> {
+    pub fn transfer(
+        &mut self,
+        ctx: &ExecutionContext,
+        to: &PublicKey,
+        amount: u64,
+    ) -> Result<u64, Error> {
         // Phase C: kernel-only mode enforcement
         if self.kernel_only_mode {
             let caller_key = match ctx.call_origin {
@@ -241,7 +246,8 @@ impl TokenContract {
         };
 
         // Perform transfer
-        self.balances.insert(source.clone(), source_balance - amount);
+        self.balances
+            .insert(source.clone(), source_balance - amount);
         let to_balance = self.balance_of(to);
         self.balances.insert(to.clone(), to_balance + amount);
 
@@ -465,7 +471,11 @@ impl TokenContract {
     }
 
     /// Release previously locked tokens
-    pub(crate) fn release_balance(&mut self, account: &PublicKey, amount: u64) -> Result<(), String> {
+    pub(crate) fn release_balance(
+        &mut self,
+        account: &PublicKey,
+        amount: u64,
+    ) -> Result<(), String> {
         let locked = self.locked_balances.get(account).copied().unwrap_or(0);
         if locked < amount {
             return Err(format!(
@@ -562,7 +572,10 @@ impl TokenContract {
 
     /// Get the total number of holders
     pub fn holder_count(&self) -> usize {
-        self.balances.iter().filter(|(_, &balance)| balance > 0).count()
+        self.balances
+            .iter()
+            .filter(|(_, &balance)| balance > 0)
+            .count()
     }
 
     /// Calculate market cap (requires external price data)
@@ -588,7 +601,7 @@ pub struct TokenInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::executor::{ExecutionContext, CallOrigin};
+    use crate::contracts::executor::{CallOrigin, ExecutionContext};
 
     fn create_test_public_key(id: u8) -> PublicKey {
         PublicKey::new(vec![id; 32])
@@ -596,12 +609,10 @@ mod tests {
 
     fn create_test_execution_context(contract: PublicKey, caller: PublicKey) -> ExecutionContext {
         ExecutionContext::with_contract(
-            caller,
-            contract,
-            1,           // block_number
-            1000,        // timestamp
-            100000,      // gas_limit
-            [1u8; 32],   // tx_hash
+            caller, contract, 1,         // block_number
+            1000,      // timestamp
+            100000,    // gas_limit
+            [1u8; 32], // tx_hash
         )
     }
 
@@ -630,7 +641,10 @@ mod tests {
         assert_eq!(token.name, "Sovereign");
         assert_eq!(token.symbol, "SOV");
         assert_eq!(token.decimals, 8);
-        assert_eq!(token.max_supply, crate::contracts::tokens::constants::SOV_TOKEN_MAX_SUPPLY);
+        assert_eq!(
+            token.max_supply,
+            crate::contracts::tokens::constants::SOV_TOKEN_MAX_SUPPLY
+        );
         assert!(!token.is_deflationary);
         assert_eq!(token.burn_rate, 0);
     }
@@ -659,10 +673,10 @@ mod tests {
             [0u8; 32], // token_id
             "Transfer Token".to_string(),
             "XFER".to_string(),
-            8,      // decimals
-            10000,  // max_supply
-            false,  // is_deflationary
-            0,      // burn_rate
+            8,     // decimals
+            10000, // max_supply
+            false, // is_deflationary
+            0,     // burn_rate
             public_key1.clone(),
         );
 
@@ -690,10 +704,10 @@ mod tests {
             [0u8; 32], // token_id
             "Burn Token".to_string(),
             "BURN".to_string(),
-            8,      // decimals
-            10000,  // max_supply
-            true,   // is_deflationary
-            10,     // burn_rate (10%)
+            8,     // decimals
+            10000, // max_supply
+            true,  // is_deflationary
+            10,    // burn_rate (10%)
             public_key1.clone(),
         );
 
@@ -726,23 +740,17 @@ mod tests {
 
         // Transfer from allowance using ExecutionContext
         let ctx = create_test_execution_context(public_key2.clone(), public_key2.clone());
-        let burn_amount = token.transfer_from(
-            &ctx,
-            &public_key1,
-            &public_key3,
-            50,
-        ).unwrap();
+        let burn_amount = token
+            .transfer_from(&ctx, &public_key1, &public_key3, 50)
+            .unwrap();
         assert_eq!(burn_amount, 0);
         assert_eq!(token.balance_of(&public_key3), 50);
         assert_eq!(token.allowance(&public_key1, &public_key2), 50);
 
         // Test insufficient allowance
-        assert!(token.transfer_from(
-            &ctx,
-            &public_key1,
-            &public_key3,
-            100,
-        ).is_err());
+        assert!(token
+            .transfer_from(&ctx, &public_key1, &public_key3, 100,)
+            .is_err());
     }
 
     #[test]
@@ -752,10 +760,10 @@ mod tests {
             [0u8; 32], // token_id
             "Burnable Token".to_string(),
             "BURNABLE".to_string(),
-            8,      // decimals
-            10000,  // max_supply
-            false,  // is_deflationary
-            0,      // burn_rate
+            8,     // decimals
+            10000, // max_supply
+            false, // is_deflationary
+            0,     // burn_rate
             public_key.clone(),
         );
 
@@ -880,7 +888,9 @@ mod tests {
         token.kernel_mint_authority = Some(kernel_addr.clone());
 
         // Minting within limit should succeed
-        assert!(token.mint_kernel_only(&kernel_addr, &recipient, 500).is_ok());
+        assert!(token
+            .mint_kernel_only(&kernel_addr, &recipient, 500)
+            .is_ok());
 
         // Minting beyond limit should fail
         let result = token.mint_kernel_only(&kernel_addr, &recipient, 600);
@@ -901,9 +911,15 @@ mod tests {
         let mut token = TokenContract::new_sov_with_kernel_authority(kernel_addr.clone());
 
         // Mint to multiple recipients
-        assert!(token.mint_kernel_only(&kernel_addr, &recipient1, 1000).is_ok());
-        assert!(token.mint_kernel_only(&kernel_addr, &recipient2, 2000).is_ok());
-        assert!(token.mint_kernel_only(&kernel_addr, &recipient3, 3000).is_ok());
+        assert!(token
+            .mint_kernel_only(&kernel_addr, &recipient1, 1000)
+            .is_ok());
+        assert!(token
+            .mint_kernel_only(&kernel_addr, &recipient2, 2000)
+            .is_ok());
+        assert!(token
+            .mint_kernel_only(&kernel_addr, &recipient3, 3000)
+            .is_ok());
 
         assert_eq!(token.balance_of(&recipient1), 1000);
         assert_eq!(token.balance_of(&recipient2), 2000);
@@ -918,8 +934,7 @@ mod tests {
 
         // Test serialization and deserialization
         let serialized = bincode::serialize(&token).expect("serialize");
-        let deserialized: TokenContract =
-            bincode::deserialize(&serialized).expect("deserialize");
+        let deserialized: TokenContract = bincode::deserialize(&serialized).expect("deserialize");
 
         assert_eq!(deserialized.kernel_mint_authority, Some(kernel_addr));
         assert_eq!(deserialized.name, "SOV Token");

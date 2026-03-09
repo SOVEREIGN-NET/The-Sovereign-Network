@@ -21,11 +21,10 @@ pub enum OptCodes {
     DnsSecValidated,
     AdaptiveDnsDiscovery,
     DoH,
-    MultiUserClientSubnet
+    MultiUserClientSubnet,
 }
 
 impl OptCodes {
-
     pub fn code(&self) -> u16 {
         match self {
             Self::Llq => 1,
@@ -46,7 +45,7 @@ impl OptCodes {
             Self::DnsSecValidated => 18,
             Self::AdaptiveDnsDiscovery => 19,
             Self::DoH => 20,
-            Self::MultiUserClientSubnet => 21
+            Self::MultiUserClientSubnet => 21,
         }
     }
 }
@@ -55,14 +54,12 @@ impl OptCodes {
 pub struct OptCodeParseError(u16);
 
 impl fmt::Display for OptCodeParseError {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "unknown opt code: {}", self.0)
     }
 }
 
 impl TryFrom<u16> for OptCodes {
-
     type Error = OptCodeParseError;
 
     fn try_from(v: u16) -> Result<Self, Self::Error> {
@@ -86,34 +83,37 @@ impl TryFrom<u16> for OptCodes {
             19 => Self::AdaptiveDnsDiscovery,
             20 => Self::DoH,
             21 => Self::MultiUserClientSubnet,
-            _  => return Err(OptCodeParseError(v))
+            _ => return Err(OptCodeParseError(v)),
         })
     }
 }
 
 impl fmt::Display for OptCodes {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self {
-            Self::Llq => "LLQ",
-            Self::Ul => "UL",
-            Self::Nsid => "NSID",
-            Self::Dau => "DAU",
-            Self::Dhu => "DHU",
-            Self::N3u => "N3U",
-            Self::Ecs => "ECS",
-            Self::Expire => "EXPIRE",
-            Self::Cookie => "COOKIE",
-            Self::TcpKeepalive => "TCP_KEEP_ALIVE",
-            Self::Padding => "PADDING",
-            Self::Chain => "CHAIN",
-            Self::KeyTag => "KEYTAG",
-            Self::Ede => "EDE",
-            Self::DnsSecTrustedKey => "DNSSEC_TRUSTED_KEY",
-            Self::DnsSecValidated => "DNSSEC_VALIDATED",
-            Self::AdaptiveDnsDiscovery => "ADAPTIVE_DNS_DISCOVERY",
-            Self::DoH => "DOH",
-            Self::MultiUserClientSubnet => "MULTI_USER_CLIENT_SUBNET"
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Llq => "LLQ",
+                Self::Ul => "UL",
+                Self::Nsid => "NSID",
+                Self::Dau => "DAU",
+                Self::Dhu => "DHU",
+                Self::N3u => "N3U",
+                Self::Ecs => "ECS",
+                Self::Expire => "EXPIRE",
+                Self::Cookie => "COOKIE",
+                Self::TcpKeepalive => "TCP_KEEP_ALIVE",
+                Self::Padding => "PADDING",
+                Self::Chain => "CHAIN",
+                Self::KeyTag => "KEYTAG",
+                Self::Ede => "EDE",
+                Self::DnsSecTrustedKey => "DNSSEC_TRUSTED_KEY",
+                Self::DnsSecValidated => "DNSSEC_VALIDATED",
+                Self::AdaptiveDnsDiscovery => "ADAPTIVE_DNS_DISCOVERY",
+                Self::DoH => "DOH",
+                Self::MultiUserClientSubnet => "MULTI_USER_CLIENT_SUBNET",
+            }
+        )
     }
 }

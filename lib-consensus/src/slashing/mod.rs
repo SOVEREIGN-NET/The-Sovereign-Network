@@ -150,8 +150,16 @@ impl SlashSeverity {
 impl std::fmt::Display for SlashSeverity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Safety => write!(f, "Safety(slash={}%, permanent_ban=true)", DOUBLE_SIGN_SLASH_PERCENT),
-            Self::Liveness => write!(f, "Liveness(slash={}%, jail_blocks={})", LIVENESS_SLASH_PERCENT, JAIL_DURATION_BLOCKS),
+            Self::Safety => write!(
+                f,
+                "Safety(slash={}%, permanent_ban=true)",
+                DOUBLE_SIGN_SLASH_PERCENT
+            ),
+            Self::Liveness => write!(
+                f,
+                "Liveness(slash={}%, jail_blocks={})",
+                LIVENESS_SLASH_PERCENT, JAIL_DURATION_BLOCKS
+            ),
         }
     }
 }
@@ -241,7 +249,9 @@ impl JailStatus {
     /// Returns `None` for `Active` and `PermanentBan` statuses.
     pub fn eligible_at_block(&self) -> Option<u64> {
         match self {
-            Self::LivenessJail { eligible_at_block, .. } => Some(*eligible_at_block),
+            Self::LivenessJail {
+                eligible_at_block, ..
+            } => Some(*eligible_at_block),
             _ => None,
         }
     }
@@ -281,21 +291,21 @@ pub enum RecoveryError {
 impl std::fmt::Display for RecoveryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::PermanentBan { reason } => write!(
-                f,
-                "Permanent ban for {} — validator cannot unjail",
-                reason
-            ),
+            Self::PermanentBan { reason } => {
+                write!(f, "Permanent ban for {} — validator cannot unjail", reason)
+            }
             Self::JailPeriodNotExpired { eligible_at_block } => write!(
                 f,
                 "Jail period not expired; eligible to unjail at block {}",
                 eligible_at_block
             ),
-            Self::InsufficientStake { remaining_stake, required } => write!(
+            Self::InsufficientStake {
+                remaining_stake,
+                required,
+            } => write!(
                 f,
                 "Insufficient stake to unjail: {} < {} required",
-                remaining_stake,
-                required
+                remaining_stake, required
             ),
             Self::NotJailed => write!(f, "Validator is not jailed"),
             Self::ValidatorNotFound => write!(f, "Validator not found"),
@@ -326,7 +336,11 @@ impl std::fmt::Display for SlashPolicyError {
             ),
             Self::ValidatorNotFound => write!(f, "Validator not found in active set"),
             Self::InvalidSlashPercent { got } => {
-                write!(f, "Invalid slash percentage: got {}%, expected 1..=100", got)
+                write!(
+                    f,
+                    "Invalid slash percentage: got {}%, expected 1..=100",
+                    got
+                )
             }
         }
     }
@@ -371,7 +385,9 @@ pub fn check_unjail_eligibility(
     match jail_status {
         // REC-INV-1: Safety-slashed validators cannot unjail
         JailStatus::PermanentBan { reason, .. } => {
-            return Err(RecoveryError::PermanentBan { reason: reason.clone() });
+            return Err(RecoveryError::PermanentBan {
+                reason: reason.clone(),
+            });
         }
 
         // Not jailed — unjail request is invalid
@@ -380,7 +396,10 @@ pub fn check_unjail_eligibility(
         }
 
         // Liveness jail: check wait period and stake
-        JailStatus::LivenessJail { jailed_at_block, eligible_at_block } => {
+        JailStatus::LivenessJail {
+            jailed_at_block,
+            eligible_at_block,
+        } => {
             // REC-INV-2: Validate that eligible_at_block matches computed expectation
             let computed_eligible = jailed_at_block.saturating_add(JAIL_EXIT_WAIT_BLOCKS);
             debug_assert_eq!(
@@ -447,7 +466,10 @@ pub fn liveness_jail_status(jailed_at_block: u64) -> JailStatus {
 ///
 /// # Invariant REC-INV-1
 pub fn safety_ban_status(banned_at_block: u64, reason: BanReason) -> JailStatus {
-    JailStatus::PermanentBan { banned_at_block, reason }
+    JailStatus::PermanentBan {
+        banned_at_block,
+        reason,
+    }
 }
 
 /// Determine the stake restoration amount after unjailing.
@@ -539,7 +561,10 @@ mod tests {
         assert!(!status.is_active());
         assert!(!status.is_permanently_banned());
         assert!(status.is_liveness_jailed());
-        assert_eq!(status.eligible_at_block(), Some(500 + JAIL_EXIT_WAIT_BLOCKS));
+        assert_eq!(
+            status.eligible_at_block(),
+            Some(500 + JAIL_EXIT_WAIT_BLOCKS)
+        );
     }
 
     #[test]
@@ -559,8 +584,10 @@ mod tests {
     fn test_rec_inv1_permanent_ban_cannot_unjail() {
         let status = safety_banned(100);
         let result = check_unjail_eligibility(&status, MIN_STAKE_TO_UNJAIL + 1, 99999);
-        assert!(matches!(result, Err(RecoveryError::PermanentBan { .. })),
-            "REC-INV-1: permanent ban must be rejected");
+        assert!(
+            matches!(result, Err(RecoveryError::PermanentBan { .. })),
+            "REC-INV-1: permanent ban must be rejected"
+        );
     }
 
     #[test]
@@ -592,7 +619,9 @@ mod tests {
         let result = check_unjail_eligibility(&status, MIN_STAKE_TO_UNJAIL + 1, eligible_at - 1);
         assert_eq!(
             result,
-            Err(RecoveryError::JailPeriodNotExpired { eligible_at_block: eligible_at }),
+            Err(RecoveryError::JailPeriodNotExpired {
+                eligible_at_block: eligible_at
+            }),
             "REC-INV-2: must reject before jail period expires"
         );
     }
@@ -627,13 +656,17 @@ mod tests {
 
         // Zero stake
         let result = check_unjail_eligibility(&status, 0, eligible_at + 1);
-        assert!(matches!(result, Err(RecoveryError::InsufficientStake { .. })),
-            "REC-INV-3: zero stake must be rejected");
+        assert!(
+            matches!(result, Err(RecoveryError::InsufficientStake { .. })),
+            "REC-INV-3: zero stake must be rejected"
+        );
 
         // Just below minimum
         let result2 = check_unjail_eligibility(&status, MIN_STAKE_TO_UNJAIL - 1, eligible_at + 1);
-        assert!(matches!(result2, Err(RecoveryError::InsufficientStake { .. })),
-            "REC-INV-3: below-minimum stake must be rejected");
+        assert!(
+            matches!(result2, Err(RecoveryError::InsufficientStake { .. })),
+            "REC-INV-3: below-minimum stake must be rejected"
+        );
     }
 
     #[test]
@@ -643,7 +676,11 @@ mod tests {
         let eligible_at = jailed_at + JAIL_EXIT_WAIT_BLOCKS;
 
         let result = check_unjail_eligibility(&status, MIN_STAKE_TO_UNJAIL, eligible_at + 1);
-        assert_eq!(result, Ok(()), "REC-INV-3: exact minimum stake must be accepted");
+        assert_eq!(
+            result,
+            Ok(()),
+            "REC-INV-3: exact minimum stake must be accepted"
+        );
     }
 
     #[test]
@@ -674,7 +711,10 @@ mod tests {
         let jailed_at = 7500u64;
         let status = liveness_jail_status(jailed_at);
         match status {
-            JailStatus::LivenessJail { jailed_at_block, eligible_at_block } => {
+            JailStatus::LivenessJail {
+                jailed_at_block,
+                eligible_at_block,
+            } => {
                 assert_eq!(jailed_at_block, 7500);
                 assert_eq!(eligible_at_block, 7500 + JAIL_EXIT_WAIT_BLOCKS);
             }

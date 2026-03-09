@@ -61,9 +61,9 @@
 //! - No server "fill-in" of missing policy decisions
 //! Prevents: hardcoded protocol defaults, capability-incompatible connections
 
-use std::time::SystemTime;
 use lib_crypto::PublicKey;
 use lib_network::protocols::NetworkProtocol;
+use std::time::SystemTime;
 
 // ============================================================================
 // NodeRole - Defines what kind of node this is
@@ -103,7 +103,10 @@ impl NodeRole {
     }
 
     pub fn stores_full_blockchain(&self) -> bool {
-        matches!(self, NodeRole::FullValidator | NodeRole::Observer | NodeRole::ArchivalNode)
+        matches!(
+            self,
+            NodeRole::FullValidator | NodeRole::Observer | NodeRole::ArchivalNode
+        )
     }
 
     /// Check if this node role can participate in block mining/production.
@@ -135,7 +138,10 @@ impl NodeRole {
     /// This is different from consensus validation - it's just checking blocks are valid.
     /// Observer and FullValidator nodes can do this as they have full blockchain.
     pub fn can_verify_blocks(&self) -> bool {
-        matches!(self, NodeRole::FullValidator | NodeRole::Observer | NodeRole::ArchivalNode)
+        matches!(
+            self,
+            NodeRole::FullValidator | NodeRole::Observer | NodeRole::ArchivalNode
+        )
     }
 }
 
@@ -184,7 +190,7 @@ pub enum PeerState {
 #[derive(Clone, Debug)]
 pub struct PeerStateChange {
     pub peer: PublicKey,
-    pub peer_info: PeerInfo,  // NR-7: Policy Input Completeness - authoritative peer metadata
+    pub peer_info: PeerInfo, // NR-7: Policy Input Completeness - authoritative peer metadata
     pub old_state: PeerState,
     pub new_state: PeerState,
     pub reason: Option<String>,
@@ -217,10 +223,7 @@ pub enum NodeAction {
     DropPeer(PublicKey),
 
     /// Advertise our capabilities to peer
-    AdvertiseCapabilities {
-        peer: PublicKey,
-        role: NodeRole,
-    },
+    AdvertiseCapabilities { peer: PublicKey, role: NodeRole },
 
     /// Retry failed connection to peer
     RetryConnection {
@@ -241,10 +244,7 @@ pub enum NodeAction {
     PromotePeer(PublicKey),
 
     /// Demote peer (back off, throttle)
-    DemotePeer {
-        peer: PublicKey,
-        reason: String,
-    },
+    DemotePeer { peer: PublicKey, reason: String },
 }
 
 // ============================================================================
@@ -412,7 +412,8 @@ impl NodeRuntime for DefaultNodeRuntime {
                 if self.should_sync_with(&change.peer_info) {
                     // Select protocol based on peer metadata (NR-8: Action Completeness)
                     let preferred_protocols = self.get_preferred_protocols(&change.peer_info);
-                    let selected_protocol = preferred_protocols.first()
+                    let selected_protocol = preferred_protocols
+                        .first()
                         .cloned()
                         .unwrap_or(NetworkProtocol::QUIC);
 
@@ -463,12 +464,9 @@ impl NodeRuntime for DefaultNodeRuntime {
         match peer.discovered_via {
             DiscoveryProtocol::BluetoothLE => {
                 // For BLE-discovered peers, check if they have better protocols available
-                let has_quic = peer
-                    .addresses
-                    .iter()
-                    .any(|addr| {
-                        addr.contains("quic://") || addr.parse::<std::net::SocketAddr>().is_ok()
-                    });
+                let has_quic = peer.addresses.iter().any(|addr| {
+                    addr.contains("quic://") || addr.parse::<std::net::SocketAddr>().is_ok()
+                });
 
                 if has_quic {
                     vec![NetworkProtocol::QUIC, NetworkProtocol::BluetoothLE]
@@ -550,7 +548,7 @@ mod tests {
     use super::*;
 
     /// Test the service capability matrix for all node roles.
-    /// 
+    ///
     /// This enforces the documented capability matrix:
     /// | Service          | FullNode | EdgeNode | Validator | Relay |
     /// |------------------|----------|----------|-----------|-------|
@@ -564,43 +562,103 @@ mod tests {
     fn test_node_role_capabilities() {
         // FullValidator: can mine, can validate, can verify blocks
         let full_validator = NodeRole::FullValidator;
-        assert!(full_validator.can_mine(), "FullValidator must be able to mine");
-        assert!(full_validator.can_validate(), "FullValidator must be able to validate");
-        assert!(full_validator.can_verify_blocks(), "FullValidator must be able to verify blocks");
-        assert!(full_validator.stores_full_blockchain(), "FullValidator must store full blockchain");
-        
+        assert!(
+            full_validator.can_mine(),
+            "FullValidator must be able to mine"
+        );
+        assert!(
+            full_validator.can_validate(),
+            "FullValidator must be able to validate"
+        );
+        assert!(
+            full_validator.can_verify_blocks(),
+            "FullValidator must be able to verify blocks"
+        );
+        assert!(
+            full_validator.stores_full_blockchain(),
+            "FullValidator must store full blockchain"
+        );
+
         // Observer: cannot mine, cannot validate (consensus), but can verify blocks
         let observer = NodeRole::Observer;
         assert!(!observer.can_mine(), "Observer must NOT be able to mine");
-        assert!(!observer.can_validate(), "Observer must NOT participate in consensus validation");
-        assert!(observer.can_verify_blocks(), "Observer CAN verify blocks locally");
-        assert!(observer.stores_full_blockchain(), "Observer must store full blockchain");
-        
+        assert!(
+            !observer.can_validate(),
+            "Observer must NOT participate in consensus validation"
+        );
+        assert!(
+            observer.can_verify_blocks(),
+            "Observer CAN verify blocks locally"
+        );
+        assert!(
+            observer.stores_full_blockchain(),
+            "Observer must store full blockchain"
+        );
+
         // LightNode: cannot mine, cannot validate, cannot verify blocks (no full state)
         let light_node = NodeRole::LightNode;
         assert!(!light_node.can_mine(), "LightNode must NOT be able to mine");
-        assert!(!light_node.can_validate(), "LightNode must NOT participate in consensus");
-        assert!(!light_node.can_verify_blocks(), "LightNode cannot verify full blocks");
-        assert!(!light_node.stores_full_blockchain(), "LightNode does NOT store full blockchain");
-        
+        assert!(
+            !light_node.can_validate(),
+            "LightNode must NOT participate in consensus"
+        );
+        assert!(
+            !light_node.can_verify_blocks(),
+            "LightNode cannot verify full blocks"
+        );
+        assert!(
+            !light_node.stores_full_blockchain(),
+            "LightNode does NOT store full blockchain"
+        );
+
         // MobileNode: same as LightNode
         let mobile_node = NodeRole::MobileNode;
-        assert!(!mobile_node.can_mine(), "MobileNode must NOT be able to mine");
-        assert!(!mobile_node.can_validate(), "MobileNode must NOT participate in consensus");
-        assert!(!mobile_node.can_verify_blocks(), "MobileNode cannot verify full blocks");
-        assert!(!mobile_node.stores_full_blockchain(), "MobileNode does NOT store full blockchain");
-        
+        assert!(
+            !mobile_node.can_mine(),
+            "MobileNode must NOT be able to mine"
+        );
+        assert!(
+            !mobile_node.can_validate(),
+            "MobileNode must NOT participate in consensus"
+        );
+        assert!(
+            !mobile_node.can_verify_blocks(),
+            "MobileNode cannot verify full blocks"
+        );
+        assert!(
+            !mobile_node.stores_full_blockchain(),
+            "MobileNode does NOT store full blockchain"
+        );
+
         // BootstrapNode: cannot mine, cannot validate
         let bootstrap_node = NodeRole::BootstrapNode;
-        assert!(!bootstrap_node.can_mine(), "BootstrapNode must NOT be able to mine");
-        assert!(!bootstrap_node.can_validate(), "BootstrapNode must NOT participate in consensus");
-        
+        assert!(
+            !bootstrap_node.can_mine(),
+            "BootstrapNode must NOT be able to mine"
+        );
+        assert!(
+            !bootstrap_node.can_validate(),
+            "BootstrapNode must NOT participate in consensus"
+        );
+
         // ArchivalNode: cannot mine, cannot validate, but can verify blocks
         let archival_node = NodeRole::ArchivalNode;
-        assert!(!archival_node.can_mine(), "ArchivalNode must NOT be able to mine");
-        assert!(!archival_node.can_validate(), "ArchivalNode must NOT participate in consensus");
-        assert!(archival_node.can_verify_blocks(), "ArchivalNode CAN verify blocks");
-        assert!(archival_node.stores_full_blockchain(), "ArchivalNode must store full blockchain");
+        assert!(
+            !archival_node.can_mine(),
+            "ArchivalNode must NOT be able to mine"
+        );
+        assert!(
+            !archival_node.can_validate(),
+            "ArchivalNode must NOT participate in consensus"
+        );
+        assert!(
+            archival_node.can_verify_blocks(),
+            "ArchivalNode CAN verify blocks"
+        );
+        assert!(
+            archival_node.stores_full_blockchain(),
+            "ArchivalNode must store full blockchain"
+        );
     }
 
     #[test]
@@ -614,7 +672,7 @@ mod tests {
             NodeRole::BootstrapNode,
             NodeRole::ArchivalNode,
         ];
-        
+
         for role in all_roles {
             let can_mine = role.can_mine();
             match role {
@@ -639,7 +697,7 @@ mod tests {
             NodeRole::BootstrapNode,
             NodeRole::ArchivalNode,
         ];
-        
+
         for role in all_roles {
             let can_validate = role.can_validate();
             match role {
@@ -647,7 +705,11 @@ mod tests {
                     assert!(can_validate, "FullValidator MUST be able to validate");
                 }
                 _ => {
-                    assert!(!can_validate, "{:?} must NOT participate in consensus validation", role);
+                    assert!(
+                        !can_validate,
+                        "{:?} must NOT participate in consensus validation",
+                        role
+                    );
                 }
             }
         }
@@ -659,7 +721,7 @@ mod tests {
         assert!(NodeRole::FullValidator.can_verify_blocks());
         assert!(NodeRole::Observer.can_verify_blocks());
         assert!(NodeRole::ArchivalNode.can_verify_blocks());
-        
+
         // Light nodes cannot verify full blocks (no full state)
         assert!(!NodeRole::LightNode.can_verify_blocks());
         assert!(!NodeRole::MobileNode.can_verify_blocks());

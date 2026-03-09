@@ -22,10 +22,10 @@
 //! });
 //! ```
 
+use futures::FutureExt;
 use std::any::Any;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
-use futures::FutureExt;
 use tracing::error;
 
 /// Result of a panic catch operation
@@ -78,9 +78,7 @@ where
     T: Send + 'static,
     C: FnOnce(&str),
 {
-    let result = AssertUnwindSafe(future)
-        .catch_unwind()
-        .await;
+    let result = AssertUnwindSafe(future).catch_unwind().await;
 
     match result {
         Ok(value) => PanicCatchResult::Success(value),
@@ -134,8 +132,9 @@ where
         catch_unwind_handler(
             handler_name,
             future,
-            |_| {} // No-op callback, logging is done automatically
-        ).await
+            |_| {}, // No-op callback, logging is done automatically
+        )
+        .await
     })
 }
 
@@ -170,11 +169,7 @@ macro_rules! spawn_handler {
     };
     ($name:expr, $future:expr, $on_panic:expr) => {
         tokio::spawn(async move {
-            $crate::panic_recovery::catch_unwind_handler(
-                $name,
-                $future,
-                $on_panic
-            ).await
+            $crate::panic_recovery::catch_unwind_handler($name, $future, $on_panic).await
         })
     };
 }
@@ -185,11 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_catch_unwind_success() {
-        let result = catch_unwind_handler(
-            "test_handler",
-            async { 42 },
-            |_| {}
-        ).await;
+        let result = catch_unwind_handler("test_handler", async { 42 }, |_| {}).await;
 
         match result {
             PanicCatchResult::Success(value) => assert_eq!(value, 42),
@@ -202,8 +193,9 @@ mod tests {
         let result = catch_unwind_handler(
             "test_handler",
             async { panic!("test panic message") },
-            |_| {}
-        ).await;
+            |_| {},
+        )
+        .await;
 
         match result {
             PanicCatchResult::Success(_) => panic!("Should have panicked"),
@@ -218,8 +210,9 @@ mod tests {
         let result = catch_unwind_handler(
             "test_handler",
             async { panic!("static string panic") },
-            |_| {}
-        ).await;
+            |_| {},
+        )
+        .await;
 
         match result {
             PanicCatchResult::Success(_) => panic!("Should have panicked"),
@@ -231,10 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_with_panic_recovery() {
-        let handle = spawn_with_panic_recovery(
-            "test_spawn",
-            async { "success" }
-        );
+        let handle = spawn_with_panic_recovery("test_spawn", async { "success" });
 
         let result = handle.await.unwrap();
         match result {
@@ -245,10 +235,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_with_panic_recovery_catches_panic() {
-        let handle = spawn_with_panic_recovery(
-            "test_spawn_panic",
-            async { panic!("intentional test panic") }
-        );
+        let handle = spawn_with_panic_recovery("test_spawn_panic", async {
+            panic!("intentional test panic")
+        });
 
         let result = handle.await.unwrap();
         match result {

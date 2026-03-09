@@ -266,8 +266,8 @@ async fn test_consensus_with_insufficient_validators() -> Result<()> {
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
                 vec![(i + 2) as u8; 32], // consensus_key
-                vec![0xEEu8; 32],            // networking_key
-                vec![0xFFu8; 32],            // rewards_key
+                vec![0xEEu8; 32],        // networking_key
+                vec![0xFFu8; 32],        // rewards_key
                 5,
                 false,
             )
@@ -315,7 +315,7 @@ async fn test_validator_lifecycle_management() -> Result<()> {
             new_validator.clone(),
             3000 * 1_000_000,
             300 * 1024 * 1024 * 1024,
-            vec![99u8; 32],  // consensus_key
+            vec![99u8; 32],   // consensus_key
             vec![0xEEu8; 32], // networking_key
             vec![0xFFu8; 32], // rewards_key
             5,
@@ -387,7 +387,16 @@ async fn test_reward_system_integration() -> Result<()> {
     for (i, (name, stake, storage)) in validators.iter().enumerate() {
         let identity = create_test_identity(name);
         consensus_engine
-            .register_validator(identity, *stake, *storage, vec![i as u8; 32], vec![0xEEu8; 32], vec![0xFFu8; 32], 5, i == 0)
+            .register_validator(
+                identity,
+                *stake,
+                *storage,
+                vec![i as u8; 32],
+                vec![0xEEu8; 32],
+                vec![0xFFu8; 32],
+                5,
+                i == 0,
+            )
             .await?;
     }
 

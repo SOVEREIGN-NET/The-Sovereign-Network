@@ -29,13 +29,7 @@ pub const SHORT_WAIT: Duration = Duration::from_millis(100);
 /// Create a unified identity with seed.
 /// This is the single source of truth for creating test identities in lib-network.
 pub fn identity_with_seed(device: &str, seed: [u8; 64]) -> Result<ZhtpIdentity> {
-    ZhtpIdentity::new_unified(
-        IdentityType::Device,
-        None,
-        None,
-        device,
-        Some(seed),
-    )
+    ZhtpIdentity::new_unified(IdentityType::Device, None, None, device, Some(seed))
 }
 
 /// Create a test identity with optional seed (Human type, for handshake/discovery tests).
@@ -87,10 +81,7 @@ pub fn derive_session_key_for_test(
 
 /// Assert two identities have the same DID (from same seed).
 pub fn assert_same_did(a: &ZhtpIdentity, b: &ZhtpIdentity) {
-    assert_eq!(
-        a.did, b.did,
-        "Same seed should produce same DID"
-    );
+    assert_eq!(a.did, b.did, "Same seed should produce same DID");
 }
 
 /// Assert two identities have different DIDs (from different seeds).

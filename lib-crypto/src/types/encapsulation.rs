@@ -1,5 +1,5 @@
 //! Key encapsulation type definitions - preserving ZHTP encapsulation
-//! 
+//!
 //! implementations from crypto.rs, lines 194-202
 
 use zeroize::{Zeroize, ZeroizeOnDrop};

@@ -156,18 +156,11 @@ pub struct VerificationResult {
 #[derive(Debug, Clone, PartialEq)]
 pub enum VerificationError {
     /// Proof type doesn't match verifier
-    ProofTypeMismatch {
-        expected: String,
-        found: String,
-    },
+    ProofTypeMismatch { expected: String, found: String },
     /// Invalid governance vote proof
-    InvalidGovernanceVote {
-        reason: String,
-    },
+    InvalidGovernanceVote { reason: String },
     /// Proposal not found
-    ProposalNotFound {
-        proposal_id: [u8; 32],
-    },
+    ProposalNotFound { proposal_id: [u8; 32] },
     /// Vote did not pass (required_ratio_percent is 0-100 instead of f64)
     VoteDidNotPass {
         votes_for: u64,
@@ -175,57 +168,36 @@ pub enum VerificationError {
         required_ratio_percent: u8,
     },
     /// Invalid merkle proof
-    InvalidMerkleProof {
-        reason: String,
-    },
+    InvalidMerkleProof { reason: String },
     /// Invalid multisig
-    InvalidMultisig {
-        reason: String,
-    },
+    InvalidMultisig { reason: String },
     /// Insufficient signatures
-    InsufficientSignatures {
-        provided: usize,
-        required: u8,
-    },
+    InsufficientSignatures { provided: usize, required: u8 },
     /// Invalid signature
-    InvalidSignature {
-        signer_index: usize,
-        reason: String,
-    },
+    InvalidSignature { signer_index: usize, reason: String },
     /// Signer not authorized
-    SignerNotAuthorized {
-        signer: [u8; 32],
-    },
+    SignerNotAuthorized { signer: [u8; 32] },
     /// Invalid attestation
-    InvalidAttestation {
-        reason: String,
-    },
+    InvalidAttestation { reason: String },
     /// Delegated verifier error
-    DelegatedVerifierError {
-        verifier: Address,
-        error: String,
-    },
+    DelegatedVerifierError { verifier: Address, error: String },
     /// Approval expired
-    ApprovalExpired {
-        expired_at: u64,
-        current_block: u64,
-    },
+    ApprovalExpired { expired_at: u64, current_block: u64 },
     /// DAO not authorized for this sector
-    DaoNotAuthorizedForSector {
-        dao_id: [u8; 32],
-        sector_id: u8,
-    },
+    DaoNotAuthorizedForSector { dao_id: [u8; 32], sector_id: u8 },
     /// Generic verification error
-    Other {
-        message: String,
-    },
+    Other { message: String },
 }
 
 impl std::fmt::Display for VerificationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VerificationError::ProofTypeMismatch { expected, found } => {
-                write!(f, "Proof type mismatch: expected {}, found {}", expected, found)
+                write!(
+                    f,
+                    "Proof type mismatch: expected {}, found {}",
+                    expected, found
+                )
             }
             VerificationError::InvalidGovernanceVote { reason } => {
                 write!(f, "Invalid governance vote: {}", reason)
@@ -233,7 +205,11 @@ impl std::fmt::Display for VerificationError {
             VerificationError::ProposalNotFound { proposal_id } => {
                 write!(f, "Proposal not found: {:?}", &proposal_id[..8])
             }
-            VerificationError::VoteDidNotPass { votes_for, votes_against, required_ratio_percent } => {
+            VerificationError::VoteDidNotPass {
+                votes_for,
+                votes_against,
+                required_ratio_percent,
+            } => {
                 write!(
                     f,
                     "Vote did not pass: {} for, {} against (required: {}%)",
@@ -253,7 +229,10 @@ impl std::fmt::Display for VerificationError {
                     provided, required
                 )
             }
-            VerificationError::InvalidSignature { signer_index, reason } => {
+            VerificationError::InvalidSignature {
+                signer_index,
+                reason,
+            } => {
                 write!(f, "Invalid signature at index {}: {}", signer_index, reason)
             }
             VerificationError::SignerNotAuthorized { signer } => {
@@ -263,9 +242,17 @@ impl std::fmt::Display for VerificationError {
                 write!(f, "Invalid attestation: {}", reason)
             }
             VerificationError::DelegatedVerifierError { verifier, error } => {
-                write!(f, "Delegated verifier {:?} error: {}", &verifier[..8], error)
+                write!(
+                    f,
+                    "Delegated verifier {:?} error: {}",
+                    &verifier[..8],
+                    error
+                )
             }
-            VerificationError::ApprovalExpired { expired_at, current_block } => {
+            VerificationError::ApprovalExpired {
+                expired_at,
+                current_block,
+            } => {
                 write!(
                     f,
                     "Approval expired at block {}, current block {}",
@@ -342,7 +329,10 @@ mod tests {
         let mut request2 = request.clone();
         request2.label = "store".to_string();
         let hash3 = request2.compute_hash();
-        assert_ne!(hash1, hash3, "Different requests should have different hashes");
+        assert_ne!(
+            hash1, hash3,
+            "Different requests should have different hashes"
+        );
     }
 
     #[test]

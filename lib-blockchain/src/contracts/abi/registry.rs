@@ -3,8 +3,8 @@
 //! Provides a central registry to manage and query contract ABIs.
 
 use super::schema::ContractAbi;
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
 
 /// Registry of contract ABIs
 ///

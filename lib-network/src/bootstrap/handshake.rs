@@ -54,22 +54,20 @@
 //! }
 //! ```
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use lib_identity::ZhtpIdentity;
 use tokio::net::TcpStream;
 
 // Re-export UHP types for convenience
 pub use crate::handshake::{
-    HandshakeContext, HandshakeResult, HandshakeCapabilities,
-    ClientHello, ServerHello, ClientFinish,
-    HandshakeMessage, HandshakePayload,
-    NonceCache, NegotiatedCapabilities, HandshakeSessionInfo,
-    derive_channel_binding_from_addrs, compute_transcript_hash,
+    compute_transcript_hash, derive_channel_binding_from_addrs, ClientFinish, ClientHello,
+    HandshakeCapabilities, HandshakeContext, HandshakeMessage, HandshakePayload, HandshakeResult,
+    HandshakeSessionInfo, NegotiatedCapabilities, NonceCache, ServerHello,
 };
 use lib_crypto::KeyPair;
 
 // Use orchestrator helpers to reduce duplication
-use crate::handshake::orchestrator::{extract_payload, check_for_error};
+use crate::handshake::orchestrator::{check_for_error, extract_payload};
 
 // SECURITY (P1-2 FIX): Use shared constant from constants module
 // Ensures consistency across all UHP implementations (1 MB limit)
@@ -145,15 +143,21 @@ pub async fn handshake_as_initiator(
         let capabilities = HandshakeCapabilities::default();
         let client_hello = ClientHello::new(identity, capabilities, &ctx)
             .map_err(|e| anyhow!("Failed to create ClientHello: {}", e))?;
-        
-        let client_hello_msg = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
-        let client_hello_bytes = send_message_with_bytes(stream, &client_hello_msg).await
+
+        let client_hello_msg =
+            HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
+        let client_hello_bytes = send_message_with_bytes(stream, &client_hello_msg)
+            .await
             .map_err(|e| anyhow!("Failed to send ClientHello: {}", e))?;
-        
-        tracing::debug!("Sent ClientHello to server ({} bytes)", client_hello_bytes.len());
-        
+
+        tracing::debug!(
+            "Sent ClientHello to server ({} bytes)",
+            client_hello_bytes.len()
+        );
+
         // Step 2: Receive and verify ServerHello
-        let (server_hello_msg, server_hello_bytes) = receive_message_with_bytes(stream).await
+        let (server_hello_msg, server_hello_bytes) = receive_message_with_bytes(stream)
+            .await
             .map_err(|e| anyhow!("Failed to receive ServerHello: {}", e))?;
 
         check_for_error(&server_hello_msg)?;
@@ -165,10 +169,13 @@ pub async fn handshake_as_initiator(
             }
         })
         .map_err(|e| anyhow!("{}", e))?;
-        
-        tracing::debug!("Received ServerHello from {} ({} bytes)", 
-            server_hello.identity.did, server_hello_bytes.len());
-        
+
+        tracing::debug!(
+            "Received ServerHello from {} ({} bytes)",
+            server_hello.identity.did,
+            server_hello_bytes.len()
+        );
+
         let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
         let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
 
@@ -176,10 +183,12 @@ pub async fn handshake_as_initiator(
         // ClientFinish::new_with_pqc() performs full mutual authentication of server before signing
         let client_keypair = KeyPair {
             public_key: identity.public_key.clone(),
-            private_key: identity.private_key.clone()
+            private_key: identity
+                .private_key
+                .clone()
                 .ok_or_else(|| anyhow!("Identity missing private key"))?,
         };
-        
+
         let (client_finish, pqc_shared_secret) = ClientFinish::new_with_pqc(
             &server_hello,
             &client_hello,
@@ -189,13 +198,18 @@ pub async fn handshake_as_initiator(
             &ctx,
         )
         .map_err(|e| anyhow!("Failed to create ClientFinish: {}", e))?;
-        
-        let client_finish_msg = HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish));
-        let client_finish_bytes = send_message_with_bytes(stream, &client_finish_msg).await
+
+        let client_finish_msg =
+            HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish));
+        let client_finish_bytes = send_message_with_bytes(stream, &client_finish_msg)
+            .await
             .map_err(|e| anyhow!("Failed to send ClientFinish: {}", e))?;
-        
-        tracing::debug!("Sent ClientFinish to server ({} bytes)", client_finish_bytes.len());
-        
+
+        tracing::debug!(
+            "Sent ClientFinish to server ({} bytes)",
+            client_finish_bytes.len()
+        );
+
         let transcript_hash = compute_transcript_hash(&[
             &client_hello_bytes,
             &server_hello_bytes,
@@ -217,13 +231,23 @@ pub async fn handshake_as_initiator(
             &session_info,
             pqc_shared_secret.as_ref(),
             transcript_hash,
-        ).map_err(|e| anyhow!("Failed to derive session key: {}", e))?;
-        
-        tracing::info!("✅ Client handshake completed successfully with {}", server_hello.identity.did);
-        
+        )
+        .map_err(|e| anyhow!("Failed to derive session key: {}", e))?;
+
+        tracing::info!(
+            "✅ Client handshake completed successfully with {}",
+            server_hello.identity.did
+        );
+
         Ok(result)
-    }).await
-        .map_err(|_| anyhow!("Handshake timeout after {} seconds", HANDSHAKE_TIMEOUT.as_secs()))?
+    })
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "Handshake timeout after {} seconds",
+            HANDSHAKE_TIMEOUT.as_secs()
+        )
+    })?
 }
 
 // ============================================================================
@@ -286,7 +310,8 @@ pub async fn handshake_as_responder(
         let ctx = ctx.for_server_with_transport(binding, "tcp");
 
         // Step 1: Receive and verify ClientHello
-        let (client_hello_msg, client_hello_bytes) = receive_message_with_bytes(stream).await
+        let (client_hello_msg, client_hello_bytes) = receive_message_with_bytes(stream)
+            .await
             .map_err(|e| anyhow!("Failed to receive ClientHello: {}", e))?;
 
         let client_hello = extract_payload(&client_hello_msg, "ClientHello", |payload| {
@@ -297,17 +322,21 @@ pub async fn handshake_as_responder(
             }
         })
         .map_err(|e| anyhow!("{}", e))?;
-        
-        tracing::debug!("Received ClientHello from {} ({} bytes)", 
-            client_hello.identity.did, client_hello_bytes.len());
-        
+
+        tracing::debug!(
+            "Received ClientHello from {} ({} bytes)",
+            client_hello.identity.did,
+            client_hello_bytes.len()
+        );
+
         // Verify ClientHello signature
         // This validates NodeId, timestamp, nonce, and protocol version
-        client_hello.verify_signature(&ctx)
+        client_hello
+            .verify_signature(&ctx)
             .map_err(|e| anyhow!("ClientHello verification failed: {}", e))?;
-        
+
         tracing::debug!("ClientHello signature verified successfully");
-        
+
         // Step 2: Create and send ServerHello
         let client_hello_hash = compute_transcript_hash(&[&client_hello_bytes]);
 
@@ -320,15 +349,21 @@ pub async fn handshake_as_responder(
             &ctx,
         )
         .map_err(|e| anyhow!("Failed to create ServerHello: {}", e))?;
-        
-        let server_hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
-        let server_hello_bytes = send_message_with_bytes(stream, &server_hello_msg).await
+
+        let server_hello_msg =
+            HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
+        let server_hello_bytes = send_message_with_bytes(stream, &server_hello_msg)
+            .await
             .map_err(|e| anyhow!("Failed to send ServerHello: {}", e))?;
-        
-        tracing::debug!("Sent ServerHello to client ({} bytes)", server_hello_bytes.len());
-        
+
+        tracing::debug!(
+            "Sent ServerHello to client ({} bytes)",
+            server_hello_bytes.len()
+        );
+
         // Step 3: Receive and verify ClientFinish
-        let (client_finish_msg, client_finish_bytes) = receive_message_with_bytes(stream).await
+        let (client_finish_msg, client_finish_bytes) = receive_message_with_bytes(stream)
+            .await
             .map_err(|e| anyhow!("Failed to receive ClientFinish: {}", e))?;
 
         check_for_error(&client_finish_msg)?;
@@ -340,22 +375,26 @@ pub async fn handshake_as_responder(
             }
         })
         .map_err(|e| anyhow!("{}", e))?;
-        
-        tracing::debug!("Received ClientFinish from client ({} bytes)", client_finish_bytes.len());
-        
+
+        tracing::debug!(
+            "Received ClientFinish from client ({} bytes)",
+            client_finish_bytes.len()
+        );
+
         let pre_finish_hash = compute_transcript_hash(&[&client_hello_bytes, &server_hello_bytes]);
 
         // Verify ClientFinish signature
-        client_finish.verify_signature_with_context(
-            &server_hello.response_nonce,
-            &pre_finish_hash,
-            &client_hello.identity.public_key,
-            &ctx,
-        )
+        client_finish
+            .verify_signature_with_context(
+                &server_hello.response_nonce,
+                &pre_finish_hash,
+                &client_hello.identity.public_key,
+                &ctx,
+            )
             .map_err(|e| anyhow!("ClientFinish verification failed: {}", e))?;
-        
+
         tracing::debug!("ClientFinish signature verified successfully");
-        
+
         let transcript_hash = compute_transcript_hash(&[
             &client_hello_bytes,
             &server_hello_bytes,
@@ -386,13 +425,23 @@ pub async fn handshake_as_responder(
             &session_info,
             pqc_shared_secret.as_ref(),
             transcript_hash,
-        ).map_err(|e| anyhow!("Failed to derive session key: {}", e))?;
-        
-        tracing::info!("✅ Server handshake completed successfully with {}", client_hello.identity.did);
-        
+        )
+        .map_err(|e| anyhow!("Failed to derive session key: {}", e))?;
+
+        tracing::info!(
+            "✅ Server handshake completed successfully with {}",
+            client_hello.identity.did
+        );
+
         Ok(result)
-    }).await
-        .map_err(|_| anyhow!("Handshake timeout after {} seconds", HANDSHAKE_TIMEOUT.as_secs()))?
+    })
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "Handshake timeout after {} seconds",
+            HANDSHAKE_TIMEOUT.as_secs()
+        )
+    })?
 }
 
 // ============================================================================
@@ -453,9 +502,7 @@ async fn receive_message(stream: &mut TcpStream) -> Result<Vec<u8>> {
     crate::handshake::framing::recv_framed(stream).await
 }
 
-async fn receive_message_with_bytes(
-    stream: &mut TcpStream,
-) -> Result<(HandshakeMessage, Vec<u8>)> {
+async fn receive_message_with_bytes(stream: &mut TcpStream) -> Result<(HandshakeMessage, Vec<u8>)> {
     let bytes = receive_message(stream).await?;
     let message = HandshakeMessage::from_bytes(&bytes)
         .map_err(|e| anyhow!("Failed to deserialize handshake message: {}", e))?;
@@ -470,7 +517,7 @@ async fn receive_message_with_bytes(
 mod tests {
     use super::*;
     use tokio::net::TcpListener;
-    
+
     /// Helper: Create test identity
     fn create_test_identity(device_name: &str) -> ZhtpIdentity {
         lib_identity::ZhtpIdentity::new_unified(
@@ -479,13 +526,14 @@ mod tests {
             Some("US".to_string()),
             device_name,
             None,
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     fn net_tests_disabled() -> bool {
         !cfg!(feature = "allow-net-tests")
     }
-    
+
     /// Test complete client-server handshake over TCP
     #[tokio::test]
     async fn test_tcp_bootstrap_handshake() -> Result<()> {
@@ -521,7 +569,8 @@ mod tests {
         let client_identity = create_test_identity("client-device");
         let mut client_stream = TcpStream::connect(server_addr).await?;
 
-        let client_result = handshake_as_initiator(&mut client_stream, &client_identity, &ctx).await?;
+        let client_result =
+            handshake_as_initiator(&mut client_stream, &client_identity, &ctx).await?;
         let server_result = server_handle.await.unwrap()?;
 
         // Verify both sides derived the same session key
@@ -538,7 +587,7 @@ mod tests {
 
         Ok(())
     }
-    
+
     /// Test handshake with replay attack detection
     #[tokio::test]
     async fn test_replay_attack_prevention() -> Result<()> {
@@ -551,11 +600,11 @@ mod tests {
         let server_identity = create_test_identity("server-replay-test");
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let server_addr = listener.local_addr()?;
-        
+
         let epoch = crate::handshake::NetworkEpoch::from_chain_id(0);
         let ctx = HandshakeContext::new(NonceCache::new_test(300, 10000, epoch));
         let server_ctx = ctx.clone();
-        
+
         // First handshake should succeed
         let server_ctx_1 = server_ctx.clone();
         let server_identity_1 = server_identity.clone();
@@ -563,34 +612,36 @@ mod tests {
             let (mut stream, _addr) = listener.accept().await.unwrap();
             handshake_as_responder(&mut stream, &server_identity_1, &server_ctx_1).await
         });
-        
+
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        
+
         let client_identity = create_test_identity("client-replay-test");
         let mut client_stream_1 = TcpStream::connect(server_addr).await?;
-        
-        let _client_result_1 = handshake_as_initiator(&mut client_stream_1, &client_identity, &ctx).await?;
+
+        let _client_result_1 =
+            handshake_as_initiator(&mut client_stream_1, &client_identity, &ctx).await?;
         let _server_result_1 = server_handle_1.await.unwrap()?;
-        
+
         // Second handshake with same identity should succeed (different nonces)
         let listener_2 = TcpListener::bind("127.0.0.1:0").await?;
         let server_addr_2 = listener_2.local_addr()?;
-        
+
         let server_handle_2 = tokio::spawn(async move {
             let (mut stream, _addr) = listener_2.accept().await.unwrap();
             handshake_as_responder(&mut stream, &server_identity, &server_ctx).await
         });
-        
+
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        
+
         let mut client_stream_2 = TcpStream::connect(server_addr_2).await?;
-        let _client_result_2 = handshake_as_initiator(&mut client_stream_2, &client_identity, &ctx).await?;
+        let _client_result_2 =
+            handshake_as_initiator(&mut client_stream_2, &client_identity, &ctx).await?;
         let _server_result_2 = server_handle_2.await.unwrap()?;
-        
+
         // Both handshakes should succeed because nonces are different
         Ok(())
     }
-    
+
     /// Test message framing utilities
     #[tokio::test]
     async fn test_message_framing() -> Result<()> {
@@ -601,27 +652,27 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
-        
+
         // Spawn receiver
         let receive_handle = tokio::spawn(async move {
             let (mut stream, _addr) = listener.accept().await.unwrap();
             receive_message(&mut stream).await
         });
-        
+
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        
+
         // Send test message
         let mut sender = TcpStream::connect(addr).await?;
         let test_data = b"Hello, World! This is a test message.";
         send_message(&mut sender, test_data).await?;
-        
+
         // Verify received data matches
         let received = receive_handle.await.unwrap()?;
         assert_eq!(received, test_data);
-        
+
         Ok(())
     }
-    
+
     /// Test oversized message rejection
     #[tokio::test]
     async fn test_oversized_message_rejection() -> Result<()> {
@@ -632,16 +683,19 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
-        
+
         let mut stream = TcpStream::connect(addr).await?;
-        
+
         // Try to send message larger than MAX_HANDSHAKE_MESSAGE_SIZE
         let oversized_data = vec![0u8; MAX_HANDSHAKE_MESSAGE_SIZE + 1];
         let result = send_message(&mut stream, &oversized_data).await;
-        
+
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Message too large"));
-        
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Message too large"));
+
         Ok(())
     }
 }

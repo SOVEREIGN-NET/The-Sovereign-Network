@@ -11,17 +11,12 @@ use std::collections::HashMap;
 // =============================================================================
 
 pub use lib_types::consensus::{
-    ConsensusConfig, ConsensusStep, ConsensusType, FeeDistributionResult,
-    MIN_BFT_VALIDATORS, SlashType, UsefulWorkType, ValidatorStatus, VoteType,
+    ConsensusConfig, ConsensusStep, ConsensusType, FeeDistributionResult, SlashType,
+    UsefulWorkType, ValidatorStatus, VoteType, MIN_BFT_VALIDATORS,
 };
 
 // Re-export proof types from proofs module
-pub use crate::proofs::{
-    ProofOfUsefulWork,
-    StakeProof,
-    StorageCapacityAttestation,
-    WorkProof,
-};
+pub use crate::proofs::{ProofOfUsefulWork, StakeProof, StorageCapacityAttestation, WorkProof};
 
 // Re-export heartbeat types from validator protocol module
 pub use crate::validators::validator_protocol::HeartbeatMessage;
@@ -31,7 +26,7 @@ pub use crate::validators::validator_protocol::HeartbeatMessage;
 // =============================================================================
 
 /// Extension trait for ConsensusStep with additional behavior
-/// 
+///
 /// Note: The Display implementation is purposefully kept in lib-types
 /// as it is a fundamental representation concern, not behavioral logic.
 pub trait ConsensusStepExt {
@@ -83,7 +78,7 @@ impl ConsensusStepExt for ConsensusStep {
 /// Extension trait for FeeDistributionResult with business logic
 pub trait FeeDistributionResultExt {
     /// Calculate distribution from total fees using 45/30/15/10 split
-    /// 
+    ///
     /// Uses the allocation percentages defined in lib-types::economy:
     /// - UBI: 45%
     /// - Consensus: 30%
@@ -95,18 +90,21 @@ pub trait FeeDistributionResultExt {
 impl FeeDistributionResultExt for FeeDistributionResult {
     fn from_total_fees(total_fees: u64) -> Self {
         use lib_types::economy::{
-            UBI_ALLOCATION_PERCENTAGE,
-            SECTOR_DAO_ALLOCATION_PERCENTAGE,
-            EMERGENCY_ALLOCATION_PERCENTAGE,
-            DEV_GRANT_ALLOCATION_PERCENTAGE,
+            DEV_GRANT_ALLOCATION_PERCENTAGE, EMERGENCY_ALLOCATION_PERCENTAGE,
+            SECTOR_DAO_ALLOCATION_PERCENTAGE, UBI_ALLOCATION_PERCENTAGE,
         };
-        
+
         let ubi_amount = total_fees * UBI_ALLOCATION_PERCENTAGE / 100;
         let consensus_amount = total_fees * SECTOR_DAO_ALLOCATION_PERCENTAGE / 100;
         let governance_amount = total_fees * EMERGENCY_ALLOCATION_PERCENTAGE / 100;
         let treasury_amount = total_fees * DEV_GRANT_ALLOCATION_PERCENTAGE / 100;
-        
-        Self::new(ubi_amount, consensus_amount, governance_amount, treasury_amount)
+
+        Self::new(
+            ubi_amount,
+            consensus_amount,
+            governance_amount,
+            treasury_amount,
+        )
     }
 }
 
@@ -331,17 +329,11 @@ impl BlockMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ValidatorMessage {
     /// Proposal message for new block
-    Propose {
-        proposal: ConsensusProposal,
-    },
+    Propose { proposal: ConsensusProposal },
     /// Vote message (PreVote, PreCommit, or Commit votes)
-    Vote {
-        vote: ConsensusVote,
-    },
+    Vote { vote: ConsensusVote },
     /// Heartbeat message for validator liveness detection
-    Heartbeat {
-        message: HeartbeatMessage,
-    },
+    Heartbeat { message: HeartbeatMessage },
 }
 
 /// Message broadcaster trait for network distribution
@@ -407,7 +399,8 @@ pub trait ConsensusBlockchainProvider: Send + Sync {
     ///
     /// Returns the hash of the block at `height - 1` when proposing for `height`.
     /// For genesis (height 0), returns a zero hash.
-    async fn get_latest_block_hash(&self) -> Result<Hash, Box<dyn std::error::Error + Send + Sync>>;
+    async fn get_latest_block_hash(&self)
+        -> Result<Hash, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Get pending transactions from the mempool
     ///
@@ -417,7 +410,9 @@ pub trait ConsensusBlockchainProvider: Send + Sync {
     /// # Returns
     /// - Serialized transaction data (bincode-encoded Vec<Transaction>)
     /// - Empty Vec if no pending transactions
-    async fn get_pending_transactions(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>;
+    async fn get_pending_transactions(
+        &self,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Get current blockchain height
     ///
@@ -435,11 +430,15 @@ pub struct NoOpBlockchainProvider;
 
 #[async_trait]
 impl ConsensusBlockchainProvider for NoOpBlockchainProvider {
-    async fn get_latest_block_hash(&self) -> Result<Hash, Box<dyn std::error::Error + Send + Sync>> {
+    async fn get_latest_block_hash(
+        &self,
+    ) -> Result<Hash, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Hash([0u8; 32]))
     }
 
-    async fn get_pending_transactions(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn get_pending_transactions(
+        &self,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Vec::new())
     }
 
@@ -516,7 +515,9 @@ pub trait BlockCommitCallback: Send + Sync {
     /// Returns the count of validators currently registered and active.
     /// Used by the mining loop to determine whether to use BFT consensus
     /// (4+ validators) or bootstrap mode (< 4 validators).
-    async fn get_active_validator_count(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>;
+    async fn get_active_validator_count(
+        &self,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Fee collector trait for consensus-blockchain integration

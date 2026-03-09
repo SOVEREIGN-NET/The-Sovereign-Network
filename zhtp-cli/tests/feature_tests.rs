@@ -104,11 +104,7 @@ mod tests {
     #[test]
     fn test_feature_flag_naming_convention() {
         // All blockchain features should follow naming convention
-        let blockchain_features = vec![
-            "full-blockchain",
-            "basic-blockchain",
-            "minimal-blockchain",
-        ];
+        let blockchain_features = vec!["full-blockchain", "basic-blockchain", "minimal-blockchain"];
 
         for feature in blockchain_features {
             assert!(feature.contains("blockchain"));

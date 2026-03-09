@@ -8,23 +8,21 @@
 //! - `voting`: DOC 05 - Voting Primitives (TODO)
 //! - `compensation_attestor`: DOC 06 - Compensation Fairness (TODO)
 
+pub mod citizen_role;
 pub mod entity_registry;
 pub mod governance;
 pub mod sunset;
-pub mod citizen_role;
 
 // Re-export key types
-pub use entity_registry::{EntityRegistry, EntityType, Role, EntityRegistryError};
-pub use citizen_role::{CitizenRole, CitizenRegistry, CitizenRoleError, RegistryStats};
+pub use citizen_role::{CitizenRegistry, CitizenRole, CitizenRoleError, RegistryStats};
+pub use entity_registry::{EntityRegistry, EntityRegistryError, EntityType, Role};
 pub use governance::{
-    Governance, Proposal, Vote,
-    GovernanceError, ProposalStatus, VoteType, ProposalCategory,
-    VOTING_PERIOD_SECONDS, TIMELOCK_DELAY_SECONDS,
-    MAJORITY_THRESHOLD_BASIS_POINTS, SUPERMAJORITY_THRESHOLD_BASIS_POINTS,
-    MIN_VOTING_POWER_FOR_PROPOSAL,
+    Governance, GovernanceError, Proposal, ProposalCategory, ProposalStatus, Vote, VoteType,
+    MAJORITY_THRESHOLD_BASIS_POINTS, MIN_VOTING_POWER_FOR_PROPOSAL,
+    SUPERMAJORITY_THRESHOLD_BASIS_POINTS, TIMELOCK_DELAY_SECONDS, VOTING_PERIOD_SECONDS,
 };
 pub use sunset::{
-    Sunset, StateTransitionProposal, SunsetState, SpendingPolicy,
-    SunsetError, RESTRICTED_MIN_DURATION, WIND_DOWN_MIN_DURATION,
-    FINAL_PAYOUT_TO_NONPROFIT_PERCENTAGE, SUNSET_STATE_TRANSITION_TIMELOCK,
+    SpendingPolicy, StateTransitionProposal, Sunset, SunsetError, SunsetState,
+    FINAL_PAYOUT_TO_NONPROFIT_PERCENTAGE, RESTRICTED_MIN_DURATION,
+    SUNSET_STATE_TRANSITION_TIMELOCK, WIND_DOWN_MIN_DURATION,
 };

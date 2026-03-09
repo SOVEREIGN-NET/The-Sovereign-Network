@@ -7,8 +7,8 @@ use std::collections::HashSet;
 
 use lib_types::{Amount, BlockHeight, TxHash};
 
-use crate::types::{OutPoint, TransferOutcome, TxInput, TxOutput, Utxo, UtxoStore};
 use crate::errors::{UtxoError, UtxoResult};
+use crate::types::{OutPoint, TransferOutcome, TxInput, TxOutput, Utxo, UtxoStore};
 
 /// Apply a native transfer transaction
 ///
@@ -90,16 +90,16 @@ pub fn apply_native_transfer(
     let mut total_output: Amount = 0;
     for output in outputs {
         if output.amount == 0 {
-            return Err(UtxoError::InvalidAmount("Output amount cannot be zero".to_string()));
+            return Err(UtxoError::InvalidAmount(
+                "Output amount cannot be zero".to_string(),
+            ));
         }
         total_output = total_output
             .checked_add(output.amount)
             .ok_or(UtxoError::Overflow)?;
     }
 
-    let required = total_output
-        .checked_add(fee)
-        .ok_or(UtxoError::Overflow)?;
+    let required = total_output.checked_add(fee).ok_or(UtxoError::Overflow)?;
 
     if total_input < required {
         return Err(UtxoError::InsufficientInput {
@@ -124,12 +124,9 @@ pub fn apply_native_transfer(
         let outpoint = OutPoint::new(tx_hash, index as u32);
 
         let utxo = match output.locked_until {
-            Some(lock_height) => Utxo::new_locked(
-                output.amount,
-                output.recipient,
-                height,
-                lock_height,
-            ),
+            Some(lock_height) => {
+                Utxo::new_locked(output.amount, output.recipient, height, lock_height)
+            }
             None => Utxo::new(output.amount, output.recipient, height),
         };
 
@@ -184,7 +181,11 @@ mod tests {
                 return Err(UtxoError::AlreadySpent(*outpoint));
             }
 
-            let utxo = self.utxos.borrow().get(outpoint).cloned()
+            let utxo = self
+                .utxos
+                .borrow()
+                .get(outpoint)
+                .cloned()
                 .ok_or_else(|| UtxoError::NotFound(*outpoint))?;
 
             self.spent.borrow_mut().insert(*outpoint);
@@ -246,14 +247,17 @@ mod tests {
 
         // Setup: Create two UTXOs
         let prev_tx = TxHash::default();
-        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(500, Address::default(), 0));
-        store.add_utxo(OutPoint::new(prev_tx, 1), Utxo::new(500, Address::default(), 0));
+        store.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new(500, Address::default(), 0),
+        );
+        store.add_utxo(
+            OutPoint::new(prev_tx, 1),
+            Utxo::new(500, Address::default(), 0),
+        );
 
         // Transfer: 500 + 500 -> 400 + 400 + 200 fee
-        let inputs = vec![
-            create_input(prev_tx, 0),
-            create_input(prev_tx, 1),
-        ];
+        let inputs = vec![create_input(prev_tx, 0), create_input(prev_tx, 1)];
         let outputs = vec![
             create_output(400, Address::new([1u8; 32])),
             create_output(400, Address::new([2u8; 32])),
@@ -286,7 +290,10 @@ mod tests {
         let store = MockUtxoStore::new();
 
         let prev_tx = TxHash::default();
-        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+        store.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new(1000, Address::default(), 0),
+        );
 
         // Try to spend the same input twice
         let inputs = vec![
@@ -325,7 +332,10 @@ mod tests {
         let store = MockUtxoStore::new();
 
         let prev_tx = TxHash::default();
-        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(100, Address::default(), 0));
+        store.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new(100, Address::default(), 0),
+        );
 
         // Try to transfer more than available
         let inputs = vec![create_input(prev_tx, 0)];
@@ -383,7 +393,10 @@ mod tests {
         let store = MockUtxoStore::new();
 
         let prev_tx = TxHash::default();
-        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+        store.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new(1000, Address::default(), 0),
+        );
 
         let inputs = vec![create_input(prev_tx, 0)];
         let outputs: Vec<TxOutput> = vec![];
@@ -398,7 +411,10 @@ mod tests {
         let store = MockUtxoStore::new();
 
         let prev_tx = TxHash::default();
-        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+        store.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new(1000, Address::default(), 0),
+        );
 
         // inputs (1000) != outputs (800) + fee (100) = 900
         // This leaves 100 unaccounted for
@@ -425,7 +441,10 @@ mod tests {
         let tx_hash = TxHash::new([2u8; 32]);
 
         let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 0);
-        assert!(result.is_err(), "Must reject transfer from non-existent UTXO");
+        assert!(
+            result.is_err(),
+            "Must reject transfer from non-existent UTXO"
+        );
     }
 
     /// Invariant: No double-spend (same input twice in single tx)
@@ -433,13 +452,13 @@ mod tests {
     fn invariant_no_double_spend_same_tx() {
         let store = MockUtxoStore::new();
         let prev_tx = TxHash::default();
-        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+        store.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new(1000, Address::default(), 0),
+        );
 
         // Same input twice
-        let inputs = vec![
-            create_input(prev_tx, 0),
-            create_input(prev_tx, 0),
-        ];
+        let inputs = vec![create_input(prev_tx, 0), create_input(prev_tx, 0)];
         let outputs = vec![create_output(1900, Address::new([1u8; 32]))];
         let tx_hash = TxHash::new([1u8; 32]);
 
@@ -452,7 +471,10 @@ mod tests {
     fn invariant_no_double_spend_across_blocks() {
         let store = MockUtxoStore::new();
         let prev_tx = TxHash::default();
-        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+        store.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new(1000, Address::default(), 0),
+        );
 
         let inputs = vec![create_input(prev_tx, 0)];
         let outputs = vec![create_output(900, Address::new([1u8; 32]))];
@@ -472,7 +494,10 @@ mod tests {
     fn invariant_value_conservation() {
         let store = MockUtxoStore::new();
         let prev_tx = TxHash::default();
-        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+        store.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new(1000, Address::default(), 0),
+        );
 
         let inputs = vec![create_input(prev_tx, 0)];
         let tx_hash = TxHash::new([1u8; 32]);
@@ -484,7 +509,10 @@ mod tests {
 
         // Case 2: outputs + fee < inputs (value destruction - rejected)
         let store2 = MockUtxoStore::new();
-        store2.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+        store2.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new(1000, Address::default(), 0),
+        );
         let outputs2 = vec![create_output(500, Address::new([1u8; 32]))];
         let result = apply_native_transfer(&store2, &inputs, &outputs2, tx_hash, 10, 100);
         assert!(matches!(result, Err(UtxoError::ValueMismatch { .. })));
@@ -495,7 +523,10 @@ mod tests {
     fn invariant_output_indices_sequential() {
         let store = MockUtxoStore::new();
         let prev_tx = TxHash::default();
-        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(3000, Address::default(), 0));
+        store.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new(3000, Address::default(), 0),
+        );
 
         let inputs = vec![create_input(prev_tx, 0)];
         let outputs = vec![
@@ -508,10 +539,22 @@ mod tests {
         let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).unwrap();
 
         // Verify outputs are at indices 0, 1, 2
-        assert!(store.get_utxo(&OutPoint::new(tx_hash, 0)).unwrap().is_some());
-        assert!(store.get_utxo(&OutPoint::new(tx_hash, 1)).unwrap().is_some());
-        assert!(store.get_utxo(&OutPoint::new(tx_hash, 2)).unwrap().is_some());
-        assert!(store.get_utxo(&OutPoint::new(tx_hash, 3)).unwrap().is_none());
+        assert!(store
+            .get_utxo(&OutPoint::new(tx_hash, 0))
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get_utxo(&OutPoint::new(tx_hash, 1))
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get_utxo(&OutPoint::new(tx_hash, 2))
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get_utxo(&OutPoint::new(tx_hash, 3))
+            .unwrap()
+            .is_none());
     }
 
     /// Invariant: Locked UTXOs cannot be spent before unlock height
@@ -542,7 +585,10 @@ mod tests {
     fn golden_standard_transfer() {
         let store = MockUtxoStore::new();
         let prev_tx = TxHash::default();
-        store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(10_000, Address::default(), 0));
+        store.add_utxo(
+            OutPoint::new(prev_tx, 0),
+            Utxo::new(10_000, Address::default(), 0),
+        );
 
         let inputs = vec![create_input(prev_tx, 0)];
         let outputs = vec![
@@ -572,7 +618,10 @@ mod tests {
         let create_scenario = || {
             let store = MockUtxoStore::new();
             let prev_tx = TxHash::default();
-            store.add_utxo(OutPoint::new(prev_tx, 0), Utxo::new(1000, Address::default(), 0));
+            store.add_utxo(
+                OutPoint::new(prev_tx, 0),
+                Utxo::new(1000, Address::default(), 0),
+            );
             store
         };
 
@@ -584,7 +633,8 @@ mod tests {
         let mut results = Vec::new();
         for _ in 0..10 {
             let store = create_scenario();
-            let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).unwrap();
+            let result =
+                apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).unwrap();
             results.push((result.total_input, result.total_output, result.fee));
         }
 

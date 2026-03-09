@@ -26,7 +26,9 @@ impl RangeCircuit {
                 public_inputs: vec![value],
             })
         } else {
-            Ok(VerificationResult::Invalid("Value out of range".to_string()))
+            Ok(VerificationResult::Invalid(
+                "Value out of range".to_string(),
+            ))
         }
     }
 }

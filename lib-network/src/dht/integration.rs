@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 /// DHT Network Status
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,7 +57,8 @@ impl DhtContentEntry {
         let expires_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() + ttl_secs;
+            .as_secs()
+            + ttl_secs;
 
         Self {
             key,
@@ -86,7 +87,7 @@ pub struct DhtPeerInfo {
 }
 
 /// ZkDHTIntegration - Stub implementation with in-memory storage
-/// 
+///
 /// This provides the structure for DHT operations. In production,
 /// this would be replaced with lib-storage's DhtStorage backend.
 #[derive(Clone)]
@@ -118,12 +119,15 @@ impl ZkDHTIntegration {
 
     pub async fn initialize(&mut self, identity: lib_identity::ZhtpIdentity) -> Result<()> {
         self.local_node_id = identity.node_id.as_bytes().clone();
-        info!("DHT integration initialized with node ID: {:?}", &self.local_node_id[..8]);
+        info!(
+            "DHT integration initialized with node ID: {:?}",
+            &self.local_node_id[..8]
+        );
         Ok(())
     }
 
     /// Store content with TTL
-    /// 
+    ///
     /// ## TODO: Replace with lib-storage DhtStorage::store()
     pub async fn store_content(
         &self,
@@ -133,7 +137,12 @@ impl ZkDHTIntegration {
         ttl_secs: u64,
     ) -> Result<String> {
         let key = format!("{}:{}", domain, path);
-        info!("Storing content at key: {} ({} bytes, TTL: {}s)", key, content.len(), ttl_secs);
+        info!(
+            "Storing content at key: {} ({} bytes, TTL: {}s)",
+            key,
+            content.len(),
+            ttl_secs
+        );
 
         // Check storage limit
         let current_usage = {
@@ -161,7 +170,7 @@ impl ZkDHTIntegration {
     }
 
     /// Retrieve content by key
-    /// 
+    ///
     /// ## TODO: Replace with lib-storage DhtStorage::get()
     pub async fn fetch_content(&self, key: &str) -> Result<Option<Vec<u8>>> {
         debug!("Fetching content for key: {}", key);
@@ -195,15 +204,13 @@ impl ZkDHTIntegration {
     }
 
     /// Discover peers in the DHT
-    /// 
+    ///
     /// ## TODO: Replace with lib-storage peer registry lookup
     pub async fn discover_peers(&self) -> Result<Vec<String>> {
         let peer_registry = self.peer_registry.read().await;
         let peers: Vec<String> = peer_registry
             .values()
-            .filter_map(|peer| {
-                peer.address.map(|addr| addr.to_string())
-            })
+            .filter_map(|peer| peer.address.map(|addr| addr.to_string()))
             .collect();
         Ok(peers)
     }
@@ -234,7 +241,7 @@ impl ZkDHTIntegration {
     /// Connect to a peer
     pub async fn connect_to_peer(&self, peer_addr: &str) -> Result<()> {
         let addr: std::net::SocketAddr = peer_addr.parse()?;
-        
+
         // Create a peer entry
         let peer_info = DhtPeerInfo {
             node_id: [0u8; 32], // Would be derived from peer identity
@@ -255,7 +262,7 @@ impl ZkDHTIntegration {
     }
 
     /// Send DHT query to a peer
-    /// 
+    ///
     /// ## TODO: Implement actual DHT query to peers
     pub async fn send_dht_query(&self, peer_addr: &str, query: String) -> Result<Vec<String>> {
         warn!("DHT query to {} not yet implemented: {}", peer_addr, query);
@@ -269,7 +276,10 @@ impl ZkDHTIntegration {
 
         stats.insert("total_nodes".to_string(), status.total_nodes as f64);
         stats.insert("connected_nodes".to_string(), status.connected_nodes as f64);
-        stats.insert("storage_used_bytes".to_string(), status.storage_used_bytes as f64);
+        stats.insert(
+            "storage_used_bytes".to_string(),
+            status.storage_used_bytes as f64,
+        );
         stats.insert("total_keys".to_string(), status.total_keys as f64);
 
         Ok(stats)
@@ -304,11 +314,15 @@ impl ZkDHTIntegration {
     }
 
     /// Find closest peers to a given node ID (for replication)
-    /// 
+    ///
     /// ## TODO: Implement Kademlia-style XOR distance routing
-    pub async fn find_closest_peers(&self, target_node_id: &[u8; 32], count: usize) -> Vec<DhtPeerInfo> {
+    pub async fn find_closest_peers(
+        &self,
+        target_node_id: &[u8; 32],
+        count: usize,
+    ) -> Vec<DhtPeerInfo> {
         let peer_registry = self.peer_registry.read().await;
-        
+
         // Simple distance-based selection (XOR distance)
         let mut peers: Vec<_> = peer_registry.values().collect();
         peers.sort_by(|a, b| {
@@ -317,14 +331,11 @@ impl ZkDHTIntegration {
             dist_a.cmp(&dist_b)
         });
 
-        peers.into_iter()
-            .take(count)
-            .cloned()
-            .collect()
+        peers.into_iter().take(count).cloned().collect()
     }
 
     /// Replicate content to nearest peers
-    /// 
+    ///
     /// ## TODO: Implement actual peer-to-peer replication
     pub async fn replicate_content(&self, key: &str, replication_factor: u8) -> Result<u8> {
         let content = {
@@ -333,12 +344,17 @@ impl ZkDHTIntegration {
         };
 
         let Some(_value) = content else {
-            return Err(anyhow::anyhow!("Content not found for replication: {}", key));
+            return Err(anyhow::anyhow!(
+                "Content not found for replication: {}",
+                key
+            ));
         };
 
         // Find closest peers
-        let closest_peers = self.find_closest_peers(&self.local_node_id, replication_factor as usize).await;
-        
+        let closest_peers = self
+            .find_closest_peers(&self.local_node_id, replication_factor as usize)
+            .await;
+
         let mut replicated_count = 0u8;
         for _peer in closest_peers {
             // TODO: Actually send to peer over network
@@ -353,10 +369,8 @@ impl ZkDHTIntegration {
     pub async fn cleanup_expired(&self) -> Result<usize> {
         let mut store = self.content_store.write().await;
         let initial_count = store.len();
-        
-        store.retain(|_, entry| {
-            !entry.is_expired()
-        });
+
+        store.retain(|_, entry| !entry.is_expired());
 
         let removed = initial_count - store.len();
         if removed > 0 {
@@ -418,7 +432,9 @@ impl DHTClient {
         content: Vec<u8>,
         ttl_secs: u64,
     ) -> Result<String> {
-        self.inner.store_content(domain, path, content, ttl_secs).await
+        self.inner
+            .store_content(domain, path, content, ttl_secs)
+            .await
     }
 
     pub async fn fetch_content(&self, key: &str) -> Result<Option<Vec<u8>>> {
@@ -470,15 +486,17 @@ mod tests {
             Some("US".to_string()),
             "test-device",
             None,
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[tokio::test]
     async fn test_store_and_retrieve_content() {
         let dht = ZkDHTIntegration::new();
-        
+
         let content = b"Hello, DHT!".to_vec();
-        let key = dht.store_content("test.zhtp", "/hello", content.clone(), 300)
+        let key = dht
+            .store_content("test.zhtp", "/hello", content.clone(), 300)
             .await
             .unwrap();
 
@@ -489,10 +507,11 @@ mod tests {
     #[tokio::test]
     async fn test_content_expiration() {
         let dht = ZkDHTIntegration::new();
-        
+
         // Store with very short TTL
         let content = b"Expiring content".to_vec();
-        let key = dht.store_content("test.zhtp", "/expire", content.clone(), 1)
+        let key = dht
+            .store_content("test.zhtp", "/expire", content.clone(), 1)
             .await
             .unwrap();
 
@@ -511,7 +530,7 @@ mod tests {
     #[tokio::test]
     async fn test_network_status() {
         let dht = ZkDHTIntegration::new();
-        
+
         let status = dht.get_network_status().await.unwrap();
         assert_eq!(status.total_nodes, 0);
         assert_eq!(status.total_keys, 0);
@@ -529,7 +548,7 @@ mod tests {
     #[tokio::test]
     async fn test_peer_discovery() {
         let dht = ZkDHTIntegration::new();
-        
+
         // Initially no peers
         let peers = dht.discover_peers().await.unwrap();
         assert!(peers.is_empty());
@@ -559,7 +578,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_expired() {
         let dht = ZkDHTIntegration::new();
-        
+
         // Store with short TTL
         dht.store_content("test.zhtp", "/expire1", b"test1".to_vec(), 1)
             .await
@@ -587,7 +606,7 @@ mod tests {
     async fn test_dht_client_creation() {
         let identity = create_test_identity();
         let client = DHTClient::new(identity).await.unwrap();
-        
+
         let status = client.get_network_status().await.unwrap();
         assert_eq!(status.total_nodes, 0);
     }

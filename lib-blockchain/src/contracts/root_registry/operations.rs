@@ -142,10 +142,7 @@ impl RegisterGuard {
         // (Checked by classification - commercial requires L2, welfare requires DAO approval)
 
         // Precondition 4: Verification level meets minimum for classification
-        super::validation::validate_verification_level(
-            parsed.classification,
-            owner_verification,
-        )?;
+        super::validation::validate_verification_level(parsed.classification, owner_verification)?;
 
         // Precondition 5: Fee paid and routed through FeeRouter
         if fee_paid < required_fee {
@@ -191,8 +188,10 @@ impl RegisterGuard {
         // Convert duration_secs to blocks (approximately, 10 seconds per block)
         let duration_blocks = duration_secs.saturating_div(10);
         let expires_at_height = current_block.saturating_add(duration_blocks);
-        let renewal_window_start_height = expires_at_height.saturating_sub(timing::RENEWAL_WINDOW_BLOCKS);
-        let renew_grace_until_height = expires_at_height.saturating_add(timing::EXPIRATION_GRACE_BLOCKS);
+        let renewal_window_start_height =
+            expires_at_height.saturating_sub(timing::RENEWAL_WINDOW_BLOCKS);
+        let renew_grace_until_height =
+            expires_at_height.saturating_add(timing::EXPIRATION_GRACE_BLOCKS);
         let transfer_lock_until = current_block.saturating_add(timing::TRANSFER_LOCK_BLOCKS);
 
         // Legacy fields (deprecated, for display only)
@@ -567,10 +566,7 @@ impl RevokeGuard {
             }
             RevocationRequester::WelfareDao { .. } => {
                 // Only for welfare delegated domains
-                if !matches!(
-                    record.classification,
-                    NameClassification::WelfareDelegated
-                ) {
+                if !matches!(record.classification, NameClassification::WelfareDelegated) {
                     return Err(OperationError::InvalidRevocationAuthority);
                 }
             }

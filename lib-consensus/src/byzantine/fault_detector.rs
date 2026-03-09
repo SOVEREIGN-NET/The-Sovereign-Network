@@ -114,7 +114,10 @@ impl ByzantineFaultDetector {
             liveness_violations: HashMap::new(),
             invalid_proposals: HashMap::new(),
             first_votes: HashMap::new(),
-            replay_cache: BoundedLruCache::new(config.replay_cache_max_size, config.replay_detection_window_secs),
+            replay_cache: BoundedLruCache::new(
+                config.replay_cache_max_size,
+                config.replay_detection_window_secs,
+            ),
             forensic_records: VecDeque::new(),
             forensic_max_size: config.forensic_max_records,
             forensic_ttl_secs: config.forensic_ttl_secs,
@@ -126,7 +129,10 @@ impl ByzantineFaultDetector {
     }
 
     /// Detect Byzantine faults among validators
-    pub fn detect_faults(&mut self, _validator_manager: &ValidatorManager) -> Result<Vec<ByzantineFault>> {
+    pub fn detect_faults(
+        &mut self,
+        _validator_manager: &ValidatorManager,
+    ) -> Result<Vec<ByzantineFault>> {
         let mut detected_faults = Vec::new();
 
         // Check for double signing
@@ -373,7 +379,8 @@ impl ByzantineFaultDetector {
                 reported_by_peer_b: reported_by_peer.clone(),
             };
 
-            self.evidence_log.push(ByzantineEvidence::Equivocation(evidence.clone()));
+            self.evidence_log
+                .push(ByzantineEvidence::Equivocation(evidence.clone()));
             return Some(evidence);
         }
 
@@ -424,7 +431,8 @@ impl ByzantineFaultDetector {
 
             // Update cache with new count
             self.replay_cache.insert(key, metadata, current_time);
-            self.evidence_log.push(ByzantineEvidence::Replay(evidence.clone()));
+            self.evidence_log
+                .push(ByzantineEvidence::Replay(evidence.clone()));
             return Some(evidence);
         }
 
@@ -480,7 +488,8 @@ impl ByzantineFaultDetector {
             detected_at: current_time,
         };
 
-        self.evidence_log.push(ByzantineEvidence::PartitionSuspected(evidence.clone()));
+        self.evidence_log
+            .push(ByzantineEvidence::PartitionSuspected(evidence.clone()));
         Some(evidence)
     }
 
@@ -555,12 +564,7 @@ impl ByzantineFaultDetector {
         // NEW: Clean first votes (keep last 100 heights)
         if self.first_votes.len() > 400 {
             // Rough estimate: 4 vote types per height
-            let min_height = self
-                .first_votes
-                .keys()
-                .map(|k| k.height)
-                .min()
-                .unwrap_or(0);
+            let min_height = self.first_votes.keys().map(|k| k.height).min().unwrap_or(0);
             let cutoff_height = min_height + 100;
 
             self.first_votes

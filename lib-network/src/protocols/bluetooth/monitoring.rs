@@ -11,7 +11,7 @@ pub struct BluetoothMeshStatus {
     pub discovery_active: bool,
     pub connected_peers: u32,
     pub signal_strength: i32, // dBm
-    pub mesh_quality: f64, // 0.0 to 1.0
+    pub mesh_quality: f64,    // 0.0 to 1.0
 }
 
 impl BluetoothMeshProtocol {

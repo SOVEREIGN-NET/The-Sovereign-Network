@@ -3,17 +3,17 @@
 //! Provides compression, deduplication, and content-defined chunking
 //! to optimize storage efficiency.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
+pub mod chunking;
 pub mod compression;
 pub mod deduplication;
-pub mod chunking;
 
 // Re-export key types
-pub use compression::{CompressionAlgorithm, Compressor, CompressionStats};
-pub use deduplication::{Deduplicator, DedupStats, BlockReference};
-pub use chunking::{ContentChunker, ChunkingAlgorithm, Chunk};
+pub use chunking::{Chunk, ChunkingAlgorithm, ContentChunker};
+pub use compression::{CompressionAlgorithm, CompressionStats, Compressor};
+pub use deduplication::{BlockReference, DedupStats, Deduplicator};
 
 /// Optimization manager coordinating compression and deduplication
 pub struct OptimizationManager {
@@ -47,7 +47,7 @@ impl OptimizationManager {
 
         // Step 1: Chunk the data
         let chunks = self.chunker.chunk(data)?;
-        
+
         // Step 2: Deduplicate chunks - extract data from Chunk structs
         let chunk_data: Vec<Vec<u8>> = chunks.iter().map(|c| c.data.clone()).collect();
         let dedup_refs = self.deduplicator.deduplicate_chunks(chunk_data)?;
@@ -99,7 +99,10 @@ impl OptimizationManager {
             if let Some(chunk_data) = self.deduplicator.get_chunk(&block_ref.hash) {
                 result.extend_from_slice(chunk_data);
             } else {
-                return Err(anyhow!("Chunk not found during reconstruction: {:?}", block_ref.hash));
+                return Err(anyhow!(
+                    "Chunk not found during reconstruction: {:?}",
+                    block_ref.hash
+                ));
             }
         }
 
@@ -126,7 +129,10 @@ impl OptimizationManager {
         if self.stats.original_bytes == 0 {
             0.0
         } else {
-            let saved = self.stats.original_bytes.saturating_sub(self.stats.final_bytes);
+            let saved = self
+                .stats
+                .original_bytes
+                .saturating_sub(self.stats.final_bytes);
             (saved as f64 / self.stats.original_bytes as f64) * 100.0
         }
     }

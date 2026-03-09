@@ -5,11 +5,11 @@
 // material must never be embedded directly into the DID.
 // IMPLEMENTATIONS from original identity.rs
 
+use crate::did::storage;
 use crate::identity::ZhtpIdentity;
 use lib_crypto::keypair::KeyPair;
 use lib_crypto::types::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
-use crate::did::storage;
 
 // Note: base64 encoding removed after cleanup - no longer needed
 
@@ -86,12 +86,14 @@ impl DidDocument {
     pub fn from_identity(identity: &ZhtpIdentity, base_url: Option<&str>) -> Result<Self, String> {
         generate_did_document(identity, base_url)
     }
-    
+
     /// Get the DID document as a hash for storage/reference
     pub fn to_hash(&self) -> Result<lib_crypto::Hash, String> {
         let serialized = serde_json::to_vec(self)
             .map_err(|e| format!("Failed to serialize DID document: {}", e))?;
-        Ok(lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(&serialized)))
+        Ok(lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(
+            &serialized,
+        )))
     }
 }
 
@@ -116,10 +118,6 @@ pub struct ServiceEndpoint {
     pub service_endpoint: String,
 }
 
-
-
-
-
 /// Generate W3C DID Document for ZHTP identity
 /// Implementation from original identity.rs lines 1500-1600
 pub fn generate_did_document(
@@ -128,39 +126,42 @@ pub fn generate_did_document(
 ) -> Result<DidDocument, String> {
     let base_url = base_url.unwrap_or("https://did.zhtp.network");
     let did = format!("did:zhtp:{}", hex::encode(&identity.id.0));
-    
+
     // Generate timestamp
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
     let timestamp = format_timestamp(now);
-    
+
     // Create verification methods
     let verification_methods = create_verification_methods(&identity, &did)?;
-    
+
     // Create service endpoints
     let services = create_service_endpoints(&identity, &did, base_url)?;
-    
+
     // Create authentication and assertion method references
-    let auth_methods = verification_methods.iter()
+    let auth_methods = verification_methods
+        .iter()
         .filter(|vm| vm.verification_type.contains("Authentication"))
         .map(|vm| vm.id.clone())
         .collect();
-    
-    let assertion_methods = verification_methods.iter()
+
+    let assertion_methods = verification_methods
+        .iter()
         .filter(|vm| vm.verification_type.contains("Assertion"))
         .map(|vm| vm.id.clone())
         .collect();
-    
-    let key_agreement_methods = verification_methods.iter()
+
+    let key_agreement_methods = verification_methods
+        .iter()
         .filter(|vm| vm.verification_type.contains("KeyAgreement"))
         .map(|vm| vm.id.clone())
         .collect();
-    
+
     let capability_invocation = vec![format!("{}#primary", did)];
     let capability_delegation = vec![format!("{}#delegate", did)];
-    
+
     Ok(DidDocument {
         context: vec![
             "https://www.w3.org/ns/did/v1".to_string(),
@@ -188,7 +189,7 @@ fn create_verification_methods(
     did: &str,
 ) -> Result<Vec<VerificationMethod>, String> {
     let mut methods = Vec::new();
-    
+
     // Primary quantum-resistant authentication key
     let primary_key_multibase = encode_public_key_multibase(&identity.public_key.as_bytes())?;
     methods.push(VerificationMethod {
@@ -221,7 +222,7 @@ fn create_verification_methods(
         controller: did.to_string(),
         public_key_multibase: encode_public_key_multibase(&identity.public_key.as_bytes())?,
     });
-    
+
     Ok(methods)
 }
 
@@ -232,28 +233,28 @@ fn create_service_endpoints(
     base_url: &str,
 ) -> Result<Vec<ServiceEndpoint>, String> {
     let mut services = Vec::new();
-    
+
     // ZHTP Quantum Wallet service
     services.push(ServiceEndpoint {
         id: format!("{}#quantumWallet", did),
         service_type: "ZhtpQuantumWallet".to_string(),
         service_endpoint: format!("{}/wallet/{}", base_url, hex::encode(&identity.id.0)),
     });
-    
+
     // Identity verification service
     services.push(ServiceEndpoint {
         id: format!("{}#verification", did),
         service_type: "ZhtpIdentityVerification".to_string(),
         service_endpoint: format!("{}/verify/{}", base_url, hex::encode(&identity.id.0)),
     });
-    
+
     // Credential issuance service
     services.push(ServiceEndpoint {
         id: format!("{}#credentials", did),
         service_type: "ZhtpCredentialIssuance".to_string(),
         service_endpoint: format!("{}/credentials/{}", base_url, hex::encode(&identity.id.0)),
     });
-    
+
     // UBI service endpoint (if citizen)
     if identity.access_level.to_string().contains("Citizen") {
         services.push(ServiceEndpoint {
@@ -262,7 +263,7 @@ fn create_service_endpoints(
             service_endpoint: format!("{}/ubi/{}", base_url, hex::encode(&identity.id.0)),
         });
     }
-    
+
     // DAO governance service (if citizen)
     if identity.access_level.to_string().contains("Citizen") {
         services.push(ServiceEndpoint {
@@ -271,7 +272,7 @@ fn create_service_endpoints(
             service_endpoint: format!("{}/dao/{}", base_url, hex::encode(&identity.id.0)),
         });
     }
-    
+
     // Web4 access service (if citizen)
     if identity.access_level.to_string().contains("Citizen") {
         services.push(ServiceEndpoint {
@@ -280,14 +281,14 @@ fn create_service_endpoints(
             service_endpoint: format!("{}/web4/{}", base_url, hex::encode(&identity.id.0)),
         });
     }
-    
+
     // Zero-knowledge proof service
     services.push(ServiceEndpoint {
         id: format!("{}#zkProofs", did),
         service_type: "ZhtpZKProofService".to_string(),
         service_endpoint: format!("{}/zk/{}", base_url, hex::encode(&identity.id.0)),
     });
-    
+
     Ok(services)
 }
 
@@ -305,7 +306,7 @@ fn encode_base58(input: &[u8]) -> String {
     if input.is_empty() {
         return String::new();
     }
-    
+
     // Use hex encoding with base58 prefix for demo
     format!("base58_{}", hex::encode(input))
 }
@@ -317,18 +318,20 @@ fn format_timestamp(timestamp: u64) -> String {
     let seconds_per_day = 86400u64;
     let days_since_epoch = timestamp / seconds_per_day;
     let seconds_in_day = timestamp % seconds_per_day;
-    
+
     let hours = seconds_in_day / 3600;
     let minutes = (seconds_in_day % 3600) / 60;
     let seconds = seconds_in_day % 60;
-    
+
     // Simplified date calculation to avoid overflow
     let year = 2024; // Fixed year for demo
     let month = ((days_since_epoch % 365) / 30).min(11) + 1;
     let day = ((days_since_epoch % 365) % 30).min(28) + 1;
-    
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", 
-            year, month, day, hours, minutes, seconds)
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hours, minutes, seconds
+    )
 }
 
 /// Update DID document with new information
@@ -342,16 +345,17 @@ pub fn update_did_document(
         .unwrap()
         .as_secs();
     document.updated = format_timestamp(now);
-    
+
     // Increment version
     document.version_id += 1;
-    
+
     // Update verification methods if keys changed
     document.verification_method = create_verification_methods(identity, &document.id)?;
-    
+
     // Update service endpoints
-    document.service = create_service_endpoints(identity, &document.id, "https://did.zhtp.network")?;
-    
+    document.service =
+        create_service_endpoints(identity, &document.id, "https://did.zhtp.network")?;
+
     Ok(document)
 }
 
@@ -360,45 +364,34 @@ pub fn resolve_did(did: &str) -> Result<DidDocument, String> {
     storage::resolve_did_document(did)
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /// Validate DID Document structure
 pub fn validate_did_document(document: &DidDocument) -> Result<bool, String> {
     // Check required fields
     if document.id.is_empty() {
         return Err("DID document missing id".to_string());
     }
-    
+
     if !document.id.starts_with("did:") {
         return Err("Invalid DID format".to_string());
     }
-    
+
     if document.verification_method.is_empty() {
         return Err("DID document must have at least one verification method".to_string());
     }
-    
+
     // Validate verification methods
     for vm in &document.verification_method {
         if vm.id.is_empty() || vm.verification_type.is_empty() || vm.controller.is_empty() {
             return Err("Invalid verification method".to_string());
         }
     }
-    
+
     // Validate service endpoints
     for service in &document.service {
-        if service.id.is_empty() || service.service_type.is_empty() || service.service_endpoint.is_empty() {
+        if service.id.is_empty()
+            || service.service_type.is_empty()
+            || service.service_endpoint.is_empty()
+        {
             return Err("Invalid service endpoint".to_string());
         }
     }
@@ -413,10 +406,13 @@ pub fn validate_did_document(document: &DidDocument) -> Result<bool, String> {
             return Err("Device entry missing keys".to_string());
         }
         if !seen_device_ids.insert(device.device_id.clone()) {
-            return Err(format!("Duplicate device_id in registry: {}", device.device_id));
+            return Err(format!(
+                "Duplicate device_id in registry: {}",
+                device.device_id
+            ));
         }
     }
-    
+
     Ok(true)
 }
 
@@ -489,7 +485,10 @@ pub fn get_device_entry(document: &DidDocument, device_id: &str) -> Option<Devic
 }
 
 /// Get decoded device keys (signing, encryption) by device_id
-pub fn get_device_keys(document: &DidDocument, device_id: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
+pub fn get_device_keys(
+    document: &DidDocument,
+    device_id: &str,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
     let entry = get_device_entry(document, device_id)
         .ok_or_else(|| format!("Device not found: {}", device_id))?;
     let signing = decode_public_key_multibase(&entry.signing_key_multibase)?;
@@ -612,7 +611,11 @@ fn apply_did_update_unchecked(
 ) -> Result<DidDocument, String> {
     // Apply additions
     for entry in &update.diff.adds {
-        if document.device_registry.iter().any(|d| d.device_id == entry.device_id && d.status == DeviceStatus::Active) {
+        if document
+            .device_registry
+            .iter()
+            .any(|d| d.device_id == entry.device_id && d.status == DeviceStatus::Active)
+        {
             return Err(format!("Device already active: {}", entry.device_id));
         }
         document.device_registry.push(entry.clone());
@@ -620,7 +623,11 @@ fn apply_did_update_unchecked(
 
     // Apply removals
     for device_id in &update.diff.removes {
-        if let Some(existing) = document.device_registry.iter_mut().find(|d| d.device_id == *device_id && d.status == DeviceStatus::Active) {
+        if let Some(existing) = document
+            .device_registry
+            .iter_mut()
+            .find(|d| d.device_id == *device_id && d.status == DeviceStatus::Active)
+        {
             existing.status = DeviceStatus::Removed;
             existing.removed_at = Some(update.timestamp);
         } else {
@@ -703,7 +710,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = generate_did_document(&identity, None)?;
         let update = create_device_add_update(
@@ -715,7 +723,10 @@ mod tests {
         )?;
 
         let updated = apply_did_update(doc, &update)?;
-        let entry = updated.device_registry.iter().find(|d| d.device_id == "phone-1");
+        let entry = updated
+            .device_registry
+            .iter()
+            .find(|d| d.device_id == "phone-1");
         assert!(entry.is_some(), "Device should be added");
         assert_eq!(entry.unwrap().status, DeviceStatus::Active);
         Ok(())
@@ -729,7 +740,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = generate_did_document(&identity, None)?;
         let add_update = create_device_add_update(
@@ -743,7 +755,10 @@ mod tests {
 
         let remove_update = create_device_remove_update(&identity, &doc_with_device, "tablet-1")?;
         let updated = apply_did_update(doc_with_device, &remove_update)?;
-        let entry = updated.device_registry.iter().find(|d| d.device_id == "tablet-1");
+        let entry = updated
+            .device_registry
+            .iter()
+            .find(|d| d.device_id == "tablet-1");
         assert!(entry.is_some(), "Device should exist");
         assert_eq!(entry.unwrap().status, DeviceStatus::Removed);
         Ok(())
@@ -757,7 +772,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = generate_did_document(&identity, None)?;
         let add_update = create_device_add_update(
@@ -782,7 +798,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = generate_did_document(&identity, None)?;
         let add_update = create_device_add_update(
@@ -808,7 +825,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = generate_did_document(&identity, None)?;
         let mut update = create_device_add_update(
@@ -836,7 +854,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = generate_did_document(&identity, None)?;
         store_did_document(doc.clone())?;

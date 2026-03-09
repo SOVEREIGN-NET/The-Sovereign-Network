@@ -1,12 +1,12 @@
 use std::env;
 use std::io::{self, Read};
 
-use lib_blockchain::types::ContractCall;
 use lib_blockchain::transaction::core::Transaction;
 use lib_blockchain::transaction::creation::utils::calculate_minimum_fee;
 use lib_blockchain::transaction::DecodedContractExecutionMemo;
-use lib_blockchain::TransactionType;
+use lib_blockchain::types::ContractCall;
 use lib_blockchain::types::ContractType;
+use lib_blockchain::TransactionType;
 use lib_crypto::types::signatures::Signature;
 
 fn main() {
@@ -48,10 +48,7 @@ fn decode_and_inspect(hex_tx: &str) -> Result<(), String> {
     println!("  fee: {}", tx.fee);
     println!("  size: {}", tx.size());
     println!("  memo.len: {}", tx.memo.len());
-    println!(
-        "  signature.len: {}",
-        tx.signature.signature.len()
-    );
+    println!("  signature.len: {}", tx.signature.signature.len());
     println!(
         "  public_key.len: {} (dilithium_pk={}, kyber_pk={})",
         tx.signature.public_key.as_bytes().len(),
@@ -100,7 +97,10 @@ fn is_token_contract_execution_diagnostic(
     let sig = decoded.signature;
 
     if call.contract_type != ContractType::Token {
-        return Err(format!("contract_type is {:?}, not Token", call.contract_type));
+        return Err(format!(
+            "contract_type is {:?}, not Token",
+            call.contract_type
+        ));
     }
 
     let is_token_method = matches!(

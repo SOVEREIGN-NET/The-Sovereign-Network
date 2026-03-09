@@ -1,15 +1,15 @@
 //! ZHTP Headers for Zero-Knowledge Web with Built-in Economic Incentives
-//! 
+//!
 //! Headers include standard HTTP-compatible fields plus Web4 extensions for
 //! zero-knowledge proofs, DAO fees, post-quantum cryptography, and mesh networking.
 
+use crate::storage_stub::ContentHash;
+use crate::types::ZHTP_VERSION;
+use lib_crypto::PostQuantumSignature;
+use lib_economy::Priority;
+use lib_proofs::ZeroKnowledgeProof;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use lib_crypto::PostQuantumSignature;
-use crate::storage_stub::ContentHash;
-use lib_proofs::ZeroKnowledgeProof;
-use lib_economy::Priority;
-use crate::types::ZHTP_VERSION;
 
 /// ZHTP headers with Web4 extensions
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -317,7 +317,7 @@ impl ZhtpHeaders {
         self
     }
 
-    /// Enable 
+    /// Enable
     pub fn with_isp_bypass(mut self, enable: bool) -> Self {
         self.isp_bypass = Some(enable);
         self
@@ -441,9 +441,10 @@ impl ZhtpHeaders {
     pub fn has_post_quantum_crypto(&self) -> bool {
         self.encryption.as_ref().map_or(false, |enc| {
             enc.contains("Kyber") || enc.contains("Dilithium")
-        }) || self.signature_algorithm.as_ref().map_or(false, |sig| {
-            sig.contains("Dilithium")
-        })
+        }) || self
+            .signature_algorithm
+            .as_ref()
+            .map_or(false, |sig| sig.contains("Dilithium"))
     }
 
     /// Check if DAO fee is properly set and validated
@@ -459,22 +460,42 @@ impl ZhtpHeaders {
     /// Get all header names
     pub fn header_names(&self) -> Vec<String> {
         let mut names = Vec::new();
-        
+
         // Add standard headers that have values
-        if self.content_type.is_some() { names.push("content-type".to_string()); }
-        if self.content_length.is_some() { names.push("content-length".to_string()); }
-        if self.content_encoding.is_some() { names.push("content-encoding".to_string()); }
-        if self.cache_control.is_some() { names.push("cache-control".to_string()); }
-        if self.privacy_level.is_some() { names.push("privacy-level".to_string()); }
-        if self.encryption.is_some() { names.push("encryption".to_string()); }
-        if self.dao_fee > 0 { names.push("dao-fee".to_string()); }
-        if self.total_fees > 0 { names.push("total-fees".to_string()); }
-        if self.isp_bypass.is_some() { names.push("isp-bypass".to_string()); }
-        if self.lib_version.is_some() { names.push("lib-version".to_string()); }
-        
+        if self.content_type.is_some() {
+            names.push("content-type".to_string());
+        }
+        if self.content_length.is_some() {
+            names.push("content-length".to_string());
+        }
+        if self.content_encoding.is_some() {
+            names.push("content-encoding".to_string());
+        }
+        if self.cache_control.is_some() {
+            names.push("cache-control".to_string());
+        }
+        if self.privacy_level.is_some() {
+            names.push("privacy-level".to_string());
+        }
+        if self.encryption.is_some() {
+            names.push("encryption".to_string());
+        }
+        if self.dao_fee > 0 {
+            names.push("dao-fee".to_string());
+        }
+        if self.total_fees > 0 {
+            names.push("total-fees".to_string());
+        }
+        if self.isp_bypass.is_some() {
+            names.push("isp-bypass".to_string());
+        }
+        if self.lib_version.is_some() {
+            names.push("lib-version".to_string());
+        }
+
         // Add custom headers
         names.extend(self.custom.keys().cloned());
-        
+
         names.sort();
         names
     }
@@ -482,47 +503,109 @@ impl ZhtpHeaders {
     /// Iterate over all headers
     pub fn iter(&self) -> Vec<(String, String)> {
         let mut headers = Vec::new();
-        
+
         // Add standard headers if present
-        if let Some(ref value) = self.content_type { headers.push(("Content-Type".to_string(), value.clone())); }
-        if let Some(value) = self.content_length { headers.push(("Content-Length".to_string(), value.to_string())); }
-        if let Some(ref value) = self.content_encoding { headers.push(("Content-Encoding".to_string(), value.clone())); }
-        if let Some(ref value) = self.cache_control { headers.push(("Cache-Control".to_string(), value.clone())); }
-        if let Some(value) = self.last_modified { headers.push(("Last-Modified".to_string(), value.to_string())); }
-        if let Some(ref value) = self.etag { headers.push(("ETag".to_string(), value.clone())); }
-        if let Some(ref value) = self.accept { headers.push(("Accept".to_string(), value.clone())); }
-        if let Some(ref value) = self.accept_encoding { headers.push(("Accept-Encoding".to_string(), value.clone())); }
-        if let Some(ref value) = self.accept_language { headers.push(("Accept-Language".to_string(), value.clone())); }
-        if let Some(ref value) = self.user_agent { headers.push(("User-Agent".to_string(), value.clone())); }
-        if let Some(ref value) = self.host { headers.push(("Host".to_string(), value.clone())); }
-        if let Some(ref value) = self.referer { headers.push(("Referer".to_string(), value.clone())); }
-        if let Some(ref value) = self.authorization { headers.push(("Authorization".to_string(), value.clone())); }
-        if let Some(ref value) = self.location { headers.push(("Location".to_string(), value.clone())); }
-        if let Some(ref value) = self.access_control_allow_origin { headers.push(("Access-Control-Allow-Origin".to_string(), value.clone())); }
-        if let Some(ref value) = self.server { headers.push(("Server".to_string(), value.clone())); }
-        if let Some(value) = self.date { headers.push(("Date".to_string(), value.to_string())); }
-        if let Some(value) = self.expires { headers.push(("Expires".to_string(), value.to_string())); }
-        if let Some(ref value) = self.cookie { headers.push(("Cookie".to_string(), value.clone())); }
-        if let Some(ref value) = self.set_cookie { headers.push(("Set-Cookie".to_string(), value.clone())); }
-        
+        if let Some(ref value) = self.content_type {
+            headers.push(("Content-Type".to_string(), value.clone()));
+        }
+        if let Some(value) = self.content_length {
+            headers.push(("Content-Length".to_string(), value.to_string()));
+        }
+        if let Some(ref value) = self.content_encoding {
+            headers.push(("Content-Encoding".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.cache_control {
+            headers.push(("Cache-Control".to_string(), value.clone()));
+        }
+        if let Some(value) = self.last_modified {
+            headers.push(("Last-Modified".to_string(), value.to_string()));
+        }
+        if let Some(ref value) = self.etag {
+            headers.push(("ETag".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.accept {
+            headers.push(("Accept".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.accept_encoding {
+            headers.push(("Accept-Encoding".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.accept_language {
+            headers.push(("Accept-Language".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.user_agent {
+            headers.push(("User-Agent".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.host {
+            headers.push(("Host".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.referer {
+            headers.push(("Referer".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.authorization {
+            headers.push(("Authorization".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.location {
+            headers.push(("Location".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.access_control_allow_origin {
+            headers.push(("Access-Control-Allow-Origin".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.server {
+            headers.push(("Server".to_string(), value.clone()));
+        }
+        if let Some(value) = self.date {
+            headers.push(("Date".to_string(), value.to_string()));
+        }
+        if let Some(value) = self.expires {
+            headers.push(("Expires".to_string(), value.to_string()));
+        }
+        if let Some(ref value) = self.cookie {
+            headers.push(("Cookie".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.set_cookie {
+            headers.push(("Set-Cookie".to_string(), value.clone()));
+        }
+
         // Add Web4 headers if present
-        if let Some(value) = self.privacy_level { headers.push(("Privacy-Level".to_string(), value.to_string())); }
-        if let Some(ref value) = self.encryption { headers.push(("Encryption".to_string(), value.clone())); }
-        if let Some(ref value) = self.signature_algorithm { headers.push(("Signature-Algorithm".to_string(), value.clone())); }
-        if let Some(ref value) = self.zk_proof { headers.push(("ZK-Proof".to_string(), format!("{:?}", value))); }
-        if let Some(ref value) = self.identity_did { headers.push(("Identity-ID".to_string(), value.clone())); }
-        if let Some(ref value) = self.access_policy_id { headers.push(("Access-Policy-ID".to_string(), value.clone())); }
-        if let Some(ref value) = self.fee_tier { headers.push(("Fee-Tier".to_string(), format!("{:?}", value))); }
-        if self.dao_fee > 0 { headers.push(("DAO-Fee".to_string(), self.dao_fee.to_string())); }
-        if self.total_fees > 0 { headers.push(("Total-Fees".to_string(), self.total_fees.to_string())); }
-        if let Some(value) = self.isp_bypass { headers.push(("ISP-Bypass".to_string(), value.to_string())); }
-        if let Some(ref value) = self.lib_version { headers.push(("ZHTP-Version".to_string(), value.clone())); }
-        
+        if let Some(value) = self.privacy_level {
+            headers.push(("Privacy-Level".to_string(), value.to_string()));
+        }
+        if let Some(ref value) = self.encryption {
+            headers.push(("Encryption".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.signature_algorithm {
+            headers.push(("Signature-Algorithm".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.zk_proof {
+            headers.push(("ZK-Proof".to_string(), format!("{:?}", value)));
+        }
+        if let Some(ref value) = self.identity_did {
+            headers.push(("Identity-ID".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.access_policy_id {
+            headers.push(("Access-Policy-ID".to_string(), value.clone()));
+        }
+        if let Some(ref value) = self.fee_tier {
+            headers.push(("Fee-Tier".to_string(), format!("{:?}", value)));
+        }
+        if self.dao_fee > 0 {
+            headers.push(("DAO-Fee".to_string(), self.dao_fee.to_string()));
+        }
+        if self.total_fees > 0 {
+            headers.push(("Total-Fees".to_string(), self.total_fees.to_string()));
+        }
+        if let Some(value) = self.isp_bypass {
+            headers.push(("ISP-Bypass".to_string(), value.to_string()));
+        }
+        if let Some(ref value) = self.lib_version {
+            headers.push(("ZHTP-Version".to_string(), value.clone()));
+        }
+
         // Add custom headers
         for (key, value) in &self.custom {
             headers.push((key.clone(), value.clone()));
         }
-        
+
         headers
     }
 
@@ -569,24 +652,33 @@ mod tests {
     #[test]
     fn test_header_get_set() {
         let mut headers = ZhtpHeaders::new();
-        
+
         headers.set("content-type", "application/json".to_string());
-        assert_eq!(headers.get("content-type"), Some("application/json".to_string()));
-        assert_eq!(headers.get("Content-Type"), Some("application/json".to_string()));
-        
+        assert_eq!(
+            headers.get("content-type"),
+            Some("application/json".to_string())
+        );
+        assert_eq!(
+            headers.get("Content-Type"),
+            Some("application/json".to_string())
+        );
+
         headers.set("custom-header", "custom-value".to_string());
-        assert_eq!(headers.get("custom-header"), Some("custom-value".to_string()));
+        assert_eq!(
+            headers.get("custom-header"),
+            Some("custom-value".to_string())
+        );
     }
 
     #[test]
     fn test_header_validation_methods() {
         let mut headers = ZhtpHeaders::new();
-        
+
         assert!(headers.has_zero_knowledge_privacy()); // Default privacy level is 100
         assert!(headers.has_post_quantum_crypto()); // Default encryption is Kyber
         assert!(!headers.has_valid_dao_fee()); // No DAO fee set
         assert!(headers.has_isp_bypass()); // Default  is true
-        
+
         headers.dao_fee = 50;
         headers.dao_fee_proof = Some([1u8; 32]);
         assert!(headers.has_valid_dao_fee());
@@ -597,7 +689,7 @@ mod tests {
         let headers = ZhtpHeaders::new()
             .with_content_type("text/plain".to_string())
             .with_custom_header("x-custom".to_string(), "value".to_string());
-        
+
         let names = headers.header_names();
         assert!(names.contains(&"content-type".to_string()));
         assert!(names.contains(&"x-custom".to_string()));

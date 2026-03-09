@@ -1,17 +1,17 @@
 //! Dependency Injection System for ZHTP
-//! 
+//!
 //! Provides a sophisticated dependency injection container for managing
 //! service lifetimes, dependencies, and runtime resolution
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
+use async_trait::async_trait;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error, debug};
-use async_trait::async_trait;
+use tracing::{debug, error, info, warn};
 
 /// Service lifetime scopes
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +31,7 @@ pub trait Injectable: Send + Sync + Any {
     fn type_id(&self) -> TypeId {
         TypeId::of::<Self>()
     }
-    
+
     /// Type name for debugging
     fn type_name(&self) -> &'static str {
         std::any::type_name::<Self>()
@@ -57,7 +57,12 @@ pub trait Injectable: Send + Sync + Any {
 type ServiceFactory = Box<dyn Fn() -> Box<dyn Any + Send + Sync> + Send + Sync>;
 
 /// Async service factory for services that require async initialization
-type AsyncServiceFactory = Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Box<dyn Any + Send + Sync>>> + Send>> + Send + Sync>;
+type AsyncServiceFactory = Box<
+    dyn Fn() -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Box<dyn Any + Send + Sync>>> + Send>,
+        > + Send
+        + Sync,
+>;
 
 /// Service registration information
 struct ServiceRegistration {
@@ -112,22 +117,24 @@ impl DIScope {
     }
 
     /// Get or create a scoped instance
-    pub fn get<T: Injectable + 'static>(&mut self) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + '_>> {
+    pub fn get<T: Injectable + 'static>(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + '_>> {
         Box::pin(async move {
             let type_id = TypeId::of::<T>();
-            
+
             if let Some(instance) = self.instances.get(&type_id) {
-                return instance
-                    .clone()
-                    .downcast::<T>()
-                    .map_err(|_| anyhow::anyhow!("Failed to downcast service {}", std::any::type_name::<T>()));
+                return instance.clone().downcast::<T>().map_err(|_| {
+                    anyhow::anyhow!("Failed to downcast service {}", std::any::type_name::<T>())
+                });
             }
 
             // Create new scoped instance
             let injector = self.injector.clone();
             let instance = injector.resolve_internal::<T>(Some(self)).await?;
-            self.instances.insert(type_id, instance.clone() as Arc<dyn Any + Send + Sync>);
-            
+            self.instances
+                .insert(type_id, instance.clone() as Arc<dyn Any + Send + Sync>);
+
             Ok(instance)
         })
     }
@@ -164,10 +171,13 @@ impl DependencyInjector {
     }
 
     /// Register a singleton service with an instance
-    pub async fn register_singleton<T: Injectable + 'static>(&self, instance: Arc<T>) -> Result<()> {
+    pub async fn register_singleton<T: Injectable + 'static>(
+        &self,
+        instance: Arc<T>,
+    ) -> Result<()> {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
-        
+
         info!("Registering singleton service: {}", type_name);
 
         let registration = ServiceRegistration::new(type_id, type_name, Scope::Singleton)
@@ -184,7 +194,7 @@ impl DependencyInjector {
         }
 
         self.update_initialization_order().await?;
-        
+
         debug!("Singleton service {} registered", type_name);
         Ok(())
     }
@@ -196,12 +206,10 @@ impl DependencyInjector {
     {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
-        
+
         info!("Registering transient service: {}", type_name);
 
-        let boxed_factory: ServiceFactory = Box::new(move || {
-            Box::new(Arc::new(factory()))
-        });
+        let boxed_factory: ServiceFactory = Box::new(move || Box::new(Arc::new(factory())));
 
         let registration = ServiceRegistration::new(type_id, type_name, Scope::Transient)
             .with_factory(boxed_factory);
@@ -212,20 +220,23 @@ impl DependencyInjector {
         }
 
         self.update_initialization_order().await?;
-        
+
         debug!("Transient service {} registered", type_name);
         Ok(())
     }
 
     /// Register a transient service with an async factory
-    pub async fn register_transient_async<T: Injectable + 'static, F, Fut>(&self, factory: F) -> Result<()>
+    pub async fn register_transient_async<T: Injectable + 'static, F, Fut>(
+        &self,
+        factory: F,
+    ) -> Result<()>
     where
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<T>> + Send + 'static,
     {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
-        
+
         info!("Registering async transient service: {}", type_name);
 
         let boxed_factory: AsyncServiceFactory = Box::new(move || {
@@ -245,7 +256,7 @@ impl DependencyInjector {
         }
 
         self.update_initialization_order().await?;
-        
+
         debug!("Async transient service {} registered", type_name);
         Ok(())
     }
@@ -257,15 +268,13 @@ impl DependencyInjector {
     {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
-        
+
         info!("Registering scoped service: {}", type_name);
 
-        let boxed_factory: ServiceFactory = Box::new(move || {
-            Box::new(Arc::new(factory()))
-        });
+        let boxed_factory: ServiceFactory = Box::new(move || Box::new(Arc::new(factory())));
 
-        let registration = ServiceRegistration::new(type_id, type_name, Scope::Scoped)
-            .with_factory(boxed_factory);
+        let registration =
+            ServiceRegistration::new(type_id, type_name, Scope::Scoped).with_factory(boxed_factory);
 
         {
             let mut services = self.services.write().await;
@@ -273,17 +282,24 @@ impl DependencyInjector {
         }
 
         self.update_initialization_order().await?;
-        
+
         debug!("Scoped service {} registered", type_name);
         Ok(())
     }
 
     /// Register service dependencies
-    pub async fn register_dependencies<T: Injectable + 'static>(&self, dependencies: Vec<TypeId>) -> Result<()> {
+    pub async fn register_dependencies<T: Injectable + 'static>(
+        &self,
+        dependencies: Vec<TypeId>,
+    ) -> Result<()> {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
-        
-        debug!("Registering dependencies for {}: {} deps", type_name, dependencies.len());
+
+        debug!(
+            "Registering dependencies for {}: {} deps",
+            type_name,
+            dependencies.len()
+        );
 
         {
             let mut services = self.services.write().await;
@@ -304,20 +320,27 @@ impl DependencyInjector {
     }
 
     /// Resolve a service instance with a specific scope
-    pub async fn resolve_with_scope<T: Injectable + 'static>(&self, scope: &mut DIScope) -> Result<Arc<T>> {
+    pub async fn resolve_with_scope<T: Injectable + 'static>(
+        &self,
+        scope: &mut DIScope,
+    ) -> Result<Arc<T>> {
         self.resolve_internal::<T>(Some(scope)).await
     }
 
     /// Resolve a service instance with optional scope
-    async fn resolve_internal<T: Injectable + 'static>(&self, di_scope: Option<&mut DIScope>) -> Result<Arc<T>> {
+    async fn resolve_internal<T: Injectable + 'static>(
+        &self,
+        di_scope: Option<&mut DIScope>,
+    ) -> Result<Arc<T>> {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
-        
+
         debug!("Resolving service: {}", type_name);
 
         let scope = {
             let services = self.services.read().await;
-            let registration = services.get(&type_id)
+            let registration = services
+                .get(&type_id)
                 .ok_or_else(|| anyhow::anyhow!("Service {} not registered", type_name))?;
             registration.scope.clone()
         };
@@ -328,16 +351,15 @@ impl DependencyInjector {
                 {
                     let cache = self.singleton_cache.read().await;
                     if let Some(instance) = cache.get(&type_id) {
-                        return instance
-                            .clone()
-                            .downcast::<T>()
-                            .map_err(|_| anyhow::anyhow!("Failed to downcast singleton {}", type_name));
+                        return instance.clone().downcast::<T>().map_err(|_| {
+                            anyhow::anyhow!("Failed to downcast singleton {}", type_name)
+                        });
                     }
                 }
 
                 // Create and cache singleton
                 let instance = self.create_instance_by_type_id::<T>(type_id).await?;
-                
+
                 {
                     let mut cache = self.singleton_cache.write().await;
                     cache.insert(type_id, instance.clone() as Arc<dyn Any + Send + Sync>);
@@ -355,7 +377,10 @@ impl DependencyInjector {
                     scope_ref.get::<T>().await
                 } else {
                     // No scope provided, create transient instance
-                    warn!("No scope provided for scoped service {}, creating transient instance", type_name);
+                    warn!(
+                        "No scope provided for scoped service {}, creating transient instance",
+                        type_name
+                    );
                     self.create_instance_by_type_id::<T>(type_id).await
                 }
             }
@@ -368,48 +393,61 @@ impl DependencyInjector {
     }
 
     /// Helper method to create instance by TypeId
-    async fn create_instance_by_type_id<T: Injectable + 'static>(&self, type_id: TypeId) -> Result<Arc<T>> {
+    async fn create_instance_by_type_id<T: Injectable + 'static>(
+        &self,
+        type_id: TypeId,
+    ) -> Result<Arc<T>> {
         let services = self.services.read().await;
-        let registration = services.get(&type_id)
+        let registration = services
+            .get(&type_id)
             .ok_or_else(|| anyhow::anyhow!("Service not registered"))?;
         self.create_instance::<T>(registration).await
     }
 
     /// Create a service instance
-    async fn create_instance<T: Injectable + 'static>(&self, registration: &ServiceRegistration) -> Result<Arc<T>> {
+    async fn create_instance<T: Injectable + 'static>(
+        &self,
+        registration: &ServiceRegistration,
+    ) -> Result<Arc<T>> {
         let type_name = registration.type_name;
-        
+
         // Check for singleton instance first
         if let Some(instance) = &registration.singleton_instance {
-            return instance
-                .clone()
-                .downcast::<T>()
-                .map_err(|_| anyhow::anyhow!("Failed to downcast existing singleton {}", type_name));
+            return instance.clone().downcast::<T>().map_err(|_| {
+                anyhow::anyhow!("Failed to downcast existing singleton {}", type_name)
+            });
         }
 
         // Use async factory if available
         if let Some(async_factory) = &registration.async_factory {
-            let boxed_instance = async_factory().await
-                .with_context(|| format!("Failed to create instance using async factory for {}", type_name))?;
-            
-            let arc_instance = boxed_instance
-                .downcast::<Arc<T>>()
-                .map_err(|_| anyhow::anyhow!("Failed to downcast async factory result for {}", type_name))?;
-            
+            let boxed_instance = async_factory().await.with_context(|| {
+                format!(
+                    "Failed to create instance using async factory for {}",
+                    type_name
+                )
+            })?;
+
+            let arc_instance = boxed_instance.downcast::<Arc<T>>().map_err(|_| {
+                anyhow::anyhow!("Failed to downcast async factory result for {}", type_name)
+            })?;
+
             return Ok(*arc_instance);
         }
 
         // Use sync factory
         if let Some(factory) = &registration.factory {
             let boxed_instance = factory();
-            let arc_instance = boxed_instance
-                .downcast::<Arc<T>>()
-                .map_err(|_| anyhow::anyhow!("Failed to downcast factory result for {}", type_name))?;
-            
+            let arc_instance = boxed_instance.downcast::<Arc<T>>().map_err(|_| {
+                anyhow::anyhow!("Failed to downcast factory result for {}", type_name)
+            })?;
+
             return Ok(*arc_instance);
         }
 
-        Err(anyhow::anyhow!("No factory or instance available for {}", type_name))
+        Err(anyhow::anyhow!(
+            "No factory or instance available for {}",
+            type_name
+        ))
     }
 
     /// Initialize all registered services in dependency order
@@ -421,7 +459,8 @@ impl DependencyInjector {
         for type_id in initialization_order {
             let type_name = {
                 let services = self.services.read().await;
-                services.get(&type_id)
+                services
+                    .get(&type_id)
                     .map(|r| r.type_name)
                     .unwrap_or("Unknown")
             };
@@ -436,7 +475,9 @@ impl DependencyInjector {
 
             if let Some(instance) = instance {
                 if let Ok(injectable_arc) = instance.downcast::<Arc<dyn Injectable>>() {
-                    injectable_arc.initialize().await
+                    injectable_arc
+                        .initialize()
+                        .await
                         .with_context(|| format!("Failed to initialize service {}", type_name))?;
                     debug!("Service {} initialized", type_name);
                 } else {
@@ -459,7 +500,8 @@ impl DependencyInjector {
         for type_id in cleanup_order {
             let type_name = {
                 let services = self.services.read().await;
-                services.get(&type_id)
+                services
+                    .get(&type_id)
                     .map(|r| r.type_name)
                     .unwrap_or("Unknown")
             };
@@ -496,7 +538,8 @@ impl DependencyInjector {
         for (type_id, instance) in cache.iter() {
             let type_name = {
                 let services = self.services.read().await;
-                services.get(type_id)
+                services
+                    .get(type_id)
                     .map(|r| r.type_name.to_string())
                     .unwrap_or_else(|| format!("Unknown-{:?}", type_id))
             };
@@ -534,7 +577,7 @@ impl DependencyInjector {
 
         for (type_id, registration) in services.iter() {
             let is_instantiated = cache.contains_key(type_id);
-            
+
             info.push(ServiceInfo {
                 type_name: registration.type_name.to_string(),
                 scope: registration.scope.clone(),

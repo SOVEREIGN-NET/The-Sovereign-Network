@@ -5,10 +5,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-
+use super::device;
 use super::device::{BleDevice, MeshPeer};
 use super::BluetoothMeshProtocol;
-use super::device;
 
 use sha2::{Digest, Sha256};
 
@@ -282,8 +281,8 @@ impl BluetoothMeshProtocol {
         adv_data.push(0x11);
         adv_data.push(0x07);
         let service_uuid = [
-            0xca, 0x30, 0xd4, 0x30, 0xc0, 0x00, 0xb4, 0x80, 0xd1, 0x11, 0xad, 0x9d, 0x10,
-            0xb8, 0xa7, 0x6b,
+            0xca, 0x30, 0xd4, 0x30, 0xc0, 0x00, 0xb4, 0x80, 0xd1, 0x11, 0xad, 0x9d, 0x10, 0xb8,
+            0xa7, 0x6b,
         ];
         adv_data.extend_from_slice(&service_uuid);
 
@@ -352,23 +351,21 @@ impl BluetoothMeshProtocol {
                                 drop(conns);
 
                                 #[cfg(target_os = "macos")]
-                                let handshake_result =
-                                    Self::send_mesh_handshake_to_peer(
-                                        &peer.address,
-                                        node_id,
-                                        &public_key,
-                                        &core_bt,
-                                    )
-                                    .await;
+                                let handshake_result = Self::send_mesh_handshake_to_peer(
+                                    &peer.address,
+                                    node_id,
+                                    &public_key,
+                                    &core_bt,
+                                )
+                                .await;
 
                                 #[cfg(not(target_os = "macos"))]
-                                let handshake_result =
-                                    Self::send_mesh_handshake_to_peer(
-                                        &peer.address,
-                                        node_id,
-                                        &public_key,
-                                    )
-                                    .await;
+                                let handshake_result = Self::send_mesh_handshake_to_peer(
+                                    &peer.address,
+                                    node_id,
+                                    &public_key,
+                                )
+                                .await;
 
                                 if let Err(e) = handshake_result {
                                     warn!("Failed to send handshake to {}: {}", peer.address, e);
@@ -494,8 +491,8 @@ impl BluetoothMeshProtocol {
     #[allow(dead_code)]
     fn is_zhtp_advertisement(advertisement_data: &[u8]) -> bool {
         let zhtp_uuid_bytes = [
-            0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f,
-            0xd4, 0x30, 0xc8,
+            0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4,
+            0x30, 0xc8,
         ];
 
         if advertisement_data.len() >= 16 {
@@ -558,8 +555,8 @@ mod tests {
         assert!(BluetoothMeshProtocol::is_zhtp_advertisement(with_name));
 
         let uuid_bytes = [
-            0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f,
-            0xd4, 0x30, 0xc8,
+            0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4,
+            0x30, 0xc8,
         ];
         assert!(BluetoothMeshProtocol::is_zhtp_advertisement(&uuid_bytes));
     }

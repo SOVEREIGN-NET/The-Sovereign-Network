@@ -1,6 +1,6 @@
 // Merkle prover implementation
-use crate::types::MerkleProof;
 use crate::merkle::ZkMerkleTree;
+use crate::types::MerkleProof;
 use anyhow::Result;
 
 /// Merkle prover for generating merkle inclusion proofs
@@ -18,10 +18,13 @@ impl MerkleProver {
         let tree_leaf = self.tree.get_leaf(index);
         if let Some(actual_leaf) = tree_leaf {
             if actual_leaf != leaf {
-                return Err(anyhow::anyhow!("Leaf mismatch: provided leaf does not match leaf at index {}", index));
+                return Err(anyhow::anyhow!(
+                    "Leaf mismatch: provided leaf does not match leaf at index {}",
+                    index
+                ));
             }
         }
-        
+
         self.tree.generate_proof(index)
     }
 }

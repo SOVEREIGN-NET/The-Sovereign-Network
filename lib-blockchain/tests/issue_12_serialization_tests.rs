@@ -27,14 +27,14 @@ fn test_public_key(id: u8) -> PublicKey {
 fn test_token_contract_serialization_cycle() {
     // Create a token contract with various data
     let mut token = TokenContract::new(
-        [1u8; 32],                  // token_id
-        "Test Token".to_string(),    // name
-        "TEST".to_string(),          // symbol
-        18,                          // decimals
-        1_000_000_000,               // max_supply
-        true,                        // is_deflationary
-        100,                         // burn_rate
-        test_public_key(1),          // creator
+        [1u8; 32],                // token_id
+        "Test Token".to_string(), // name
+        "TEST".to_string(),       // symbol
+        18,                       // decimals
+        1_000_000_000,            // max_supply
+        true,                     // is_deflationary
+        100,                      // burn_rate
+        test_public_key(1),       // creator
     );
 
     // Mint some tokens
@@ -130,9 +130,7 @@ fn test_token_contract_large_numbers() {
     );
 
     token.total_supply = u64::MAX - 1;
-    token
-        .balances
-        .insert(test_public_key(21), u64::MAX / 2);
+    token.balances.insert(test_public_key(21), u64::MAX / 2);
 
     let serialized = bincode::serialize(&token).expect("Failed to serialize");
     let deserialized: TokenContract =
@@ -163,9 +161,7 @@ fn test_token_unicode_strings() {
         test_public_key(40),
     );
 
-    token
-        .balances
-        .insert(test_public_key(41), 100_000);
+    token.balances.insert(test_public_key(41), 100_000);
 
     // Serialize and deserialize
     let serialized = bincode::serialize(&token).expect("Failed to serialize unicode");
@@ -173,10 +169,7 @@ fn test_token_unicode_strings() {
         bincode::deserialize(&serialized).expect("Failed to deserialize unicode");
 
     // Verify unicode strings survived
-    assert_eq!(
-        deserialized.name,
-        "Token with emojis 🎯🚀"
-    );
+    assert_eq!(deserialized.name, "Token with emojis 🎯🚀");
     assert_eq!(deserialized.symbol, "ÉMOJI");
 }
 

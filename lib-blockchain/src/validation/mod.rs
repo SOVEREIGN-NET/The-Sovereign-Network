@@ -18,30 +18,19 @@
 //!
 //! All other types are rejected with `UnsupportedType` error.
 
-pub mod errors;
 pub mod block_validate;
+pub mod errors;
 pub mod tx_validate;
 
 // Re-exports
-pub use errors::{
-    BlockValidateError, BlockValidateResult,
-    TxValidateError, TxValidateResult,
-};
+pub use errors::{BlockValidateError, BlockValidateResult, TxValidateError, TxValidateResult};
 
 pub use block_validate::{
-    BlockValidateConfig,
-    BlockResourceUsage,
-    validate_block_structure,
-    validate_block_context,
-    validate_block,
-    validate_block_resource_limits,
+    validate_block, validate_block_context, validate_block_resource_limits,
+    validate_block_structure, BlockResourceUsage, BlockValidateConfig,
 };
 
 pub use tx_validate::{
-    validate_stateless,
-    validate_stateful,
-    validate_stateful_with_fees,
-    validate_fee,
-    validate_transactions_stateless,
-    validate_transactions_stateful,
+    validate_fee, validate_stateful, validate_stateful_with_fees, validate_stateless,
+    validate_transactions_stateful, validate_transactions_stateless,
 };

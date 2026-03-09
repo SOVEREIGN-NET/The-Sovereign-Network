@@ -7,18 +7,21 @@
 //! - `peer.rs` - Peer addressing and identity
 //! - `session.rs` - Session management, keys, lifecycle, replay protection
 
-pub mod network;
 pub mod capabilities;
-pub mod security;
+pub mod network;
 pub mod peer;
+pub mod security;
 pub mod session;
 
 // Re-export commonly used types at module level for convenience
+pub use capabilities::{PowerProfile, ProtocolCapabilities, CAPABILITY_VERSION};
 pub use network::NetworkProtocol;
-pub use capabilities::{ProtocolCapabilities, PowerProfile, CAPABILITY_VERSION};
-pub use security::{AuthScheme, UnsafeAuthScheme, CipherSuite, UnsafeCipherSuite, PqcMode};
-pub use peer::{BluetoothMac, ValidatedSocketAddr, ValidatedDeviceId, ValidatedSatelliteId, PeerAddress, VerifiedPeerIdentity};
+pub use peer::{
+    BluetoothMac, PeerAddress, ValidatedDeviceId, ValidatedSatelliteId, ValidatedSocketAddr,
+    VerifiedPeerIdentity,
+};
+pub use security::{AuthScheme, CipherSuite, PqcMode, UnsafeAuthScheme, UnsafeCipherSuite};
 pub use session::{
-    SessionId, SessionKeys, ReplayProtectionState, SessionLifecycle, SessionRenewalReason,
-    ProtocolSession,
+    ProtocolSession, ReplayProtectionState, SessionId, SessionKeys, SessionLifecycle,
+    SessionRenewalReason,
 };

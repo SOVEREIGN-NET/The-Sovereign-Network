@@ -7,10 +7,10 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for validation
 
-use crate::argument_parsing::{CitizenArgs, CitizenAction, ZhtpCli, format_output};
+use crate::argument_parsing::{format_output, CitizenAction, CitizenArgs, ZhtpCli};
 use crate::commands::common::validate_identity_id;
 use crate::commands::web4_utils::connect_default;
-use crate::error::{CliResult, CliError};
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_network::client::ZhtpClient;
 use serde_json::{json, Value};
@@ -70,10 +70,7 @@ pub fn build_citizenship_request(identity_id: &str) -> Value {
 // ============================================================================
 
 /// Handle citizen command
-pub async fn handle_citizen_command(
-    args: CitizenArgs,
-    cli: &ZhtpCli,
-) -> CliResult<()> {
+pub async fn handle_citizen_command(args: CitizenArgs, cli: &ZhtpCli) -> CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_citizen_command_impl(args, cli, &output).await
 }
@@ -125,12 +122,11 @@ async fn apply_for_citizenship(
             reason: e.to_string(),
         })?;
 
-    let result: Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.to_string(),
-            status: 0,
-            reason: format!("Failed to parse response: {}", e),
-        })?;
+    let result: Value = ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+        endpoint: endpoint.to_string(),
+        status: 0,
+        reason: format!("Failed to parse response: {}", e),
+    })?;
 
     let formatted = format_output(&result, &cli.format)?;
     output.header(CitizenOperation::Add.title())?;

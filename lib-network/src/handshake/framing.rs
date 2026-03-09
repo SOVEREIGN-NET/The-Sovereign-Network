@@ -11,9 +11,9 @@
 //! This module eliminates duplication of message framing logic across
 //! multiple protocol implementations.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::{trace, debug};
+use tracing::{debug, trace};
 
 /// Maximum allowed handshake message size (1 MB)
 /// Prevents memory exhaustion attacks during handshake
@@ -47,7 +47,11 @@ where
 
     // Write length prefix (big-endian u32)
     let len = data.len() as u32;
-    trace!("send_framed: writing 4-byte length prefix: {} (0x{:08x})", len, len);
+    trace!(
+        "send_framed: writing 4-byte length prefix: {} (0x{:08x})",
+        len,
+        len
+    );
     stream.write_u32(len).await?;
     trace!("send_framed: length prefix written successfully");
 
@@ -59,7 +63,11 @@ where
     // Flush to ensure delivery
     trace!("send_framed: flushing stream...");
     stream.flush().await?;
-    debug!("send_framed: successfully sent {} bytes (4 + {})", 4 + data.len(), data.len());
+    debug!(
+        "send_framed: successfully sent {} bytes (4 + {})",
+        4 + data.len(),
+        data.len()
+    );
 
     Ok(())
 }
@@ -88,24 +96,37 @@ where
     let mut len_buf = [0u8; 4];
     for i in 0..4 {
         trace!("recv_framed: reading byte {} of length prefix...", i);
-        match stream.read_exact(&mut len_buf[i..i+1]).await {
+        match stream.read_exact(&mut len_buf[i..i + 1]).await {
             Ok(_) => {
                 trace!("recv_framed: byte {} = 0x{:02x}", i, len_buf[i]);
             }
             Err(e) => {
-                debug!("recv_framed: failed to read byte {} of length prefix: {}", i, e);
+                debug!(
+                    "recv_framed: failed to read byte {} of length prefix: {}",
+                    i, e
+                );
                 return Err(anyhow!("Failed to read length prefix byte {}: {}", i, e));
             }
         }
     }
     let len = u32::from_be_bytes(len_buf) as usize;
-    debug!("recv_framed: length prefix complete: {} bytes (0x{:08x})", len, len);
+    debug!(
+        "recv_framed: length prefix complete: {} bytes (0x{:08x})",
+        len, len
+    );
 
-    trace!("recv_framed: got length prefix: {} bytes (0x{:08x})", len, len);
+    trace!(
+        "recv_framed: got length prefix: {} bytes (0x{:08x})",
+        len,
+        len
+    );
 
     // Validate message size (DoS protection)
     if len > MAX_HANDSHAKE_MESSAGE_SIZE {
-        debug!("recv_framed: message too large: {} > {}", len, MAX_HANDSHAKE_MESSAGE_SIZE);
+        debug!(
+            "recv_framed: message too large: {} > {}",
+            len, MAX_HANDSHAKE_MESSAGE_SIZE
+        );
         return Err(anyhow!(
             "Message too large: {} > {}",
             len,
@@ -123,8 +144,15 @@ where
     let mut data = vec![0u8; len];
     match stream.read_exact(&mut data).await {
         Ok(_) => {
-            debug!("recv_framed: successfully received {} bytes (4 + {})", 4 + len, len);
-            trace!("recv_framed: payload first 16 bytes: {:02x?}", &data[..std::cmp::min(16, data.len())]);
+            debug!(
+                "recv_framed: successfully received {} bytes (4 + {})",
+                4 + len,
+                len
+            );
+            trace!(
+                "recv_framed: payload first 16 bytes: {:02x?}",
+                &data[..std::cmp::min(16, data.len())]
+            );
         }
         Err(e) => {
             debug!("recv_framed: failed to read payload ({} bytes): {}", len, e);

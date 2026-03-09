@@ -1,6 +1,10 @@
 //! Platform-specific MeshHandshake writers.
 
-#[cfg(any(target_os = "linux", target_os = "windows", any(test, feature = "ble-mock")))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "windows",
+    any(test, feature = "ble-mock")
+))]
 use anyhow::{anyhow, Result};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use tracing::{info, warn};
@@ -48,7 +52,10 @@ impl BluetoothMeshProtocol {
 
         let _ = gatt_manager.discover_services(peer_address).await;
 
-        match gatt_manager.enable_notifications(peer_address, char_uuid).await {
+        match gatt_manager
+            .enable_notifications(peer_address, char_uuid)
+            .await
+        {
             Ok(_) => {
                 info!(
                     " Windows: Notifications enabled - handshake response will be received via ValueChanged events"
@@ -188,7 +195,11 @@ mod tests {
 
     #[async_trait]
     impl GattBackend for MockBackend {
-        async fn read_characteristic(&self, _device_address: &str, _char_uuid: &str) -> Result<Vec<u8>> {
+        async fn read_characteristic(
+            &self,
+            _device_address: &str,
+            _char_uuid: &str,
+        ) -> Result<Vec<u8>> {
             Ok(vec![])
         }
 
@@ -210,11 +221,19 @@ mod tests {
             Ok(vec![])
         }
 
-        async fn enable_notifications(&self, _device_address: &str, _char_uuid: &str) -> Result<()> {
+        async fn enable_notifications(
+            &self,
+            _device_address: &str,
+            _char_uuid: &str,
+        ) -> Result<()> {
             Ok(())
         }
 
-        async fn disable_notifications(&self, _device_address: &str, _char_uuid: &str) -> Result<()> {
+        async fn disable_notifications(
+            &self,
+            _device_address: &str,
+            _char_uuid: &str,
+        ) -> Result<()> {
             Ok(())
         }
 

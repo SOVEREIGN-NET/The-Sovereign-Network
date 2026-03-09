@@ -100,8 +100,12 @@ impl std::fmt::Display for SRVError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SRVError::ChangeExceedsLimit => write!(f, "SRV change exceeds maximum allowed limit"),
-            SRVError::InvalidCirculatingSupply => write!(f, "Invalid circulating supply (must be > 0)"),
-            SRVError::InvalidStabilityMultiplier => write!(f, "Invalid stability multiplier (must be > 0)"),
+            SRVError::InvalidCirculatingSupply => {
+                write!(f, "Invalid circulating supply (must be > 0)")
+            }
+            SRVError::InvalidStabilityMultiplier => {
+                write!(f, "Invalid stability multiplier (must be > 0)")
+            }
             SRVError::Paused => write!(f, "SRV updates are paused"),
             SRVError::InvalidProposal => write!(f, "Invalid SRV update proposal"),
             SRVError::Overflow => write!(f, "Arithmetic overflow in SRV calculation"),
@@ -149,10 +153,10 @@ impl SRVState {
     /// - Stability multiplier: 1.0 (10_000 basis points)
     pub fn new_genesis() -> Self {
         Self::new(
-            2_180_000,                    // $0.0218
-            109_000_000,                  // $1,090,000
-            50_000_000_000_000_000,       // 50M SOV
-            10_000,                       // 1.0
+            2_180_000,              // $0.0218
+            109_000_000,            // $1,090,000
+            50_000_000_000_000_000, // 50M SOV
+            10_000,                 // 1.0
         )
     }
 
@@ -361,11 +365,11 @@ pub struct SRVGenesisConfig {
 impl Default for SRVGenesisConfig {
     fn default() -> Self {
         Self {
-            initial_srv: 2_180_000,                  // $0.0218
-            initial_committed_value_usd: 109_000_000, // $1,090,000
+            initial_srv: 2_180_000,                             // $0.0218
+            initial_committed_value_usd: 109_000_000,           // $1,090,000
             initial_circulating_supply: 50_000_000_000_000_000, // 50M SOV
-            stability_multiplier_bps: 10_000,        // 1.0
-            max_change_bps: 100,                     // 1%
+            stability_multiplier_bps: 10_000,                   // 1.0
+            max_change_bps: 100,                                // 1%
         }
     }
 }
@@ -568,9 +572,18 @@ mod tests {
         let state = config.initialize();
 
         assert_eq!(state.current_srv, config.initial_srv);
-        assert_eq!(state.committed_value_usd, config.initial_committed_value_usd);
-        assert_eq!(state.circulating_supply_sov, config.initial_circulating_supply);
-        assert_eq!(state.stability_multiplier_bps, config.stability_multiplier_bps);
+        assert_eq!(
+            state.committed_value_usd,
+            config.initial_committed_value_usd
+        );
+        assert_eq!(
+            state.circulating_supply_sov,
+            config.initial_circulating_supply
+        );
+        assert_eq!(
+            state.stability_multiplier_bps,
+            config.stability_multiplier_bps
+        );
         assert_eq!(state.max_change_bps, config.max_change_bps);
     }
 }

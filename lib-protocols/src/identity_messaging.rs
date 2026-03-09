@@ -1,29 +1,19 @@
 //! Identity messaging helpers (Phase 2: per-device fan-out)
 
-use crate::types::{
-    DevicePayload,
-    IdentityEnvelope,
-    MessageTtl,
-    DeliveryReceipt,
-    ReadReceipt,
-    SealedSenderEnvelope,
-};
-use crate::types::PoUwStamp;
 use crate::types::IdentityPayload;
-use lib_crypto::hash_blake3;
-use lib_crypto::{encrypt_with_public_key, PublicKey, Signature};
-use lib_crypto::keypair::generation::KeyPair;
-use lib_identity::{resolve_did, list_active_devices, get_device_keys};
-use lib_identity::DidDocument;
+use crate::types::PoUwStamp;
 use crate::types::{
-    DEFAULT_GROUP_CAP,
-    MAX_GROUP_CAP,
-    GroupId,
-    GroupChange,
-    GroupStateUpdate,
-    GroupEpochKey,
+    DeliveryReceipt, DevicePayload, IdentityEnvelope, MessageTtl, ReadReceipt, SealedSenderEnvelope,
 };
+use crate::types::{
+    GroupChange, GroupEpochKey, GroupId, GroupStateUpdate, DEFAULT_GROUP_CAP, MAX_GROUP_CAP,
+};
+use lib_crypto::hash_blake3;
+use lib_crypto::keypair::generation::KeyPair;
+use lib_crypto::{encrypt_with_public_key, PublicKey, Signature};
+use lib_identity::DidDocument;
 use lib_identity::DidDocumentUpdate;
+use lib_identity::{get_device_keys, list_active_devices, resolve_did};
 
 /// Build an identity envelope for a recipient DID (per-device fan-out)
 pub fn build_identity_envelope(
@@ -71,8 +61,8 @@ pub fn build_identity_envelope_with_payload(
     payload: &IdentityPayload,
     ttl: MessageTtl,
 ) -> Result<IdentityEnvelope, String> {
-    let bytes = bincode::serialize(payload)
-        .map_err(|e| format!("Failed to serialize payload: {}", e))?;
+    let bytes =
+        bincode::serialize(payload).map_err(|e| format!("Failed to serialize payload: {}", e))?;
     build_identity_envelope(sender_did, recipient_did, &bytes, ttl)
 }
 
@@ -84,7 +74,8 @@ pub fn build_identity_envelope_with_pouw(
     ttl: MessageTtl,
     pouw_stamp: PoUwStamp,
 ) -> Result<IdentityEnvelope, String> {
-    let mut envelope = build_identity_envelope_with_payload(sender_did, recipient_did, payload, ttl)?;
+    let mut envelope =
+        build_identity_envelope_with_payload(sender_did, recipient_did, payload, ttl)?;
     envelope.pouw_stamp = Some(pouw_stamp);
     Ok(envelope)
 }
@@ -97,16 +88,14 @@ pub fn build_identity_envelope_with_retention(
     ttl: MessageTtl,
     retain_until_ttl: bool,
 ) -> Result<IdentityEnvelope, String> {
-    let mut envelope = build_identity_envelope_with_payload(sender_did, recipient_did, payload, ttl)?;
+    let mut envelope =
+        build_identity_envelope_with_payload(sender_did, recipient_did, payload, ttl)?;
     envelope.retain_until_ttl = retain_until_ttl;
     Ok(envelope)
 }
 
 /// Extract ciphertext for a specific device_id from an envelope
-pub fn extract_device_ciphertext(
-    envelope: &IdentityEnvelope,
-    device_id: &str,
-) -> Option<Vec<u8>> {
+pub fn extract_device_ciphertext(envelope: &IdentityEnvelope, device_id: &str) -> Option<Vec<u8>> {
     envelope
         .payloads
         .iter()
@@ -145,8 +134,8 @@ pub fn control_payload_from_device_update(
     if !is_add && !is_remove {
         return Err("Device update must be purely add or remove".to_string());
     }
-    let body = bincode::serialize(update)
-        .map_err(|e| format!("Failed to serialize DID update: {}", e))?;
+    let body =
+        bincode::serialize(update).map_err(|e| format!("Failed to serialize DID update: {}", e))?;
     let kind = if is_add {
         crate::types::ControlMessageType::DeviceAdd
     } else {
@@ -244,7 +233,8 @@ pub fn verify_delivery_receipt(
     receipt: &DeliveryReceipt,
     signer_pk: &PublicKey,
 ) -> Result<bool, String> {
-    let signing_bytes = receipt_signing_bytes(receipt.message_id, &receipt.device_id, receipt.delivered_at)?;
+    let signing_bytes =
+        receipt_signing_bytes(receipt.message_id, &receipt.device_id, receipt.delivered_at)?;
     let signature = Signature {
         signature: receipt.signature.clone(),
         public_key: signer_pk.clone(),
@@ -257,11 +247,9 @@ pub fn verify_delivery_receipt(
 }
 
 /// Verify a read receipt signature
-pub fn verify_read_receipt(
-    receipt: &ReadReceipt,
-    signer_pk: &PublicKey,
-) -> Result<bool, String> {
-    let signing_bytes = receipt_signing_bytes(receipt.message_id, &receipt.device_id, receipt.read_at)?;
+pub fn verify_read_receipt(receipt: &ReadReceipt, signer_pk: &PublicKey) -> Result<bool, String> {
+    let signing_bytes =
+        receipt_signing_bytes(receipt.message_id, &receipt.device_id, receipt.read_at)?;
     let signature = Signature {
         signature: receipt.signature.clone(),
         public_key: signer_pk.clone(),
@@ -273,7 +261,11 @@ pub fn verify_read_receipt(
         .map_err(|e| format!("Receipt verification failed: {}", e))
 }
 
-fn receipt_signing_bytes(message_id: u64, device_id: &str, timestamp: u64) -> Result<Vec<u8>, String> {
+fn receipt_signing_bytes(
+    message_id: u64,
+    device_id: &str,
+    timestamp: u64,
+) -> Result<Vec<u8>, String> {
     #[derive(serde::Serialize)]
     struct ReceiptSigningPayload<'a> {
         message_id: u64,
@@ -316,7 +308,10 @@ pub fn validate_group_size(member_count: usize) -> Result<(), String> {
         return Err(format!("Group size exceeds maximum cap: {}", MAX_GROUP_CAP));
     }
     if member_count > DEFAULT_GROUP_CAP {
-        return Err(format!("Group size exceeds default cap: {} (requires explicit override)", DEFAULT_GROUP_CAP));
+        return Err(format!(
+            "Group size exceeds default cap: {} (requires explicit override)",
+            DEFAULT_GROUP_CAP
+        ));
     }
     Ok(())
 }
@@ -349,7 +344,12 @@ pub fn verify_group_state_update(
     update: &GroupStateUpdate,
     signer_pk: &PublicKey,
 ) -> Result<bool, String> {
-    let signing_bytes = group_state_signing_bytes(&update.group_id, update.epoch, &update.admin_key, &update.change)?;
+    let signing_bytes = group_state_signing_bytes(
+        &update.group_id,
+        update.epoch,
+        &update.admin_key,
+        &update.change,
+    )?;
     let signature = Signature {
         signature: update.signed_payload.clone(),
         public_key: signer_pk.clone(),
@@ -367,7 +367,10 @@ pub fn derive_group_epoch_key(group_id: &GroupId, epoch: u64) -> GroupEpochKey {
     input.extend_from_slice(group_id.0.as_bytes());
     input.extend_from_slice(&epoch.to_be_bytes());
     let key_material = hash_blake3(&input);
-    GroupEpochKey { epoch, key_material }
+    GroupEpochKey {
+        epoch,
+        key_material,
+    }
 }
 
 /// Increment epoch on membership or device change
@@ -458,10 +461,7 @@ pub fn verify_pouw_stamp_with_sender_did(
     verify_pouw_stamp_with_document(stamp, &doc)
 }
 
-fn verify_pouw_stamp_with_document(
-    stamp: &PoUwStamp,
-    doc: &DidDocument,
-) -> Result<bool, String> {
+fn verify_pouw_stamp_with_document(stamp: &PoUwStamp, doc: &DidDocument) -> Result<bool, String> {
     let devices = list_active_devices(doc);
     for device in devices {
         let (signing_pk, _encryption_pk) = get_device_keys(doc, &device.device_id)?;
@@ -477,9 +477,9 @@ fn verify_pouw_stamp_with_document(
 mod tests {
     use super::*;
     use lib_identity::{
-        set_did_store_memory, store_did_document, apply_did_update, create_device_add_update,
+        apply_did_update, create_device_add_update, set_did_store_memory, store_did_document,
     };
-    use lib_identity::{ZhtpIdentity, IdentityType};
+    use lib_identity::{IdentityType, ZhtpIdentity};
 
     #[test]
     fn test_build_identity_envelope_fanout() -> Result<(), String> {
@@ -491,7 +491,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let mut doc = lib_identity::DidDocument::from_identity(&identity, None)?;
         let add_update = create_device_add_update(
@@ -504,12 +505,8 @@ mod tests {
         doc = apply_did_update(doc, &add_update)?;
         store_did_document(doc.clone())?;
 
-        let envelope = build_identity_envelope(
-            "did:zhtp:sender",
-            &doc.id,
-            b"hello",
-            MessageTtl::Days7,
-        )?;
+        let envelope =
+            build_identity_envelope("did:zhtp:sender", &doc.id, b"hello", MessageTtl::Days7)?;
 
         assert_eq!(envelope.payloads.len(), 1);
         assert_eq!(envelope.payloads[0].device_id, "phone-1");
@@ -537,7 +534,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = lib_identity::DidDocument::from_identity(&identity, None)?;
         let add_update = create_device_add_update(
@@ -590,7 +588,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = lib_identity::DidDocument::from_identity(&identity, None)?;
         let add_update = create_device_add_update(
@@ -605,7 +604,11 @@ mod tests {
 
         let payload = IdentityPayload::user_message(b"payload".to_vec());
         let msg_hash = lib_crypto::hash_blake3(b"payload");
-        let stamp = create_pouw_stamp(&KeyPair::generate().map_err(|e| e.to_string())?, b"challenge", msg_hash)?;
+        let stamp = create_pouw_stamp(
+            &KeyPair::generate().map_err(|e| e.to_string())?,
+            b"challenge",
+            msg_hash,
+        )?;
 
         let envelope = build_identity_envelope_with_pouw(
             "did:zhtp:sender",
@@ -628,7 +631,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = lib_identity::DidDocument::from_identity(&identity, None)?;
         let add_update = create_device_add_update(
@@ -679,7 +683,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = lib_identity::DidDocument::from_identity(&identity, None)?;
         let update = create_device_add_update(
@@ -691,7 +696,10 @@ mod tests {
         )?;
 
         let payload = control_payload_from_device_update(&update)?;
-        assert!(matches!(payload.kind, crate::types::IdentityMessageKind::Control(_)));
+        assert!(matches!(
+            payload.kind,
+            crate::types::IdentityMessageKind::Control(_)
+        ));
         Ok(())
     }
 
@@ -705,7 +713,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = lib_identity::DidDocument::from_identity(&identity, None)?;
         let add_update = create_device_add_update(
@@ -721,8 +730,14 @@ mod tests {
         let signer = KeyPair::generate().map_err(|e| e.to_string())?;
         let delivery = create_delivery_receipt(1, "device-1", &signer)?;
         let read = create_read_receipt(1, "device-1", &signer)?;
-        let env1 = build_delivery_receipt_envelope("did:zhtp:sender", &doc.id, &delivery, MessageTtl::Days7)?;
-        let env2 = build_read_receipt_envelope("did:zhtp:sender", &doc.id, &read, MessageTtl::Days7)?;
+        let env1 = build_delivery_receipt_envelope(
+            "did:zhtp:sender",
+            &doc.id,
+            &delivery,
+            MessageTtl::Days7,
+        )?;
+        let env2 =
+            build_read_receipt_envelope("did:zhtp:sender", &doc.id, &read, MessageTtl::Days7)?;
         assert_eq!(env1.payloads.len(), 1);
         assert_eq!(env2.payloads.len(), 1);
         Ok(())
@@ -738,7 +753,8 @@ mod tests {
             Some("US".to_string()),
             "laptop",
             None,
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let doc = lib_identity::DidDocument::from_identity(&identity, None)?;
         let add_update = create_device_add_update(

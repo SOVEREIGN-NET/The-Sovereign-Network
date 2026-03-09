@@ -62,12 +62,12 @@
 //! - **Code Generation**: Automatic Rust and TypeScript binding generation
 //! - **Validation**: Runtime type checking and schema adherence
 
-pub mod schema;
 pub mod codec;
-pub mod validation;
+pub mod codegen;
 pub mod privilege;
 pub mod registry;
-pub mod codegen;
+pub mod schema;
+pub mod validation;
 
 #[cfg(test)]
 mod tests;
@@ -75,12 +75,12 @@ mod tests;
 #[cfg(test)]
 mod red_tests;
 
-pub use schema::{
-    ContractAbi, MethodSchema, EventSchema, ParameterType, ReturnType, FieldType,
-    Parameter, EventField, ExecutionSemantics, TypeDefinition, PrivilegeRequirement,
-};
-pub use codec::{AbiCodec, AbiEncoder, AbiDecoder};
-pub use validation::AbiValidator;
-pub use privilege::{PrivilegeMarker, PrivilegeLevel};
-pub use registry::AbiRegistry;
+pub use codec::{AbiCodec, AbiDecoder, AbiEncoder};
 pub use codegen::AbiCodegen;
+pub use privilege::{PrivilegeLevel, PrivilegeMarker};
+pub use registry::AbiRegistry;
+pub use schema::{
+    ContractAbi, EventField, EventSchema, ExecutionSemantics, FieldType, MethodSchema, Parameter,
+    ParameterType, PrivilegeRequirement, ReturnType, TypeDefinition,
+};
+pub use validation::AbiValidator;

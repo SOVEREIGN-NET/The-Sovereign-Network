@@ -1,7 +1,7 @@
 //! Multi-wallet management operations
 
+use crate::wallets::{WalletId, WalletManager, WalletSummary, WalletType};
 use anyhow::Result;
-use crate::wallets::{WalletManager, WalletType, WalletId, WalletSummary};
 
 impl WalletManager {
     /// Create multiple wallets for a new citizen with HD derivation from master seed
@@ -12,7 +12,9 @@ impl WalletManager {
     /// - Index 2 → Savings wallet
     ///
     /// Returns the master seed phrase and derivation indices for recovery.
-    pub async fn create_citizen_wallets_with_hd_derivation(&mut self) -> Result<CitizenWalletSetHD> {
+    pub async fn create_citizen_wallets_with_hd_derivation(
+        &mut self,
+    ) -> Result<CitizenWalletSetHD> {
         // Generate master seed (64 bytes) for HD derivation
         let mut master_seed = [0u8; 64];
         use rand::RngCore;
@@ -23,23 +25,29 @@ impl WalletManager {
         self.next_derivation_index = 0;
 
         // Create HD wallets at fixed indices
-        let (primary_id, _) = self.create_hd_wallet(
-            WalletType::Primary,
-            "Primary Wallet".to_string(),
-            Some("primary".to_string()),
-        ).await?;
+        let (primary_id, _) = self
+            .create_hd_wallet(
+                WalletType::Primary,
+                "Primary Wallet".to_string(),
+                Some("primary".to_string()),
+            )
+            .await?;
 
-        let (ubi_id, _) = self.create_hd_wallet(
-            WalletType::UBI,
-            "UBI Wallet".to_string(),
-            Some("ubi".to_string()),
-        ).await?;
+        let (ubi_id, _) = self
+            .create_hd_wallet(
+                WalletType::UBI,
+                "UBI Wallet".to_string(),
+                Some("ubi".to_string()),
+            )
+            .await?;
 
-        let (savings_id, _) = self.create_hd_wallet(
-            WalletType::Savings,
-            "Savings Wallet".to_string(),
-            Some("savings".to_string()),
-        ).await?;
+        let (savings_id, _) = self
+            .create_hd_wallet(
+                WalletType::Savings,
+                "Savings Wallet".to_string(),
+                Some("savings".to_string()),
+            )
+            .await?;
 
         // Generate 24-word master seed phrase from first 32 bytes
         let master_seed_phrase = crate::recovery::RecoveryPhrase::from_entropy(&master_seed[..32])?;
@@ -67,7 +75,7 @@ impl WalletManager {
         let mut business_wallets = Vec::new();
         let mut nonprofit_dao_wallets = Vec::new();
         let mut forprofit_dao_wallets = Vec::new();
-        
+
         for wallet in self.wallets.values() {
             let summary = wallet.to_summary();
             match wallet.wallet_type {
@@ -81,7 +89,7 @@ impl WalletManager {
                 WalletType::ForProfitDAO => forprofit_dao_wallets.push(summary),
             }
         }
-        
+
         WalletTypeSummary {
             primary_wallets,
             ubi_wallets,
@@ -93,11 +101,11 @@ impl WalletManager {
             forprofit_dao_wallets,
         }
     }
-    
+
     /// Get balance summary by wallet type
     pub fn get_balance_by_type(&self) -> WalletBalanceSummary {
         let mut balances = WalletBalanceSummary::default();
-        
+
         for wallet in self.wallets.values() {
             match wallet.wallet_type {
                 WalletType::Primary => balances.primary_balance += wallet.balance,
@@ -110,16 +118,16 @@ impl WalletManager {
                 WalletType::ForProfitDAO => balances.forprofit_dao_balance += wallet.balance,
             }
         }
-        
-        balances.total_balance = balances.primary_balance + 
-                                balances.ubi_balance + 
-                                balances.savings_balance + 
-                                balances.stealth_balance + 
-                                balances.standard_balance +
-                                balances.business_balance +
-                                balances.nonprofit_dao_balance +
-                                balances.forprofit_dao_balance;
-        
+
+        balances.total_balance = balances.primary_balance
+            + balances.ubi_balance
+            + balances.savings_balance
+            + balances.stealth_balance
+            + balances.standard_balance
+            + balances.business_balance
+            + balances.nonprofit_dao_balance
+            + balances.forprofit_dao_balance;
+
         balances
     }
 }
@@ -177,25 +185,25 @@ pub struct WalletBalanceSummary {
 impl WalletTypeSummary {
     /// Get total wallet count across all types
     pub fn total_wallet_count(&self) -> usize {
-        self.primary_wallets.len() + 
-        self.ubi_wallets.len() + 
-        self.savings_wallets.len() + 
-        self.stealth_wallets.len() + 
-        self.standard_wallets.len() +
-        self.business_wallets.len() +
-        self.nonprofit_dao_wallets.len() +
-        self.forprofit_dao_wallets.len()
+        self.primary_wallets.len()
+            + self.ubi_wallets.len()
+            + self.savings_wallets.len()
+            + self.stealth_wallets.len()
+            + self.standard_wallets.len()
+            + self.business_wallets.len()
+            + self.nonprofit_dao_wallets.len()
+            + self.forprofit_dao_wallets.len()
     }
-    
+
     /// Get total DAO wallet count
     pub fn dao_wallet_count(&self) -> usize {
         self.nonprofit_dao_wallets.len() + self.forprofit_dao_wallets.len()
     }
-    
+
     /// Check if citizen has required wallets
     pub fn has_citizen_wallets(&self) -> bool {
-        !self.primary_wallets.is_empty() && 
-        !self.ubi_wallets.is_empty() && 
-        !self.savings_wallets.is_empty()
+        !self.primary_wallets.is_empty()
+            && !self.ubi_wallets.is_empty()
+            && !self.savings_wallets.is_empty()
     }
 }

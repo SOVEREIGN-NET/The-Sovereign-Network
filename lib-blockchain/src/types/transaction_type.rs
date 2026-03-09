@@ -235,10 +235,18 @@ impl TransactionType {
             TransactionType::BondingCurveBuy => "Buy tokens from bonding curve",
             TransactionType::BondingCurveSell => "Sell tokens back to bonding curve",
             TransactionType::BondingCurveGraduate => "Graduate bonding curve token to AMM",
-            TransactionType::UpdateOracleCommittee => "Update oracle committee membership (via DAO governance)",
-            TransactionType::UpdateOracleConfig => "Update oracle configuration parameters (via DAO governance)",
-            TransactionType::OracleAttestation => "Oracle price attestation (validator submits price for epoch)",
-            TransactionType::CancelOracleUpdate => "Cancel pending oracle update (via DAO governance)",
+            TransactionType::UpdateOracleCommittee => {
+                "Update oracle committee membership (via DAO governance)"
+            }
+            TransactionType::UpdateOracleConfig => {
+                "Update oracle configuration parameters (via DAO governance)"
+            }
+            TransactionType::OracleAttestation => {
+                "Oracle price attestation (validator submits price for epoch)"
+            }
+            TransactionType::CancelOracleUpdate => {
+                "Cancel pending oracle update (via DAO governance)"
+            }
         }
     }
 

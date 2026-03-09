@@ -1,7 +1,7 @@
 //! Mempool Configuration
 //!
 //! Limits and thresholds for mempool admission.
-//! 
+//!
 //! Note: The canonical type definition has moved to lib-types.
 //! This module provides extension behavior via the MempoolConfigExt trait.
 
@@ -35,9 +35,7 @@ impl MempoolConfigExt for MempoolConfig {
 
     fn effective_min_fee(&self, computed_fee: Amount) -> Amount {
         // Apply multiplier: fee * multiplier_bps / 10000
-        computed_fee
-            .saturating_mul(self.min_fee_multiplier_bps as Amount)
-            / 10_000
+        computed_fee.saturating_mul(self.min_fee_multiplier_bps as Amount) / 10_000
     }
 }
 

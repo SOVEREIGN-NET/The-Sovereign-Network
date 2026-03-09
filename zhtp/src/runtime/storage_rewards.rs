@@ -1,5 +1,5 @@
 //! # Storage Reward Processor
-//! 
+//!
 //! Automatically processes storage rewards by:
 //! 1. Checking storage statistics every 10 minutes
 //! 2. Creating reward transactions when threshold is met
@@ -13,19 +13,19 @@
 //!     blockchain_arc,
 //!     environment,
 //! ));
-//! 
+//!
 //! let handle = processor.start();
 //! // Processor now runs in background...
 //! ```
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::time::{Duration, interval};
-use tracing::{info, warn, error, debug};
+use tokio::time::{interval, Duration};
+use tracing::{debug, error, info, warn};
 
+use super::components::{BlockchainComponent, NetworkComponent};
 use lib_blockchain::Blockchain;
-use super::components::{NetworkComponent, BlockchainComponent};
 
 /// Storage reward processor configuration
 #[derive(Debug, Clone)]
@@ -42,14 +42,14 @@ impl Default for StorageRewardConfig {
     fn default() -> Self {
         Self {
             check_interval: Duration::from_secs(600), // 10 minutes
-            minimum_threshold: 100, // 100 SOV
-            max_batch_size: 10_000, // 10,000 SOV max
+            minimum_threshold: 100,                   // 100 SOV
+            max_batch_size: 10_000,                   // 10,000 SOV max
         }
     }
 }
 
 /// Storage reward processor
-/// 
+///
 /// This processor runs in the background and periodically checks storage
 /// statistics. When the accumulated rewards exceed the minimum threshold,
 /// it creates a reward transaction and adds it to the blockchain.
@@ -74,7 +74,7 @@ impl StorageRewardProcessor {
             config: StorageRewardConfig::default(),
         }
     }
-    
+
     /// Create with custom configuration
     pub fn with_config(
         network_component: Arc<NetworkComponent>,
@@ -89,9 +89,9 @@ impl StorageRewardProcessor {
             config,
         }
     }
-    
+
     /// Start the background processor task
-    /// 
+    ///
     /// Returns a JoinHandle that can be used to stop the processor.
     /// The processor will run indefinitely until the handle is aborted.
     pub fn start(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
@@ -99,20 +99,23 @@ impl StorageRewardProcessor {
         info!(" Starting Storage Reward Processor");
         info!("═══════════════════════════════════════════════════════");
         info!("   Check interval: {:?}", self.config.check_interval);
-        info!("   Minimum threshold: {} SOV", self.config.minimum_threshold);
+        info!(
+            "   Minimum threshold: {} SOV",
+            self.config.minimum_threshold
+        );
         info!("   Max batch size: {} SOV", self.config.max_batch_size);
         info!("═══════════════════════════════════════════════════════");
-        
+
         tokio::spawn(async move {
             let mut interval_timer = interval(self.config.check_interval);
             let mut cycle = 0u64;
-            
+
             loop {
                 interval_timer.tick().await;
                 cycle += 1;
-                
+
                 debug!("⏰ Storage reward check cycle {} triggered", cycle);
-                
+
                 match self.process_storage_rewards(cycle).await {
                     Ok(claimed) => {
                         if claimed {
@@ -128,13 +131,13 @@ impl StorageRewardProcessor {
             }
         })
     }
-    
+
     /// Process storage rewards for this cycle
-    /// 
+    ///
     /// Returns true if rewards were claimed, false if skipped.
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if:
     /// - Failed to get storage statistics
     /// - Failed to create reward transaction
@@ -142,82 +145,97 @@ impl StorageRewardProcessor {
     /// - Failed to reset reward counter
     async fn process_storage_rewards(&self, cycle: u64) -> Result<bool> {
         info!(" Checking storage rewards (cycle {})...", cycle);
-        
+
         // Get current storage statistics
         let stats = self.network_component.get_storage_stats().await;
-        
+
         info!("    Stats:");
-        info!("      Tokens earned: {} SOV", stats.theoretical_tokens_earned);
+        info!(
+            "      Tokens earned: {} SOV",
+            stats.theoretical_tokens_earned
+        );
         info!("      Items stored: {}", stats.items_stored);
-        info!("      Bytes stored: {} bytes ({:.2} MB)", 
-              stats.bytes_stored, 
-              stats.bytes_stored as f64 / 1_048_576.0);
+        info!(
+            "      Bytes stored: {} bytes ({:.2} MB)",
+            stats.bytes_stored,
+            stats.bytes_stored as f64 / 1_048_576.0
+        );
         info!("      Retrievals served: {}", stats.retrievals_served);
-        info!("      Storage duration: {} hours", stats.storage_duration_hours);
-        
+        info!(
+            "      Storage duration: {} hours",
+            stats.storage_duration_hours
+        );
+
         // Check if reward meets minimum threshold
         if stats.theoretical_tokens_earned < self.config.minimum_threshold {
-            debug!("     Below threshold ({} < {}), skipping claim", 
-                  stats.theoretical_tokens_earned, 
-                  self.config.minimum_threshold);
+            debug!(
+                "     Below threshold ({} < {}), skipping claim",
+                stats.theoretical_tokens_earned, self.config.minimum_threshold
+            );
             return Ok(false);
         }
-        
+
         // Cap reward at max batch size
-        let claim_amount = std::cmp::min(
-            stats.theoretical_tokens_earned, 
-            self.config.max_batch_size
-        );
-        
+        let claim_amount =
+            std::cmp::min(stats.theoretical_tokens_earned, self.config.max_batch_size);
+
         if claim_amount < stats.theoretical_tokens_earned {
-            warn!("     Capping claim: {} -> {} SOV (excess will be claimed next cycle)", 
-                  stats.theoretical_tokens_earned, 
-                  claim_amount);
+            warn!(
+                "     Capping claim: {} -> {} SOV (excess will be claimed next cycle)",
+                stats.theoretical_tokens_earned, claim_amount
+            );
         }
-        
-        info!("    Creating storage reward transaction: {} SOV", claim_amount);
-        
+
+        info!(
+            "    Creating storage reward transaction: {} SOV",
+            claim_amount
+        );
+
         // Get this node's unique identifier for reward attribution
-        let node_id = self.network_component.get_node_id().await
-            .ok_or_else(|| anyhow::anyhow!("Cannot get node ID: mesh server not initialized"))?;
-        
+        let node_id =
+            self.network_component.get_node_id().await.ok_or_else(|| {
+                anyhow::anyhow!("Cannot get node ID: mesh server not initialized")
+            })?;
+
         info!("    Node ID: {}", hex::encode(&node_id));
-        
+
         // Create reward transaction with actual node ID and claim amount
         let reward_tx = BlockchainComponent::create_reward_transaction(
             node_id,
             claim_amount,
-            &self.environment
+            &self.environment,
         )
-            .await
-            .context("Failed to create reward transaction")?;
-        
+        .await
+        .context("Failed to create reward transaction")?;
+
         info!("    Transaction created: {:?}", reward_tx.hash());
-        
+
         // Validate transaction before submitting
-        self.validate_reward_transaction(claim_amount, &reward_tx).await?;
-        
+        self.validate_reward_transaction(claim_amount, &reward_tx)
+            .await?;
+
         // Add to blockchain using global blockchain provider
         let shared_blockchain = crate::runtime::blockchain_provider::get_global_blockchain()
             .await
             .context("Failed to get global blockchain")?;
-        
+
         {
             let mut blockchain_write = shared_blockchain.write().await;
-            blockchain_write.add_pending_transaction(reward_tx.clone())
+            blockchain_write
+                .add_pending_transaction(reward_tx.clone())
                 .context("Failed to add transaction to blockchain")?;
         }
-        
+
         info!("    Transaction added to pending pool");
-        
+
         // Reset counter (only reset claimed amount if capped)
         if claim_amount < stats.theoretical_tokens_earned {
             // TODO: Partial reset - need to add this to mesh server
             warn!("     Partial reset not yet implemented - resetting all");
         }
-        
+
         self.network_component.reset_storage_rewards().await?;
-        
+
         info!("    Reward counter reset");
         info!("═══════════════════════════════════════════════════════");
         info!(" Storage Reward Claimed Successfully!");
@@ -225,19 +243,19 @@ impl StorageRewardProcessor {
         info!("   Cycle: {}", cycle);
         info!("   Next check: {:?}", self.config.check_interval);
         info!("═══════════════════════════════════════════════════════");
-        
+
         Ok(true)
     }
-    
+
     /// Validate reward transaction before submitting to blockchain
-    /// 
+    ///
     /// Performs critical security checks:
     /// - Verifies reward amount is within reasonable bounds
     /// - Checks blockchain is available and synced
     /// - Validates transaction structure
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns an error if:
     /// - Reward amount is zero or exceeds maximum allowed
     /// - Blockchain is unavailable
@@ -248,14 +266,14 @@ impl StorageRewardProcessor {
         transaction: &lib_blockchain::Transaction,
     ) -> Result<()> {
         info!("    Validating transaction...");
-        
+
         // 1. Validate reward amount is reasonable
         const MAX_SINGLE_CLAIM: u64 = 1_000_000; // 1M SOV maximum per claim
-        
+
         if claim_amount == 0 {
             return Err(anyhow::anyhow!("Invalid claim: amount is zero"));
         }
-        
+
         if claim_amount > MAX_SINGLE_CLAIM {
             return Err(anyhow::anyhow!(
                 "Invalid claim: amount {} exceeds maximum allowed {} SOV",
@@ -263,7 +281,7 @@ impl StorageRewardProcessor {
                 MAX_SINGLE_CLAIM
             ));
         }
-        
+
         if claim_amount > self.config.max_batch_size {
             return Err(anyhow::anyhow!(
                 "Invalid claim: amount {} exceeds configured max_batch_size {} SOV",
@@ -271,44 +289,44 @@ impl StorageRewardProcessor {
                 self.config.max_batch_size
             ));
         }
-        
+
         info!("       Amount valid: {} SOV", claim_amount);
-        
+
         // 2. Verify blockchain is available
         let shared_blockchain = crate::runtime::blockchain_provider::get_global_blockchain()
             .await
             .context("Blockchain unavailable")?;
-        
+
         {
             let blockchain = shared_blockchain.read().await;
-            
+
             // Check blockchain has blocks (is initialized)
             let chain_height = blockchain.get_height();
             if chain_height == 0 {
                 return Err(anyhow::anyhow!("Blockchain not initialized: no blocks"));
             }
-            
+
             info!("       Blockchain available: {} blocks", chain_height);
         }
-        
+
         // 3. Validate transaction structure
         let tx_hash = transaction.hash();
         if tx_hash.is_zero() {
             return Err(anyhow::anyhow!("Invalid transaction: zero hash"));
         }
-        
+
         info!("       Transaction structure valid");
         info!("    Validation passed");
-        
+
         Ok(())
     }
-    
+
     /// Get current processor metrics (for monitoring/API)
-    /// 
+    ///
     /// Returns current statistics about pending rewards and processor state.
     pub async fn get_metrics(&self) -> StorageRewardMetrics {
         let stats = self.network_component.get_storage_stats().await;
-        
+
         StorageRewardMetrics {
             pending_rewards: stats.theoretical_tokens_earned,
             total_items_stored: stats.items_stored,
@@ -346,7 +364,7 @@ pub struct StorageRewardMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_default_config() {
         let config = StorageRewardConfig::default();
@@ -354,7 +372,7 @@ mod tests {
         assert_eq!(config.minimum_threshold, 100);
         assert_eq!(config.max_batch_size, 10_000);
     }
-    
+
     #[test]
     fn test_custom_config() {
         let config = StorageRewardConfig {
@@ -366,6 +384,6 @@ mod tests {
         assert_eq!(config.minimum_threshold, 50);
         assert_eq!(config.max_batch_size, 5_000);
     }
-    
+
     // TODO: Add integration tests with mock components
 }

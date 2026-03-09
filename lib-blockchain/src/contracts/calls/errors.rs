@@ -79,24 +79,21 @@ impl CrossContractError {
     }
 
     /// Create error from validation failure
-    pub fn validation_failed(
-        callee: ContractId,
-        method: String,
-        reason: &str,
-    ) -> Self {
+    pub fn validation_failed(callee: ContractId, method: String, reason: &str) -> Self {
         let reason_hash = blake3::hash(reason.as_bytes());
         let mut hash_bytes = [0u8; 32];
         hash_bytes.copy_from_slice(reason_hash.as_bytes());
 
-        Self::new(callee, method, CalleeErrorCode::ValidationFailed, hash_bytes)
+        Self::new(
+            callee,
+            method,
+            CalleeErrorCode::ValidationFailed,
+            hash_bytes,
+        )
     }
 
     /// Create error from execution failure
-    pub fn execution_failed(
-        callee: ContractId,
-        method: String,
-        reason: &str,
-    ) -> Self {
+    pub fn execution_failed(callee: ContractId, method: String, reason: &str) -> Self {
         let reason_hash = blake3::hash(reason.as_bytes());
         let mut hash_bytes = [0u8; 32];
         hash_bytes.copy_from_slice(reason_hash.as_bytes());
@@ -119,20 +116,26 @@ impl CrossContractError {
         let mut hash_bytes = [0u8; 32];
         hash_bytes.copy_from_slice(reason_hash.as_bytes());
 
-        Self::new(callee, method, CalleeErrorCode::PermissionDenied, hash_bytes)
+        Self::new(
+            callee,
+            method,
+            CalleeErrorCode::PermissionDenied,
+            hash_bytes,
+        )
     }
 
     /// Create error for call depth exceeded
-    pub fn call_depth_exceeded(
-        callee: ContractId,
-        method: String,
-        depth: u16,
-    ) -> Self {
+    pub fn call_depth_exceeded(callee: ContractId, method: String, depth: u16) -> Self {
         let reason_hash = blake3::hash(format!("depth:{}", depth).as_bytes());
         let mut hash_bytes = [0u8; 32];
         hash_bytes.copy_from_slice(reason_hash.as_bytes());
 
-        Self::new(callee, method, CalleeErrorCode::CallDepthExceeded, hash_bytes)
+        Self::new(
+            callee,
+            method,
+            CalleeErrorCode::CallDepthExceeded,
+            hash_bytes,
+        )
     }
 }
 
@@ -154,11 +157,23 @@ mod tests {
 
     #[test]
     fn test_error_code_display() {
-        assert_eq!(CalleeErrorCode::ValidationFailed.to_string(), "ValidationFailed");
-        assert_eq!(CalleeErrorCode::ExecutionFailed.to_string(), "ExecutionFailed");
+        assert_eq!(
+            CalleeErrorCode::ValidationFailed.to_string(),
+            "ValidationFailed"
+        );
+        assert_eq!(
+            CalleeErrorCode::ExecutionFailed.to_string(),
+            "ExecutionFailed"
+        );
         assert_eq!(CalleeErrorCode::NotFound.to_string(), "NotFound");
-        assert_eq!(CalleeErrorCode::PermissionDenied.to_string(), "PermissionDenied");
-        assert_eq!(CalleeErrorCode::CallDepthExceeded.to_string(), "CallDepthExceeded");
+        assert_eq!(
+            CalleeErrorCode::PermissionDenied.to_string(),
+            "PermissionDenied"
+        );
+        assert_eq!(
+            CalleeErrorCode::CallDepthExceeded.to_string(),
+            "CallDepthExceeded"
+        );
         assert_eq!(CalleeErrorCode::Unknown.to_string(), "Unknown");
     }
 
@@ -167,16 +182,10 @@ mod tests {
         let contract_id: ContractId = [0u8; 32];
 
         // Same reason should produce same hash
-        let err1 = CrossContractError::validation_failed(
-            contract_id,
-            "test_method".to_string(),
-            "reason",
-        );
-        let err2 = CrossContractError::validation_failed(
-            contract_id,
-            "test_method".to_string(),
-            "reason",
-        );
+        let err1 =
+            CrossContractError::validation_failed(contract_id, "test_method".to_string(), "reason");
+        let err2 =
+            CrossContractError::validation_failed(contract_id, "test_method".to_string(), "reason");
         assert_eq!(err1.reason_hash, err2.reason_hash);
 
         // Different reasons should produce different hashes
@@ -200,15 +209,14 @@ mod tests {
             CrossContractError::execution_failed(contract_id, "method".to_string(), "test");
         assert_eq!(execution_err.code, CalleeErrorCode::ExecutionFailed);
 
-        let not_found_err =
-            CrossContractError::not_found(contract_id, "method".to_string());
+        let not_found_err = CrossContractError::not_found(contract_id, "method".to_string());
         assert_eq!(not_found_err.code, CalleeErrorCode::NotFound);
 
-        let perm_err =
-            CrossContractError::permission_denied(contract_id, "method".to_string());
+        let perm_err = CrossContractError::permission_denied(contract_id, "method".to_string());
         assert_eq!(perm_err.code, CalleeErrorCode::PermissionDenied);
 
-        let depth_err = CrossContractError::call_depth_exceeded(contract_id, "method".to_string(), 20);
+        let depth_err =
+            CrossContractError::call_depth_exceeded(contract_id, "method".to_string(), 20);
         assert_eq!(depth_err.code, CalleeErrorCode::CallDepthExceeded);
     }
 }

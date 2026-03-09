@@ -443,12 +443,16 @@ mod event_tests {
         // Invariant: remaining_capacity + total_distributed == 1_000_000
         for total_distributed in [0, 500_000, 999_999, 1_000_000] {
             let status = UbiPoolStatus::new(1, 100, total_distributed);
-            assert!(status.invariant_holds(),
-                "invariant should hold for total_distributed={}", total_distributed);
+            assert!(
+                status.invariant_holds(),
+                "invariant should hold for total_distributed={}",
+                total_distributed
+            );
             assert_eq!(
                 status.remaining_capacity + status.total_distributed,
                 1_000_000,
-                "invariant equation failed for total_distributed={}", total_distributed
+                "invariant equation failed for total_distributed={}",
+                total_distributed
             );
         }
     }
@@ -508,7 +512,8 @@ mod event_tests {
 
         // Should be serializable (for storage and transmission)
         let json = serde_json::to_string(&claim).expect("should serialize");
-        let deserialized: UbiClaimRecorded = serde_json::from_str(&json).expect("should deserialize");
+        let deserialized: UbiClaimRecorded =
+            serde_json::from_str(&json).expect("should deserialize");
 
         assert_eq!(claim, deserialized);
     }
@@ -534,13 +539,17 @@ mod event_tests {
             assert_eq!(
                 status.total_distributed + status.remaining_capacity,
                 1_000_000,
-                "calculation failed for {}", desc
+                "calculation failed for {}",
+                desc
             );
 
             // Verify individual values
             let expected_remaining = 1_000_000 - total_distributed;
-            assert_eq!(status.remaining_capacity, expected_remaining,
-                "remaining capacity wrong for {}", desc);
+            assert_eq!(
+                status.remaining_capacity, expected_remaining,
+                "remaining capacity wrong for {}",
+                desc
+            );
         }
     }
 }

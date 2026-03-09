@@ -3,12 +3,12 @@
 //! Provides endpoints for node health, system metrics, and performance monitoring.
 //! Issue #1801: Implement missing monitoring endpoints
 
-use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use tracing::{info, error};
+use std::sync::Arc;
+use tracing::{error, info};
 
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 use crate::runtime::RuntimeOrchestrator;
 
@@ -76,23 +76,17 @@ impl ZhtpRequestHandler for MonitorHandler {
 
         let response = match (request.method, request.uri.as_str()) {
             // Issue #1801: Health check endpoint
-            (ZhtpMethod::Get, "/api/v1/monitor/health") => {
-                self.handle_get_health(request).await
-            }
+            (ZhtpMethod::Get, "/api/v1/monitor/health") => self.handle_get_health(request).await,
             // Issue #1801: System metrics endpoint
-            (ZhtpMethod::Get, "/api/v1/monitor/system") => {
-                self.handle_get_system(request).await
-            }
+            (ZhtpMethod::Get, "/api/v1/monitor/system") => self.handle_get_system(request).await,
             // Issue #1801: Performance metrics endpoint
             (ZhtpMethod::Get, "/api/v1/monitor/performance") => {
                 self.handle_get_performance(request).await
             }
-            _ => {
-                Ok(ZhtpResponse::error(
-                    ZhtpStatus::NotFound,
-                    "Monitor endpoint not found".to_string(),
-                ))
-            }
+            _ => Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                "Monitor endpoint not found".to_string(),
+            )),
         };
 
         let duration_ms = start_time.elapsed().as_millis();
@@ -133,17 +127,18 @@ impl MonitorHandler {
         info!("API: Getting health status");
 
         // Check blockchain component via global provider
-        let blockchain_health = match crate::runtime::blockchain_provider::get_global_blockchain().await {
-            Ok(bc) => {
-                let blockchain = bc.read().await;
-                if blockchain.get_height() > 0 {
-                    "ok"
-                } else {
-                    "warning"
+        let blockchain_health =
+            match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                Ok(bc) => {
+                    let blockchain = bc.read().await;
+                    if blockchain.get_height() > 0 {
+                        "ok"
+                    } else {
+                        "warning"
+                    }
                 }
-            }
-            Err(_) => "error",
-        };
+                Err(_) => "error",
+            };
 
         // Check network component
         let network_health = match self._runtime.get_connected_peers().await {
@@ -155,7 +150,7 @@ impl MonitorHandler {
         // Placeholder for other components
         // These would check actual component status when exposed by runtime
         let consensus_health = "ok"; // Placeholder
-        let oracle_health = "ok"; // Placeholder  
+        let oracle_health = "ok"; // Placeholder
         let mempool_health = "ok"; // Placeholder
 
         // Determine overall status
@@ -186,7 +181,10 @@ impl MonitorHandler {
             uptime_secs,
         };
 
-        info!("API: Health status - {}, uptime {}s", overall_status, uptime_secs);
+        info!(
+            "API: Health status - {}, uptime {}s",
+            overall_status, uptime_secs
+        );
 
         let json_response = serde_json::to_vec(&response)
             .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
@@ -233,12 +231,12 @@ impl MonitorHandler {
         info!("API: Getting performance metrics");
 
         // Get blockchain stats via global provider
-        let (_height, avg_block_time, mempool_size) = 
+        let (_height, avg_block_time, mempool_size) =
             match crate::runtime::blockchain_provider::get_global_blockchain().await {
                 Ok(bc) => {
                     let blockchain = bc.read().await;
                     let height = blockchain.get_height();
-                    
+
                     // Calculate average block time from recent blocks (placeholder)
                     let avg_block_time = if height > 0 {
                         // Would calculate from actual block timestamps
@@ -246,9 +244,9 @@ impl MonitorHandler {
                     } else {
                         0.0
                     };
-                    
+
                     let mempool_size = blockchain.get_pending_transactions().len();
-                    
+
                     (height, avg_block_time, mempool_size)
                 }
                 Err(_) => (0, 0.0, 0),
@@ -272,8 +270,10 @@ impl MonitorHandler {
             tx_throughput_per_sec: tx_throughput,
         };
 
-        info!("API: Performance - {}s avg block time, {} mempool", 
-              avg_block_time, mempool_size);
+        info!(
+            "API: Performance - {}s avg block time, {} mempool",
+            avg_block_time, mempool_size
+        );
 
         let json_response = serde_json::to_vec(&response)
             .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;

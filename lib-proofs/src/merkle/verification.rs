@@ -1,12 +1,12 @@
 //! Merkle proof verification
-//! 
+//!
 //! Provides comprehensive verification functions for Merkle inclusion proofs,
 //! ensuring data membership validation without revealing tree structure.
 
-use anyhow::Result;
-use crate::types::{MerkleProof, VerificationResult};
-use crate::merkle::tree::{ZkMerkleTree, hash_merkle_pair};
 use crate::merkle::proof_generation::compute_root_from_proof;
+use crate::merkle::tree::{hash_merkle_pair, ZkMerkleTree};
+use crate::types::{MerkleProof, VerificationResult};
+use anyhow::Result;
 
 impl ZkMerkleTree {
     /// Verify a Merkle inclusion proof
@@ -50,7 +50,10 @@ impl ZkMerkleTree {
 
     /// Batch verify multiple proofs
     pub fn batch_verify_proofs(&self, proofs: &[MerkleProof]) -> Vec<bool> {
-        proofs.iter().map(|proof| self.verify_proof(proof)).collect()
+        proofs
+            .iter()
+            .map(|proof| self.verify_proof(proof))
+            .collect()
     }
 
     /// Verify that a proof is for a leaf that exists in this tree
@@ -60,19 +63,12 @@ impl ZkMerkleTree {
 }
 
 /// Verify a Merkle proof against a known root hash
-pub fn verify_proof_against_root(
-    proof: &MerkleProof,
-    expected_root: [u8; 32],
-) -> Result<bool> {
+pub fn verify_proof_against_root(proof: &MerkleProof, expected_root: [u8; 32]) -> Result<bool> {
     if !proof.is_valid_structure() {
         return Ok(false);
     }
 
-    let computed_root = compute_root_from_proof(
-        proof.leaf,
-        &proof.path,
-        &proof.indices,
-    )?;
+    let computed_root = compute_root_from_proof(proof.leaf, &proof.path, &proof.indices)?;
 
     Ok(computed_root == expected_root)
 }
@@ -99,11 +95,11 @@ pub fn batch_verify_against_root(
     expected_root: [u8; 32],
 ) -> Result<Vec<bool>> {
     let mut results = Vec::with_capacity(proofs.len());
-    
+
     for proof in proofs {
         results.push(verify_proof_against_root(proof, expected_root)?);
     }
-    
+
     Ok(results)
 }
 
@@ -119,7 +115,7 @@ pub fn verify_proof_optimized(
     }
 
     let mut current_hash = leaf;
-    
+
     for (i, &sibling) in siblings.iter().enumerate() {
         current_hash = if indices[i] {
             hash_merkle_pair(sibling, current_hash)
@@ -127,7 +123,7 @@ pub fn verify_proof_optimized(
             hash_merkle_pair(current_hash, sibling)
         };
     }
-    
+
     current_hash == expected_root
 }
 
@@ -151,10 +147,7 @@ pub fn batch_verify_optimized(
 }
 
 /// Verify proof membership in a set of valid roots (useful for multiple tree versions)
-pub fn verify_proof_in_root_set(
-    proof: &MerkleProof,
-    valid_roots: &[[u8; 32]],
-) -> Result<bool> {
+pub fn verify_proof_in_root_set(proof: &MerkleProof, valid_roots: &[[u8; 32]]) -> Result<bool> {
     for &root in valid_roots {
         if verify_proof_against_root(proof, root)? {
             return Ok(true);
@@ -208,16 +201,17 @@ impl VerificationStats {
     /// Update stats with a verification result
     pub fn update(&mut self, result: &VerificationResult, depth: usize) {
         self.total_proofs += 1;
-        
+
         match result {
             VerificationResult::Valid { .. } => self.valid_proofs += 1,
             VerificationResult::Invalid(_) => self.invalid_proofs += 1,
             VerificationResult::Error(_) => self.error_count += 1,
         }
-        
+
         // Update running average of depth
-        self.average_depth = (self.average_depth * (self.total_proofs - 1) as f64 + depth as f64) / self.total_proofs as f64;
-        
+        self.average_depth = (self.average_depth * (self.total_proofs - 1) as f64 + depth as f64)
+            / self.total_proofs as f64;
+
         // Update success rate
         self.success_rate = (self.valid_proofs as f64 / self.total_proofs as f64) * 100.0;
     }
@@ -237,13 +231,13 @@ mod tests {
     #[test]
     fn test_verify_valid_proof() {
         let mut tree = ZkMerkleTree::new(4);
-        
+
         let leaf1 = hash_blake3(b"leaf1");
         let leaf2 = hash_blake3(b"leaf2");
-        
+
         tree.add_leaf(leaf1).unwrap();
         tree.add_leaf(leaf2).unwrap();
-        
+
         let proof = tree.generate_proof(0).unwrap();
         assert!(tree.verify_proof(&proof));
     }
@@ -253,11 +247,11 @@ mod tests {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"leaf");
         tree.add_leaf(leaf).unwrap();
-        
+
         let mut proof = tree.generate_proof(0).unwrap();
         // Corrupt the proof
         proof.leaf = hash_blake3(b"different_leaf");
-        
+
         assert!(!tree.verify_proof(&proof));
     }
 
@@ -266,10 +260,10 @@ mod tests {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"leaf");
         tree.add_leaf(leaf).unwrap();
-        
+
         let proof = tree.generate_proof(0).unwrap();
         let result = tree.verify_proof_detailed(&proof);
-        
+
         assert!(result.is_valid());
     }
 
@@ -278,10 +272,10 @@ mod tests {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"leaf");
         tree.add_leaf(leaf).unwrap();
-        
+
         let proof = tree.generate_proof(0).unwrap();
         let is_valid = verify_proof_against_root(&proof, tree.root).unwrap();
-        
+
         assert!(is_valid);
     }
 
@@ -290,26 +284,26 @@ mod tests {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"leaf");
         tree.add_leaf(leaf).unwrap();
-        
+
         let proof = tree.generate_proof(0).unwrap();
         let wrong_root = [0u8; 32];
         let is_valid = verify_proof_against_root(&proof, wrong_root).unwrap();
-        
+
         assert!(!is_valid);
     }
 
     #[test]
     fn test_batch_verification() {
         let mut tree = ZkMerkleTree::new(4);
-        
+
         for i in 0..3 {
             let leaf = hash_blake3(&[i]);
             tree.add_leaf(leaf).unwrap();
         }
-        
+
         let proofs = tree.generate_all_proofs().unwrap();
         let results = tree.batch_verify_proofs(&proofs);
-        
+
         assert_eq!(results.len(), 3);
         assert!(results.iter().all(|&r| r));
     }
@@ -319,15 +313,10 @@ mod tests {
         let mut tree = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"test");
         tree.add_leaf(leaf).unwrap();
-        
+
         let proof = tree.generate_proof(0).unwrap();
-        let is_valid = verify_proof_optimized(
-            proof.leaf,
-            &proof.path,
-            &proof.indices,
-            tree.root,
-        );
-        
+        let is_valid = verify_proof_optimized(proof.leaf, &proof.path, &proof.indices, tree.root);
+
         assert!(is_valid);
     }
 
@@ -336,14 +325,14 @@ mod tests {
         let mut tree1 = ZkMerkleTree::new(3);
         let mut tree2 = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"test");
-        
+
         tree1.add_leaf(leaf).unwrap();
         tree2.add_leaf(leaf).unwrap();
         tree2.add_leaf(hash_blake3(b"extra")).unwrap();
-        
+
         let proof = tree1.generate_proof(0).unwrap();
         let valid_roots = vec![tree1.root, tree2.root];
-        
+
         let is_valid = verify_proof_in_root_set(&proof, &valid_roots).unwrap();
         assert!(is_valid);
     }
@@ -353,15 +342,15 @@ mod tests {
         let mut tree = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"valid_prefix_data");
         tree.add_leaf(leaf).unwrap();
-        
+
         let proof = tree.generate_proof(0).unwrap();
-        
+
         // Validator that checks if leaf starts with specific bytes
         let validator = |leaf_hash: [u8; 32]| {
             // Just check that it's not all zeros (simple validation)
             leaf_hash != [0u8; 32]
         };
-        
+
         let is_valid = verify_proof_with_validator(&proof, tree.root, validator).unwrap();
         assert!(is_valid);
     }
@@ -369,19 +358,28 @@ mod tests {
     #[test]
     fn test_verification_stats() {
         let mut stats = VerificationStats::new();
-        
-        stats.update(&VerificationResult::Valid {
-            circuit_id: "test".to_string(),
-            verification_time_ms: 0,
-            public_inputs: vec![],
-        }, 3);
-        stats.update(&VerificationResult::Invalid("Merkle verification failed".to_string()), 2);
-        stats.update(&VerificationResult::Valid {
-            circuit_id: "test".to_string(),
-            verification_time_ms: 0,
-            public_inputs: vec![],
-        }, 4);
-        
+
+        stats.update(
+            &VerificationResult::Valid {
+                circuit_id: "test".to_string(),
+                verification_time_ms: 0,
+                public_inputs: vec![],
+            },
+            3,
+        );
+        stats.update(
+            &VerificationResult::Invalid("Merkle verification failed".to_string()),
+            2,
+        );
+        stats.update(
+            &VerificationResult::Valid {
+                circuit_id: "test".to_string(),
+                verification_time_ms: 0,
+                public_inputs: vec![],
+            },
+            4,
+        );
+
         assert_eq!(stats.total_proofs, 3);
         assert_eq!(stats.valid_proofs, 2);
         assert_eq!(stats.invalid_proofs, 1);

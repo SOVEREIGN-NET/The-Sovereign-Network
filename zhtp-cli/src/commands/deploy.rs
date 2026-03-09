@@ -7,9 +7,12 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{DeployArgs, DeployAction, ZhtpCli};
-use crate::commands::web4_utils::{build_trust_config, connect_client, load_identity_from_keystore, resolve_keystore_path, validate_domain};
-use crate::error::{CliResult, CliError};
+use crate::argument_parsing::{DeployAction, DeployArgs, ZhtpCli};
+use crate::commands::web4_utils::{
+    build_trust_config, connect_client, load_identity_from_keystore, resolve_keystore_path,
+    validate_domain,
+};
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
 
 use base64::Engine;
@@ -17,7 +20,10 @@ use lib_network::client::ZhtpClient;
 use lib_protocols::types::ZhtpRequest;
 use std::path::PathBuf;
 use std::str::FromStr;
-use zhtp::web4_manifest::{DeployManifest, FileEntry, DeployMode as ManifestDeployMode, canonicalize_file_entries, compute_root_hash, manifest_unsigned_bytes_from_parts, normalize_manifest_path};
+use zhtp::web4_manifest::{
+    canonicalize_file_entries, compute_root_hash, manifest_unsigned_bytes_from_parts,
+    normalize_manifest_path, DeployManifest, DeployMode as ManifestDeployMode, FileEntry,
+};
 
 const MAX_FILE_SIZE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_TOTAL_SIZE_BYTES: u64 = 1024 * 1024 * 1024;
@@ -48,9 +54,10 @@ impl FromStr for DeployMode {
         match s.to_lowercase().as_str() {
             "spa" => Ok(DeployMode::Spa),
             "static" => Ok(DeployMode::Static),
-            _ => Err(CliError::ConfigError(
-                format!("Invalid deploy mode: '{}'. Use 'spa' or 'static'", s),
-            )),
+            _ => Err(CliError::ConfigError(format!(
+                "Invalid deploy mode: '{}'. Use 'spa' or 'static'",
+                s
+            ))),
         }
     }
 }
@@ -64,7 +71,6 @@ impl DeployMode {
         }
     }
 }
-
 
 /// Valid deployment operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,7 +256,8 @@ async fn upload_files(
             .unwrap_or("application/octet-stream")
             .to_string();
 
-        let blob_response = post_bytes(client, "/api/v1/web4/content/blob", content, &content_type).await?;
+        let blob_response =
+            post_bytes(client, "/api/v1/web4/content/blob", content, &content_type).await?;
         let blob_hash = blob_response
             .get("content_id")
             .and_then(|v| v.as_str())
@@ -310,10 +317,7 @@ async fn upload_manifest(client: &ZhtpClient, manifest: &DeployManifest) -> CliR
     Ok(local_cid)
 }
 
-fn collect_files(
-    build_dir: &str,
-    domain: &str,
-) -> CliResult<Vec<FileToUpload>> {
+fn collect_files(build_dir: &str, domain: &str) -> CliResult<Vec<FileToUpload>> {
     let build_path = PathBuf::from(build_dir);
     let canonical_build = build_path
         .canonicalize()
@@ -343,7 +347,10 @@ fn collect_files(
         let relative_path = entry
             .path()
             .strip_prefix(&build_path)
-            .map_err(|e| CliError::DeploymentFailed { domain: domain.to_string(), reason: format!("Path error: {}", e) })?
+            .map_err(|e| CliError::DeploymentFailed {
+                domain: domain.to_string(),
+                reason: format!("Path error: {}", e),
+            })?
             .to_string_lossy()
             .to_string();
 
@@ -387,12 +394,13 @@ fn collect_files(
     }
 
     if files.is_empty() {
-        return Err(CliError::InvalidBuildDirectory("No files found in build directory".to_string()));
+        return Err(CliError::InvalidBuildDirectory(
+            "No files found in build directory".to_string(),
+        ));
     }
 
     Ok(files)
 }
-
 
 // ============================================================================
 // IMPERATIVE SHELL - All side effects here (file I/O, network, output)
@@ -401,10 +409,7 @@ fn collect_files(
 /// Handle deploy command with proper error handling and output
 ///
 /// Public entry point that maintains backward compatibility
-pub async fn handle_deploy_command(
-    args: DeployArgs,
-    cli: &ZhtpCli,
-) -> crate::error::CliResult<()> {
+pub async fn handle_deploy_command(args: DeployArgs, cli: &ZhtpCli) -> crate::error::CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_deploy_command_impl(args, cli, &output).await
 }
@@ -431,10 +436,7 @@ async fn handle_deploy_command_impl(
             // Pure validation
             let domain = validate_domain(&domain)?;
             validate_build_directory(&build_dir)?;
-            let deploy_mode: DeployMode = mode
-                .as_deref()
-                .unwrap_or("spa")
-                .parse()?;
+            let deploy_mode: DeployMode = mode.as_deref().unwrap_or("spa").parse()?;
 
             output.header("Web4 Site Deployment")?;
             output.print(&format!("Domain: {}", domain))?;
@@ -470,10 +472,7 @@ async fn handle_deploy_command_impl(
             // Pure validation
             let domain = validate_domain(&domain)?;
             validate_build_directory(&build_dir)?;
-            let deploy_mode: DeployMode = mode
-                .as_deref()
-                .unwrap_or("spa")
-                .parse()?;
+            let deploy_mode: DeployMode = mode.as_deref().unwrap_or("spa").parse()?;
 
             output.header("Update Website Deployment")?;
             output.print(&format!("Domain: {}", domain))?;
@@ -547,10 +546,7 @@ async fn handle_deploy_command_impl(
             )
             .await
         }
-        DeployAction::List {
-            keystore,
-            trust,
-        } => {
+        DeployAction::List { keystore, trust } => {
             output.header("Deployments")?;
 
             // Imperative: Network communication
@@ -645,7 +641,13 @@ async fn fetch_manifest_impl(
     let body = serde_json::to_vec(&serde_json::json!({ "cid": cid }))
         .map_err(|e| CliError::ConfigError(format!("Failed to encode request JSON: {}", e)))?;
 
-    let bytes = post_raw(&client, "/api/v1/web4/content/manifest", body, "application/json").await?;
+    let bytes = post_raw(
+        &client,
+        "/api/v1/web4/content/manifest",
+        body,
+        "application/json",
+    )
+    .await?;
 
     // Server returns raw manifest bytes as octet-stream. It should be JSON.
     let manifest_json: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
@@ -704,9 +706,14 @@ async fn deploy_site_impl(
     let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
 
     output.info("Uploading files...")?;
-    let (manifest_files, canonical_total_size) = upload_files(&client, &files, domain, output).await?;
+    let (manifest_files, canonical_total_size) =
+        upload_files(&client, &files, domain, output).await?;
 
-    output.print(&format!("📊 Upload complete: {} files, {} bytes total", manifest_files.len(), canonical_total_size))?;
+    output.print(&format!(
+        "📊 Upload complete: {} files, {} bytes total",
+        manifest_files.len(),
+        canonical_total_size
+    ))?;
 
     let deployed_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -724,14 +731,20 @@ async fn deploy_site_impl(
         &loaded.keypair,
     )?;
 
-    output.print(&format!("✅ Manifest built: {} files, hash computed", manifest.files.len()))?;
+    output.print(&format!(
+        "✅ Manifest built: {} files, hash computed",
+        manifest.files.len()
+    ))?;
 
     output.info("Uploading manifest...")?;
     let manifest_hash = upload_manifest(&client, &manifest).await?;
     output.print(&format!("✅ Manifest uploaded with CID: {}", manifest_hash))?;
 
     if let Some(_fee_amount) = fee {
-        output.info(&format!("Note: Registration fee of {} tokens reserved for future billing integration", _fee_amount))?;
+        output.info(&format!(
+            "Note: Registration fee of {} tokens reserved for future billing integration",
+            _fee_amount
+        ))?;
     }
 
     let registration_body = serde_json::json!({
@@ -746,10 +759,12 @@ async fn deploy_site_impl(
             domain: domain.to_string(),
             reason: format!("Failed to register domain: {}", e),
         })?;
-    let _: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::DeploymentFailed {
-            domain: domain.to_string(),
-            reason: format!("Failed to parse registration response: {}", e),
+    let _: serde_json::Value =
+        lib_network::client::ZhtpClient::parse_json(&response).map_err(|e| {
+            CliError::DeploymentFailed {
+                domain: domain.to_string(),
+                reason: format!("Failed to parse registration response: {}", e),
+            }
         })?;
 
     output.success(&format!("✓ Site deployed successfully to {}", domain))?;
@@ -808,13 +823,13 @@ async fn deploy_update_impl(
         })?;
     let status: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&status_response)
         .map_err(|e| CliError::DeploymentFailed {
-            domain: domain.to_string(),
-            reason: format!("Failed to parse domain status: {}", e),
-        })?;
+        domain: domain.to_string(),
+        reason: format!("Failed to parse domain status: {}", e),
+    })?;
 
     let previous_cid = status
         .get("current_web4_manifest_cid")
-        .or_else(|| status.get("current_manifest_cid"))  // Fallback for backwards compatibility
+        .or_else(|| status.get("current_manifest_cid")) // Fallback for backwards compatibility
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| CliError::DeploymentFailed {
@@ -823,7 +838,8 @@ async fn deploy_update_impl(
         })?;
 
     output.info("Uploading updated files...")?;
-    let (manifest_files, canonical_total_size) = upload_files(&client, &files, domain, output).await?;
+    let (manifest_files, canonical_total_size) =
+        upload_files(&client, &files, domain, output).await?;
     let deployed_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
@@ -841,14 +857,20 @@ async fn deploy_update_impl(
     let manifest_hash = upload_manifest(&client, &manifest).await?;
 
     if let Some(_fee_amount) = fee {
-        output.info(&format!("Note: Update fee of {} tokens reserved for future billing integration", _fee_amount))?;
+        output.info(&format!(
+            "Note: Update fee of {} tokens reserved for future billing integration",
+            _fee_amount
+        ))?;
     }
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| CliError::ConfigError(format!("Time error: {}", e)))?
         .as_secs();
-    let update_message = format!("{}|{}|{}|{}", domain, previous_cid, manifest_hash, timestamp);
+    let update_message = format!(
+        "{}|{}|{}|{}",
+        domain, previous_cid, manifest_hash, timestamp
+    );
     let update_signature = lib_crypto::sign_message(&loaded.keypair, update_message.as_bytes())
         .map_err(|e| CliError::ConfigError(format!("Failed to sign update: {}", e)))?;
 
@@ -932,7 +954,11 @@ async fn delete_deployment_impl(
             reason: format!("Failed to parse release response: {}", e),
         })?;
 
-    if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if result
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         output.success(&format!("✓ Domain {} released", domain))?;
         output.print(&format!(
             "Use 'zhtp-cli deploy status {}' to verify deletion status",
@@ -946,7 +972,6 @@ async fn delete_deployment_impl(
         reason: "Domain release failed".to_string(),
     })
 }
-
 
 /// Check deployment status
 async fn check_deployment_status_impl(
@@ -998,8 +1023,9 @@ async fn check_deployment_status_impl(
         output.print(&format!("Current version: {}", version))?;
     }
 
-    if let Some(cid) = status.get("current_web4_manifest_cid")
-        .or_else(|| status.get("current_manifest_cid"))  // Fallback for backwards compatibility
+    if let Some(cid) = status
+        .get("current_web4_manifest_cid")
+        .or_else(|| status.get("current_manifest_cid")) // Fallback for backwards compatibility
         .and_then(|v| v.as_str())
     {
         output.print(&format!("Manifest CID: {}", cid))?;
@@ -1011,7 +1037,6 @@ async fn check_deployment_status_impl(
 
     Ok(())
 }
-
 
 /// List all deployments
 async fn list_deployments_impl(
@@ -1030,7 +1055,10 @@ async fn list_deployments_impl(
     let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
 
     let response = client
-        .get(&format!("/api/v1/web4/domains?owner={}", loaded.identity.did))
+        .get(&format!(
+            "/api/v1/web4/domains?owner={}",
+            loaded.identity.did
+        ))
         .await
         .map_err(|e| CliError::ConfigError(format!("Failed to list domains: {}", e)))?;
     let data: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
@@ -1113,8 +1141,9 @@ async fn show_deployment_history_impl(
             Some(v) => output.print(&format!("  Version {}", v))?,
             None => output.print(&format!("  Version {}", idx + 1))?,
         }
-        if let Some(cid) = version.get("web4_manifest_cid")
-            .or_else(|| version.get("manifest_cid"))  // Fallback for backwards compatibility
+        if let Some(cid) = version
+            .get("web4_manifest_cid")
+            .or_else(|| version.get("manifest_cid")) // Fallback for backwards compatibility
             .and_then(|v| v.as_str())
         {
             output.print(&format!("    Manifest CID: {}", cid))?;
@@ -1150,7 +1179,10 @@ async fn rollback_deployment_impl(
         .parse()
         .map_err(|_| CliError::ConfigError(format!("Invalid version number: {}", to_version)))?;
 
-    output.info(&format!("Rolling back {} to version {}...", domain, version_num))?;
+    output.info(&format!(
+        "Rolling back {} to version {}...",
+        domain, version_num
+    ))?;
 
     let body = serde_json::json!({
         "to_version": version_num,
@@ -1168,7 +1200,10 @@ async fn rollback_deployment_impl(
             reason: format!("Failed to parse rollback response: {}", e),
         })?;
 
-    output.success(&format!("✓ Rolled back {} to version {}", domain, version_num))?;
+    output.success(&format!(
+        "✓ Rolled back {} to version {}",
+        domain, version_num
+    ))?;
 
     if let Some(new_version) = result.get("rolled_back_to").and_then(|v| v.as_u64()) {
         output.print(&format!("New version: {}", new_version))?;
@@ -1176,7 +1211,6 @@ async fn rollback_deployment_impl(
 
     Ok(())
 }
-
 
 // ============================================================================
 // TESTS - Pure logic is testable without mocks or side effects
@@ -1195,14 +1229,8 @@ mod tests {
 
     #[test]
     fn test_deploy_mode_from_str_static() {
-        assert_eq!(
-            "static".parse::<DeployMode>().unwrap(),
-            DeployMode::Static
-        );
-        assert_eq!(
-            "STATIC".parse::<DeployMode>().unwrap(),
-            DeployMode::Static
-        );
+        assert_eq!("static".parse::<DeployMode>().unwrap(), DeployMode::Static);
+        assert_eq!("STATIC".parse::<DeployMode>().unwrap(), DeployMode::Static);
     }
 
     #[test]
@@ -1290,10 +1318,7 @@ mod tests {
             DeployOperation::Status.description(),
             "Check deployment status"
         );
-        assert_eq!(
-            DeployOperation::List.description(),
-            "List deployments"
-        );
+        assert_eq!(DeployOperation::List.description(), "List deployments");
         assert_eq!(
             DeployOperation::History.description(),
             "Show deployment history"

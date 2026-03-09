@@ -125,8 +125,11 @@ impl ProofTypeCounts {
     }
 
     pub fn total(&self) -> u64 {
-        self.hash_count + self.merkle_count + self.signature_count
-            + self.web4_manifest_route_count + self.web4_content_served_count
+        self.hash_count
+            + self.merkle_count
+            + self.signature_count
+            + self.web4_manifest_route_count
+            + self.web4_content_served_count
     }
 }
 
@@ -306,7 +309,10 @@ impl RewardCalculator {
     }
 
     /// Aggregate validated receipts by client and epoch
-    pub fn aggregate_receipts(&self, receipts: &[ValidatedReceipt]) -> HashMap<(String, u64), EpochClientStats> {
+    pub fn aggregate_receipts(
+        &self,
+        receipts: &[ValidatedReceipt],
+    ) -> HashMap<(String, u64), EpochClientStats> {
         let mut aggregated: HashMap<(String, u64), EpochClientStats> = HashMap::new();
 
         for receipt in receipts {
@@ -334,12 +340,13 @@ impl RewardCalculator {
     /// Calculate reward for a client's epoch stats (sync portion — history recording is async)
     pub fn calculate_reward(&self, stats: &EpochClientStats) -> Reward {
         // Calculate weighted reward based on proof types
-        let weighted_count =
-            stats.proof_type_counts.hash_count * self.multipliers.hash +
-            stats.proof_type_counts.merkle_count * self.multipliers.merkle +
-            stats.proof_type_counts.signature_count * self.multipliers.signature +
-            stats.proof_type_counts.web4_manifest_route_count * self.multipliers.web4_manifest_route +
-            stats.proof_type_counts.web4_content_served_count * self.multipliers.web4_content_served;
+        let weighted_count = stats.proof_type_counts.hash_count * self.multipliers.hash
+            + stats.proof_type_counts.merkle_count * self.multipliers.merkle
+            + stats.proof_type_counts.signature_count * self.multipliers.signature
+            + stats.proof_type_counts.web4_manifest_route_count
+                * self.multipliers.web4_manifest_route
+            + stats.proof_type_counts.web4_content_served_count
+                * self.multipliers.web4_content_served;
 
         // Raw amount = base unit * weighted count
         let raw_amount = BASE_REWARD_UNIT * weighted_count;
@@ -409,14 +416,21 @@ impl RewardCalculator {
         }
 
         // ── Anomaly 1: Sustained cap-hitting ────────────────────────────────
-        let recent: Vec<&DIDEpochRecord> = history.iter().rev().take(MAX_CONSECUTIVE_CAP_EPOCHS).collect();
+        let recent: Vec<&DIDEpochRecord> = history
+            .iter()
+            .rev()
+            .take(MAX_CONSECUTIVE_CAP_EPOCHS)
+            .collect();
         if recent.len() == MAX_CONSECUTIVE_CAP_EPOCHS && recent.iter().all(|r| r.hit_cap) {
             warn!(
                 did = %client_did,
                 consecutive_epochs = MAX_CONSECUTIVE_CAP_EPOCHS,
                 "PoUW anomaly: DID hitting per-node cap every epoch (sustained cap-hitting)"
             );
-            self.suspicious_dids.write().await.insert(client_did.to_string());
+            self.suspicious_dids
+                .write()
+                .await
+                .insert(client_did.to_string());
         }
 
         // ── Anomaly 2: Receipt volume spike ─────────────────────────────────
@@ -428,7 +442,10 @@ impl RewardCalculator {
             .take(SPIKE_BASELINE_EPOCHS)
             .collect();
         if !baseline_epochs.is_empty() {
-            let baseline_sum: u64 = baseline_epochs.iter().map(|r| r.weighted_receipt_count).sum();
+            let baseline_sum: u64 = baseline_epochs
+                .iter()
+                .map(|r| r.weighted_receipt_count)
+                .sum();
             let baseline_avg = baseline_sum / baseline_epochs.len() as u64;
             if baseline_avg > 0 && weighted_count > SPIKE_FACTOR * baseline_avg {
                 warn!(
@@ -439,7 +456,10 @@ impl RewardCalculator {
                     spike_factor = SPIKE_FACTOR,
                     "PoUW anomaly: DID receipt volume spike ({}x above own average)", weighted_count / baseline_avg
                 );
-                self.suspicious_dids.write().await.insert(client_did.to_string());
+                self.suspicious_dids
+                    .write()
+                    .await
+                    .insert(client_did.to_string());
             }
         }
 
@@ -455,7 +475,10 @@ impl RewardCalculator {
                     receipt_count = receipt_count,
                     "PoUW anomaly: all receipts claim exactly MIN_BYTES_PER_RECEIPT (fabrication signal)"
                 );
-                self.suspicious_dids.write().await.insert(client_did.to_string());
+                self.suspicious_dids
+                    .write()
+                    .await
+                    .insert(client_did.to_string());
             }
         }
     }
@@ -477,12 +500,13 @@ impl RewardCalculator {
         for ((_client_did, receipt_epoch), stats) in aggregated {
             if receipt_epoch == epoch {
                 // Compute weighted count for anomaly detection
-                let weighted_count =
-                    stats.proof_type_counts.hash_count * self.multipliers.hash +
-                    stats.proof_type_counts.merkle_count * self.multipliers.merkle +
-                    stats.proof_type_counts.signature_count * self.multipliers.signature +
-                    stats.proof_type_counts.web4_manifest_route_count * self.multipliers.web4_manifest_route +
-                    stats.proof_type_counts.web4_content_served_count * self.multipliers.web4_content_served;
+                let weighted_count = stats.proof_type_counts.hash_count * self.multipliers.hash
+                    + stats.proof_type_counts.merkle_count * self.multipliers.merkle
+                    + stats.proof_type_counts.signature_count * self.multipliers.signature
+                    + stats.proof_type_counts.web4_manifest_route_count
+                        * self.multipliers.web4_manifest_route
+                    + stats.proof_type_counts.web4_content_served_count
+                        * self.multipliers.web4_content_served;
 
                 let reward = self.calculate_reward(&stats);
                 let hit_cap = reward.raw_amount > self.pool_config.per_node_cap();
@@ -497,7 +521,8 @@ impl RewardCalculator {
                     hit_cap,
                     super::types::DEFAULT_MIN_BYTES_PER_RECEIPT,
                     stats.receipt_count,
-                ).await;
+                )
+                .await;
 
                 rewards.push(reward.clone());
 
@@ -517,7 +542,9 @@ impl RewardCalculator {
 
     /// Get all pending rewards for payout
     pub async fn get_pending_rewards(&self) -> Vec<Reward> {
-        self.rewards.read().await
+        self.rewards
+            .read()
+            .await
             .iter()
             .filter(|r| r.payout_status == PayoutStatus::Pending)
             .cloned()
@@ -586,7 +613,9 @@ impl RewardCalculator {
 
     /// Get rewards for a specific client
     pub async fn get_client_rewards(&self, client_did: &str) -> Vec<Reward> {
-        self.rewards.read().await
+        self.rewards
+            .read()
+            .await
             .iter()
             .filter(|r| r.client_did == client_did)
             .cloned()
@@ -595,7 +624,9 @@ impl RewardCalculator {
 
     /// Get paid rewards as transaction records for a specific client.
     pub async fn get_reward_transactions_for_did(&self, did: &str) -> Vec<RewardTransaction> {
-        self.rewards.read().await
+        self.rewards
+            .read()
+            .await
             .iter()
             .filter(|r| r.client_did == did && r.payout_status == PayoutStatus::Paid)
             .map(|r| RewardTransaction {
@@ -610,7 +641,9 @@ impl RewardCalculator {
 
     /// Get rewards for a specific epoch
     pub async fn get_epoch_rewards(&self, epoch: u64) -> Vec<Reward> {
-        self.rewards.read().await
+        self.rewards
+            .read()
+            .await
             .iter()
             .filter(|r| r.epoch == epoch)
             .cloned()
@@ -619,7 +652,9 @@ impl RewardCalculator {
 
     /// Get total rewards paid
     pub async fn total_paid_rewards(&self) -> u64 {
-        self.rewards.read().await
+        self.rewards
+            .read()
+            .await
             .iter()
             .filter(|r| r.payout_status == PayoutStatus::Paid)
             .map(|r| r.final_amount)
@@ -666,13 +701,17 @@ impl RewardCalculator {
     /// Silently returns Ok if the file does not exist (first boot).
     pub async fn load_rewards_from_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
         if !path.exists() {
-            info!("No rewards file at {} — starting with empty state", path.display());
+            info!(
+                "No rewards file at {} — starting with empty state",
+                path.display()
+            );
             return Ok(());
         }
         let bytes = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
-        let loaded: Vec<Reward> = bincode::deserialize(&bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize rewards (file may be corrupt): {}", e))?;
+        let loaded: Vec<Reward> = bincode::deserialize(&bytes).map_err(|e| {
+            anyhow::anyhow!("Failed to deserialize rewards (file may be corrupt): {}", e)
+        })?;
         let count = loaded.len();
         *self.rewards.write().await = loaded;
         info!(path = %path.display(), count = count, "POUW rewards loaded from disk");
@@ -694,7 +733,12 @@ impl RewardCalculator {
 mod tests {
     use super::*;
 
-    fn create_test_receipt(client_did: &str, proof_type: ProofType, bytes: u64, timestamp: u64) -> ValidatedReceipt {
+    fn create_test_receipt(
+        client_did: &str,
+        proof_type: ProofType,
+        bytes: u64,
+        timestamp: u64,
+    ) -> ValidatedReceipt {
         ValidatedReceipt {
             receipt_nonce: vec![1u8; 32],
             client_did: client_did.to_string(),
@@ -768,8 +812,8 @@ mod tests {
             total_bytes: 4096,
             receipt_count: 4,
             proof_type_counts: ProofTypeCounts {
-                hash_count: 2,     // 2 * 1 = 2
-                merkle_count: 1,   // 1 * 2 = 2
+                hash_count: 2,      // 2 * 1 = 2
+                merkle_count: 1,    // 1 * 2 = 2
                 signature_count: 1, // 1 * 3 = 3
                 web4_manifest_route_count: 0,
                 web4_content_served_count: 0,

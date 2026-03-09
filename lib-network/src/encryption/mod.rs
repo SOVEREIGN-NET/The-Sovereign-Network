@@ -142,9 +142,9 @@
 //!
 //! Suitable for all mesh protocols including low-power LoRaWAN devices.
 
-use anyhow::{Result, Context};
-use lib_crypto::symmetric::chacha20::{encrypt_data_with_ad, decrypt_data_with_ad};
-use serde::{Serialize, Deserialize};
+use anyhow::{Context, Result};
+use lib_crypto::symmetric::chacha20::{decrypt_data_with_ad, encrypt_data_with_ad};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{debug, warn};
@@ -498,8 +498,12 @@ mod shell {
             match core::encrypt_core(plaintext, &self.key, aad) {
                 Ok(ciphertext) => {
                     // SHELL: Post-encryption stats tracking (atomic, thread-safe)
-                    self.stats.messages_encrypted.fetch_add(1, Ordering::Relaxed);
-                    self.stats.bytes_encrypted.fetch_add(plaintext.len() as u64, Ordering::Relaxed);
+                    self.stats
+                        .messages_encrypted
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.stats
+                        .bytes_encrypted
+                        .fetch_add(plaintext.len() as u64, Ordering::Relaxed);
 
                     // SHELL: Post-encryption logging
                     debug!(
@@ -512,7 +516,9 @@ mod shell {
                 }
                 Err(e) => {
                     // SHELL: Error stats tracking
-                    self.stats.encryption_failures.fetch_add(1, Ordering::Relaxed);
+                    self.stats
+                        .encryption_failures
+                        .fetch_add(1, Ordering::Relaxed);
 
                     // SHELL: Error logging
                     warn!(
@@ -539,8 +545,12 @@ mod shell {
             match core::decrypt_core(ciphertext, &self.key, aad) {
                 Ok(plaintext) => {
                     // SHELL: Post-decryption stats tracking (atomic, thread-safe)
-                    self.stats.messages_decrypted.fetch_add(1, Ordering::Relaxed);
-                    self.stats.bytes_decrypted.fetch_add(plaintext.len() as u64, Ordering::Relaxed);
+                    self.stats
+                        .messages_decrypted
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.stats
+                        .bytes_decrypted
+                        .fetch_add(plaintext.len() as u64, Ordering::Relaxed);
 
                     // SHELL: Post-decryption logging
                     debug!(
@@ -553,7 +563,9 @@ mod shell {
                 }
                 Err(e) => {
                     // SHELL: Error stats tracking
-                    self.stats.decryption_failures.fetch_add(1, Ordering::Relaxed);
+                    self.stats
+                        .decryption_failures
+                        .fetch_add(1, Ordering::Relaxed);
 
                     // SHELL: Error logging
                     warn!(
@@ -794,7 +806,10 @@ mod shell {
 
             // Decryption with different AAD should fail
             let result = enc.decrypt(&ciphertext, aad2);
-            assert!(result.is_err(), "❌ SECURITY FAILURE: AAD mismatch should cause decryption failure");
+            assert!(
+                result.is_err(),
+                "❌ SECURITY FAILURE: AAD mismatch should cause decryption failure"
+            );
         }
 
         #[test]
@@ -814,7 +829,10 @@ mod shell {
 
             // Decryption should fail due to authentication failure
             let result = enc.decrypt(&ciphertext, aad);
-            assert!(result.is_err(), "❌ SECURITY FAILURE: Tampered ciphertext should be detected");
+            assert!(
+                result.is_err(),
+                "❌ SECURITY FAILURE: Tampered ciphertext should be detected"
+            );
         }
 
         #[test]

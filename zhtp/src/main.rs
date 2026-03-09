@@ -3,21 +3,18 @@
 //! Main entry point for the ZHTP orchestrator node.
 //! Starts the unified server and manages the network node lifecycle.
 
-use zhtp::config::{CliArgs, load_configuration, Environment, NodeType};
-use zhtp::runtime::RuntimeOrchestrator;
-use tracing_subscriber;
 use std::env;
 use std::path::PathBuf;
+use tracing_subscriber;
+use zhtp::config::{load_configuration, CliArgs, Environment, NodeType};
+use zhtp::runtime::RuntimeOrchestrator;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize logging
-    let filter = env::var("RUST_LOG")
-        .unwrap_or_else(|_| "info".to_string());
+    let filter = env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     // Parse command-line arguments
     let args = parse_cli_args();
@@ -38,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
              derive_node_type() must be called before runtime initialization."
         )
     })?;
-    
+
     let orchestrator = match node_type {
         NodeType::Validator => {
             tracing::info!("Starting node as Validator (mining and consensus enabled)");
@@ -64,7 +61,10 @@ async fn main() -> anyhow::Result<()> {
     // Register runtime-dependent handlers (NetworkHandler, MeshHandler) now that
     // RuntimeOrchestrator is available as Arc. Give components a moment to fully initialize.
     tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-    if let Err(e) = orchestrator.register_runtime_handlers(orchestrator.clone()).await {
+    if let Err(e) = orchestrator
+        .register_runtime_handlers(orchestrator.clone())
+        .await
+    {
         tracing::warn!("Failed to register runtime handlers: {}", e);
     } else {
         tracing::info!("✅ Runtime handlers registered (NetworkHandler, MeshHandler)");

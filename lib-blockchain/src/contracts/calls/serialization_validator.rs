@@ -100,7 +100,10 @@ impl SerializationValidator {
 
         let first = trimmed[0];
         // JSON starts with {, [, ", null, true, false, or digit
-        matches!(first, b'{' | b'[' | b'"' | b'n' | b't' | b'f' | b'0'..=b'9' | b'-')
+        matches!(
+            first,
+            b'{' | b'[' | b'"' | b'n' | b't' | b'f' | b'0'..=b'9' | b'-'
+        )
     }
 
     /// Check if data looks like MessagePack
@@ -273,24 +276,19 @@ mod tests {
     #[test]
     fn test_format_compatibility_same() {
         assert!(SerializationFormat::Json.is_compatible_with(SerializationFormat::Json));
-        assert!(SerializationFormat::Bincode
-            .is_compatible_with(SerializationFormat::Bincode));
+        assert!(SerializationFormat::Bincode.is_compatible_with(SerializationFormat::Bincode));
     }
 
     #[test]
     fn test_format_compatibility_bincode_exclusive() {
-        assert!(!SerializationFormat::Bincode
-            .is_compatible_with(SerializationFormat::Json));
-        assert!(!SerializationFormat::Json
-            .is_compatible_with(SerializationFormat::Bincode));
+        assert!(!SerializationFormat::Bincode.is_compatible_with(SerializationFormat::Json));
+        assert!(!SerializationFormat::Json.is_compatible_with(SerializationFormat::Bincode));
     }
 
     #[test]
     fn test_format_compatibility_cross_language() {
-        assert!(!SerializationFormat::Json
-            .is_compatible_with(SerializationFormat::MessagePack));
-        assert!(!SerializationFormat::MessagePack
-            .is_compatible_with(SerializationFormat::Cbor));
+        assert!(!SerializationFormat::Json.is_compatible_with(SerializationFormat::MessagePack));
+        assert!(!SerializationFormat::MessagePack.is_compatible_with(SerializationFormat::Cbor));
     }
 
     #[test]
@@ -398,8 +396,7 @@ mod tests {
     #[test]
     fn test_validate_format_match() {
         let json = b"{\"a\": 1}";
-        let result =
-            SerializationValidator::validate_format(json, SerializationFormat::Json);
+        let result = SerializationValidator::validate_format(json, SerializationFormat::Json);
         assert!(result.is_ok());
     }
 

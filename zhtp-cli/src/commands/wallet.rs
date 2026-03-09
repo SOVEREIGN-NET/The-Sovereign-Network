@@ -7,11 +7,11 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{WalletArgs, WalletAction, ZhtpCli, format_output};
+use crate::argument_parsing::{format_output, WalletAction, WalletArgs, ZhtpCli};
 use crate::commands::web4_utils::connect_default;
-use crate::error::{CliResult, CliError};
-use crate::output::Output;
+use crate::error::{CliError, CliResult};
 use crate::logic;
+use crate::output::Output;
 use lib_network::client::ZhtpClient;
 use serde_json::json;
 
@@ -113,10 +113,7 @@ pub fn build_create_wallet_request(name: &str, wallet_type: &str) -> CliResult<s
 /// Handle wallet command with proper error handling and output
 ///
 /// Public entry point that maintains backward compatibility
-pub async fn handle_wallet_command(
-    args: WalletArgs,
-    cli: &ZhtpCli,
-) -> crate::error::CliResult<()> {
+pub async fn handle_wallet_command(args: WalletArgs, cli: &ZhtpCli) -> crate::error::CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_wallet_command_impl(args, cli, &output).await
 }
@@ -147,8 +144,8 @@ async fn handle_wallet_command_impl(
                     reason: e.to_string(),
                 })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: "/api/v1/wallet/create".to_string(),
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),
@@ -158,8 +155,14 @@ async fn handle_wallet_command_impl(
             output.print(&formatted)?;
             Ok(())
         }
-        WalletAction::Balance { identity_id, wallet_type } => {
-            output.info(&format!("Fetching {} wallet balance for {}...", wallet_type, identity_id))?;
+        WalletAction::Balance {
+            identity_id,
+            wallet_type,
+        } => {
+            output.info(&format!(
+                "Fetching {} wallet balance for {}...",
+                wallet_type, identity_id
+            ))?;
 
             // GET /api/v1/wallet/balance/{wallet_type}/{identity_id}
             let endpoint = build_balance_path(&wallet_type, &identity_id);
@@ -173,8 +176,8 @@ async fn handle_wallet_command_impl(
                     reason: e.to_string(),
                 })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: endpoint.clone(),
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),
@@ -185,7 +188,10 @@ async fn handle_wallet_command_impl(
             Ok(())
         }
         WalletAction::Transfer { from, to, amount } => {
-            output.info(&format!("Transferring {} from {} to {}...", amount, from, to))?;
+            output.info(&format!(
+                "Transferring {} from {} to {}...",
+                amount, from, to
+            ))?;
 
             // Pure validation and request building
             let request_body = build_transfer_request(&from, &to, amount)?;
@@ -200,8 +206,8 @@ async fn handle_wallet_command_impl(
                     reason: e.to_string(),
                 })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: "/api/v1/wallet/send".to_string(),
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),
@@ -212,7 +218,10 @@ async fn handle_wallet_command_impl(
             Ok(())
         }
         WalletAction::History { identity_id } => {
-            output.info(&format!("Fetching transaction history for {}...", identity_id))?;
+            output.info(&format!(
+                "Fetching transaction history for {}...",
+                identity_id
+            ))?;
 
             // GET /api/v1/wallet/transactions/{identity_id}
             let endpoint = build_transactions_path(&identity_id);
@@ -226,8 +235,8 @@ async fn handle_wallet_command_impl(
                     reason: e.to_string(),
                 })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: endpoint.clone(),
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),
@@ -252,8 +261,8 @@ async fn handle_wallet_command_impl(
                     reason: e.to_string(),
                 })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: endpoint.clone(),
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),
@@ -264,7 +273,10 @@ async fn handle_wallet_command_impl(
             Ok(())
         }
         WalletAction::Statistics { identity_id } => {
-            output.info(&format!("Fetching wallet statistics for {}...", identity_id))?;
+            output.info(&format!(
+                "Fetching wallet statistics for {}...",
+                identity_id
+            ))?;
 
             // GET /api/v1/wallet/statistics/{identity_id}
             let endpoint = build_statistics_path(&identity_id);
@@ -278,8 +290,8 @@ async fn handle_wallet_command_impl(
                     reason: e.to_string(),
                 })?;
 
-            let result: serde_json::Value = ZhtpClient::parse_json(&response)
-                .map_err(|e| CliError::ApiCallFailed {
+            let result: serde_json::Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: endpoint.clone(),
                     status: 0,
                     reason: format!("Failed to parse response: {}", e),

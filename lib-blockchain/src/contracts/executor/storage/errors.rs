@@ -85,7 +85,10 @@ impl StorageError {
 
     /// Check if this is a recoverable error
     pub fn is_recoverable(&self) -> bool {
-        !matches!(self.recovery_strategy(), RecoveryStrategy::Fail | RecoveryStrategy::Manual)
+        !matches!(
+            self.recovery_strategy(),
+            RecoveryStrategy::Fail | RecoveryStrategy::Manual
+        )
     }
 }
 

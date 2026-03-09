@@ -14,7 +14,10 @@ fn templates_include_runtime_role() {
 
     for template in templates {
         let config = load_template(template);
-        let role = config.get("runtime_role").and_then(|v| v.as_str()).unwrap_or("");
+        let role = config
+            .get("runtime_role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         assert!(
             !role.is_empty(),
             "template {} must define runtime_role",

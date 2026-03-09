@@ -1,9 +1,14 @@
 // Identity verifier implementation
-use crate::types::VerificationResult;
-use crate::identity::{ZkIdentityProof, ZkCredentialProof, CredentialSchema, IdentityVerificationResult};
-use crate::identity::verification::{verify_identity_proof, verify_credential_proof, verify_batch_identity_proofs, verify_batch_credential_proofs};
-use crate::identity::identity_proof::BatchIdentityProof;
 use crate::identity::credential_proof::BatchCredentialProof;
+use crate::identity::identity_proof::BatchIdentityProof;
+use crate::identity::verification::{
+    verify_batch_credential_proofs, verify_batch_identity_proofs, verify_credential_proof,
+    verify_identity_proof,
+};
+use crate::identity::{
+    CredentialSchema, IdentityVerificationResult, ZkCredentialProof, ZkIdentityProof,
+};
+use crate::types::VerificationResult;
 use anyhow::Result;
 
 /// Identity verifier for verifying identity proofs
@@ -21,7 +26,10 @@ impl IdentityVerifier {
     }
 
     /// Verify a zero-knowledge identity proof with detailed identity context
-    pub fn verify_identity_detailed(&self, proof: &ZkIdentityProof) -> Result<IdentityVerificationResult> {
+    pub fn verify_identity_detailed(
+        &self,
+        proof: &ZkIdentityProof,
+    ) -> Result<IdentityVerificationResult> {
         verify_identity_proof(proof)
     }
 
@@ -36,17 +44,28 @@ impl IdentityVerifier {
     }
 
     /// Verify a credential proof
-    pub fn verify_credential(&self, proof: &ZkCredentialProof, schema: &CredentialSchema) -> Result<VerificationResult> {
+    pub fn verify_credential(
+        &self,
+        proof: &ZkCredentialProof,
+        schema: &CredentialSchema,
+    ) -> Result<VerificationResult> {
         verify_credential_proof(proof, schema)
     }
 
     /// Verify a batch of identity proofs
-    pub fn verify_batch_identities(&self, batch: &BatchIdentityProof) -> Result<Vec<IdentityVerificationResult>> {
+    pub fn verify_batch_identities(
+        &self,
+        batch: &BatchIdentityProof,
+    ) -> Result<Vec<IdentityVerificationResult>> {
         verify_batch_identity_proofs(batch)
     }
 
     /// Verify a batch of credential proofs
-    pub fn verify_batch_credentials(&self, batch: &BatchCredentialProof, schemas: &[CredentialSchema]) -> Result<Vec<VerificationResult>> {
+    pub fn verify_batch_credentials(
+        &self,
+        batch: &BatchCredentialProof,
+        schemas: &[CredentialSchema],
+    ) -> Result<Vec<VerificationResult>> {
         verify_batch_credential_proofs(batch, schemas)
     }
 

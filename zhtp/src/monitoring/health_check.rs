@@ -1,14 +1,17 @@
 //! Health Check and System Status Monitoring
-//! 
+//!
 //! Monitors the health and status of all ZHTP components
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tokio::sync::RwLock;
-use tokio::time::{Duration, interval};
-use tracing::{info, error, debug};
+use tokio::time::{interval, Duration};
+use tracing::{debug, error, info};
 
 use super::alerting::{Alert, AlertLevel, AlertManager};
 
@@ -98,10 +101,10 @@ pub struct ResourceHealth {
 /// Health level indicators
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum HealthLevel {
-    Good,      // Green - all normal
-    Warning,   // Yellow - approaching limits
-    Critical,  // Red - immediate attention needed
-    Unknown,   // Gray - cannot determine status
+    Good,     // Green - all normal
+    Warning,  // Yellow - approaching limits
+    Critical, // Red - immediate attention needed
+    Unknown,  // Gray - cannot determine status
 }
 
 /// Resource usage trend
@@ -128,7 +131,7 @@ pub struct NetworkHealth {
 pub struct ConnectivityStatus {
     pub internet_reachable: bool,
     pub mesh_reachable: bool,
-    pub peer_connectivity: f64, // Percentage of peers reachable
+    pub peer_connectivity: f64,  // Percentage of peers reachable
     pub relay_connectivity: f64, // Percentage of relays reachable
 }
 
@@ -145,18 +148,18 @@ pub struct PeerHealth {
 /// Peer geographic/network distribution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerDistribution {
-    pub local_peers: usize,     // Same subnet
-    pub regional_peers: usize,   // Same region
-    pub global_peers: usize,     // Global distribution
-    pub relay_peers: usize,      // Long-range relays
+    pub local_peers: usize,    // Same subnet
+    pub regional_peers: usize, // Same region
+    pub global_peers: usize,   // Global distribution
+    pub relay_peers: usize,    // Long-range relays
 }
 
 /// Mesh network health
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshHealth {
-    pub mesh_coverage: f64,      // Geographic coverage
-    pub mesh_redundancy: f64,    // Path redundancy
-    pub mesh_stability: f64,     // Connection stability
+    pub mesh_coverage: f64,                               // Geographic coverage
+    pub mesh_redundancy: f64,                             // Path redundancy
+    pub mesh_stability: f64,                              // Connection stability
     pub protocol_health: HashMap<String, ProtocolHealth>, // BLE, WiFi, LoRa, etc.
 }
 
@@ -432,10 +435,10 @@ impl HealthMonitor {
 
         tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             while running.load(Ordering::SeqCst) {
                 interval.tick().await;
-                
+
                 if let Err(e) = Self::perform_health_checks(&health_status, &alert_manager).await {
                     error!("Health check failed: {}", e);
                 }
@@ -479,34 +482,37 @@ impl HealthMonitor {
         alert_manager: &Option<Arc<AlertManager>>,
     ) -> Result<()> {
         let mut health = health_status.write().await;
-        
+
         // Update timestamp
         health.timestamp = chrono::Utc::now().timestamp() as u64;
 
         // Check system health
         health.system_health = Self::check_system_health().await?;
-        
+
         // Check network health
         health.network_health = Self::check_network_health().await?;
-        
+
         // Check blockchain health
         health.blockchain_health = Self::check_blockchain_health().await?;
-        
+
         // Check storage health
         health.storage_health = Self::check_storage_health().await?;
-        
+
         // Check economic health
         health.economic_health = Self::check_economic_health().await?;
-        
+
         // Determine overall health status
         health.overall_status = Self::calculate_overall_health(&health);
-        
+
         // Trigger alerts if necessary
         if let Some(alert_manager) = alert_manager {
             Self::check_and_trigger_alerts(&health, alert_manager).await?;
         }
 
-        debug!("🏥 Health checks completed - Overall status: {:?}", health.overall_status);
+        debug!(
+            "🏥 Health checks completed - Overall status: {:?}",
+            health.overall_status
+        );
         Ok(())
     }
 
@@ -543,18 +549,16 @@ impl HealthMonitor {
                 threshold_critical: 95.0,
                 trend: ResourceTrend::Stable,
             },
-            network_interfaces: vec![
-                NetworkInterfaceHealth {
-                    interface_name: "eth0".to_string(),
-                    status: InterfaceStatus::Up,
-                    rx_bytes: 1024 * 1024 * 100, // 100MB
-                    tx_bytes: 1024 * 1024 * 50,  // 50MB
-                    rx_errors: 0,
-                    tx_errors: 0,
-                    rx_dropped: 0,
-                    tx_dropped: 0,
-                }
-            ],
+            network_interfaces: vec![NetworkInterfaceHealth {
+                interface_name: "eth0".to_string(),
+                status: InterfaceStatus::Up,
+                rx_bytes: 1024 * 1024 * 100, // 100MB
+                tx_bytes: 1024 * 1024 * 50,  // 50MB
+                rx_errors: 0,
+                tx_errors: 0,
+                rx_dropped: 0,
+                tx_dropped: 0,
+            }],
         })
     }
 
@@ -565,7 +569,7 @@ impl HealthMonitor {
             Ok(count) => count,
             Err(_) => 0,
         };
-        
+
         // Get network connectivity status from lib-network
         let connectivity_status = match lib_network::get_mesh_status().await {
             Ok(mesh_status) => ConnectivityStatus {
@@ -579,9 +583,9 @@ impl HealthMonitor {
                 mesh_reachable: false,
                 peer_connectivity: 0.0,
                 relay_connectivity: 0.0,
-            }
+            },
         };
-        
+
         Ok(NetworkHealth {
             connectivity_status,
             peer_health: PeerHealth {
@@ -599,10 +603,10 @@ impl HealthMonitor {
                         regional_peers: (peer_count / 3) as usize,
                         global_peers: (peer_count / 3) as usize,
                         relay_peers: (peer_count / 10) as usize,
-                    }
+                    },
                 },
                 average_peer_latency: 150.0, // Could be enhanced with latency data
-                peer_churn_rate: 5.0, // Could be enhanced with churn rate calculation
+                peer_churn_rate: 5.0,        // Could be enhanced with churn rate calculation
             },
             mesh_health: MeshHealth {
                 mesh_coverage: 80.0,
@@ -685,7 +689,11 @@ impl HealthMonitor {
         Ok(BlockchainHealth {
             sync_status: SyncStatus {
                 is_synced: blockchain_health.is_synced,
-                sync_progress: if blockchain_health.is_synced { 100.0 } else { 85.0 },
+                sync_progress: if blockchain_health.is_synced {
+                    100.0
+                } else {
+                    85.0
+                },
                 blocks_behind: if blockchain_health.is_synced { 0 } else { 10 },
                 sync_speed: 5.2,
             },
@@ -741,14 +749,14 @@ impl HealthMonitor {
                 let (total_storage, used_storage) = match storage.get_statistics().await {
                     Ok(stats) => (
                         1024 * 1024 * 1024 * 100, // 100GB system capacity
-                        stats.storage_stats.total_storage_used
+                        stats.storage_stats.total_storage_used,
                     ),
                     Err(_) => (
                         1024 * 1024 * 1024 * 100, // 100GB system capacity
                         std::fs::metadata("./")
                             .map(|m| m.len())
-                            .unwrap_or(1024 * 1024 * 500) // 500MB fallback
-                    )
+                            .unwrap_or(1024 * 1024 * 500), // 500MB fallback
+                    ),
                 };
 
                 Some(StorageStats {
@@ -773,7 +781,7 @@ impl HealthMonitor {
                 }
             }
         };
-        
+
         match storage_stats {
             Some(stats) => {
                 Ok(StorageHealth {
@@ -781,7 +789,7 @@ impl HealthMonitor {
                     used_capacity: stats.used_storage,
                     dht_node_count: stats.dht_nodes,
                     replication_health: ReplicationHealth {
-                        replication_factor: 3.0, // Standard replication factor
+                        replication_factor: 3.0,   // Standard replication factor
                         under_replicated_files: 0, // Calculated from storage system status
                         replication_efficiency: 0.95,
                     },
@@ -792,7 +800,7 @@ impl HealthMonitor {
                     },
                     availability: 0.999, // Default high availability
                 })
-            },
+            }
             None => {
                 // Fallback values when storage is unavailable
                 Ok(StorageHealth {
@@ -899,7 +907,10 @@ impl HealthMonitor {
                 id: "cpu_critical".to_string(),
                 level: AlertLevel::Critical,
                 title: "Critical CPU Usage".to_string(),
-                message: format!("CPU usage at {:.1}%", health.system_health.cpu_health.usage_percent),
+                message: format!(
+                    "CPU usage at {:.1}%",
+                    health.system_health.cpu_health.usage_percent
+                ),
                 source: "health_monitor".to_string(),
                 timestamp: chrono::Utc::now().timestamp() as u64,
                 metadata: HashMap::new(),
@@ -927,7 +938,10 @@ impl HealthMonitor {
                 id: "blockchain_sync".to_string(),
                 level: AlertLevel::Warning,
                 title: "Blockchain Not Synced".to_string(),
-                message: format!("Blockchain {} blocks behind", health.blockchain_health.sync_status.blocks_behind),
+                message: format!(
+                    "Blockchain {} blocks behind",
+                    health.blockchain_health.sync_status.blocks_behind
+                ),
                 source: "health_monitor".to_string(),
                 timestamp: chrono::Utc::now().timestamp() as u64,
                 metadata: HashMap::new(),

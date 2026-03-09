@@ -1,5 +1,5 @@
 //! Economic Storage Layer - Phase C Implementation
-//! 
+//!
 //! This module implements the economic incentive system for the ZHTP storage network.
 //! It builds on top of the DHT foundation layer to provide:
 //! - Dynamic pricing based on supply and demand
@@ -8,28 +8,28 @@
 //! - Reputation and quality scoring
 //! - Market mechanisms for storage resources
 
-pub mod pricing;
-pub mod contracts; 
-pub mod payments;
-pub mod reputation;
-pub mod market;
+pub mod contracts;
 pub mod incentives;
-pub mod quality;
-pub mod penalties;
-pub mod rewards;
 pub mod manager;
+pub mod market;
+pub mod payments;
+pub mod penalties;
+pub mod pricing;
+pub mod quality;
+pub mod reputation;
+pub mod rewards;
 
 // Re-export key components
-pub use pricing::*;
 pub use contracts::*;
-pub use payments::*;
-pub use reputation::*;
-pub use market::*;
 pub use incentives::*;
-pub use quality::*;
-pub use penalties::*;
-pub use rewards::*;
 pub use manager::*;
+pub use market::*;
+pub use payments::*;
+pub use penalties::*;
+pub use pricing::*;
+pub use quality::*;
+pub use reputation::*;
+pub use rewards::*;
 
 // Economic system configuration
 pub const BASE_STORAGE_PRICE: u64 = 100; // Base price per GB per day in tokens

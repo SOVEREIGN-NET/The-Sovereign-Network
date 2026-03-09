@@ -7,16 +7,16 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{format_output, IdentityArgs, IdentityAction, ZhtpCli};
-use crate::error::{CliResult, CliError};
-use crate::output::Output;
+use crate::argument_parsing::{format_output, IdentityAction, IdentityArgs, ZhtpCli};
+use crate::error::{CliError, CliResult};
 use crate::logic;
+use crate::output::Output;
 
+use base64::Engine;
 use lib_identity::ZhtpIdentity;
 use lib_network::client::ZhtpClient;
-use zhtp::keystore_names::{USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME};
 use std::path::PathBuf;
-use base64::Engine;
+use zhtp::keystore_names::{USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME};
 
 use super::web4_utils::save_private_key_to_file;
 use super::web4_utils::{build_trust_config, connect_client, load_identity_from_keystore};
@@ -162,27 +162,23 @@ async fn create_identity_impl(
 
     // Generate new identity locally (no network required)
     output.info("Generating cryptographic keys (post-quantum Dilithium + Kyber)...")?;
-    let identity = ZhtpIdentity::new_unified(
-        lib_identity::IdentityType::Device,
-        None,
-        None,
-        name,
-        None,
-    )
-    .map_err(|e| CliError::IdentityError(format!("Failed to generate identity: {}", e)))?;
+    let identity =
+        ZhtpIdentity::new_unified(lib_identity::IdentityType::Device, None, None, name, None)
+            .map_err(|e| CliError::IdentityError(format!("Failed to generate identity: {}", e)))?;
 
     output.success(&format!("DID: {}", identity.did))?;
     output.print(&format!("Identity ID: {}", identity.id))?;
 
     // Extract and save private key
-    let private_key = identity.private_key.as_ref()
+    let private_key = identity
+        .private_key
+        .as_ref()
         .ok_or_else(|| CliError::IdentityError("Identity missing private key".to_string()))?;
     save_private_key_to_file(private_key, &private_key_file)?;
 
     // Save identity to file (public data)
-    let identity_json = serde_json::to_string_pretty(&identity).map_err(|e| {
-        CliError::IdentityError(format!("Failed to serialize identity: {}", e))
-    })?;
+    let identity_json = serde_json::to_string_pretty(&identity)
+        .map_err(|e| CliError::IdentityError(format!("Failed to serialize identity: {}", e)))?;
     std::fs::write(&identity_file, identity_json).map_err(|e| {
         CliError::IdentityError(format!("Failed to write {}: {}", USER_IDENTITY_FILENAME, e))
     })?;
@@ -191,10 +187,9 @@ async fn create_identity_impl(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&identity_file, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| {
-                CliError::IdentityError(format!("Failed to set file permissions: {}", e))
-            })?;
+        std::fs::set_permissions(&identity_file, std::fs::Permissions::from_mode(0o600)).map_err(
+            |e| CliError::IdentityError(format!("Failed to set file permissions: {}", e)),
+        )?;
     }
 
     output.success(&format!("Identity saved to: {:?}", identity_file))?;
@@ -237,22 +232,22 @@ async fn create_identity_with_type_impl(
     ))?;
 
     // Generate new identity
-    let identity = ZhtpIdentity::new_unified(id_type, None, None, name, None).map_err(|e| {
-        CliError::IdentityError(format!("Failed to generate identity: {}", e))
-    })?;
+    let identity = ZhtpIdentity::new_unified(id_type, None, None, name, None)
+        .map_err(|e| CliError::IdentityError(format!("Failed to generate identity: {}", e)))?;
 
     output.success(&format!("DID: {}", identity.did))?;
     output.print(&format!("Identity Type: {}", identity_type))?;
 
     // Extract and save private key
-    let private_key = identity.private_key.as_ref()
+    let private_key = identity
+        .private_key
+        .as_ref()
         .ok_or_else(|| CliError::IdentityError("Identity missing private key".to_string()))?;
     save_private_key_to_file(private_key, &private_key_file)?;
 
     // Save identity (public data)
-    let identity_json = serde_json::to_string_pretty(&identity).map_err(|e| {
-        CliError::IdentityError(format!("Failed to serialize identity: {}", e))
-    })?;
+    let identity_json = serde_json::to_string_pretty(&identity)
+        .map_err(|e| CliError::IdentityError(format!("Failed to serialize identity: {}", e)))?;
     std::fs::write(&identity_file, identity_json).map_err(|e| {
         CliError::IdentityError(format!("Failed to write {}: {}", USER_IDENTITY_FILENAME, e))
     })?;
@@ -260,10 +255,9 @@ async fn create_identity_with_type_impl(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&identity_file, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| {
-                CliError::IdentityError(format!("Failed to set file permissions: {}", e))
-            })?;
+        std::fs::set_permissions(&identity_file, std::fs::Permissions::from_mode(0o600)).map_err(
+            |e| CliError::IdentityError(format!("Failed to set file permissions: {}", e)),
+        )?;
     }
 
     output.success(&format!("Identity saved to: {:?}", identity_file))?;
@@ -346,23 +340,33 @@ async fn migrate_identity_impl(
     };
 
     let new_identity = if let Some(phrase) = &phrase {
-        zhtp_client::restore_identity_from_phrase(phrase, device_id.to_string())
-            .map_err(|e| CliError::IdentityError(format!("Failed to derive identity from phrase: {}", e)))?
+        zhtp_client::restore_identity_from_phrase(phrase, device_id.to_string()).map_err(|e| {
+            CliError::IdentityError(format!("Failed to derive identity from phrase: {}", e))
+        })?
     } else {
-        let id = zhtp_client::generate_identity(device_id.to_string())
-            .map_err(|e| CliError::IdentityError(format!("Failed to generate new identity: {}", e)))?;
+        let id = zhtp_client::generate_identity(device_id.to_string()).map_err(|e| {
+            CliError::IdentityError(format!("Failed to generate new identity: {}", e))
+        })?;
         let generated_phrase = zhtp_client::get_seed_phrase(&id)
             .map_err(|e| CliError::IdentityError(format!("Failed to render seed phrase: {}", e)))?;
         output.header("Generated Recovery Phrase (NEW DID)")?;
-        output.warning("This phrase is the ONLY way to recover the migrated identity. Store it offline.")?;
+        output.warning(
+            "This phrase is the ONLY way to recover the migrated identity. Store it offline.",
+        )?;
         output.print(&generated_phrase)?;
         id
     };
 
-    let body_json = zhtp_client::build_migrate_identity_request_json(&new_identity, display_name.to_string())
-        .map_err(|e| CliError::ConfigError(format!("Failed to build migrate payload JSON: {}", e)))?;
+    let body_json =
+        zhtp_client::build_migrate_identity_request_json(&new_identity, display_name.to_string())
+            .map_err(|e| {
+            CliError::ConfigError(format!("Failed to build migrate payload JSON: {}", e))
+        })?;
     let body_value: serde_json::Value = serde_json::from_str(&body_json).map_err(|e| {
-        CliError::ConfigError(format!("Failed to parse migrate payload JSON (internal): {}", e))
+        CliError::ConfigError(format!(
+            "Failed to parse migrate payload JSON (internal): {}",
+            e
+        ))
     })?;
 
     output.info(&format!(
@@ -379,13 +383,12 @@ async fn migrate_identity_impl(
             reason: e.to_string(),
         })?;
 
-    let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-        CliError::ApiCallFailed {
+    let result: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: "/api/v1/identity/migrate".to_string(),
             status: 0,
             reason: format!("Failed to parse response: {}", e),
-        }
-    })?;
+        })?;
 
     output.header("Identity Migration Result")?;
     output.print(&format_output(&result, format)?)?;
@@ -418,25 +421,44 @@ async fn migrate_identity_impl(
             })?;
 
         let old_wallets_json: serde_json::Value = ZhtpClient::parse_json(&old_wallets_resp)
-            .map_err(|e| CliError::ConfigError(format!("Failed to parse old wallet list: {}", e)))?;
+            .map_err(|e| {
+                CliError::ConfigError(format!("Failed to parse old wallet list: {}", e))
+            })?;
         let new_wallets_json: serde_json::Value = ZhtpClient::parse_json(&new_wallets_resp)
-            .map_err(|e| CliError::ConfigError(format!("Failed to parse new wallet list: {}", e)))?;
+            .map_err(|e| {
+                CliError::ConfigError(format!("Failed to parse new wallet list: {}", e))
+            })?;
 
         output.header("Wallet Transfer Check")?;
         output.print(&format!(
             "Old identity wallets: total_wallets={} total_balance={}",
-            old_wallets_json.get("total_wallets").and_then(|v| v.as_u64()).unwrap_or(0),
-            old_wallets_json.get("total_balance").and_then(|v| v.as_u64()).unwrap_or(0),
+            old_wallets_json
+                .get("total_wallets")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            old_wallets_json
+                .get("total_balance")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
         ))?;
         output.print(&format!(
             "New identity wallets: total_wallets={} total_balance={}",
-            new_wallets_json.get("total_wallets").and_then(|v| v.as_u64()).unwrap_or(0),
-            new_wallets_json.get("total_balance").and_then(|v| v.as_u64()).unwrap_or(0),
+            new_wallets_json
+                .get("total_wallets")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            new_wallets_json
+                .get("total_balance")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
         ))?;
 
         // Chain-level check: wallet registry owner bindings.
         let chain_old_resp = client
-            .get(&format!("/api/v1/blockchain/wallets?owner_identity={}", old_id))
+            .get(&format!(
+                "/api/v1/blockchain/wallets?owner_identity={}",
+                old_id
+            ))
             .await
             .map_err(|e| CliError::ApiCallFailed {
                 endpoint: "/api/v1/blockchain/wallets?owner_identity={old}".to_string(),
@@ -444,7 +466,10 @@ async fn migrate_identity_impl(
                 reason: e.to_string(),
             })?;
         let chain_new_resp = client
-            .get(&format!("/api/v1/blockchain/wallets?owner_identity={}", new_id))
+            .get(&format!(
+                "/api/v1/blockchain/wallets?owner_identity={}",
+                new_id
+            ))
             .await
             .map_err(|e| CliError::ApiCallFailed {
                 endpoint: "/api/v1/blockchain/wallets?owner_identity={new}".to_string(),
@@ -452,19 +477,29 @@ async fn migrate_identity_impl(
                 reason: e.to_string(),
             })?;
 
-        let chain_old_json: serde_json::Value = ZhtpClient::parse_json(&chain_old_resp)
-            .map_err(|e| CliError::ConfigError(format!("Failed to parse chain wallet list (old): {}", e)))?;
-        let chain_new_json: serde_json::Value = ZhtpClient::parse_json(&chain_new_resp)
-            .map_err(|e| CliError::ConfigError(format!("Failed to parse chain wallet list (new): {}", e)))?;
+        let chain_old_json: serde_json::Value =
+            ZhtpClient::parse_json(&chain_old_resp).map_err(|e| {
+                CliError::ConfigError(format!("Failed to parse chain wallet list (old): {}", e))
+            })?;
+        let chain_new_json: serde_json::Value =
+            ZhtpClient::parse_json(&chain_new_resp).map_err(|e| {
+                CliError::ConfigError(format!("Failed to parse chain wallet list (new): {}", e))
+            })?;
 
         output.header("Chain Wallet Registry Check")?;
         output.print(&format!(
             "Old owner wallet_count={}",
-            chain_old_json.get("wallet_count").and_then(|v| v.as_u64()).unwrap_or(0),
+            chain_old_json
+                .get("wallet_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
         ))?;
         output.print(&format!(
             "New owner wallet_count={}",
-            chain_new_json.get("wallet_count").and_then(|v| v.as_u64()).unwrap_or(0),
+            chain_new_json
+                .get("wallet_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
         ))?;
     }
 
@@ -511,8 +546,10 @@ async fn register_identity_impl(
         .map_err(|e| CliError::IdentityError(format!("Clock error: {}", e)))?
         .as_secs();
     let signed_message = format!("ZHTP_REGISTER:{}", timestamp);
-    let sig = zhtp_client::identity::sign_message(&identity, signed_message.as_bytes())
-        .map_err(|e| CliError::IdentityError(format!("Failed to sign registration proof: {}", e)))?;
+    let sig =
+        zhtp_client::identity::sign_message(&identity, signed_message.as_bytes()).map_err(|e| {
+            CliError::IdentityError(format!("Failed to sign registration proof: {}", e))
+        })?;
 
     let body_value = serde_json::json!({
         "public_key": base64::engine::general_purpose::STANDARD.encode(&identity.public_key),
@@ -538,19 +575,21 @@ async fn register_identity_impl(
             reason: e.to_string(),
         })?;
 
-    let result: serde_json::Value = ZhtpClient::parse_json(&response).map_err(|e| {
-        CliError::ApiCallFailed {
+    let result: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: "/api/v1/identity/register".to_string(),
             status: 0,
             reason: format!("Failed to parse response: {}", e),
-        }
-    })?;
+        })?;
 
     output.header("Identity Register Result")?;
     output.print(&format_output(&result, format)?)?;
 
     // Convenience: fetch wallet list right away, so we have a baseline before migration.
-    let did = result.get("did").and_then(|v| v.as_str()).unwrap_or(&identity.did);
+    let did = result
+        .get("did")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&identity.did);
     let id = did.strip_prefix("did:zhtp:").unwrap_or(did);
 
     let wallets_resp = client
@@ -583,10 +622,7 @@ mod tests {
         let action = IdentityAction::Create {
             name: "test".to_string(),
         };
-        assert_eq!(
-            action_to_operation(&action),
-            IdentityOperation::Create
-        );
+        assert_eq!(action_to_operation(&action), IdentityOperation::Create);
     }
 
     #[test]
@@ -607,19 +643,13 @@ mod tests {
         let action = IdentityAction::Verify {
             identity_id: "did:zhtp:test:abc".to_string(),
         };
-        assert_eq!(
-            action_to_operation(&action),
-            IdentityOperation::Verify
-        );
+        assert_eq!(action_to_operation(&action), IdentityOperation::Verify);
     }
 
     #[test]
     fn test_action_to_operation_list() {
         let action = IdentityAction::List;
-        assert_eq!(
-            action_to_operation(&action),
-            IdentityOperation::List
-        );
+        assert_eq!(action_to_operation(&action), IdentityOperation::List);
     }
 
     #[test]

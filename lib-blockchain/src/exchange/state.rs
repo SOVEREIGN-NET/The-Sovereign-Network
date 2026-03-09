@@ -116,7 +116,9 @@ impl ExchangeState {
     ///
     /// Returns `None` if no trades have occurred.
     pub fn last_trade_price_sov_usdc(&self) -> Option<LastTradePrice> {
-        self.last_trade_prices.get(&TradingPair::sov_usdc()).copied()
+        self.last_trade_prices
+            .get(&TradingPair::sov_usdc())
+            .copied()
     }
 
     /// (best_bid + best_ask) / 2 for SOV/USDC, in atomic units.
@@ -230,14 +232,15 @@ mod tests {
 
         // VWAP for all trades: (100*10 + 110*20 + 120*30) / (10+20+30) = 6800/60 = 113.33...
         let vwap_all = state.vwap_sov_usdc(0, 10000).unwrap();
-        let expected = (100_000_000u128 * 10_000_000 + 110_000_000 * 20_000_000 + 120_000_000 * 30_000_000)
-            / (10_000_000 + 20_000_000 + 30_000_000);
+        let expected =
+            (100_000_000u128 * 10_000_000 + 110_000_000 * 20_000_000 + 120_000_000 * 30_000_000)
+                / (10_000_000 + 20_000_000 + 30_000_000);
         assert_eq!(vwap_all, expected);
 
         // VWAP for first two trades only
         let vwap_first_two = state.vwap_sov_usdc(0, 200).unwrap();
-        let expected_first_two = (100_000_000u128 * 10_000_000 + 110_000_000 * 20_000_000)
-            / (10_000_000 + 20_000_000);
+        let expected_first_two =
+            (100_000_000u128 * 10_000_000 + 110_000_000 * 20_000_000) / (10_000_000 + 20_000_000);
         assert_eq!(vwap_first_two, expected_first_two);
 
         // VWAP for no trades in window

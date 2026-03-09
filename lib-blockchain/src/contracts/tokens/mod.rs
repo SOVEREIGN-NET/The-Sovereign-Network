@@ -1,9 +1,9 @@
+pub mod cbe_token;
 pub mod constants;
 pub mod core;
-pub mod functions;
 pub mod dao_token;
+pub mod functions;
 pub mod token_id;
-pub mod cbe_token;
 
 // Re-export core types and canonical token ID function
 pub use core::{TokenContract, TokenInfo};
@@ -12,14 +12,12 @@ pub use token_id::derive_token_id;
 
 // Re-export canonical SOV constants (single source of truth)
 pub use constants::{
-    SOV_TOKEN_NAME, SOV_TOKEN_SYMBOL, SOV_TOKEN_DECIMALS,
-    SOV_TOKEN_MAX_SUPPLY, SOV_FEE_RATE_BPS,
+    SOV_FEE_RATE_BPS, SOV_TOKEN_DECIMALS, SOV_TOKEN_MAX_SUPPLY, SOV_TOKEN_NAME, SOV_TOKEN_SYMBOL,
 };
 
 // Re-export CBE token
 pub use cbe_token::{
-    CbeToken, CbeTokenError, DistributionAllocation, VestingSchedule, VestingPool,
-    CBE_TOTAL_SUPPLY, CBE_DECIMALS, CBE_SYMBOL, CBE_NAME,
-    CBE_COMPENSATION_POOL, CBE_OPERATIONAL_TREASURY,
-    CBE_PERFORMANCE_INCENTIVES, CBE_STRATEGIC_RESERVES,
+    CbeToken, CbeTokenError, DistributionAllocation, VestingPool, VestingSchedule,
+    CBE_COMPENSATION_POOL, CBE_DECIMALS, CBE_NAME, CBE_OPERATIONAL_TREASURY,
+    CBE_PERFORMANCE_INCENTIVES, CBE_STRATEGIC_RESERVES, CBE_SYMBOL, CBE_TOTAL_SUPPLY,
 };

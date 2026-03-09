@@ -8,8 +8,8 @@
 //! - Filling nonce cache with garbage nonces
 //! - Performing timing attacks via mass handshake attempts
 
-use anyhow::{Result, anyhow};
-use governor::{Quota, RateLimiter as GovernorRateLimiter, DefaultDirectRateLimiter};
+use anyhow::{anyhow, Result};
+use governor::{DefaultDirectRateLimiter, Quota, RateLimiter as GovernorRateLimiter};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::num::NonZeroU32;
@@ -116,7 +116,9 @@ impl RateLimiter {
     /// }
     /// ```
     pub fn check_handshake(&self, ip: IpAddr) -> Result<()> {
-        let mut limiters = self.limiters.write()
+        let mut limiters = self
+            .limiters
+            .write()
             .map_err(|e| anyhow!("Rate limiter lock poisoned: {}", e))?;
 
         // Get or create limiter for this IP
@@ -124,10 +126,10 @@ impl RateLimiter {
             // Create quota: X per second with burst capacity Y
             let quota = Quota::per_second(
                 NonZeroU32::new(self.config.handshakes_per_second)
-                    .expect("handshakes_per_second must be > 0")
-            ).allow_burst(
-                NonZeroU32::new(self.config.burst_capacity)
-                    .expect("burst_capacity must be > 0")
+                    .expect("handshakes_per_second must be > 0"),
+            )
+            .allow_burst(
+                NonZeroU32::new(self.config.burst_capacity).expect("burst_capacity must be > 0"),
             );
 
             GovernorRateLimiter::direct(quota)
@@ -147,9 +149,7 @@ impl RateLimiter {
 
     /// Get number of IPs being tracked
     pub fn tracked_ips(&self) -> usize {
-        self.limiters.read()
-            .map(|l| l.len())
-            .unwrap_or(0)
+        self.limiters.read().map(|l| l.len()).unwrap_or(0)
     }
 
     /// Clear all rate limiters (for testing)
@@ -173,7 +173,7 @@ impl Clone for RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, IpAddr};
+    use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
     fn test_rate_limiter_allows_within_limit() {

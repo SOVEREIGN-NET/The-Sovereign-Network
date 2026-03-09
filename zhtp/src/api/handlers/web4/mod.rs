@@ -14,30 +14,30 @@
 //! It intercepts requests like `myapp.zhtp.localhost` and routes them to
 //! the appropriate Web4 content.
 
-pub mod domains;
-pub mod content;
-pub mod gateway;
 pub mod chunked_upload;
+pub mod content;
+pub mod domains;
+pub mod gateway;
 
-pub use domains::*;
+pub use chunked_upload::{handle_chunked_upload, ChunkedUploadManager, UploadLimits, UploadStats};
 pub use content::*;
+pub use domains::*;
 pub use gateway::*;
-pub use chunked_upload::{ChunkedUploadManager, UploadLimits, UploadStats, handle_chunked_upload};
 
-use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
-use lib_protocols::zhtp::ZhtpResult;
+use crate::pouw::types::ProofType;
+use crate::pouw::validation::{ReceiptValidator, ValidatedReceipt};
+use chrono;
+use hex;
+use lib_network::web4::{ContentPublisher, DomainRegistry, NameResolver, Web4ContentService};
 use lib_protocols::zhtp::ZhtpRequestHandler;
+use lib_protocols::zhtp::ZhtpResult;
+use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use lib_network::web4::{DomainRegistry, ContentPublisher, NameResolver, Web4ContentService};
-use tracing::{info, warn, error, debug};
-use crate::pouw::validation::{ReceiptValidator, ValidatedReceipt};
-use crate::pouw::types::ProofType;
-use serde::{Serialize, Deserialize};
-use chrono;
+use tracing::{debug, error, info, warn};
 use uuid;
-use hex;
 
 /// Standardized error response format (Issue #11)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,9 +123,14 @@ impl Web4Handler {
 
     /// Emit a Web4ContentServed receipt (server-side, fire-and-forget)
     async fn emit_content_served(&self, domain: &str, bytes: u64) {
-        let Some(v) = &self.pouw_validator else { return };
+        let Some(v) = &self.pouw_validator else {
+            return;
+        };
         let node_did = self.node_did.as_deref().unwrap_or("did:zhtp:node");
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let mut nonce = vec![0u8; 16];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
         let receipt = ValidatedReceipt {
@@ -146,9 +151,14 @@ impl Web4Handler {
 
     /// Emit a Web4ManifestRoute receipt (server-side, fire-and-forget)
     async fn emit_manifest_route(&self, domain: &str, bytes: u64) {
-        let Some(v) = &self.pouw_validator else { return };
+        let Some(v) = &self.pouw_validator else {
+            return;
+        };
         let node_did = self.node_did.as_deref().unwrap_or("did:zhtp:node");
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let mut nonce = vec![0u8; 16];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
         let receipt = ValidatedReceipt {
@@ -168,7 +178,11 @@ impl Web4Handler {
     }
 
     /// Create standardized JSON error response (Issue #11)
-    fn json_error(&self, status: ZhtpStatus, message: impl Into<String>) -> ZhtpResult<ZhtpResponse> {
+    fn json_error(
+        &self,
+        status: ZhtpStatus,
+        message: impl Into<String>,
+    ) -> ZhtpResult<ZhtpResponse> {
         let code = match status {
             ZhtpStatus::BadRequest => 400,
             ZhtpStatus::Unauthorized => 401,
@@ -190,7 +204,6 @@ impl Web4Handler {
 
     /// Get Web4 system statistics
     async fn get_web4_statistics(&self) -> ZhtpResult<ZhtpResponse> {
-
         match self.domain_registry.get_statistics().await {
             Ok(stats) => {
                 let stats_json = serde_json::to_vec(&stats)
@@ -273,7 +286,8 @@ impl Web4Handler {
     /// Resolve Web4 domain to DApp (Issue #9)
     /// GET /api/v1/web4/resolve/{domain}
     async fn resolve_web4_domain(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
-        let domain = request.uri
+        let domain = request
+            .uri
             .strip_prefix("/api/v1/web4/resolve/")
             .ok_or_else(|| anyhow::anyhow!("Invalid resolve URL"))?;
 
@@ -328,7 +342,8 @@ impl Web4Handler {
     async fn serve_content(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         // Parse domain and path from URL
         // URL format: /api/v1/web4/content/{domain}/{path...}
-        let content_path = request.uri
+        let content_path = request
+            .uri
             .strip_prefix("/api/v1/web4/content/")
             .ok_or_else(|| anyhow::anyhow!("Invalid content URL"))?;
 
@@ -364,15 +379,13 @@ impl Web4Handler {
                 );
 
                 // Emit Web4ContentServed receipt for successful content serve
-                self.emit_content_served(&domain, result.content.len() as u64).await;
+                self.emit_content_served(&domain, result.content.len() as u64)
+                    .await;
 
                 // Build response with headers
-                let mut response = ZhtpResponse::success_with_content_type(
-                    result.content,
-                    result.mime_type,
-                    None,
-                )
-                .with_cache_control(result.cache_control);
+                let mut response =
+                    ZhtpResponse::success_with_content_type(result.content, result.mime_type, None)
+                        .with_cache_control(result.cache_control);
 
                 // Add ETag if present
                 if let Some(etag) = result.etag {
@@ -386,10 +399,8 @@ impl Web4Handler {
 
                 // Add fallback indicator header (useful for debugging SPA routing)
                 if result.is_fallback {
-                    response = response.with_custom_header(
-                        "X-Web4-Fallback".to_string(),
-                        "true".to_string(),
-                    );
+                    response = response
+                        .with_custom_header("X-Web4-Fallback".to_string(), "true".to_string());
                 }
 
                 Ok(response)
@@ -421,7 +432,9 @@ impl Web4Handler {
         }
 
         // This is an UPLOAD request - store the blob
-        let content_type = request.headers.content_type
+        let content_type = request
+            .headers
+            .content_type
             .clone()
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
@@ -432,7 +445,10 @@ impl Web4Handler {
         );
 
         // Store blob in content-addressed storage
-        let content_id = self.domain_registry.store_content_by_cid(request.body.clone()).await
+        let content_id = self
+            .domain_registry
+            .store_content_by_cid(request.body.clone())
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to store blob: {}", e))?;
 
         let response = serde_json::json!({
@@ -471,7 +487,8 @@ impl Web4Handler {
         let manifest: serde_json::Value = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid manifest JSON: {}", e))?;
 
-        let files_count = manifest.get("files")
+        let files_count = manifest
+            .get("files")
             .and_then(|v| {
                 // Handle both array (Vec<FileEntry>) and object (HashMap<String, ManifestFile>) formats
                 if let Some(arr) = v.as_array() {
@@ -485,13 +502,19 @@ impl Web4Handler {
             .unwrap_or(0);
 
         debug!(
-            domain = manifest.get("domain").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            domain = manifest
+                .get("domain")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown"),
             files = files_count,
             "Uploading manifest"
         );
 
         // Store manifest in content-addressed storage
-        let manifest_cid = self.domain_registry.store_content_by_cid(request.body.clone()).await
+        let manifest_cid = self
+            .domain_registry
+            .store_content_by_cid(request.body.clone())
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to store manifest: {}", e))?;
 
         let response = serde_json::json!({
@@ -518,7 +541,10 @@ impl Web4Handler {
     async fn fetch_content_by_cid(&self, cid: &str) -> ZhtpResult<ZhtpResponse> {
         info!("Fetching content by CID: {}", cid);
 
-        let content = self.domain_registry.get_content_by_cid(cid).await
+        let content = self
+            .domain_registry
+            .get_content_by_cid(cid)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to retrieve content: {}", e))?;
 
         match content {
@@ -573,19 +599,28 @@ impl ZhtpRequestHandler for Web4Handler {
             "/api/v1/web4/domains/resolve" if request.method == lib_protocols::ZhtpMethod::Post => {
                 self.resolve_domain_manifest(request).await
             }
-            "/api/v1/web4/domains/admin/migrate-domains" if request.method == lib_protocols::ZhtpMethod::Post => {
+            "/api/v1/web4/domains/admin/migrate-domains"
+                if request.method == lib_protocols::ZhtpMethod::Post =>
+            {
                 self.migrate_domains(request).await
             }
             "/api/v1/web4/domains/update" if request.method == lib_protocols::ZhtpMethod::Post => {
                 self.update_domain_version(request).await
             }
-            path if path.starts_with("/api/v1/web4/domains/status/") && request.method == lib_protocols::ZhtpMethod::Get => {
+            path if path.starts_with("/api/v1/web4/domains/status/")
+                && request.method == lib_protocols::ZhtpMethod::Get =>
+            {
                 self.get_domain_status(request).await
             }
-            path if path.starts_with("/api/v1/web4/domains/history/") && request.method == lib_protocols::ZhtpMethod::Get => {
+            path if path.starts_with("/api/v1/web4/domains/history/")
+                && request.method == lib_protocols::ZhtpMethod::Get =>
+            {
                 self.get_domain_history(request).await
             }
-            path if path.starts_with("/api/v1/web4/domains/") && path.ends_with("/rollback") && request.method == lib_protocols::ZhtpMethod::Post => {
+            path if path.starts_with("/api/v1/web4/domains/")
+                && path.ends_with("/rollback")
+                && request.method == lib_protocols::ZhtpMethod::Post =>
+            {
                 self.rollback_domain(request).await
             }
 
@@ -593,10 +628,14 @@ impl ZhtpRequestHandler for Web4Handler {
             path if path.starts_with("/api/v1/web4/domains/register") => {
                 self.register_domain_simple(request.body).await
             }
-            path if path.starts_with("/api/v1/web4/domains?") && request.method == lib_protocols::ZhtpMethod::Get => {
+            path if path.starts_with("/api/v1/web4/domains?")
+                && request.method == lib_protocols::ZhtpMethod::Get =>
+            {
                 self.list_domains(request).await
             }
-            path if path.starts_with("/api/v1/web4/domains/") && request.method == lib_protocols::ZhtpMethod::Get => {
+            path if path.starts_with("/api/v1/web4/domains/")
+                && request.method == lib_protocols::ZhtpMethod::Get =>
+            {
                 self.get_domain(request).await
             }
             path if path.starts_with("/api/v1/web4/domains/") && path.ends_with("/transfer") => {
@@ -610,7 +649,9 @@ impl ZhtpRequestHandler for Web4Handler {
             path if path.starts_with("/api/v1/web4/content/upload/") => {
                 // Extract owner DID from request headers or use placeholder
                 // In production, this should come from the authenticated principal via VerifiedPrincipal
-                let owner_did = request.headers.get("x-owner-did")
+                let owner_did = request
+                    .headers
+                    .get("x-owner-did")
                     .unwrap_or_else(|| "anonymous".to_string());
                 handle_chunked_upload(request, &self.chunked_upload_manager, &owner_did).await
             }
@@ -620,31 +661,39 @@ impl ZhtpRequestHandler for Web4Handler {
                 self.publish_content(request.body).await
             }
             // Blob upload/fetch endpoint
-            path if path == "/api/v1/web4/content/blob" && request.method == lib_protocols::ZhtpMethod::Post => {
+            path if path == "/api/v1/web4/content/blob"
+                && request.method == lib_protocols::ZhtpMethod::Post =>
+            {
                 self.handle_blob(request).await
             }
             // Manifest upload/fetch endpoint
-            path if path == "/api/v1/web4/content/manifest" && request.method == lib_protocols::ZhtpMethod::Post => {
+            path if path == "/api/v1/web4/content/manifest"
+                && request.method == lib_protocols::ZhtpMethod::Post =>
+            {
                 self.handle_manifest(request).await
             }
-            path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Put => {
+            path if path.starts_with("/api/v1/web4/content/")
+                && request.method == lib_protocols::ZhtpMethod::Put =>
+            {
                 self.update_content(request).await
             }
             path if path.starts_with("/api/v1/web4/content/") && path.ends_with("/metadata") => {
                 self.get_content_metadata(request).await
             }
-            path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Delete => {
+            path if path.starts_with("/api/v1/web4/content/")
+                && request.method == lib_protocols::ZhtpMethod::Delete =>
+            {
                 self.delete_content(request).await
             }
             // Content serving endpoint (GET) - uses Web4ContentService
-            path if path.starts_with("/api/v1/web4/content/") && request.method == lib_protocols::ZhtpMethod::Get => {
+            path if path.starts_with("/api/v1/web4/content/")
+                && request.method == lib_protocols::ZhtpMethod::Get =>
+            {
                 self.serve_content(request).await
             }
 
             // Statistics endpoint
-            "/api/v1/web4/statistics" => {
-                self.get_web4_statistics().await
-            }
+            "/api/v1/web4/statistics" => self.get_web4_statistics().await,
 
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,

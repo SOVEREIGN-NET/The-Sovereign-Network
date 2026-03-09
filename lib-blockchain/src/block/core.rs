@@ -58,9 +58,9 @@
 //! confirms that the number of bytes fed into the hash function equals the total size
 //! of all consensus-critical fields.
 
-use serde::{Serialize, Deserialize};
-use crate::types::{Hash, Difficulty};
 use crate::transaction::Transaction;
+use crate::types::{Difficulty, Hash};
+use serde::{Deserialize, Serialize};
 
 // ============================================================================
 // GENESIS TRUST MODEL
@@ -154,8 +154,7 @@ pub const GENESIS_TRUST_MODEL: &str = "social-consensus";
 /// Panics if `GENESIS_TRUST_MODEL` has been changed from `"social-consensus"`.
 pub fn assert_genesis_trust_model() {
     assert_eq!(
-        GENESIS_TRUST_MODEL,
-        "social-consensus",
+        GENESIS_TRUST_MODEL, "social-consensus",
         "GENESIS TRUST MODEL VIOLATED: GENESIS_TRUST_MODEL must be \
          \"social-consensus\" — the genesis block is trusted by community \
          agreement, not by cryptographic proof"
@@ -191,8 +190,15 @@ impl GenesisValidatorSnapshot {
     /// Creates a snapshot, panicking if invariants are violated.
     pub fn new(height: u64, validator_count: usize, state_commitment: [u8; 32]) -> Self {
         assert_eq!(height, 0, "genesis snapshot height must be 0, got {height}");
-        assert!(validator_count > 0, "genesis must have at least one validator");
-        Self { height, validator_count, state_commitment }
+        assert!(
+            validator_count > 0,
+            "genesis must have at least one validator"
+        );
+        Self {
+            height,
+            validator_count,
+            state_commitment,
+        }
     }
 }
 
@@ -205,7 +211,8 @@ pub fn validate_genesis_snapshot(
 ) -> Result<(), String> {
     if block.header.height != 0 {
         return Err(format!(
-            "genesis block height must be 0, got {}", block.header.height
+            "genesis block height must be 0, got {}",
+            block.header.height
         ));
     }
     if snapshot.validator_count == 0 {
@@ -248,7 +255,7 @@ pub const BFT_REQUIRED_HEADER_FIELDS: &[&str] = &[
     "merkle_root",
     "timestamp",
     "difficulty", // Legacy PoW fields retained for backward compatibility; not validated in BFT consensus
-    "nonce",      // Legacy PoW fields retained for backward compatibility; not validated in BFT consensus
+    "nonce", // Legacy PoW fields retained for backward compatibility; not validated in BFT consensus
     "height",
     "transaction_count",
     "block_size",
@@ -302,7 +309,6 @@ pub struct BlockHeader {
     // -------------------------------------------------------------------------
     // CONSENSUS-CRITICAL FIELDS — included in calculate_hash()
     // -------------------------------------------------------------------------
-
     /// Protocol version.
     ///
     /// **Consensus-critical.** Changes signal protocol upgrades or hard-fork
@@ -358,7 +364,6 @@ pub struct BlockHeader {
     // -------------------------------------------------------------------------
     // INFORMATIONAL FIELDS — NOT included in calculate_hash()
     // -------------------------------------------------------------------------
-
     /// Cached block hash (result of `calculate_hash()`).
     ///
     /// **Informational.** This field stores the pre-computed hash for fast
@@ -513,7 +518,8 @@ impl Block {
 
     /// Verify the Merkle root of transactions
     pub fn verify_merkle_root(&self) -> bool {
-        let calculated_root = crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);
+        let calculated_root =
+            crate::transaction::hashing::calculate_transaction_merkle_root(&self.transactions);
         let matches = calculated_root == self.header.merkle_root;
         if !matches {
             tracing::warn!(
@@ -556,9 +562,9 @@ impl Block {
     /// Check if block header is valid
     pub fn has_valid_header(&self) -> bool {
         // Basic header validation
-        self.header.version > 0 &&
-        self.header.timestamp > 0 &&
-        self.header.transaction_count == self.transactions.len() as u32
+        self.header.version > 0
+            && self.header.timestamp > 0
+            && self.header.transaction_count == self.transactions.len() as u32
     }
 
     /// Calculate merkle root of transactions
@@ -623,7 +629,7 @@ impl BlockHeader {
     /// Calculate the hash of this block header
     pub fn calculate_hash(&self) -> Hash {
         let mut hasher = blake3::Hasher::new();
-        
+
         hasher.update(&self.version.to_le_bytes());
         hasher.update(self.previous_block_hash.as_bytes());
         hasher.update(self.merkle_root.as_bytes());
@@ -633,7 +639,7 @@ impl BlockHeader {
         hasher.update(&self.height.to_le_bytes());
         hasher.update(&self.transaction_count.to_le_bytes());
         hasher.update(&self.block_size.to_le_bytes());
-        
+
         Hash::from_slice(hasher.finalize().as_bytes())
     }
 
@@ -705,24 +711,24 @@ pub fn create_genesis_block() -> Block {
     let genesis_timestamp = 1730419200;
     // Genesis blocks should use easy consensus difficulty like other system transaction blocks
     let genesis_difficulty = Difficulty::from_bits(0x1fffffff);
-    
+
     let header = BlockHeader::new(
-        1, // version
+        1,               // version
         Hash::default(), // previous_block_hash (none for genesis)
         Hash::default(), // merkle_root (will be calculated)
         genesis_timestamp,
         genesis_difficulty,
-        0, // height
-        0, // transaction_count
-        0, // block_size
+        0,                  // height
+        0,                  // transaction_count
+        0,                  // block_size
         genesis_difficulty, // cumulative_difficulty
     );
 
     let genesis_block = Block::new(header, Vec::new());
-    
+
     // For genesis block, we might want to add special transactions
     // This is handled by the blockchain initialization logic
-    
+
     genesis_block
 }
 
@@ -812,72 +818,117 @@ mod header_hash_tests {
         let mut h = base.clone();
         h.version = 2;
         h.block_hash = h.calculate_hash();
-        assert_ne!(base.calculate_hash(), h.calculate_hash(), "version must affect hash");
+        assert_ne!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "version must affect hash"
+        );
 
         // previous_block_hash
         let mut h = base.clone();
         h.previous_block_hash = Hash::from_slice(&[1u8; 32]);
         h.block_hash = h.calculate_hash();
-        assert_ne!(base.calculate_hash(), h.calculate_hash(), "previous_block_hash must affect hash");
+        assert_ne!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "previous_block_hash must affect hash"
+        );
 
         // merkle_root
         let mut h = base.clone();
         h.merkle_root = Hash::from_slice(&[2u8; 32]);
         h.block_hash = h.calculate_hash();
-        assert_ne!(base.calculate_hash(), h.calculate_hash(), "merkle_root must affect hash");
+        assert_ne!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "merkle_root must affect hash"
+        );
 
         // timestamp
         let mut h = base.clone();
         h.timestamp = 2_000_000;
         h.block_hash = h.calculate_hash();
-        assert_ne!(base.calculate_hash(), h.calculate_hash(), "timestamp must affect hash");
+        assert_ne!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "timestamp must affect hash"
+        );
 
         // difficulty
         let mut h = base.clone();
         h.difficulty = Difficulty::from_bits(0x1ffffffe);
         h.block_hash = h.calculate_hash();
-        assert_ne!(base.calculate_hash(), h.calculate_hash(), "difficulty must affect hash");
+        assert_ne!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "difficulty must affect hash"
+        );
 
         // nonce
         let mut h = base.clone();
         h.nonce = 42;
         h.block_hash = h.calculate_hash();
-        assert_ne!(base.calculate_hash(), h.calculate_hash(), "nonce must affect hash");
+        assert_ne!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "nonce must affect hash"
+        );
 
         // height
         let mut h = base.clone();
         h.height = 1;
         h.block_hash = h.calculate_hash();
-        assert_ne!(base.calculate_hash(), h.calculate_hash(), "height must affect hash");
+        assert_ne!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "height must affect hash"
+        );
 
         // transaction_count
         let mut h = base.clone();
         h.transaction_count = 5;
         h.block_hash = h.calculate_hash();
-        assert_ne!(base.calculate_hash(), h.calculate_hash(), "transaction_count must affect hash");
+        assert_ne!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "transaction_count must affect hash"
+        );
 
         // block_size
         let mut h = base.clone();
         h.block_size = 1024;
         h.block_hash = h.calculate_hash();
-        assert_ne!(base.calculate_hash(), h.calculate_hash(), "block_size must affect hash");
+        assert_ne!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "block_size must affect hash"
+        );
 
         // Informational fields must NOT change the hash
         let mut h = base.clone();
         h.cumulative_difficulty = Difficulty::from_bits(0x1ffffffe);
-        assert_eq!(base.calculate_hash(), h.calculate_hash(),
-            "cumulative_difficulty is informational and must NOT affect hash");
+        assert_eq!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "cumulative_difficulty is informational and must NOT affect hash"
+        );
 
         let mut h = base.clone();
         h.fee_model_version = 2;
-        assert_eq!(base.calculate_hash(), h.calculate_hash(),
-            "fee_model_version is informational and must NOT affect hash");
+        assert_eq!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "fee_model_version is informational and must NOT affect hash"
+        );
 
         // block_hash itself must NOT affect hash calculation (it is the output, not an input)
         let mut h = base.clone();
         h.block_hash = Hash::from_slice(&[3u8; 32]);
-        assert_eq!(base.calculate_hash(), h.calculate_hash(),
-            "block_hash is the output and must NOT affect hash calculation");
+        assert_eq!(
+            base.calculate_hash(),
+            h.calculate_hash(),
+            "block_hash is the output and must NOT affect hash calculation"
+        );
     }
 
     /// Verify that the number of entries in BFT_REQUIRED_HEADER_FIELDS is correct.

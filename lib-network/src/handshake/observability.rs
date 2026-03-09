@@ -103,7 +103,12 @@ pub trait HandshakeObserver: Send + Sync {
     /// - `event`: The event that failed
     /// - `reason`: Why the operation failed
     /// - `metrics`: Optional metrics snapshot at time of failure
-    fn on_failure(&self, event: HandshakeEvent, reason: FailureReason, metrics: Option<HandshakeMetrics>);
+    fn on_failure(
+        &self,
+        event: HandshakeEvent,
+        reason: FailureReason,
+        metrics: Option<HandshakeMetrics>,
+    );
 }
 
 /// No-op observer that does nothing (default)
@@ -115,7 +120,12 @@ impl HandshakeObserver for NoOpObserver {
         // No-op
     }
 
-    fn on_failure(&self, _event: HandshakeEvent, _reason: FailureReason, _metrics: Option<HandshakeMetrics>) {
+    fn on_failure(
+        &self,
+        _event: HandshakeEvent,
+        _reason: FailureReason,
+        _metrics: Option<HandshakeMetrics>,
+    ) {
         // No-op
     }
 }
@@ -142,7 +152,12 @@ impl HandshakeObserver for LoggingObserver {
         }
     }
 
-    fn on_failure(&self, event: HandshakeEvent, reason: FailureReason, metrics: Option<HandshakeMetrics>) {
+    fn on_failure(
+        &self,
+        event: HandshakeEvent,
+        reason: FailureReason,
+        metrics: Option<HandshakeMetrics>,
+    ) {
         if let Some(m) = metrics {
             tracing::warn!(
                 event = ?event,

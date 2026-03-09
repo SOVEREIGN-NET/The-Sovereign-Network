@@ -1,5 +1,5 @@
 //! Peer Reputation System
-//! 
+//!
 //! Tracks peer behavior and maintains reputation scores
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,7 +20,10 @@ pub struct PeerReputation {
 
 impl PeerReputation {
     pub fn new(peer_id: String) -> Self {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         Self {
             peer_id,
             score: 50, // Start neutral
@@ -33,47 +36,51 @@ impl PeerReputation {
             last_seen: now,
         }
     }
-    
+
     pub fn update_last_seen(&mut self) {
-        self.last_seen = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        self.last_seen = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
     }
-    
+
     pub fn record_block_accepted(&mut self) {
         self.blocks_accepted += 1;
         self.score = (self.score + 1).min(100);
         self.update_last_seen();
     }
-    
+
     pub fn record_block_rejected(&mut self) {
         self.blocks_rejected += 1;
         self.score = (self.score - 2).max(-100);
         self.update_last_seen();
     }
-    
+
     pub fn record_tx_accepted(&mut self) {
         self.txs_accepted += 1;
         self.score = (self.score + 1).min(100);
         self.update_last_seen();
     }
-    
+
     pub fn record_tx_rejected(&mut self) {
         self.txs_rejected += 1;
         self.score = (self.score - 2).max(-100);
         self.update_last_seen();
     }
-    
+
     pub fn record_violation(&mut self) {
         self.violations += 1;
         self.score = (self.score - 10).max(-100);
         self.update_last_seen();
     }
-    
+
     pub fn is_banned(&self) -> bool {
         self.score <= -50 || self.violations >= 10
     }
-    
+
     pub fn get_acceptance_rate(&self) -> f64 {
-        let total = self.blocks_accepted + self.blocks_rejected + self.txs_accepted + self.txs_rejected;
+        let total =
+            self.blocks_accepted + self.blocks_rejected + self.txs_accepted + self.txs_rejected;
         if total == 0 {
             return 100.0;
         }
@@ -95,11 +102,14 @@ impl PeerRateLimit {
         Self {
             block_count: 0,
             tx_count: 0,
-            last_reset: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            last_reset: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             violations: 0,
         }
     }
-    
+
     pub fn check_and_increment_block(&mut self, max_per_minute: u32) -> bool {
         self.reset_if_needed();
         if self.block_count >= max_per_minute {
@@ -109,7 +119,7 @@ impl PeerRateLimit {
         self.block_count += 1;
         true
     }
-    
+
     pub fn check_and_increment_tx(&mut self, max_per_minute: u32) -> bool {
         self.reset_if_needed();
         if self.tx_count >= max_per_minute {
@@ -119,16 +129,19 @@ impl PeerRateLimit {
         self.tx_count += 1;
         true
     }
-    
+
     pub fn reset_if_needed(&mut self) {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         if now - self.last_reset >= 60 {
             self.block_count = 0;
             self.tx_count = 0;
             self.last_reset = now;
         }
     }
-    
+
     pub fn get_violations(&self) -> u32 {
         self.violations
     }

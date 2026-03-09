@@ -12,21 +12,14 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
-use zhtp::pouw::{
-    ChallengeGenerator,
-    new_shared_session_log,
-    validation::ReceiptValidator,
-};
-use zhtp::pouw::types::{
-    ProofType, Receipt, ReceiptBatch, SignedReceipt, POUW_VERSION,
-};
+use zhtp::pouw::types::{ProofType, Receipt, ReceiptBatch, SignedReceipt, POUW_VERSION};
+use zhtp::pouw::{new_shared_session_log, validation::ReceiptValidator, ChallengeGenerator};
 
-use lib_identity::{IdentityManager, IdentityType};
 use lib_crypto::{
     classical::ed25519::{ed25519_keypair_from_seed, ed25519_sign},
-    PublicKey,
-    Hash,
+    Hash, PublicKey,
 };
+use lib_identity::{IdentityManager, IdentityType};
 
 // =============================================================================
 // Test helpers
@@ -197,15 +190,19 @@ async fn test_web4_manifest_route_receipt_accepted() {
     let mut identity_manager = IdentityManager::new();
     let client_did = register_identity(&mut identity_manager, 0x01, client_pk, created_at);
 
-    let generator = Arc::new(ChallengeGenerator::new(node_sk.try_into().unwrap(), node_pk));
+    let generator = Arc::new(ChallengeGenerator::new(
+        node_sk.try_into().unwrap(),
+        node_pk,
+    ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
 
     let session_log = new_shared_session_log();
     let quic_session_id = [0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE];
-    session_log
-        .write()
-        .await
-        .record(quic_session_id, client_did.clone(), "/api/v1/pouw".to_string());
+    session_log.write().await.record(
+        quic_session_id,
+        client_did.clone(),
+        "/api/v1/pouw".to_string(),
+    );
 
     let validator = ReceiptValidator::new(generator.clone(), identity_mgr)
         .with_session_log(session_log)
@@ -233,7 +230,12 @@ async fn test_web4_manifest_route_receipt_accepted() {
     );
 
     let response = validator.validate_batch(&batch).await.unwrap();
-    assert_eq!(response.accepted.len(), 1, "Expected receipt to be accepted: {:?}", response.rejected);
+    assert_eq!(
+        response.accepted.len(),
+        1,
+        "Expected receipt to be accepted: {:?}",
+        response.rejected
+    );
     assert_eq!(response.rejected.len(), 0);
 
     // Verify receipt is stored
@@ -244,7 +246,10 @@ async fn test_web4_manifest_route_receipt_accepted() {
     assert_eq!(r.bytes_verified, 4096);
     assert_eq!(r.client_did, client_did);
     assert!(r.manifest_cid.is_some(), "manifest_cid should be set");
-    assert_eq!(r.manifest_cid.as_deref().unwrap(), "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi");
+    assert_eq!(
+        r.manifest_cid.as_deref().unwrap(),
+        "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+    );
     assert_eq!(r.domain.as_deref().unwrap(), "central.sov");
     assert_eq!(r.route_hops, Some(3));
 }
@@ -262,15 +267,19 @@ async fn test_web4_content_served_receipt_accepted() {
     let mut identity_manager = IdentityManager::new();
     let client_did = register_identity(&mut identity_manager, 0x02, client_pk, created_at);
 
-    let generator = Arc::new(ChallengeGenerator::new(node_sk.try_into().unwrap(), node_pk));
+    let generator = Arc::new(ChallengeGenerator::new(
+        node_sk.try_into().unwrap(),
+        node_pk,
+    ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
 
     let session_log = new_shared_session_log();
     let quic_session_id = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-    session_log
-        .write()
-        .await
-        .record(quic_session_id, client_did.clone(), "/api/v1/pouw".to_string());
+    session_log.write().await.record(
+        quic_session_id,
+        client_did.clone(),
+        "/api/v1/pouw".to_string(),
+    );
 
     let validator = ReceiptValidator::new(generator.clone(), identity_mgr)
         .with_session_log(session_log)
@@ -298,7 +307,12 @@ async fn test_web4_content_served_receipt_accepted() {
     );
 
     let response = validator.validate_batch(&batch).await.unwrap();
-    assert_eq!(response.accepted.len(), 1, "Expected receipt to be accepted: {:?}", response.rejected);
+    assert_eq!(
+        response.accepted.len(),
+        1,
+        "Expected receipt to be accepted: {:?}",
+        response.rejected
+    );
     assert_eq!(response.rejected.len(), 0);
 
     let receipts = validator.get_validated_receipts().await;
@@ -323,7 +337,10 @@ async fn test_fabricated_receipt_missing_manifest_cid_rejected() {
     let mut identity_manager = IdentityManager::new();
     let client_did = register_identity(&mut identity_manager, 0x03, client_pk, created_at);
 
-    let generator = Arc::new(ChallengeGenerator::new(node_sk.try_into().unwrap(), node_pk));
+    let generator = Arc::new(ChallengeGenerator::new(
+        node_sk.try_into().unwrap(),
+        node_pk,
+    ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
 
     let validator = ReceiptValidator::new(generator.clone(), identity_mgr);
@@ -352,7 +369,11 @@ async fn test_fabricated_receipt_missing_manifest_cid_rejected() {
     );
 
     let response = validator.validate_batch(&batch).await.unwrap();
-    assert_eq!(response.accepted.len(), 0, "Fabricated receipt should be rejected");
+    assert_eq!(
+        response.accepted.len(),
+        0,
+        "Fabricated receipt should be rejected"
+    );
     assert_eq!(response.rejected.len(), 1);
     assert_eq!(response.rejected[0].reason, "BAD_PROOF");
 }
@@ -370,19 +391,22 @@ async fn test_replay_receipt_rejected() {
     let mut identity_manager = IdentityManager::new();
     let client_did = register_identity(&mut identity_manager, 0x04, client_pk, created_at);
 
-    let generator = Arc::new(ChallengeGenerator::new(node_sk.try_into().unwrap(), node_pk));
+    let generator = Arc::new(ChallengeGenerator::new(
+        node_sk.try_into().unwrap(),
+        node_pk,
+    ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
 
     let session_log = new_shared_session_log();
     let quic_session_id = [0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89];
-    session_log
-        .write()
-        .await
-        .record(quic_session_id, client_did.clone(), "/api/v1/pouw".to_string());
+    session_log.write().await.record(
+        quic_session_id,
+        client_did.clone(),
+        "/api/v1/pouw".to_string(),
+    );
 
     let validator = Arc::new(
-        ReceiptValidator::new(generator.clone(), identity_mgr)
-            .with_session_log(session_log),
+        ReceiptValidator::new(generator.clone(), identity_mgr).with_session_log(session_log),
     );
 
     let (challenge_nonce, task_id) =
@@ -408,7 +432,11 @@ async fn test_replay_receipt_rejected() {
     );
 
     let resp1 = validator.validate_batch(&batch1).await.unwrap();
-    assert_eq!(resp1.accepted.len(), 1, "First submission should be accepted");
+    assert_eq!(
+        resp1.accepted.len(),
+        1,
+        "First submission should be accepted"
+    );
 
     // Second submission — same receipt nonce → REPLAY
     let batch2 = build_signed_batch(
@@ -443,15 +471,17 @@ async fn test_new_identity_receipt_rejected() {
     let mut identity_manager = IdentityManager::new();
     let client_did = register_identity(&mut identity_manager, 0x05, client_pk, created_at);
 
-    let generator = Arc::new(ChallengeGenerator::new(node_sk.try_into().unwrap(), node_pk));
+    let generator = Arc::new(ChallengeGenerator::new(
+        node_sk.try_into().unwrap(),
+        node_pk,
+    ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
 
     // Validator configured with 24-hour minimum identity age
-    let validator = ReceiptValidator::new(generator.clone(), identity_mgr)
-        .with_min_identity_age(86_400);
+    let validator =
+        ReceiptValidator::new(generator.clone(), identity_mgr).with_min_identity_age(86_400);
 
-    let (challenge_nonce, task_id) =
-        issue_challenge(&generator, "hash").await;
+    let (challenge_nonce, task_id) = issue_challenge(&generator, "hash").await;
 
     let batch = build_signed_batch(
         &client_did,
@@ -465,7 +495,11 @@ async fn test_new_identity_receipt_rejected() {
     );
 
     let response = validator.validate_batch(&batch).await.unwrap();
-    assert_eq!(response.accepted.len(), 0, "New identity should be rejected");
+    assert_eq!(
+        response.accepted.len(),
+        0,
+        "New identity should be rejected"
+    );
     assert_eq!(response.rejected.len(), 1);
     assert_eq!(
         response.rejected[0].reason, "CLIENT_INVALID",
@@ -487,13 +521,15 @@ async fn test_signature_forgery_rejected() {
     let mut identity_manager = IdentityManager::new();
     let client_did = register_identity(&mut identity_manager, 0x06, client_pk, created_at);
 
-    let generator = Arc::new(ChallengeGenerator::new(node_sk.try_into().unwrap(), node_pk));
+    let generator = Arc::new(ChallengeGenerator::new(
+        node_sk.try_into().unwrap(),
+        node_pk,
+    ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
 
     let validator = ReceiptValidator::new(generator.clone(), identity_mgr);
 
-    let (challenge_nonce, task_id) =
-        issue_challenge(&generator, "hash").await;
+    let (challenge_nonce, task_id) = issue_challenge(&generator, "hash").await;
 
     let now = now_secs();
     let receipt = Receipt {
@@ -529,7 +565,11 @@ async fn test_signature_forgery_rejected() {
     };
 
     let response = validator.validate_batch(&batch).await.unwrap();
-    assert_eq!(response.accepted.len(), 0, "Forged signature should be rejected");
+    assert_eq!(
+        response.accepted.len(),
+        0,
+        "Forged signature should be rejected"
+    );
     assert_eq!(response.rejected.len(), 1);
     assert_eq!(
         response.rejected[0].reason, "BAD_SIG",

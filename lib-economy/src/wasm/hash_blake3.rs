@@ -1,5 +1,5 @@
 //! WASM-compatible Blake3 hashing with DefaultHasher fallback
-//! 
+//!
 //! Provides cross-platform hashing that works in both native and browser environments.
 
 use std::collections::hash_map::DefaultHasher;

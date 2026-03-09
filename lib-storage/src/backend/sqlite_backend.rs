@@ -1183,22 +1183,21 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
 
         // Update the score
         let now = get_current_timestamp();
-        let result = sqlx::query("UPDATE reputation_scores SET score = ?, last_updated = ? WHERE node_id = ?")
-            .bind(score)
-            .bind(now)
-            .bind(node_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Database error in recalculate_reputation: {:?}", e);
-                anyhow!("Failed to update reputation score")
-            })?;
+        let result = sqlx::query(
+            "UPDATE reputation_scores SET score = ?, last_updated = ? WHERE node_id = ?",
+        )
+        .bind(score)
+        .bind(now)
+        .bind(node_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error in recalculate_reputation: {:?}", e);
+            anyhow!("Failed to update reputation score")
+        })?;
 
         if result.rows_affected() == 0 {
-            return Err(anyhow!(
-                "No reputation row found for node_id: {}",
-                node_id
-            ));
+            return Err(anyhow!("No reputation row found for node_id: {}", node_id));
         }
 
         Ok(score)
@@ -1377,10 +1376,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_node ON audit_log(node_id);
 
     /// Get total storage size by tier
     pub async fn get_storage_by_tier(&self) -> Result<Vec<(String, i64)>> {
-        let rows = sqlx::query("SELECT tier, SUM(size) as total_size FROM content_metadata GROUP BY tier")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| anyhow!("Failed to get storage by tier: {}", e))?;
+        let rows =
+            sqlx::query("SELECT tier, SUM(size) as total_size FROM content_metadata GROUP BY tier")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| anyhow!("Failed to get storage by tier: {}", e))?;
 
         let mut results = Vec::new();
         for row in rows {
@@ -1479,7 +1479,10 @@ mod tests {
         assert_eq!(retrieved.unwrap().size, 2048);
 
         // Delete
-        let deleted = backend.delete_content_metadata(&content_hash).await.unwrap();
+        let deleted = backend
+            .delete_content_metadata(&content_hash)
+            .await
+            .unwrap();
         assert!(deleted);
 
         let retrieved = backend.get_content_metadata(&content_hash).await.unwrap();
@@ -1507,11 +1510,17 @@ mod tests {
             backend.upsert_content_metadata(&metadata).await.unwrap();
         }
 
-        let results = backend.list_content_by_owner("owner1", None, None).await.unwrap();
+        let results = backend
+            .list_content_by_owner("owner1", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 3);
 
         // Test pagination
-        let results = backend.list_content_by_owner("owner1", Some(2), None).await.unwrap();
+        let results = backend
+            .list_content_by_owner("owner1", Some(2), None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
     }
 
@@ -1690,7 +1699,12 @@ mod tests {
 
         // Append logs
         let id1 = backend
-            .append_audit_log("content_stored", Some("node1"), None, Some(r#"{"size": 1024}"#))
+            .append_audit_log(
+                "content_stored",
+                Some("node1"),
+                None,
+                Some(r#"{"size": 1024}"#),
+            )
             .await
             .unwrap();
         let id2 = backend
@@ -1702,7 +1716,10 @@ mod tests {
         assert!(id2 > id1);
 
         // Get by type
-        let logs = backend.get_audit_logs_by_type("content_stored", 100).await.unwrap();
+        let logs = backend
+            .get_audit_logs_by_type("content_stored", 100)
+            .await
+            .unwrap();
         assert_eq!(logs.len(), 1);
 
         // Get by node
@@ -1711,7 +1728,10 @@ mod tests {
 
         // Get by time range
         let now = chrono::Utc::now().timestamp();
-        let logs = backend.get_audit_logs(now - 60, now + 60, 100).await.unwrap();
+        let logs = backend
+            .get_audit_logs(now - 60, now + 60, 100)
+            .await
+            .unwrap();
         assert_eq!(logs.len(), 2);
     }
 
@@ -1778,7 +1798,9 @@ mod tests {
         assert!(result.is_err());
 
         // Test invalid tier
-        let result = backend.list_content_by_tier("invalid_tier", None, None).await;
+        let result = backend
+            .list_content_by_tier("invalid_tier", None, None)
+            .await;
         assert!(result.is_err());
     }
 
@@ -1811,23 +1833,38 @@ mod tests {
         }
 
         // Search for "rust" tag
-        let results = backend.search_content_by_tag("rust", None, None).await.unwrap();
+        let results = backend
+            .search_content_by_tag("rust", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
 
         // Search for "backend" tag
-        let results = backend.search_content_by_tag("backend", None, None).await.unwrap();
+        let results = backend
+            .search_content_by_tag("backend", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
 
         // Search for "python" tag
-        let results = backend.search_content_by_tag("python", None, None).await.unwrap();
+        let results = backend
+            .search_content_by_tag("python", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
 
         // Search for non-existent tag
-        let results = backend.search_content_by_tag("nonexistent", None, None).await.unwrap();
+        let results = backend
+            .search_content_by_tag("nonexistent", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 0);
 
         // Test pagination
-        let results = backend.search_content_by_tag("rust", Some(1), None).await.unwrap();
+        let results = backend
+            .search_content_by_tag("rust", Some(1), None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -1854,22 +1891,34 @@ mod tests {
         }
 
         // List hot tier
-        let results = backend.list_content_by_tier("hot", None, None).await.unwrap();
+        let results = backend
+            .list_content_by_tier("hot", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tier, "hot");
 
         // List warm tier
-        let results = backend.list_content_by_tier("warm", None, None).await.unwrap();
+        let results = backend
+            .list_content_by_tier("warm", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tier, "warm");
 
         // List cold tier
-        let results = backend.list_content_by_tier("cold", None, None).await.unwrap();
+        let results = backend
+            .list_content_by_tier("cold", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tier, "cold");
 
         // List archive tier (no content)
-        let results = backend.list_content_by_tier("archive", None, None).await.unwrap();
+        let results = backend
+            .list_content_by_tier("archive", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 0);
     }
 
@@ -1912,15 +1961,24 @@ mod tests {
         }
 
         // List contracts by provider0
-        let results = backend.list_contracts_by_provider("provider0", None, None).await.unwrap();
+        let results = backend
+            .list_contracts_by_provider("provider0", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2); // contracts 0 and 2
 
         // List contracts by provider1
-        let results = backend.list_contracts_by_provider("provider1", None, None).await.unwrap();
+        let results = backend
+            .list_contracts_by_provider("provider1", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1); // contract 1
 
         // List contracts by non-existent provider
-        let results = backend.list_contracts_by_provider("provider999", None, None).await.unwrap();
+        let results = backend
+            .list_contracts_by_provider("provider999", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 0);
     }
 
@@ -1963,15 +2021,24 @@ mod tests {
         }
 
         // List contracts by client0
-        let results = backend.list_contracts_by_client("client0", None, None).await.unwrap();
+        let results = backend
+            .list_contracts_by_client("client0", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2); // contracts 0 and 2
 
         // List contracts by client1
-        let results = backend.list_contracts_by_client("client1", None, None).await.unwrap();
+        let results = backend
+            .list_contracts_by_client("client1", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1); // contract 1
 
         // List contracts by non-existent client
-        let results = backend.list_contracts_by_client("client999", None, None).await.unwrap();
+        let results = backend
+            .list_contracts_by_client("client999", None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 0);
     }
 
@@ -2004,7 +2071,7 @@ mod tests {
                 provider_id: "provider1".to_string(),
                 client_id: "client1".to_string(),
                 status: "active".to_string(),
-                start_time: now - 3600, // Started 1 hour ago
+                start_time: now - 3600,                // Started 1 hour ago
                 end_time: now + (60 * (i + 1) as i64), // Expires in 60, 120, 180 seconds
                 price_per_day: 100,
                 total_paid: 100,
@@ -2015,15 +2082,24 @@ mod tests {
         }
 
         // List contracts expiring before 90 seconds from now
-        let results = backend.list_expiring_contracts(now + 90, None).await.unwrap();
+        let results = backend
+            .list_expiring_contracts(now + 90, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1); // Only contract 0
 
         // List contracts expiring before 150 seconds from now
-        let results = backend.list_expiring_contracts(now + 150, None).await.unwrap();
+        let results = backend
+            .list_expiring_contracts(now + 150, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2); // Contracts 0 and 1
 
         // List contracts expiring before 200 seconds from now
-        let results = backend.list_expiring_contracts(now + 200, None).await.unwrap();
+        let results = backend
+            .list_expiring_contracts(now + 200, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 3); // All contracts
     }
 
@@ -2058,17 +2134,26 @@ mod tests {
 
         // Get storage by tier
         let results = backend.get_storage_by_tier().await.unwrap();
-        
+
         // Find hot tier total
-        let hot_total = results.iter().find(|(tier, _)| tier == "hot").map(|(_, size)| *size);
+        let hot_total = results
+            .iter()
+            .find(|(tier, _)| tier == "hot")
+            .map(|(_, size)| *size);
         assert_eq!(hot_total, Some(3000)); // 1000 + 2000
 
         // Find warm tier total
-        let warm_total = results.iter().find(|(tier, _)| tier == "warm").map(|(_, size)| *size);
+        let warm_total = results
+            .iter()
+            .find(|(tier, _)| tier == "warm")
+            .map(|(_, size)| *size);
         assert_eq!(warm_total, Some(5000));
 
         // Find cold tier total
-        let cold_total = results.iter().find(|(tier, _)| tier == "cold").map(|(_, size)| *size);
+        let cold_total = results
+            .iter()
+            .find(|(tier, _)| tier == "cold")
+            .map(|(_, size)| *size);
         assert_eq!(cold_total, Some(10000));
     }
 
@@ -2079,16 +2164,22 @@ mod tests {
 
         // Insert audit logs using append_audit_log (which uses current timestamp)
         for i in 0..5 {
-            backend.append_audit_log(
-                &format!("event_type{}", i),
-                Some(&format!("node{}", i)),
-                None,
-                Some(&format!("Details {}", i))
-            ).await.unwrap();
+            backend
+                .append_audit_log(
+                    &format!("event_type{}", i),
+                    Some(&format!("node{}", i)),
+                    None,
+                    Some(&format!("Details {}", i)),
+                )
+                .await
+                .unwrap();
         }
 
         // Get count before pruning
-        let all_logs = backend.get_audit_logs(now - 3600, now + 300, 100).await.unwrap();
+        let all_logs = backend
+            .get_audit_logs(now - 3600, now + 300, 100)
+            .await
+            .unwrap();
         let initial_count = all_logs.len();
         assert_eq!(initial_count, 5);
 
@@ -2098,7 +2189,10 @@ mod tests {
         assert_eq!(deleted, 5);
 
         // Verify no logs remain
-        let final_logs = backend.get_audit_logs(now - 3600, now + 300, 100).await.unwrap();
+        let final_logs = backend
+            .get_audit_logs(now - 3600, now + 300, 100)
+            .await
+            .unwrap();
         assert_eq!(final_logs.len(), 0);
     }
 
@@ -2109,6 +2203,9 @@ mod tests {
         // Try to recalculate reputation for non-existent node
         let result = backend.recalculate_reputation("nonexistent_node").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No reputation row found"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No reputation row found"));
     }
 }

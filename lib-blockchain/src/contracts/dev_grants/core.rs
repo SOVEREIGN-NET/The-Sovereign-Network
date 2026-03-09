@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use crate::integration::crypto_integration::PublicKey;
-use crate::contracts::tokens::core::TokenContract;
 use super::types::*;
+use crate::contracts::tokens::core::TokenContract;
+use crate::integration::crypto_integration::PublicKey;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Development Grants Fund Contract - Phase 2 Final Implementation
 ///
@@ -121,13 +121,12 @@ impl DevGrants {
             return Err(Error::ZeroAmount);
         }
 
-        self.total_received = self.total_received
+        self.total_received = self
+            .total_received
             .checked_add(amount)
             .ok_or(Error::Overflow)?;
 
-        self.balance = self.balance
-            .checked_add(amount)
-            .ok_or(Error::Overflow)?;
+        self.balance = self.balance.checked_add(amount).ok_or(Error::Overflow)?;
 
         Ok(())
     }
@@ -239,7 +238,9 @@ impl DevGrants {
         self.ensure_governance(caller)?;
 
         // Invariant G2: Proposal must be approved
-        let grant = self.approved.get_mut(&proposal_id)
+        let grant = self
+            .approved
+            .get_mut(&proposal_id)
             .ok_or(Error::ProposalNotApproved)?;
 
         // Invariant G3: Prevent replay (proposal must not be executed)
@@ -272,11 +273,10 @@ impl DevGrants {
         // ====================================================================
 
         // Update internal balances
-        self.balance = self.balance
-            .checked_sub(amt)
-            .ok_or(Error::Overflow)?;
+        self.balance = self.balance.checked_sub(amt).ok_or(Error::Overflow)?;
 
-        self.total_disbursed = self.total_disbursed
+        self.total_disbursed = self
+            .total_disbursed
             .checked_add(amt)
             .ok_or(Error::Overflow)?;
 
