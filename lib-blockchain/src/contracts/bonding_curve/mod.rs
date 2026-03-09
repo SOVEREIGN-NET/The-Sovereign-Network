@@ -19,6 +19,7 @@
 
 pub mod event_indexer;
 pub mod events;
+pub mod pricing;
 pub mod registry;
 pub mod token;
 pub mod types;
