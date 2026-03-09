@@ -333,33 +333,47 @@ impl OracleHandler {
                 }
             }
             OraclePair::CbeUsd => {
-                let token_opt = bc
+                let cbe_symbol = lib_blockchain::contracts::tokens::CBE_SYMBOL;
+                // Prefer bonding curve token (has live price); fall back to regular token contract.
+                let bonding_token = bc
                     .bonding_curve_registry
                     .get_all()
                     .into_iter()
-                    .find(|t| t.symbol == lib_blockchain::contracts::tokens::CBE_SYMBOL);
-                let token = match token_opt {
-                    Some(t) => t,
-                    None => {
-                        return Ok(ZhtpResponse::error(
-                            ZhtpStatus::NotFound,
-                            "CBE bonding curve token not found".to_string(),
-                        ));
-                    }
+                    .find(|t| t.symbol == cbe_symbol);
+
+                let body = if let Some(token) = bonding_token {
+                    let price_atomic = token.current_price() as u128;
+                    json!({
+                        "pair": pair.as_str(),
+                        "source": "bonding_curve",
+                        "token_id": hex::encode(token.token_id),
+                        "phase": format!("{:?}", token.phase),
+                        "price_atomic": price_atomic.to_string(),
+                        "price": Self::price_f64_from_atomic(price_atomic),
+                        "price_scale": ORACLE_PRICE_SCALE.to_string(),
+                        "total_supply": token.total_supply,
+                        "reserve_balance": token.reserve_balance,
+                        "current_epoch": current_epoch,
+                    })
+                } else if let Some(token) = bc.token_contracts.values().find(|t| t.symbol == cbe_symbol) {
+                    // CBE exists as a standard token contract without a bonding curve price.
+                    json!({
+                        "pair": pair.as_str(),
+                        "source": "token_contract",
+                        "token_id": hex::encode(token.token_id),
+                        "name": token.name,
+                        "symbol": token.symbol,
+                        "total_supply": token.total_supply,
+                        "price": null,
+                        "current_epoch": current_epoch,
+                    })
+                } else {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::NotFound,
+                        "CBE token not found".to_string(),
+                    ));
                 };
-                let price_atomic = token.current_price() as u128;
-                let body = json!({
-                    "pair": pair.as_str(),
-                    "source": "bonding_curve",
-                    "token_id": hex::encode(token.token_id),
-                    "phase": format!("{:?}", token.phase),
-                    "price_atomic": price_atomic.to_string(),
-                    "price": Self::price_f64_from_atomic(price_atomic),
-                    "price_scale": ORACLE_PRICE_SCALE.to_string(),
-                    "total_supply": token.total_supply,
-                    "reserve_balance": token.reserve_balance,
-                    "current_epoch": current_epoch,
-                });
+
                 let bytes = match serde_json::to_vec(&body) {
                     Ok(b) => b,
                     Err(e) => {
@@ -483,52 +497,69 @@ impl OracleHandler {
                 ))
             }
             OraclePair::CbeUsd => {
-                let token_opt = bc
+                let cbe_symbol = lib_blockchain::contracts::tokens::CBE_SYMBOL;
+                let bonding_token = bc
                     .bonding_curve_registry
                     .get_all()
                     .into_iter()
-                    .find(|t| t.symbol == lib_blockchain::contracts::tokens::CBE_SYMBOL);
-                let token = match token_opt {
-                    Some(t) => t,
-                    None => {
-                        return Ok(ZhtpResponse::error(
-                            ZhtpStatus::NotFound,
-                            "CBE bonding curve token not found".to_string(),
-                        ));
-                    }
-                };
-                let current_price_atomic = token.current_price() as u128;
-                let base_price_atomic = match token.curve_type {
-                    lib_blockchain::contracts::bonding_curve::types::CurveType::Linear { base_price, .. } => base_price as u128,
-                    lib_blockchain::contracts::bonding_curve::types::CurveType::Exponential { base_price, .. } => base_price as u128,
-                    lib_blockchain::contracts::bonding_curve::types::CurveType::Sigmoid { max_price, .. } => (max_price as u128) / 2,
-                };
-                let current_price = Self::price_f64_from_atomic(current_price_atomic);
-                let base_price = Self::price_f64_from_atomic(base_price_atomic);
-                let abs_change = current_price - base_price;
-                let pct_change = if base_price > 0.0 {
-                    (abs_change / base_price) * 100.0
-                } else {
-                    0.0
-                };
-                let stats = token.get_stats(block_timestamp);
+                    .find(|t| t.symbol == cbe_symbol);
 
-                let body = json!({
-                    "pair": pair.as_str(),
-                    "source": "bonding_curve_model",
-                    "note": "CBE variation is computed against curve baseline; no historical per-period oracle series exists yet",
-                    "period_secs": period_secs,
-                    "token_id": hex::encode(token.token_id),
-                    "phase": format!("{:?}", token.phase),
-                    "current_price": current_price,
-                    "base_price": base_price,
-                    "absolute_change_since_base": abs_change,
-                    "percent_change_since_base": pct_change,
-                    "reserve_balance": token.reserve_balance,
-                    "total_supply": token.total_supply,
-                    "graduation_progress_percent": stats.graduation_progress_percent,
-                    "can_graduate": stats.can_graduate,
-                });
+                let body = if let Some(token) = bonding_token {
+                    let current_price_atomic = token.current_price() as u128;
+                    let base_price_atomic = match token.curve_type {
+                        lib_blockchain::contracts::bonding_curve::types::CurveType::Linear { base_price, .. } => base_price as u128,
+                        lib_blockchain::contracts::bonding_curve::types::CurveType::Exponential { base_price, .. } => base_price as u128,
+                        lib_blockchain::contracts::bonding_curve::types::CurveType::Sigmoid { max_price, .. } => (max_price as u128) / 2,
+                    };
+                    let current_price = Self::price_f64_from_atomic(current_price_atomic);
+                    let base_price = Self::price_f64_from_atomic(base_price_atomic);
+                    let abs_change = current_price - base_price;
+                    let pct_change = if base_price > 0.0 {
+                        (abs_change / base_price) * 100.0
+                    } else {
+                        0.0
+                    };
+                    let stats = token.get_stats(block_timestamp);
+                    json!({
+                        "pair": pair.as_str(),
+                        "source": "bonding_curve_model",
+                        "note": "CBE variation is computed against curve baseline; no historical per-period oracle series exists yet",
+                        "period_secs": period_secs,
+                        "token_id": hex::encode(token.token_id),
+                        "phase": format!("{:?}", token.phase),
+                        "current_price": current_price,
+                        "base_price": base_price,
+                        "absolute_change_since_base": abs_change,
+                        "percent_change_since_base": pct_change,
+                        "reserve_balance": token.reserve_balance,
+                        "total_supply": token.total_supply,
+                        "graduation_progress_percent": stats.graduation_progress_percent,
+                        "can_graduate": stats.can_graduate,
+                    })
+                } else if let Some(token) = bc.token_contracts.values().find(|t| t.symbol == cbe_symbol) {
+                    // CBE exists as a standard token contract; no bonding curve variation data.
+                    json!({
+                        "pair": pair.as_str(),
+                        "source": "token_contract",
+                        "note": "CBE is a standard token contract without a bonding curve; variation data is not available",
+                        "period_secs": period_secs,
+                        "token_id": hex::encode(token.token_id),
+                        "name": token.name,
+                        "symbol": token.symbol,
+                        "total_supply": token.total_supply,
+                        "current_price": null,
+                        "base_price": null,
+                        "absolute_change_since_base": null,
+                        "percent_change_since_base": null,
+                        "current_epoch": current_epoch,
+                    })
+                } else {
+                    return Ok(ZhtpResponse::error(
+                        ZhtpStatus::NotFound,
+                        "CBE token not found".to_string(),
+                    ));
+                };
+
                 let bytes = match serde_json::to_vec(&body) {
                     Ok(b) => b,
                     Err(e) => {
