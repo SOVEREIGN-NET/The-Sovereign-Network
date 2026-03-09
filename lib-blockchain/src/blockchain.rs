@@ -1383,12 +1383,12 @@ impl Blockchain {
 
     /// Initialize CBE (Community Bonding Experiment) as a built-in bonding curve token.
     ///
-    /// This is an interim fix until full bonding curve deployment through consensus
-    /// is fully operational. CBE is initialized at genesis to unblock oracle price endpoints.
+    /// Uses the document-compliant piecewise linear curve with 4 supply bands.
+    /// This provides proper price discovery as supply grows from 0 to 100B CBE.
     ///
-    /// Issue #1820: Bonding Curve Token Deployment
+    /// Issue #1842: Piecewise Linear Bonding Curve Mathematics
     fn initialize_cbe_genesis(&mut self) {
-        use crate::contracts::bonding_curve::{BondingCurveToken, CurveType, Threshold};
+        use crate::contracts::bonding_curve::{BondingCurveToken, CurveType, Threshold, PiecewiseLinearCurve};
         use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
 
         // Generate deterministic CBE token ID (same as CbeToken)
@@ -1419,12 +1419,9 @@ impl Blockchain {
             key_id: [0u8; 32],
         };
 
-        // Deploy CBE as a bonding curve token
-        // Using linear curve with $0.01 base price and $69k reserve threshold
-        let curve_type = CurveType::Linear {
-            base_price: 1_000_000, // $0.01 in stablecoin atomic units (6 decimals)
-            slope: 0,                // Constant price for simplicity
-        };
+        // Deploy CBE with piecewise linear curve (Issue #1842)
+        // 4-band curve with price starting at ~0.000313 SOV and increasing with supply
+        let curve_type = CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default());
         let threshold = Threshold::ReserveAmount(69_000_000_000); // $69k in micro-USD
 
         match BondingCurveToken::deploy(
