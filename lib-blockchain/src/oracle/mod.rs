@@ -954,10 +954,13 @@ impl OracleState {
         .map_err(OracleAttestationAdmissionError::Validation)?;
 
         // ORACLE-R1: Deviation band check (Spec §9)
-        // Only perform if there are existing attestations to compare against
-        if let Some(state) = epoch_state {
-            if !state.signer_prices.is_empty() {
-                self.check_deviation_band(attestation, state)?;
+        // Only applied in strict spec mode to preserve V0 backward compatibility.
+        // Gate this check behind the protocol version/feature flag.
+        if self.protocol_config.is_strict_spec_active() {
+            if let Some(state) = epoch_state {
+                if !state.signer_prices.is_empty() {
+                    self.check_deviation_band(attestation, state)?;
+                }
             }
         }
 
@@ -978,9 +981,12 @@ impl OracleState {
             sorted[len / 2]
         } else {
             // Even length: return average of two middle elements
+            // Use overflow-safe average without computing mid1 + mid2 directly.
             let mid1 = sorted[len / 2 - 1];
             let mid2 = sorted[len / 2];
-            (mid1 + mid2) / 2
+            let half_sum = (mid1 / 2) + (mid2 / 2);
+            let rem_sum = (mid1 % 2) + (mid2 % 2);
+            half_sum + (rem_sum / 2)
         }
     }
 
@@ -1008,13 +1014,15 @@ impl OracleState {
         let attested_price = attestation.sov_usd_price;
 
         // Calculate deviation in basis points: |price - median| * 10000 / median
+        // Use saturating conversion to handle overflow safely.
         let deviation_bps = if median > 0 {
             let diff = if attested_price > median {
                 attested_price - median
             } else {
                 median - attested_price
             };
-            ((diff as u128).saturating_mul(10_000) / median) as u32
+            let deviation_raw = (diff as u128).saturating_mul(10_000) / median;
+            u32::try_from(deviation_raw).unwrap_or(u32::MAX)
         } else {
             0
         };

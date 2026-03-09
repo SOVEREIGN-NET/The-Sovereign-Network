@@ -119,8 +119,6 @@ pub enum ImportValidationResult {
     InvalidData(String),
     /// State is from a future height (potential replay attack).
     FutureHeight { imported: u64, current: u64 },
-    /// State hash mismatch (corruption detected).
-    HashMismatch,
 }
 
 /// Validates an oracle state envelope before import.
@@ -157,7 +155,7 @@ pub fn export_state<T: Serialize>(
     state: &T,
     height: u64,
     node_id: Option<String>,
-) -> Result<OracleStateEnvelope, Box<dyn std::error::Error>> {
+) -> anyhow::Result<OracleStateEnvelope> {
     let data = bincode::serialize(state)?;
     Ok(OracleStateEnvelope::new(data, height, node_id))
 }
@@ -165,7 +163,7 @@ pub fn export_state<T: Serialize>(
 /// Import oracle state from envelope with automatic migration.
 pub fn import_state<T: for<'de> Deserialize<'de>>(
     envelope: &OracleStateEnvelope,
-) -> Result<(T, MigrationResult), Box<dyn std::error::Error>> {
+) -> anyhow::Result<(T, MigrationResult)> {
     match OracleStateVersion::from_u16(envelope.version) {
         Some(OracleStateVersion::V2Current) => {
             let state: T = bincode::deserialize(&envelope.data)?;
@@ -176,7 +174,10 @@ pub fn import_state<T: for<'de> Deserialize<'de>>(
             let state: T = bincode::deserialize(&envelope.data)?;
             Ok((state, MigrationResult::MigratedFromV1))
         }
-        None => Err(format!("Unsupported state version: {}", envelope.version).into()),
+        None => Err(anyhow::anyhow!(
+            "Unsupported state version: {}",
+            envelope.version
+        )),
     }
 }
 

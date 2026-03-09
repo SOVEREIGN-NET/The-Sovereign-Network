@@ -474,10 +474,12 @@ impl OracleParityMetrics {
     }
 
     /// Record a disagreement with epoch information.
+    ///
+    /// This delegates counter updates to `record_comparison` to ensure
+    /// `total_comparisons` and `disagreements` stay in sync.
     pub fn record_disagreement(&mut self, epoch: u64, height: u64) {
-        self.disagreements += 1;
+        self.record_comparison(false, height);
         self.last_disagreement_epoch = Some(epoch);
-        self.last_updated_height = height;
     }
 
     /// Calculate agreement rate as percentage (0-100).
@@ -608,9 +610,15 @@ impl OracleObservabilityState {
     }
 
     /// Record a disagreement and update alarm status.
+    ///
+    /// Increments the consecutive disagreements counter and delegates
+    /// metrics updates to parity_metrics.record_comparison to ensure
+    /// total_comparisons stays in sync.
     pub fn record_disagreement(&mut self, epoch: u64, height: u64) {
         self.consecutive_disagreements += 1;
-        self.parity_metrics.record_disagreement(epoch, height);
+        self.parity_metrics.record_comparison(false, height);
+        self.parity_metrics.last_disagreement_epoch = Some(epoch);
+        self.parity_metrics.last_updated_height = height;
         self.update_alarm_status();
     }
 
@@ -618,6 +626,7 @@ impl OracleObservabilityState {
     pub fn record_agreement(&mut self, height: u64) {
         self.consecutive_disagreements = 0;
         self.parity_metrics.record_comparison(true, height);
+        self.parity_metrics.last_updated_height = height;
         self.update_alarm_status();
     }
 }
@@ -966,7 +975,9 @@ mod tests {
     #[test]
     fn observability_alarm_triggers_on_consecutive_disagreements() {
         let mut state = OracleObservabilityState::default();
+        // Set threshold to 0% so only consecutive disagreements can trigger alarm
         state.divergence_config.min_comparisons_before_alarm = 0;
+        state.divergence_config.alarm_threshold_percent = 0.0;
         state.divergence_config.consecutive_disagreements_threshold = 3;
         
         // Add some agreements first
@@ -977,10 +988,13 @@ mod tests {
         
         // Now add consecutive disagreements
         state.record_disagreement(100, 10);
+        assert_eq!(state.consecutive_disagreements, 1);
         assert!(!state.alarm_active);
         state.record_disagreement(101, 11);
+        assert_eq!(state.consecutive_disagreements, 2);
         assert!(!state.alarm_active);
         state.record_disagreement(102, 12);
+        assert_eq!(state.consecutive_disagreements, 3);
         // 3 consecutive disagreements should trigger alarm
         assert!(state.alarm_active);
         
