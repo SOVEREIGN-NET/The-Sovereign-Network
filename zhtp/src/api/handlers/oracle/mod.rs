@@ -17,13 +17,13 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use lib_blockchain::oracle::{ORACLE_PRICE_SCALE, OracleSlashReason};
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
+use lib_blockchain::oracle::{OracleSlashReason, ORACLE_PRICE_SCALE};
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::RwLock;
-use tracing::{warn, debug};
+use tracing::{debug, warn};
 
 pub struct OracleHandler {
     is_testnet: bool,
@@ -38,9 +38,7 @@ impl OracleHandler {
         }
     }
 
-    async fn get_blockchain(
-        &self,
-    ) -> Result<Arc<RwLock<lib_blockchain::Blockchain>>> {
+    async fn get_blockchain(&self) -> Result<Arc<RwLock<lib_blockchain::Blockchain>>> {
         crate::runtime::blockchain_provider::get_global_blockchain()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to access blockchain: {}", e))
@@ -80,7 +78,7 @@ impl ZhtpRequestHandler for OracleHandler {
             (ZhtpMethod::Get, ["api", "v1", "oracle", "price"]) => self.handle_get_price().await,
             (ZhtpMethod::Get, ["api", "v1", "oracle", "status"]) => self.handle_get_status().await,
             (ZhtpMethod::Get, ["api", "v1", "oracle", "config"]) => self.handle_get_config().await,
-            
+
             // ORACLE-14: New read endpoints
             (ZhtpMethod::Get, ["api", "v1", "oracle", "protocol"]) => {
                 self.handle_get_protocol().await
@@ -97,7 +95,7 @@ impl ZhtpRequestHandler for OracleHandler {
             (ZhtpMethod::Get, ["api", "v1", "oracle", "attestations", epoch_str]) => {
                 self.handle_get_attestations(epoch_str).await
             }
-            
+
             // ORACLE-14: New write endpoints (governance proposals)
             (ZhtpMethod::Post, ["api", "v1", "oracle", "committee", "propose"]) => {
                 self.handle_propose_committee(&request).await
@@ -108,12 +106,12 @@ impl ZhtpRequestHandler for OracleHandler {
             (ZhtpMethod::Post, ["api", "v1", "oracle", "updates", "cancel"]) => {
                 self.handle_cancel_update(&request).await
             }
-            
+
             // ORACLE-14: Testnet-only attestation endpoint
             (ZhtpMethod::Post, ["api", "v1", "oracle", "attest"]) => {
                 self.handle_manual_attest(&request).await
             }
-            
+
             _ => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
                 format!("Oracle endpoint not found: {}", uri_no_query),
@@ -198,12 +196,12 @@ impl OracleHandler {
         match latest {
             Some(finalized) => {
                 let price_usd = finalized.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64;
-                
+
                 // ORACLE-5: Include staleness metadata
                 let epochs_since = current_epoch.saturating_sub(finalized.epoch_id);
                 let max_staleness = bc.oracle_state.config.max_price_staleness_epochs;
                 let is_fresh = epochs_since <= max_staleness;
-                
+
                 // u128 fields are serialized as strings — serde_json cannot represent
                 // integers beyond u64::MAX and will return an error otherwise.
                 let body = json!({
@@ -234,7 +232,8 @@ impl OracleHandler {
             }
             None => Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
-                "No finalized oracle price yet — oracle committee has not reached consensus".to_string(),
+                "No finalized oracle price yet — oracle committee has not reached consensus"
+                    .to_string(),
             )),
         }
     }
@@ -497,7 +496,10 @@ impl OracleHandler {
         let bytes = match serde_json::to_vec(&body) {
             Ok(b) => b,
             Err(e) => {
-                warn!("Oracle pending-updates API: failed to serialize response: {}", e);
+                warn!(
+                    "Oracle pending-updates API: failed to serialize response: {}",
+                    e
+                );
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     "Failed to serialize response".to_string(),
@@ -527,9 +529,10 @@ impl OracleHandler {
         };
 
         let bc = bc_arc.read().await;
-        
+
         // Get last 100 events (or fewer if less exist)
-        let events: Vec<_> = bc.oracle_slash_events
+        let events: Vec<_> = bc
+            .oracle_slash_events
             .iter()
             .rev()
             .take(100)
@@ -557,7 +560,10 @@ impl OracleHandler {
         let bytes = match serde_json::to_vec(&body) {
             Ok(b) => b,
             Err(e) => {
-                warn!("Oracle slashing-events API: failed to serialize response: {}", e);
+                warn!(
+                    "Oracle slashing-events API: failed to serialize response: {}",
+                    e
+                );
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     "Failed to serialize response".to_string(),
@@ -587,8 +593,9 @@ impl OracleHandler {
         };
 
         let bc = bc_arc.read().await;
-        
-        let banned: Vec<_> = bc.oracle_banned_validators
+
+        let banned: Vec<_> = bc
+            .oracle_banned_validators
             .iter()
             .map(hex::encode)
             .collect();
@@ -601,7 +608,10 @@ impl OracleHandler {
         let bytes = match serde_json::to_vec(&body) {
             Ok(b) => b,
             Err(e) => {
-                warn!("Oracle banned-validators API: failed to serialize response: {}", e);
+                warn!(
+                    "Oracle banned-validators API: failed to serialize response: {}",
+                    e
+                );
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     "Failed to serialize response".to_string(),
@@ -643,14 +653,14 @@ impl OracleHandler {
         let bc = bc_arc.read().await;
         let committee_size = bc.oracle_state.committee.members().len();
         let threshold = bc.oracle_state.committee.threshold();
-        
+
         // Check if epoch is finalized
         let finalized = bc.oracle_state.finalized_price(epoch_id);
-        
+
         // Get current epoch to calculate attestations needed
         let block_timestamp = bc.last_committed_timestamp();
         let current_epoch = bc.oracle_state.epoch_id(block_timestamp);
-        
+
         // Per-epoch attestation tracking is not yet implemented.
         // We can only report whether the epoch is finalized or not.
         let is_finalized = finalized.is_some();
@@ -674,7 +684,10 @@ impl OracleHandler {
         let bytes = match serde_json::to_vec(&body) {
             Ok(b) => b,
             Err(e) => {
-                warn!("Oracle attestations API: failed to serialize response: {}", e);
+                warn!(
+                    "Oracle attestations API: failed to serialize response: {}",
+                    e
+                );
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
                     "Failed to serialize response".to_string(),
@@ -716,10 +729,7 @@ impl OracleHandler {
             match self.parse_hex_32(member_hex, "member") {
                 Ok(id) => member_ids.push(id),
                 Err(e) => {
-                    return Ok(ZhtpResponse::error(
-                        ZhtpStatus::BadRequest,
-                        e.to_string(),
-                    ));
+                    return Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string()));
                 }
             }
         }
@@ -738,14 +748,18 @@ impl OracleHandler {
 
         let mut bc = bc_arc.write().await;
 
-        let reason = req.reason.unwrap_or_else(|| "Bootstrap oracle committee".to_string());
+        let reason = req
+            .reason
+            .unwrap_or_else(|| "Bootstrap oracle committee".to_string());
 
         // Parse signing public keys (hex) and pair with member key_ids.
         let members_with_pubkeys: Vec<([u8; 32], Vec<u8>)> = member_ids
             .iter()
             .enumerate()
             .map(|(i, &key_id)| {
-                let pk = req.signing_pubkeys.get(i)
+                let pk = req
+                    .signing_pubkeys
+                    .get(i)
                     .and_then(|hex_str| hex::decode(hex_str).ok())
                     .unwrap_or_default();
                 (key_id, pk)
@@ -757,14 +771,24 @@ impl OracleHandler {
                 // Persist immediately so the change survives restart before next block.
                 let dat_path = std::path::Path::new("./data/testnet/blockchain.dat");
                 if let Err(e) = bc.save_to_file(dat_path) {
-                    warn!("Oracle bootstrap: failed to persist blockchain after committee update: {}", e);
+                    warn!(
+                        "Oracle bootstrap: failed to persist blockchain after committee update: {}",
+                        e
+                    );
                 }
                 let threshold = bc.oracle_state.committee.threshold();
-                let members_hex: Vec<String> = bc.oracle_state.committee.members()
+                let members_hex: Vec<String> = bc
+                    .oracle_state
+                    .committee
+                    .members()
                     .iter()
                     .map(hex::encode)
                     .collect();
-                debug!("Oracle committee bootstrapped: {} members, reason={}", members_hex.len(), reason);
+                debug!(
+                    "Oracle committee bootstrapped: {} members, reason={}",
+                    members_hex.len(),
+                    reason
+                );
                 let body = serde_json::json!({
                     "status": "success",
                     "committee_members": members_hex,
@@ -778,10 +802,7 @@ impl OracleHandler {
                     None,
                 ))
             }
-            Err(e) => Ok(ZhtpResponse::error(
-                ZhtpStatus::BadRequest,
-                e.to_string(),
-            )),
+            Err(e) => Ok(ZhtpResponse::error(ZhtpStatus::BadRequest, e.to_string())),
         }
     }
 
@@ -812,7 +833,7 @@ impl OracleHandler {
 
         let bc = bc_arc.read().await;
         let current_config = &bc.oracle_state.config;
-        
+
         // Build proposed config by modifying current config fields
         let mut proposed_config = current_config.clone();
         if let Some(epoch_duration) = req.epoch_duration_secs {
@@ -866,7 +887,8 @@ impl OracleHandler {
         if !req.cancel_committee_update && !req.cancel_config_update {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
-                "At least one of cancel_committee_update or cancel_config_update must be true".to_string(),
+                "At least one of cancel_committee_update or cancel_config_update must be true"
+                    .to_string(),
             ));
         }
 

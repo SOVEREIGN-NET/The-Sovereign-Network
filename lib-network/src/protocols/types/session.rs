@@ -1,15 +1,15 @@
 //! Session management, keys, lifecycle, and replay protection
 
+use super::network::NetworkProtocol;
+use super::peer::{PeerAddress, VerifiedPeerIdentity};
+use super::security::CipherSuite;
 use anyhow::{anyhow, Result};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use zeroize::{Zeroize, ZeroizeOnDrop};
 use subtle::ConstantTimeEq;
-use parking_lot::RwLock;
-use super::security::CipherSuite;
-use super::network::NetworkProtocol;
-use super::peer::{PeerAddress, VerifiedPeerIdentity};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Session ID entropy size in bytes
 pub const SESSION_ID_SIZE: usize = 32;
@@ -200,8 +200,14 @@ impl SessionKeys {
 impl std::fmt::Debug for SessionKeys {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionKeys")
-            .field("encryption_key", &self.encryption_key.as_ref().map(|_| "<redacted>"))
-            .field("authentication_key", &self.authentication_key.as_ref().map(|_| "<redacted>"))
+            .field(
+                "encryption_key",
+                &self.encryption_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "authentication_key",
+                &self.authentication_key.as_ref().map(|_| "<redacted>"),
+            )
             .field("has_forward_secrecy", &self.has_forward_secrecy)
             .field("rekey_generation", &self.rekey_generation)
             .field("cipher_suite", &self.cipher_suite)
@@ -238,7 +244,9 @@ impl ReplayProtectionState {
     pub fn next_send_sequence(&self) -> Result<u64> {
         let seq = self.send_counter.fetch_add(1, Ordering::SeqCst);
         if seq == u64::MAX {
-            return Err(anyhow!("Sequence number overflow - session must be rekeyed"));
+            return Err(anyhow!(
+                "Sequence number overflow - session must be rekeyed"
+            ));
         }
         Ok(seq)
     }
@@ -531,13 +539,12 @@ impl ProtocolSession {
         created_at: u64,
         mac_key: &[u8; 32],
     ) -> SessionMac {
-        use sha2::Sha256;
         use hmac::{Hmac, Mac};
+        use sha2::Sha256;
 
         type HmacSha256 = Hmac<Sha256>;
 
-        let mut mac = HmacSha256::new_from_slice(mac_key)
-            .expect("HMAC key length is valid");
+        let mut mac = HmacSha256::new_from_slice(mac_key).expect("HMAC key length is valid");
 
         mac.update(session_id.as_bytes());
         mac.update(&created_at.to_le_bytes());
@@ -569,7 +576,9 @@ impl ProtocolSession {
         );
 
         if !bool::from(self.session_mac.0.ct_eq(&expected_mac.0)) {
-            return Err(anyhow!("Session validation failed: MAC mismatch (possible hijacking)"));
+            return Err(anyhow!(
+                "Session validation failed: MAC mismatch (possible hijacking)"
+            ));
         }
 
         Ok(())
@@ -642,11 +651,14 @@ impl std::fmt::Debug for ProtocolSession {
             .field("protocol", &self.protocol)
             .field("session_keys", &"<redacted>")
             .field("replay_state", &self.replay_state)
-            .field("lifecycle", &format!(
-                "created: {}, messages: {}",
-                self.lifecycle.created_at(),
-                self.lifecycle.message_count()
-            ))
+            .field(
+                "lifecycle",
+                &format!(
+                    "created: {}, messages: {}",
+                    self.lifecycle.created_at(),
+                    self.lifecycle.message_count()
+                ),
+            )
             .field("auth_scheme", &self.auth_scheme)
             .finish()
     }
@@ -866,7 +878,8 @@ impl V2SessionStore {
     ) -> Result<String> {
         let sessions = self.sessions.read();
 
-        let session = sessions.get(session_id)
+        let session = sessions
+            .get(session_id)
             .ok_or_else(|| anyhow!("Session not found"))?;
 
         if session.is_expired() {
@@ -907,7 +920,8 @@ impl V2SessionStore {
     /// Get session for MAC key lookup (returns mac_key if session valid)
     pub fn get_mac_key(&self, session_id: &[u8; 32]) -> Option<[u8; 32]> {
         let sessions = self.sessions.read();
-        sessions.get(session_id)
+        sessions
+            .get(session_id)
             .filter(|s| !s.is_expired())
             .map(|s| *s.mac_key())
     }
@@ -915,7 +929,8 @@ impl V2SessionStore {
     /// Get session peer DID
     pub fn get_peer_did(&self, session_id: &[u8; 32]) -> Option<String> {
         let sessions = self.sessions.read();
-        sessions.get(session_id)
+        sessions
+            .get(session_id)
             .filter(|s| !s.is_expired())
             .map(|s| s.peer_did().to_string())
     }

@@ -13,7 +13,12 @@ pub mod red_tests;
 // Re-export key types
 pub use core::UbiDistributor;
 pub use types::{
-    MonthIndex, EpochIndex, Error,
+    EpochIndex,
+    Error,
+    MonthIndex,
     // Event schemas (Issue #844 Prep Phase)
-    UbiClaimRecorded, UbiDistributed, UbiPoolStatus, UbiClaimRejected,
+    UbiClaimRecorded,
+    UbiClaimRejected,
+    UbiDistributed,
+    UbiPoolStatus,
 };

@@ -58,7 +58,12 @@ impl BluetoothMeshProtocol {
         for line in output.lines() {
             if line.trim().starts_with("UUID:") {
                 if let Some(uuid_part) = line.split("UUID:").nth(1) {
-                    let uuid = uuid_part.trim().split_whitespace().next().unwrap_or("").to_string();
+                    let uuid = uuid_part
+                        .trim()
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
                     if !uuid.is_empty() {
                         services.push(uuid);
                     }
@@ -296,7 +301,9 @@ mod tests {
     #[test]
     fn test_parse_windows_bluetooth_address() {
         let proto = protocol();
-        let parsed = proto.parse_windows_bluetooth_address("AA:BB:CC:DD:EE:FF").unwrap();
+        let parsed = proto
+            .parse_windows_bluetooth_address("AA:BB:CC:DD:EE:FF")
+            .unwrap();
         assert_eq!(parsed, 0xAABBCCDDEEFF);
     }
 }

@@ -1,9 +1,9 @@
 //! Benchmark suite for ZHTP crypto operations
 //! Performance testing for post-quantum cryptographic primitives
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use lib_crypto::{KeyPair, hash_blake3, generate_nonce};
 use anyhow::Result;
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use lib_crypto::{generate_nonce, hash_blake3, KeyPair};
 
 fn benchmark_keypair_generation(c: &mut Criterion) {
     c.bench_function("keypair_generation", |b| {
@@ -31,7 +31,9 @@ fn benchmark_verification(c: &mut Criterion) {
 
     c.bench_function("verification", |b| {
         b.iter(|| {
-            let _result = keypair.verify(black_box(&signature), black_box(message)).unwrap();
+            let _result = keypair
+                .verify(black_box(&signature), black_box(message))
+                .unwrap();
         })
     });
 }
@@ -43,7 +45,9 @@ fn benchmark_encryption(c: &mut Criterion) {
 
     c.bench_function("encryption", |b| {
         b.iter(|| {
-            let _ciphertext = keypair.encrypt(black_box(plaintext), black_box(associated_data)).unwrap();
+            let _ciphertext = keypair
+                .encrypt(black_box(plaintext), black_box(associated_data))
+                .unwrap();
         })
     });
 }
@@ -56,7 +60,9 @@ fn benchmark_decryption(c: &mut Criterion) {
 
     c.bench_function("decryption", |b| {
         b.iter(|| {
-            let _plaintext = keypair.decrypt(black_box(&ciphertext), black_box(associated_data)).unwrap();
+            let _plaintext = keypair
+                .decrypt(black_box(&ciphertext), black_box(associated_data))
+                .unwrap();
         })
     });
 }

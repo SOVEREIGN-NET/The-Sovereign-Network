@@ -90,13 +90,7 @@ mod week11_fee_distribution_tests {
     /// Test fee distribution with various amounts
     #[test]
     fn test_fee_distribution_various_amounts() {
-        let test_amounts = vec![
-            1_000,
-            10_000,
-            100_000,
-            1_000_000,
-            10_000_000,
-        ];
+        let test_amounts = vec![1_000, 10_000, 100_000, 1_000_000, 10_000_000];
 
         for total_fees in test_amounts {
             let (ubi, consensus, gov, treasury) = calculate_fee_allocation(total_fees);
@@ -106,7 +100,11 @@ mod week11_fee_distribution_tests {
                 .saturating_add(gov)
                 .saturating_add(treasury);
 
-            assert_eq!(total_allocated, total_fees, "Failed for amount: {}", total_fees);
+            assert_eq!(
+                total_allocated, total_fees,
+                "Failed for amount: {}",
+                total_fees
+            );
         }
     }
 
@@ -120,10 +118,10 @@ mod week11_fee_distribution_tests {
         assert_eq!(ubi + consensus + gov + treasury, total_fees);
 
         // Verify percentages
-        assert_eq!(ubi, 22_500);  // 45%
+        assert_eq!(ubi, 22_500); // 45%
         assert_eq!(consensus, 15_000); // 30%
-        assert_eq!(gov, 7_500);   // 15%
-        assert_eq!(treasury, 5_000);   // 10%
+        assert_eq!(gov, 7_500); // 15%
+        assert_eq!(treasury, 5_000); // 10%
     }
 
     /// Test zero-fee blocks
@@ -146,10 +144,10 @@ mod week11_fee_distribution_tests {
     #[test]
     fn test_rounding_error_within_tolerance() {
         let test_amounts = vec![
-            999,            // Odd number
-            10_001,         // Large odd
-            7,              // Very small
-            1_000_000_001,  // Very large odd
+            999,           // Odd number
+            10_001,        // Large odd
+            7,             // Very small
+            1_000_000_001, // Very large odd
         ];
 
         for total_fees in test_amounts {
@@ -200,7 +198,9 @@ mod week11_fee_distribution_tests {
             .saturating_add(treasury);
         assert!(
             total <= large_fees,
-            "Total allocation exceeded: {} > {}", total, large_fees
+            "Total allocation exceeded: {} > {}",
+            total,
+            large_fees
         );
     }
 
@@ -226,7 +226,9 @@ mod week11_fee_distribution_tests {
         // For very large numbers, rounding can accumulate
         assert!(
             (total as i128 - safe_max as i128).abs() <= 5i128,
-            "Rounding error too large: {} vs {}", total, safe_max
+            "Rounding error too large: {} vs {}",
+            total,
+            safe_max
         );
     }
 
@@ -234,18 +236,15 @@ mod week11_fee_distribution_tests {
     #[test]
     fn test_graceful_saturation() {
         // Test that saturating operations don't panic
-        let amounts = vec![
-            u64::MAX,
-            u64::MAX - 1,
-            u64::MAX / 2,
-        ];
+        let amounts = vec![u64::MAX, u64::MAX - 1, u64::MAX / 2];
 
         for total_fees in amounts {
             // These should not panic due to saturating operations
             let (ubi, consensus, gov, treasury) = calculate_fee_allocation(total_fees);
 
             // Result should be valid
-            let _ = ubi.saturating_add(consensus)
+            let _ = ubi
+                .saturating_add(consensus)
                 .saturating_add(gov)
                 .saturating_add(treasury);
         }
@@ -267,7 +266,11 @@ mod week11_fee_distribution_tests {
         let duration = start.elapsed();
 
         // Should process 100K calculations in < 10ms
-        assert!(duration.as_millis() < 10, "Performance test took {:?}", duration);
+        assert!(
+            duration.as_millis() < 10,
+            "Performance test took {:?}",
+            duration
+        );
         println!("Processed 100K fee calculations in {:?}", duration);
     }
 
@@ -276,15 +279,7 @@ mod week11_fee_distribution_tests {
     fn test_fee_processing_throughput() {
         use std::time::Instant;
 
-        let test_amounts = vec![
-            1,
-            10,
-            100,
-            1_000,
-            10_000,
-            100_000,
-            1_000_000,
-        ];
+        let test_amounts = vec![1, 10, 100, 1_000, 10_000, 100_000, 1_000_000];
 
         let start = Instant::now();
         for amount in test_amounts.iter().cycle().take(100_000) {
@@ -292,7 +287,11 @@ mod week11_fee_distribution_tests {
         }
         let duration = start.elapsed();
 
-        assert!(duration.as_millis() < 50, "Throughput test took {:?}", duration);
+        assert!(
+            duration.as_millis() < 50,
+            "Throughput test took {:?}",
+            duration
+        );
         println!("Processed 100K varied fee calculations in {:?}", duration);
     }
 
@@ -309,7 +308,11 @@ mod week11_fee_distribution_tests {
         let duration = start.elapsed();
 
         // Should process 1000 blocks in < 5ms
-        assert!(duration.as_millis() < 5, "1000 block processing took {:?}", duration);
+        assert!(
+            duration.as_millis() < 5,
+            "1000 block processing took {:?}",
+            duration
+        );
         println!("Processed 1000 blocks in {:?}", duration);
     }
 }

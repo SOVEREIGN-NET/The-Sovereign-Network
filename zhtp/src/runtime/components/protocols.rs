@@ -6,13 +6,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
-use crate::runtime::{Component, ComponentId, ComponentStatus, ComponentHealth, ComponentMessage};
+use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, ComponentStatus};
 // Removed: create_default_storage_config - now using global storage provider
-use crate::server::https_gateway::{HttpsGateway, GatewayTlsConfig};
+use crate::server::https_gateway::{GatewayTlsConfig, HttpsGateway};
+use crate::web4_stub::{ZdnsResolver, ZdnsServerConfig, ZdnsTransportServer};
 use lib_protocols::{ZdnsServer, ZhtpIntegration};
-use crate::web4_stub::{ZdnsResolver, ZdnsTransportServer, ZdnsServerConfig};
 
 /// Protocols component - thin wrapper for unified server
 pub struct ProtocolsComponent {
@@ -99,7 +99,11 @@ impl ProtocolsComponent {
         }
     }
 
-    pub fn new_with_node_type(environment: crate::config::environment::Environment, api_port: u16, is_edge_node: bool) -> Self {
+    pub fn new_with_node_type(
+        environment: crate::config::environment::Environment,
+        api_port: u16,
+        is_edge_node: bool,
+    ) -> Self {
         Self::new_with_node_type_and_ports(environment, api_port, 9334, 9333, is_edge_node)
     }
 
@@ -263,7 +267,9 @@ impl Component for ProtocolsComponent {
                 loop {
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                     attempts += 1;
-                    if let Ok(shared_blockchain) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+                    if let Ok(shared_blockchain) =
+                        crate::runtime::blockchain_provider::get_global_blockchain().await
+                    {
                         info!(" ✓ Global blockchain initialized");
                         break shared_blockchain;
                     }
@@ -325,68 +331,92 @@ impl Component for ProtocolsComponent {
                 loop {
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                     attempts += 1;
-                    if let Ok(storage) = crate::runtime::storage_provider::get_global_storage().await {
+                    if let Ok(storage) =
+                        crate::runtime::storage_provider::get_global_storage().await
+                    {
                         info!(" ✓ Storage became available after {} attempts", attempts);
                         break storage;
                     }
                     if attempts >= 30 {
-                        return Err(anyhow::anyhow!("Timeout waiting for StorageComponent to initialize storage"));
+                        return Err(anyhow::anyhow!(
+                            "Timeout waiting for StorageComponent to initialize storage"
+                        ));
                     }
                 }
             }
         };
 
         info!("Creating ZHTP Unified Server...");
-        let (peer_discovery_tx, _peer_discovery_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let (peer_discovery_tx, _peer_discovery_rx) =
+            tokio::sync::mpsc::unbounded_channel::<String>();
 
-        info!("Creating unified server with ports: API={}, QUIC={}, Discovery={}",
-              self.api_port, self.quic_port, self.discovery_port);
-        let mut unified_server = crate::unified_server::ZhtpUnifiedServer::new_with_peer_notification(
-            blockchain.clone(),
-            storage.clone(),
-            identity_manager.clone(),
-            economic_model.clone(),
-            self.api_port,
-            Some(peer_discovery_tx),
-            Some(self.discovery_port),  // discovery_port from config
-            Some(self.quic_port),       // quic_port from config
-            None,  // protocols_config - will use defaults (Bluetooth disabled by default)
-            None,  // bootstrap_peers - will use defaults
-        ).await
+        info!(
+            "Creating unified server with ports: API={}, QUIC={}, Discovery={}",
+            self.api_port, self.quic_port, self.discovery_port
+        );
+        let mut unified_server =
+            crate::unified_server::ZhtpUnifiedServer::new_with_peer_notification(
+                blockchain.clone(),
+                storage.clone(),
+                identity_manager.clone(),
+                economic_model.clone(),
+                self.api_port,
+                Some(peer_discovery_tx),
+                Some(self.discovery_port), // discovery_port from config
+                Some(self.quic_port),      // quic_port from config
+                None, // protocols_config - will use defaults (Bluetooth disabled by default)
+                None, // bootstrap_peers - will use defaults
+            )
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to create unified server: {}", e))?;
-        
+
         // Initialize blockchain provider
         info!(" Setting up blockchain provider...");
-        let blockchain_provider = Arc::new(crate::runtime::network_blockchain_provider::ZhtpBlockchainProvider::new());
-        unified_server.set_blockchain_provider(blockchain_provider).await;
+        let blockchain_provider =
+            Arc::new(crate::runtime::network_blockchain_provider::ZhtpBlockchainProvider::new());
+        unified_server
+            .set_blockchain_provider(blockchain_provider)
+            .await;
 
         // Inject receive-side event receiver for mesh block/tx forwarding (#916)
-        let event_receiver = Arc::new(crate::runtime::network_blockchain_event_receiver::ZhtpBlockchainEventReceiver::new());
-        unified_server.set_blockchain_event_receiver(event_receiver).await;
+        let event_receiver = Arc::new(
+            crate::runtime::network_blockchain_event_receiver::ZhtpBlockchainEventReceiver::new(),
+        );
+        unified_server
+            .set_blockchain_event_receiver(event_receiver)
+            .await;
         info!("Blockchain event receiver injected for receive-side block/tx forwarding");
-        
+
         // Configure sync mode based on node type
         if self.is_edge_node {
             info!("📱 Configuring Edge Node sync mode (headers + ZK proofs only)...");
             unified_server.set_edge_sync_mode(500).await;
         }
-        
+
         // Initialize auth manager
         let mgr = identity_manager.read().await;
         let identities = mgr.list_identities();
         if !identities.is_empty() {
-            let node_identity = if identities.len() >= 2 { &identities[1] } else { &identities[0] };
+            let node_identity = if identities.len() >= 2 {
+                &identities[1]
+            } else {
+                &identities[0]
+            };
             let blockchain_pubkey = node_identity.public_key.clone();
-            let _ = unified_server.initialize_auth_manager(blockchain_pubkey).await;
+            let _ = unified_server
+                .initialize_auth_manager(blockchain_pubkey)
+                .await;
         }
         drop(mgr);
-        
+
         // Initialize relay protocol
         let _ = unified_server.initialize_relay_protocol().await;
-        
+
         // Initialize WiFi Direct auth
-        let _ = unified_server.initialize_wifi_direct_auth(identity_manager.clone()).await;
-        
+        let _ = unified_server
+            .initialize_wifi_direct_auth(identity_manager.clone())
+            .await;
+
         info!("Starting unified server on port {}...", self.api_port);
         unified_server.start().await?;
 
@@ -417,8 +447,10 @@ impl Component for ProtocolsComponent {
             });
 
             *self.zdns_transport.write().await = Some(transport_server);
-            info!(" ✓ ZDNS transport server started (gateway IP: {}, bind: {})",
-                  self.zdns_gateway_ip, self.zdns_bind_addr);
+            info!(
+                " ✓ ZDNS transport server started (gateway IP: {}, bind: {})",
+                self.zdns_gateway_ip, self.zdns_bind_addr
+            );
         }
 
         // Start HTTPS gateway if enabled (browser-based Web4 access)
@@ -429,12 +461,17 @@ impl Component for ProtocolsComponent {
                     domain_registry.clone(),
                     zdns_resolver.clone(),
                     gateway_config.clone(),
-                ).await {
+                )
+                .await
+                {
                     Ok(gateway) => {
                         if let Err(e) = gateway.start().await {
                             warn!("Failed to start HTTPS gateway: {}", e);
                         } else {
-                            info!(" ✓ HTTPS Gateway started on port {}", gateway_config.https_port);
+                            info!(
+                                " ✓ HTTPS Gateway started on port {}",
+                                gateway_config.https_port
+                            );
                             if let Some(http_port) = gateway_config.http_port {
                                 info!("   HTTP redirect on port {}", http_port);
                             }
@@ -460,11 +497,11 @@ impl Component for ProtocolsComponent {
                 }
             }
         }
-        
+
         *self.unified_server.write().await = Some(unified_server);
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
-        
+
         info!("Protocols component started");
         Ok(())
     }
@@ -500,7 +537,7 @@ impl Component for ProtocolsComponent {
         let status = self.status.read().await.clone();
         let start_time = *self.start_time.read().await;
         let uptime = start_time.map(|t| t.elapsed()).unwrap_or(Duration::ZERO);
-        
+
         Ok(ComponentHealth {
             status,
             last_heartbeat: Instant::now(),
@@ -528,10 +565,19 @@ impl Component for ProtocolsComponent {
     async fn get_metrics(&self) -> Result<HashMap<String, f64>> {
         let mut metrics = HashMap::new();
         let start_time = *self.start_time.read().await;
-        let uptime_secs = start_time.map(|t| t.elapsed().as_secs() as f64).unwrap_or(0.0);
+        let uptime_secs = start_time
+            .map(|t| t.elapsed().as_secs() as f64)
+            .unwrap_or(0.0);
 
         metrics.insert("uptime_seconds".to_string(), uptime_secs);
-        metrics.insert("is_running".to_string(), if matches!(*self.status.read().await, ComponentStatus::Running) { 1.0 } else { 0.0 });
+        metrics.insert(
+            "is_running".to_string(),
+            if matches!(*self.status.read().await, ComponentStatus::Running) {
+                1.0
+            } else {
+                0.0
+            },
+        );
 
         Ok(metrics)
     }
@@ -545,7 +591,7 @@ impl ProtocolsComponent {
     /// UnifiedServer's register_runtime_handlers method.
     pub async fn register_runtime_handlers(
         &self,
-        runtime: Arc<crate::runtime::RuntimeOrchestrator>
+        runtime: Arc<crate::runtime::RuntimeOrchestrator>,
     ) -> Result<()> {
         let mut server_guard = self.unified_server.write().await;
         if let Some(ref mut unified_server) = *server_guard {

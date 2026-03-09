@@ -101,10 +101,7 @@ mod tests {
         link.central.recv_frame().await.unwrap();
 
         // Rejected payload
-        link.peripheral
-            .send_frame(&[0x00, 0x11])
-            .await
-            .unwrap();
+        link.peripheral.send_frame(&[0x00, 0x11]).await.unwrap();
         let err = link.central.recv_frame().await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
     }

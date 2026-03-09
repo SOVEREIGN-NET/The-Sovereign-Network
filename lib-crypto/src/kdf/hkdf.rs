@@ -1,10 +1,10 @@
 //! HKDF key derivation - preserving ZHTP key derivation
-//! 
+//!
 //! implementation from crypto.rs, lines 710-717
 
 use anyhow::Result;
-use sha3::Sha3_256;
 use hkdf::Hkdf;
+use sha3::Sha3_256;
 
 /// Derive multiple keys from a master key using HKDF
 pub fn derive_keys(master_key: &[u8], info: &[u8], output_len: usize) -> Result<Vec<u8>> {

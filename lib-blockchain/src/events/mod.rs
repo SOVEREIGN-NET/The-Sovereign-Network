@@ -4,11 +4,11 @@
 //! Clients can subscribe to events and receive notifications when blocks are added,
 //! transactions are processed, contracts are executed, etc.
 
+use anyhow::Result;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use anyhow::Result;
-use async_trait::async_trait;
 
 // ============================================================================
 // EVENT TYPES
@@ -26,10 +26,7 @@ pub enum BlockchainEvent {
     },
 
     /// Block finalized (immutable)
-    BlockFinalized {
-        height: u64,
-        block_hash: [u8; 32],
-    },
+    BlockFinalized { height: u64, block_hash: [u8; 32] },
 
     /// Transaction processed
     TransactionProcessed {
@@ -53,29 +50,32 @@ pub enum BlockchainEvent {
     },
 
     /// Validator registered
-    ValidatorRegistered {
-        validator_key: [u8; 32],
-        stake: u64,
-    },
+    ValidatorRegistered { validator_key: [u8; 32], stake: u64 },
 
     /// Validator unregistered
-    ValidatorUnregistered {
-        validator_key: [u8; 32],
-    },
+    ValidatorUnregistered { validator_key: [u8; 32] },
 }
 
 impl std::fmt::Display for BlockchainEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BlockchainEvent::BlockAdded { height, .. } => write!(f, "BlockAdded(height={})", height),
-            BlockchainEvent::BlockFinalized { height, .. } => write!(f, "BlockFinalized(height={})", height),
+            BlockchainEvent::BlockAdded { height, .. } => {
+                write!(f, "BlockAdded(height={})", height)
+            }
+            BlockchainEvent::BlockFinalized { height, .. } => {
+                write!(f, "BlockFinalized(height={})", height)
+            }
             BlockchainEvent::TransactionProcessed { tx_hash, .. } => {
                 write!(f, "TransactionProcessed(tx={})", hex::encode(&tx_hash[..8]))
             }
             BlockchainEvent::ContractEventEmitted { block_height, .. } => {
                 write!(f, "ContractEventEmitted(block={})", block_height)
             }
-            BlockchainEvent::ChainReorganized { old_height, new_height, .. } => {
+            BlockchainEvent::ChainReorganized {
+                old_height,
+                new_height,
+                ..
+            } => {
                 write!(f, "ChainReorganized({}->{})", old_height, new_height)
             }
             BlockchainEvent::ValidatorRegistered { .. } => write!(f, "ValidatorRegistered"),
@@ -92,7 +92,7 @@ impl std::fmt::Display for BlockchainEvent {
 #[async_trait]
 pub trait BlockchainEventListener: Send {
     /// Called when a blockchain event occurs
-    /// 
+    ///
     /// This method is async to allow listeners to perform async operations
     /// without blocking other listeners or the blockchain thread.
     async fn on_event(&mut self, event: BlockchainEvent) -> Result<()>;
@@ -111,8 +111,7 @@ pub struct BlockchainEventPublisher {
 
 impl std::fmt::Debug for BlockchainEventPublisher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BlockchainEventPublisher")
-            .finish()
+        f.debug_struct("BlockchainEventPublisher").finish()
     }
 }
 

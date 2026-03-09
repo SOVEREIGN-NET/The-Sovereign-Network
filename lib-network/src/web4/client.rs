@@ -24,22 +24,19 @@
 //! - Includes a sequence number for replay protection
 //! - Contains a MAC over the request bytes
 
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Context, Result};
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::{Path, PathBuf};
-use tracing::{info, debug, warn};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use quinn::{Endpoint, Connection, ClientConfig};
+use quinn::{ClientConfig, Connection, Endpoint};
 
 use lib_identity::ZhtpIdentity;
-use lib_protocols::wire::{
-    ZhtpRequestWire,
-    read_response, write_request,
-};
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod};
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse};
+use lib_protocols::wire::{read_response, write_request, ZhtpRequestWire};
 
 use crate::handshake::{HandshakeContext, NonceCache};
 use crate::protocols::quic_handshake;
@@ -129,7 +126,12 @@ impl AuthenticatedConnection {
     }
 
     /// Derive application-layer MAC key from session key
-    fn derive_app_key(session_key: &[u8; 32], session_id: &[u8; 32], peer_did: &str, client_did: &str) -> [u8; 32] {
+    fn derive_app_key(
+        session_key: &[u8; 32],
+        session_id: &[u8; 32],
+        peer_did: &str,
+        client_did: &str,
+    ) -> [u8; 32] {
         // HKDF-style derivation using BLAKE3
         let mut input = Vec::new();
         input.extend_from_slice(b"zhtp-web4-app-mac");
@@ -152,7 +154,10 @@ impl Web4Client {
         let endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
 
         // Determine cache directory and session ID
-        let session_id = config.session_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string());
+        let session_id = config
+            .session_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         let cache_dir = if let Some(dir) = config.cache_dir.as_ref() {
             dir.clone()
         } else {
@@ -232,7 +237,10 @@ impl Web4Client {
     ///
     /// WARNING: Bootstrap mode provides NO certificate verification.
     /// Use only for development or when connecting to known local nodes.
-    #[deprecated(since = "1.1.0", note = "Use new_bootstrap_with_config with explicit config")]
+    #[deprecated(
+        since = "1.1.0",
+        note = "Use new_bootstrap_with_config with explicit config"
+    )]
     pub async fn new_bootstrap(identity: ZhtpIdentity) -> Result<Self> {
         warn!("Web4 client created in BOOTSTRAP MODE - NO TLS VERIFICATION");
         let config = Web4ClientConfig {
@@ -265,7 +273,10 @@ impl Web4Client {
     }
 
     /// Load identity from keystore with specific trust config
-    pub async fn from_keystore_with_trust(keystore_path: &Path, trust_config: TrustConfig) -> Result<Self> {
+    pub async fn from_keystore_with_trust(
+        keystore_path: &Path,
+        trust_config: TrustConfig,
+    ) -> Result<Self> {
         let identity = Self::load_identity_from_keystore(keystore_path)?;
         Self::new_with_trust(identity, trust_config).await
     }
@@ -278,12 +289,15 @@ impl Web4Client {
         let identity_path = keystore_path.join("identity.json");
         if identity_path.exists() {
             let identity_data = std::fs::read_to_string(&identity_path)?;
-            let identity: ZhtpIdentity = serde_json::from_str(&identity_data)
-                .context("Failed to parse identity.json")?;
+            let identity: ZhtpIdentity =
+                serde_json::from_str(&identity_data).context("Failed to parse identity.json")?;
             return Ok(identity);
         }
 
-        Err(anyhow!("No identity.json found in keystore at {:?}", keystore_path))
+        Err(anyhow!(
+            "No identity.json found in keystore at {:?}",
+            keystore_path
+        ))
     }
 
     /// Get the verified peer DID from the current connection
@@ -303,8 +317,7 @@ impl Web4Client {
 
     /// Connect to a ZHTP node
     pub async fn connect(&mut self, addr: &str) -> Result<()> {
-        let socket_addr: SocketAddr = addr.parse()
-            .context("Invalid server address")?;
+        let socket_addr: SocketAddr = addr.parse().context("Invalid server address")?;
 
         info!("Connecting to ZHTP node at {}", socket_addr);
 
@@ -327,7 +340,8 @@ impl Web4Client {
         self.endpoint.set_default_client_config(client_config);
 
         // Establish QUIC connection (TLS handshake happens here)
-        let connection = self.endpoint
+        let connection = self
+            .endpoint
             .connect(socket_addr, "zhtp-node")?
             .await
             .context("QUIC connection failed")?;
@@ -339,7 +353,9 @@ impl Web4Client {
             &connection,
             &self.identity,
             &self.handshake_ctx,
-        ).await.context("UHP v2 handshake failed")?;
+        )
+        .await
+        .context("UHP v2 handshake failed")?;
 
         let peer_did = handshake_result.verified_peer.identity.did.clone();
 
@@ -387,7 +403,7 @@ impl Web4Client {
                  an explicit enabling value. This mode is insecure and should only be used for \
                  development. Set ZHTP_ALLOW_BOOTSTRAP=1 or ZHTP_ALLOW_BOOTSTRAP=true to proceed \
                  at your own risk."
-            ))
+            )),
         }
     }
 
@@ -406,7 +422,7 @@ impl Web4Client {
         crypto.alpn_protocols = crate::constants::client_control_plane_alpns();
 
         let mut config = ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?
+            quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,
         ));
 
         // Configure transport
@@ -424,11 +440,16 @@ impl Web4Client {
 
     /// Send a request and receive response (internal - handles auth context)
     async fn send_request(&self, request: ZhtpRequest, require_auth: bool) -> Result<ZhtpResponse> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| anyhow!("Not connected to node"))?;
 
         // Determine if this request needs authentication
-        let is_mutation = matches!(request.method, ZhtpMethod::Post | ZhtpMethod::Put | ZhtpMethod::Delete);
+        let is_mutation = matches!(
+            request.method,
+            ZhtpMethod::Post | ZhtpMethod::Put | ZhtpMethod::Delete
+        );
 
         // Create wire request with auth context for mutations
         let wire_request = if is_mutation || require_auth {
@@ -454,19 +475,23 @@ impl Web4Client {
         );
 
         // Open bidirectional stream
-        let (mut send, mut recv) = conn.quic_conn.open_bi().await
+        let (mut send, mut recv) = conn
+            .quic_conn
+            .open_bi()
+            .await
             .context("Failed to open QUIC stream")?;
 
         // Send request
-        write_request(&mut send, &wire_request).await
+        write_request(&mut send, &wire_request)
+            .await
             .context("Failed to send request")?;
 
         // Finish sending
-        send.finish()
-            .context("Failed to finish send stream")?;
+        send.finish().context("Failed to finish send stream")?;
 
         // Read response
-        let wire_response = read_response(&mut recv).await
+        let wire_response = read_response(&mut recv)
+            .await
             .context("Failed to read response")?;
 
         // Verify request ID matches
@@ -512,10 +537,11 @@ impl Web4Client {
         }
 
         // Parse content ID from response
-        let result: serde_json::Value = serde_json::from_slice(&response.body)
-            .context("Invalid JSON response")?;
+        let result: serde_json::Value =
+            serde_json::from_slice(&response.body).context("Invalid JSON response")?;
 
-        result.get("content_id")
+        result
+            .get("content_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| anyhow!("Response missing content_id"))
@@ -544,7 +570,8 @@ impl Web4Client {
 
         let result: serde_json::Value = serde_json::from_slice(&response.body)?;
 
-        result.get("manifest_cid")
+        result
+            .get("manifest_cid")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| anyhow!("Response missing manifest_cid"))
@@ -579,8 +606,7 @@ impl Web4Client {
             ));
         }
 
-        serde_json::from_slice(&response.body)
-            .context("Invalid JSON response")
+        serde_json::from_slice(&response.body).context("Invalid JSON response")
     }
 
     /// Publish/update a domain to point to new manifest
@@ -611,8 +637,7 @@ impl Web4Client {
             ));
         }
 
-        serde_json::from_slice(&response.body)
-            .context("Invalid JSON response")
+        serde_json::from_slice(&response.body).context("Invalid JSON response")
     }
 
     /// Get domain info (no auth required for read)
@@ -688,22 +713,22 @@ impl Web4Client {
             ));
         }
 
-        serde_json::from_slice(&response.body)
-            .context("Invalid JSON response")
+        serde_json::from_slice(&response.body).context("Invalid JSON response")
     }
 
     /// Get domain version history
-    pub async fn get_domain_history(&self, domain: &str, limit: Option<usize>) -> Result<serde_json::Value> {
+    pub async fn get_domain_history(
+        &self,
+        domain: &str,
+        limit: Option<usize>,
+    ) -> Result<serde_json::Value> {
         let url = if let Some(limit) = limit {
             format!("/api/v1/web4/domains/history/{}?limit={}", domain, limit)
         } else {
             format!("/api/v1/web4/domains/history/{}", domain)
         };
 
-        let request = ZhtpRequest::get(
-            url,
-            Some(self.identity.id.clone()),
-        )?;
+        let request = ZhtpRequest::get(url, Some(self.identity.id.clone()))?;
 
         let response = self.send_request(request, false).await?;
 
@@ -715,8 +740,7 @@ impl Web4Client {
             ));
         }
 
-        serde_json::from_slice(&response.body)
-            .context("Invalid JSON response")
+        serde_json::from_slice(&response.body).context("Invalid JSON response")
     }
 
     /// Update domain with new manifest (atomic compare-and-swap)
@@ -755,12 +779,15 @@ impl Web4Client {
             ));
         }
 
-        serde_json::from_slice(&response.body)
-            .context("Invalid JSON response")
+        serde_json::from_slice(&response.body).context("Invalid JSON response")
     }
 
     /// Rollback domain to a previous version
-    pub async fn rollback_domain(&self, domain: &str, to_version: u64) -> Result<serde_json::Value> {
+    pub async fn rollback_domain(
+        &self,
+        domain: &str,
+        to_version: u64,
+    ) -> Result<serde_json::Value> {
         let body = serde_json::json!({
             "to_version": to_version,
         });
@@ -782,12 +809,15 @@ impl Web4Client {
             ));
         }
 
-        serde_json::from_slice(&response.body)
-            .context("Invalid JSON response")
+        serde_json::from_slice(&response.body).context("Invalid JSON response")
     }
 
     /// Resolve domain to manifest (optionally at specific version)
-    pub async fn resolve_domain(&self, domain: &str, version: Option<u64>) -> Result<serde_json::Value> {
+    pub async fn resolve_domain(
+        &self,
+        domain: &str,
+        version: Option<u64>,
+    ) -> Result<serde_json::Value> {
         let body = serde_json::json!({
             "domain": domain,
             "version": version,
@@ -810,8 +840,7 @@ impl Web4Client {
             ));
         }
 
-        serde_json::from_slice(&response.body)
-            .context("Invalid JSON response")
+        serde_json::from_slice(&response.body).context("Invalid JSON response")
     }
 
     /// Upload a blob with automatic chunking for large files
@@ -850,14 +879,12 @@ impl Web4Client {
         let total_hash = hex::encode(&lib_crypto::hash_blake3(&content)[..16]);
 
         // Initiate chunked upload session
-        let session = self.initiate_chunked_upload(
-            content.len(),
-            chunk_size,
-            content_type,
-            &total_hash,
-        ).await?;
+        let session = self
+            .initiate_chunked_upload(content.len(), chunk_size, content_type, &total_hash)
+            .await?;
 
-        let upload_id = session.get("upload_id")
+        let upload_id = session
+            .get("upload_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing upload_id in session response"))?
             .to_string();
@@ -876,12 +903,16 @@ impl Web4Client {
                 "Uploading chunk"
             );
 
-            let cid = self.upload_chunk(&upload_id, i, chunk.to_vec(), &chunk_hash).await?;
+            let cid = self
+                .upload_chunk(&upload_id, i, chunk.to_vec(), &chunk_hash)
+                .await?;
             chunk_cids.push(cid);
         }
 
         // Finalize upload - assemble chunks into blob
-        let final_cid = self.finalize_chunked_upload(&upload_id, &chunk_cids, &total_hash).await?;
+        let final_cid = self
+            .finalize_chunked_upload(&upload_id, &chunk_cids, &total_hash)
+            .await?;
 
         info!(
             upload_id = %upload_id,
@@ -925,8 +956,7 @@ impl Web4Client {
             ));
         }
 
-        serde_json::from_slice(&response.body)
-            .context("Invalid JSON response")
+        serde_json::from_slice(&response.body).context("Invalid JSON response")
     }
 
     /// Upload a single chunk
@@ -963,7 +993,8 @@ impl Web4Client {
 
         let result: serde_json::Value = serde_json::from_slice(&response.body)?;
 
-        result.get("chunk_cid")
+        result
+            .get("chunk_cid")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| anyhow!("Response missing chunk_cid"))
@@ -1001,7 +1032,8 @@ impl Web4Client {
 
         let result: serde_json::Value = serde_json::from_slice(&response.body)?;
 
-        result.get("content_id")
+        result
+            .get("content_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| anyhow!("Response missing content_id"))
@@ -1019,16 +1051,23 @@ impl Web4Client {
         // Get upload status
         let status = self.get_upload_status(upload_id).await?;
 
-        let total_chunks = status.get("num_chunks")
+        let total_chunks = status
+            .get("num_chunks")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow!("Missing num_chunks"))? as usize;
 
-        let uploaded_chunks: Vec<usize> = status.get("uploaded_chunks")
+        let uploaded_chunks: Vec<usize> = status
+            .get("uploaded_chunks")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_u64().map(|n| n as usize))
+                    .collect()
+            })
             .unwrap_or_default();
 
-        let total_hash = status.get("total_hash")
+        let total_hash = status
+            .get("total_hash")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing total_hash"))?;
 
@@ -1058,7 +1097,9 @@ impl Web4Client {
             }
 
             let chunk_hash = hex::encode(&lib_crypto::hash_blake3(chunk)[..16]);
-            let cid = self.upload_chunk(upload_id, i, chunk.to_vec(), &chunk_hash).await?;
+            let cid = self
+                .upload_chunk(upload_id, i, chunk.to_vec(), &chunk_hash)
+                .await?;
             chunk_cids.push((i, cid));
         }
 
@@ -1067,7 +1108,8 @@ impl Web4Client {
         let ordered_cids: Vec<String> = chunk_cids.into_iter().map(|(_, cid)| cid).collect();
 
         // Finalize
-        self.finalize_chunked_upload(upload_id, &ordered_cids, total_hash).await
+        self.finalize_chunked_upload(upload_id, &ordered_cids, total_hash)
+            .await
     }
 
     /// Get status of a chunked upload
@@ -1087,8 +1129,7 @@ impl Web4Client {
             ));
         }
 
-        serde_json::from_slice(&response.body)
-            .context("Invalid JSON response")
+        serde_json::from_slice(&response.body).context("Invalid JSON response")
     }
 
     /// Close the connection

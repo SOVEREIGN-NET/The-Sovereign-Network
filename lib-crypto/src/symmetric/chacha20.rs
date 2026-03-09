@@ -40,12 +40,12 @@
 //! **CRITICAL:** When using nonce functions, nonce MUST be unique per key.
 //! Reusing (key, nonce) breaks ChaCha20Poly1305 completely.
 
+use crate::random::generate_nonce;
 use anyhow::Result;
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
-    ChaCha20Poly1305, Nonce, Key,
+    ChaCha20Poly1305, Key, Nonce,
 };
-use crate::random::generate_nonce;
 
 /// ✅ SECURITY FIX: Encrypt data with unique nonce per message
 ///
@@ -58,20 +58,21 @@ pub fn encrypt_data(data: &[u8], key: &[u8]) -> Result<Vec<u8>> {
     if key.len() != 32 {
         return Err(anyhow::anyhow!("Key must be 32 bytes"));
     }
-    
+
     let cipher_key = Key::from_slice(key);
     let cipher = ChaCha20Poly1305::new(cipher_key);
-    
+
     let nonce_bytes = generate_nonce();
     let nonce = Nonce::from_slice(&nonce_bytes);
-    
-    let ciphertext = cipher.encrypt(nonce, data)
+
+    let ciphertext = cipher
+        .encrypt(nonce, data)
         .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
-    
+
     // Prepend nonce to ciphertext
     let mut result = nonce.to_vec();
     result.extend_from_slice(&ciphertext);
-    
+
     Ok(result)
 }
 
@@ -80,21 +81,22 @@ pub fn decrypt_data(encrypted_data: &[u8], key: &[u8]) -> Result<Vec<u8>> {
     if key.len() != 32 {
         return Err(anyhow::anyhow!("Key must be 32 bytes"));
     }
-    
+
     if encrypted_data.len() < 12 {
         return Err(anyhow::anyhow!("Encrypted data too short"));
     }
-    
+
     let cipher_key = Key::from_slice(key);
     let cipher = ChaCha20Poly1305::new(cipher_key);
-    
+
     // Extract nonce and ciphertext
     let nonce = Nonce::from_slice(&encrypted_data[..12]);
     let ciphertext = &encrypted_data[12..];
-    
-    let plaintext = cipher.decrypt(nonce, ciphertext)
+
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
         .map_err(|e| anyhow::anyhow!("Decryption failed: {}", e))?;
-    
+
     Ok(plaintext)
 }
 
@@ -103,31 +105,36 @@ pub fn encrypt_data_with_ad(data: &[u8], key: &[u8], associated_data: &[u8]) -> 
     if key.len() != 32 {
         return Err(anyhow::anyhow!("Key must be 32 bytes"));
     }
-    
+
     let cipher_key = Key::from_slice(key);
     let cipher = ChaCha20Poly1305::new(cipher_key);
-    
+
     let nonce_bytes = generate_nonce();
     let nonce = Nonce::from_slice(&nonce_bytes);
-    
+
     // Create payload with associated data
     let payload = chacha20poly1305::aead::Payload {
         msg: data,
         aad: associated_data,
     };
-    
-    let ciphertext = cipher.encrypt(nonce, payload)
+
+    let ciphertext = cipher
+        .encrypt(nonce, payload)
         .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
-    
+
     // Prepend nonce to ciphertext
     let mut result = nonce.to_vec();
     result.extend_from_slice(&ciphertext);
-    
+
     Ok(result)
 }
 
 /// Decrypt data with associated data (AEAD)
-pub fn decrypt_data_with_ad(encrypted_data: &[u8], key: &[u8], associated_data: &[u8]) -> Result<Vec<u8>> {
+pub fn decrypt_data_with_ad(
+    encrypted_data: &[u8],
+    key: &[u8],
+    associated_data: &[u8],
+) -> Result<Vec<u8>> {
     if key.len() != 32 {
         return Err(anyhow::anyhow!("Key must be 32 bytes"));
     }
@@ -149,7 +156,8 @@ pub fn decrypt_data_with_ad(encrypted_data: &[u8], key: &[u8], associated_data: 
         aad: associated_data,
     };
 
-    let plaintext = cipher.decrypt(nonce, payload)
+    let plaintext = cipher
+        .decrypt(nonce, payload)
         .map_err(|e| anyhow::anyhow!("Decryption failed: {}", e))?;
 
     Ok(plaintext)
@@ -182,7 +190,8 @@ pub fn encrypt_data_with_ad_nonce(
         aad: associated_data,
     };
 
-    let ciphertext = cipher.encrypt(nonce_obj, payload)
+    let ciphertext = cipher
+        .encrypt(nonce_obj, payload)
         .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
 
     // Prepend nonce to ciphertext (matching format of encrypt_data_with_ad)
@@ -216,7 +225,8 @@ pub fn decrypt_data_with_ad_nonce(
         aad: associated_data,
     };
 
-    let plaintext = cipher.decrypt(nonce_obj, payload)
+    let plaintext = cipher
+        .decrypt(nonce_obj, payload)
         .map_err(|e| anyhow::anyhow!("Decryption failed: {}", e))?;
 
     Ok(plaintext)
@@ -225,22 +235,22 @@ pub fn decrypt_data_with_ad_nonce(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::{RngCore, rngs::OsRng};
+    use rand::{rngs::OsRng, RngCore};
 
     #[test]
     fn test_symmetric_encryption() -> Result<()> {
         let mut key = [0u8; 32];
         OsRng.fill_bytes(&mut key);
-        
+
         let plaintext = b"ZHTP symmetric encryption test data";
-        
+
         // Encrypt and decrypt
         let ciphertext = encrypt_data(plaintext, &key)?;
         let decrypted = decrypt_data(&ciphertext, &key)?;
-        
+
         assert_eq!(plaintext.as_slice(), decrypted);
         assert_ne!(plaintext.as_slice(), &ciphertext[12..]); // Should be different (encrypted)
-        
+
         Ok(())
     }
 
@@ -273,7 +283,7 @@ mod tests {
 
         let plaintext = b"ZHTP AEAD with explicit nonce";
         let associated_data = b"ZHTP-v1.0";
-        let nonce = [0x42u8; 12];  // Fixed nonce
+        let nonce = [0x42u8; 12]; // Fixed nonce
 
         // Encrypt with explicit nonce
         let encrypted = encrypt_data_with_ad_nonce(plaintext, &key, &nonce, associated_data)?;
@@ -308,11 +318,16 @@ mod tests {
         let encrypted2 = encrypt_data_with_ad_nonce(plaintext, &key, &nonce2, associated_data)?;
 
         // Ciphertexts must differ (different nonces)
-        assert_ne!(encrypted1, encrypted2, "Different nonces must produce different ciphertexts");
+        assert_ne!(
+            encrypted1, encrypted2,
+            "Different nonces must produce different ciphertexts"
+        );
 
         // But both must decrypt to same plaintext
-        let decrypted1 = decrypt_data_with_ad_nonce(&encrypted1[12..], &key, &nonce1, associated_data)?;
-        let decrypted2 = decrypt_data_with_ad_nonce(&encrypted2[12..], &key, &nonce2, associated_data)?;
+        let decrypted1 =
+            decrypt_data_with_ad_nonce(&encrypted1[12..], &key, &nonce1, associated_data)?;
+        let decrypted2 =
+            decrypt_data_with_ad_nonce(&encrypted2[12..], &key, &nonce2, associated_data)?;
 
         assert_eq!(plaintext.as_slice(), decrypted1);
         assert_eq!(plaintext.as_slice(), decrypted2);

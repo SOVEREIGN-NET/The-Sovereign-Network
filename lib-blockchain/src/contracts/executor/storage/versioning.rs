@@ -102,7 +102,8 @@ impl StateVersionManager {
     /// Update the last finalized height metadata
     pub fn update_last_finalized_height(&self, height: u64) -> StorageResult<()> {
         let height_bytes = height.to_be_bytes();
-        self.storage.set(Self::last_finalized_key(), &height_bytes)?;
+        self.storage
+            .set(Self::last_finalized_key(), &height_bytes)?;
         Ok(())
     }
 

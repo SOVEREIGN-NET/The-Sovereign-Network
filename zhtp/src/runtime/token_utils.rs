@@ -1,10 +1,14 @@
 use anyhow::Result;
-use lib_blockchain::Transaction;
-use lib_blockchain::transaction::TokenMintData;
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+use lib_blockchain::transaction::TokenMintData;
+use lib_blockchain::Transaction;
 
 /// Build a signed SOV token mint transaction using the node's validator key.
-pub async fn build_sov_mint_tx(recipient_wallet_id: &[u8; 32], amount: u64, memo: Vec<u8>) -> Result<Transaction> {
+pub async fn build_sov_mint_tx(
+    recipient_wallet_id: &[u8; 32],
+    amount: u64,
+    memo: Vec<u8>,
+) -> Result<Transaction> {
     let validator_kp = load_validator_keypair_from_keystore().await?;
     let chain_id = chain_id_from_env();
 
@@ -73,5 +77,8 @@ pub(crate) async fn load_validator_keypair_from_keystore() -> Result<lib_crypto:
         master_seed: keystore_key.master_seed,
     };
 
-    Ok(lib_crypto::KeyPair { public_key, private_key })
+    Ok(lib_crypto::KeyPair {
+        public_key,
+        private_key,
+    })
 }

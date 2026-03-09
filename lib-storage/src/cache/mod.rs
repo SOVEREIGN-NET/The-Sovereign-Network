@@ -3,21 +3,21 @@
 //! Implements a multi-level cache with LRU/LFU eviction policies,
 //! cache coherency, and tiered storage (hot/warm/cold).
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub mod lru;
-pub mod lfu;
-pub mod tiered;
 pub mod coherency;
+pub mod lfu;
+pub mod lru;
+pub mod tiered;
 
 // Re-export key types
-pub use lru::LruCache;
-pub use lfu::LfuCache;
-pub use tiered::{TieredCache, CacheTier};
 pub use coherency::{CacheCoherencyManager, CoherencyProtocol};
+pub use lfu::LfuCache;
+pub use lru::LruCache;
+pub use tiered::{CacheTier, TieredCache};
 
 /// Cache entry with metadata
 #[derive(Debug, Clone)]
@@ -271,9 +271,7 @@ impl CacheManager {
     fn find_arc_victim(&self) -> Option<String> {
         self.entries
             .iter()
-            .min_by(|(_, a), (_, b)| {
-                a.eviction_score().partial_cmp(&b.eviction_score()).unwrap()
-            })
+            .min_by(|(_, a), (_, b)| a.eviction_score().partial_cmp(&b.eviction_score()).unwrap())
             .map(|(key, _)| key.clone())
     }
 
@@ -297,7 +295,8 @@ impl CacheManager {
 
     /// Remove expired entries
     pub fn cleanup_expired(&mut self) -> usize {
-        let expired_keys: Vec<String> = self.entries
+        let expired_keys: Vec<String> = self
+            .entries
             .iter()
             .filter(|(_, entry)| entry.is_expired())
             .map(|(key, _)| key.clone())
@@ -405,13 +404,15 @@ mod tests {
     #[test]
     fn test_cache_manager_insert_get() {
         let mut cache = CacheManager::new(1024, EvictionPolicy::LRU);
-        
-        cache.insert("key1".to_string(), vec![1, 2, 3], 3600).unwrap();
-        
+
+        cache
+            .insert("key1".to_string(), vec![1, 2, 3], 3600)
+            .unwrap();
+
         let data = cache.get("key1");
         assert!(data.is_some());
         assert_eq!(data.unwrap(), vec![1, 2, 3]);
-        
+
         assert_eq!(cache.get_stats().hits, 1);
         assert_eq!(cache.get_stats().insertions, 1);
     }
@@ -419,14 +420,20 @@ mod tests {
     #[test]
     fn test_cache_eviction() {
         let mut cache = CacheManager::new(10, EvictionPolicy::LRU);
-        
+
         // Fill cache
-        cache.insert("key1".to_string(), vec![1, 2, 3, 4, 5], 3600).unwrap();
-        cache.insert("key2".to_string(), vec![6, 7, 8, 9, 10], 3600).unwrap();
-        
+        cache
+            .insert("key1".to_string(), vec![1, 2, 3, 4, 5], 3600)
+            .unwrap();
+        cache
+            .insert("key2".to_string(), vec![6, 7, 8, 9, 10], 3600)
+            .unwrap();
+
         // This should trigger eviction
-        cache.insert("key3".to_string(), vec![11, 12], 3600).unwrap();
-        
+        cache
+            .insert("key3".to_string(), vec![11, 12], 3600)
+            .unwrap();
+
         // key1 should have been evicted (LRU)
         assert!(cache.get("key1").is_none());
         assert!(cache.get("key2").is_some());
@@ -436,11 +443,13 @@ mod tests {
     #[test]
     fn test_cache_stats() {
         let mut cache = CacheManager::new(1024, EvictionPolicy::LRU);
-        
-        cache.insert("key1".to_string(), vec![1, 2, 3], 3600).unwrap();
+
+        cache
+            .insert("key1".to_string(), vec![1, 2, 3], 3600)
+            .unwrap();
         cache.get("key1");
         cache.get("key2");
-        
+
         let stats = cache.get_stats();
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 1);
@@ -450,10 +459,10 @@ mod tests {
     #[test]
     fn test_cache_utilization() {
         let mut cache = CacheManager::new(100, EvictionPolicy::LRU);
-        
+
         cache.insert("key1".to_string(), vec![0; 50], 3600).unwrap();
         assert_eq!(cache.utilization(), 0.5);
-        
+
         cache.insert("key2".to_string(), vec![0; 25], 3600).unwrap();
         assert_eq!(cache.utilization(), 0.75);
     }

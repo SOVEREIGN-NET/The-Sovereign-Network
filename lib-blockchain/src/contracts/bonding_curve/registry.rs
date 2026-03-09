@@ -3,12 +3,12 @@
 //! Index of all bonding curve tokens with query capabilities.
 //! Tracks phase transitions and graduation status.
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use super::{
     token::BondingCurveToken,
-    types::{Phase, CurveError},
+    types::{CurveError, Phase},
 };
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Bonding Curve Registry
 ///
@@ -47,7 +47,7 @@ impl BondingCurveRegistry {
     pub fn register(&mut self, token: BondingCurveToken) -> Result<(), CurveError> {
         if self.tokens.contains_key(&token.token_id) {
             return Err(CurveError::InvalidParameters(
-                "Token already registered".to_string()
+                "Token already registered".to_string(),
             ));
         }
 
@@ -80,7 +80,9 @@ impl BondingCurveRegistry {
         token_id: &[u8; 32],
         new_phase: Phase,
     ) -> Result<(), CurveError> {
-        let token = self.tokens.get(token_id)
+        let token = self
+            .tokens
+            .get(token_id)
             .ok_or(CurveError::InvalidParameters("Token not found".to_string()))?;
 
         let old_phase = token.phase;
@@ -120,16 +122,11 @@ impl BondingCurveRegistry {
             Phase::AMM => &self.amm_tokens,
         };
 
-        ids.iter()
-            .filter_map(|id| self.tokens.get(id))
-            .collect()
+        ids.iter().filter_map(|id| self.tokens.get(id)).collect()
     }
 
     /// Get tokens that can graduate (curve phase + threshold met)
-    pub fn get_ready_to_graduate(
-        &self,
-        current_timestamp: u64,
-    ) -> Vec<&BondingCurveToken> {
+    pub fn get_ready_to_graduate(&self, current_timestamp: u64) -> Vec<&BondingCurveToken> {
         self.curve_tokens
             .iter()
             .filter_map(|id| self.tokens.get(id))
@@ -202,7 +199,10 @@ mod tests {
             [id; 32],
             format!("Token {}", id),
             format!("TK{}", id),
-            CurveType::Linear { base_price: 100, slope: 1 },
+            CurveType::Linear {
+                base_price: 100,
+                slope: 1,
+            },
             Threshold::ReserveAmount(1000),
             true,
             PublicKey {

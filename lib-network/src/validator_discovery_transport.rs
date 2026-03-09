@@ -69,7 +69,11 @@ pub struct MeshValidatorDiscoveryTransport {
 
     /// Optional sender for outbound DHT messages
     /// This is set by the application layer when wiring up the transport
-    dht_message_sender: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<(lib_crypto::PublicKey, ZhtpMeshMessage)>>>>,
+    dht_message_sender: Arc<
+        RwLock<
+            Option<tokio::sync::mpsc::UnboundedSender<(lib_crypto::PublicKey, ZhtpMeshMessage)>>,
+        >,
+    >,
 }
 
 impl MeshValidatorDiscoveryTransport {
@@ -78,10 +82,7 @@ impl MeshValidatorDiscoveryTransport {
     /// # Arguments
     /// * `peer_registry` - Registry of connected peers
     /// * `local_identity` - This node's public key for DHT operations
-    pub fn new(
-        peer_registry: SharedPeerRegistry,
-        local_identity: lib_crypto::PublicKey,
-    ) -> Self {
+    pub fn new(peer_registry: SharedPeerRegistry, local_identity: lib_crypto::PublicKey) -> Self {
         Self {
             peer_registry,
             local_identity,
@@ -104,7 +105,12 @@ impl MeshValidatorDiscoveryTransport {
 
     /// Create DHT key from validator identity
     fn make_dht_key(identity_id: &Hash) -> Vec<u8> {
-        format!("{}{}", VALIDATOR_KEY_PREFIX, hex::encode(identity_id.as_bytes())).into_bytes()
+        format!(
+            "{}{}",
+            VALIDATOR_KEY_PREFIX,
+            hex::encode(identity_id.as_bytes())
+        )
+        .into_bytes()
     }
 
     #[allow(dead_code)]
@@ -152,12 +158,18 @@ impl MeshValidatorDiscoveryTransport {
     }
 
     /// Send a message to a peer (uses the wired sender)
-    async fn send_to_peer(&self, peer_id: &lib_crypto::PublicKey, message: ZhtpMeshMessage) -> Result<()> {
+    async fn send_to_peer(
+        &self,
+        peer_id: &lib_crypto::PublicKey,
+        message: ZhtpMeshMessage,
+    ) -> Result<()> {
         let sender = self.dht_message_sender.read().await;
-        let sender = sender.as_ref()
-            .ok_or_else(|| anyhow!("Message sender not configured - call set_message_sender() first"))?;
+        let sender = sender.as_ref().ok_or_else(|| {
+            anyhow!("Message sender not configured - call set_message_sender() first")
+        })?;
 
-        sender.send((peer_id.clone(), message))
+        sender
+            .send((peer_id.clone(), message))
             .map_err(|e| anyhow!("Failed to queue message: {}", e))?;
 
         Ok(())
@@ -263,12 +275,7 @@ impl MeshValidatorDiscoveryTransport {
     }
 
     /// Handle incoming DHT store message (called by message handler)
-    pub async fn handle_dht_store(
-        &self,
-        key: Vec<u8>,
-        value: Vec<u8>,
-        _ttl: u64,
-    ) -> Result<bool> {
+    pub async fn handle_dht_store(&self, key: Vec<u8>, value: Vec<u8>, _ttl: u64) -> Result<bool> {
         // Check if this is a validator announcement
         if !key.starts_with(VALIDATOR_KEY_PREFIX.as_bytes()) {
             return Ok(false);
@@ -341,7 +348,10 @@ impl MeshValidatorDiscoveryTransport {
     }
 
     /// Check if announcement matches filter
-    fn matches_filter(announcement: &ValidatorAnnouncement, filter: &ValidatorDiscoveryFilter) -> bool {
+    fn matches_filter(
+        announcement: &ValidatorAnnouncement,
+        filter: &ValidatorDiscoveryFilter,
+    ) -> bool {
         if let Some(min_stake) = filter.min_stake {
             if announcement.stake < min_stake {
                 return false;
@@ -466,7 +476,8 @@ mod tests {
         let invalid = b"invalid:key";
         assert!(MeshValidatorDiscoveryTransport::parse_dht_key(invalid).is_none());
 
-        let wrong_prefix = b"other:0101010101010101010101010101010101010101010101010101010101010101";
+        let wrong_prefix =
+            b"other:0101010101010101010101010101010101010101010101010101010101010101";
         assert!(MeshValidatorDiscoveryTransport::parse_dht_key(wrong_prefix).is_none());
     }
 
@@ -496,26 +507,38 @@ mod tests {
             min_stake: Some(500_000),
             ..Default::default()
         };
-        assert!(MeshValidatorDiscoveryTransport::matches_filter(&announcement, &filter));
+        assert!(MeshValidatorDiscoveryTransport::matches_filter(
+            &announcement,
+            &filter
+        ));
 
         let filter = ValidatorDiscoveryFilter {
             min_stake: Some(2_000_000),
             ..Default::default()
         };
-        assert!(!MeshValidatorDiscoveryTransport::matches_filter(&announcement, &filter));
+        assert!(!MeshValidatorDiscoveryTransport::matches_filter(
+            &announcement,
+            &filter
+        ));
 
         // Test status filter
         let filter = ValidatorDiscoveryFilter {
             status: Some(ValidatorStatus::Active),
             ..Default::default()
         };
-        assert!(MeshValidatorDiscoveryTransport::matches_filter(&announcement, &filter));
+        assert!(MeshValidatorDiscoveryTransport::matches_filter(
+            &announcement,
+            &filter
+        ));
 
         let filter = ValidatorDiscoveryFilter {
             status: Some(ValidatorStatus::Offline),
             ..Default::default()
         };
-        assert!(!MeshValidatorDiscoveryTransport::matches_filter(&announcement, &filter));
+        assert!(!MeshValidatorDiscoveryTransport::matches_filter(
+            &announcement,
+            &filter
+        ));
 
         // Test combined filters
         let filter = ValidatorDiscoveryFilter {
@@ -524,6 +547,9 @@ mod tests {
             status: Some(ValidatorStatus::Active),
             ..Default::default()
         };
-        assert!(MeshValidatorDiscoveryTransport::matches_filter(&announcement, &filter));
+        assert!(MeshValidatorDiscoveryTransport::matches_filter(
+            &announcement,
+            &filter
+        ));
     }
 }

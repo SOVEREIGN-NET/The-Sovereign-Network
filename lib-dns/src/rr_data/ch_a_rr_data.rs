@@ -1,47 +1,50 @@
-use std::any::Any;
-use std::fmt;
-use std::fmt::Formatter;
-use crate::messages::wire::{FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError};
+use crate::messages::wire::{
+    FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError,
+};
 use crate::rr_data::inter::rr_data::{RRData, RRDataError};
 use crate::utils::fqdn_utils::{pack_fqdn, unpack_fqdn};
 use crate::utils::octal;
 use crate::zone::inter::zone_rr_data::ZoneRRData;
 use crate::zone::zone_reader::{ErrorKind, ZoneReaderError};
+use std::any::Any;
+use std::fmt;
+use std::fmt::Formatter;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChARRData {
     network: Option<String>,
-    address: u16
+    address: u16,
 }
 
 impl Default for ChARRData {
-
     fn default() -> Self {
         Self {
             network: None,
-            address: 0
+            address: 0,
         }
     }
 }
 
 impl RRData for ChARRData {
-
     fn from_bytes(buf: &[u8]) -> Result<Self, RRDataError> {
         let (network, network_length) = unpack_fqdn(buf, 0);
 
-        let address = u16::from_be_bytes([buf[network_length], buf[1+network_length]]);
+        let address = u16::from_be_bytes([buf[network_length], buf[1 + network_length]]);
 
         Ok(Self {
             network: Some(network),
-            address
+            address,
         })
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, RRDataError> {
         let mut buf = Vec::with_capacity(34);
 
-        buf.extend_from_slice(&pack_fqdn(self.network.as_ref()
-            .ok_or_else(|| RRDataError("network param was not set".to_string()))?));
+        buf.extend_from_slice(&pack_fqdn(
+            self.network
+                .as_ref()
+                .ok_or_else(|| RRDataError("network param was not set".to_string()))?,
+        ));
 
         buf.extend_from_slice(&self.address.to_be_bytes());
 
@@ -65,16 +68,18 @@ impl RRData for ChARRData {
     }
 
     fn eq_box(&self, other: &dyn RRData) -> bool {
-        other.as_any().downcast_ref::<Self>().map_or(false, |o| self == o)
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .map_or(false, |o| self == o)
     }
 }
 
 impl ChARRData {
-
     pub fn new(network: &str, address: u16) -> Self {
         Self {
             network: Some(network.to_string()),
-            address
+            address,
         }
     }
 
@@ -96,29 +101,30 @@ impl ChARRData {
 }
 
 impl FromWireLen for ChARRData {
-
     fn from_wire_len(context: &mut FromWireContext, _len: u16) -> Result<Self, WireError> {
         let network = context.name()?;
         let address = u16::from_wire(context)?;
 
         Ok(Self {
             network: Some(network),
-            address
+            address,
         })
     }
 }
 
 impl ToWire for ChARRData {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
-        context.write_name(self.network.as_ref()
-            .ok_or_else(|| WireError::Format("network param was not set".to_string()))?, true)?;
+        context.write_name(
+            self.network
+                .as_ref()
+                .ok_or_else(|| WireError::Format("network param was not set".to_string()))?,
+            true,
+        )?;
         self.address.to_wire(context)
     }
 }
 
 impl ZoneRRData for ChARRData {
-
     fn set_data(&mut self, index: usize, value: &str) -> Result<(), ZoneReaderError> {
         Ok(match index {
             0 => self.network = Some(value.strip_suffix('.')
@@ -134,16 +140,21 @@ impl ZoneRRData for ChARRData {
 }
 
 impl fmt::Display for ChARRData {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", format!("{}.", self.network.as_ref().unwrap_or(&String::new())),
-               octal::to_octal(self.address))
+        write!(
+            f,
+            "{} {}",
+            format!("{}.", self.network.as_ref().unwrap_or(&String::new())),
+            octal::to_octal(self.address)
+        )
     }
 }
 
 #[test]
 fn test() {
-    let buf = vec![ 0x7, 0x43, 0x48, 0x2d, 0x41, 0x44, 0x44, 0x52, 0x0, 0x6, 0x61 ];
+    let buf = vec![
+        0x7, 0x43, 0x48, 0x2d, 0x41, 0x44, 0x44, 0x52, 0x0, 0x6, 0x61,
+    ];
     let record = ChARRData::from_bytes(&buf).unwrap();
     assert_eq!(buf, record.to_bytes().unwrap());
 }

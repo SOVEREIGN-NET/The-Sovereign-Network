@@ -75,34 +75,29 @@ use crate::types::dao::DAOType;
 /// );
 /// // Result: deterministic [u8; 32]
 /// ```
-pub fn derive_token_id(
-    name: &str,
-    symbol: &str,
-    dao_type: DAOType,
-    decimals: u8,
-) -> [u8; 32] {
+pub fn derive_token_id(name: &str, symbol: &str, dao_type: DAOType, decimals: u8) -> [u8; 32] {
     // Domain separation prefix (versioned for migration from V1)
     let domain = b"SOV_TOKEN_ID_V2";
 
     // Build deterministic, unambiguous input with length prefixes
     let mut data = Vec::new();
-    
+
     // Domain
     data.extend_from_slice(domain);
-    
+
     // Name: length-prefixed (u16 big-endian) + UTF-8 bytes
     let name_bytes = name.as_bytes();
     data.extend_from_slice(&(name_bytes.len() as u16).to_be_bytes());
     data.extend_from_slice(name_bytes);
-    
+
     // Symbol: length-prefixed (u16 big-endian) + UTF-8 bytes
     let symbol_bytes = symbol.as_bytes();
     data.extend_from_slice(&(symbol_bytes.len() as u16).to_be_bytes());
     data.extend_from_slice(symbol_bytes);
-    
+
     // DAOType: fixed 2-byte ASCII encoding ("np" or "fp")
     data.extend_from_slice(dao_type.as_str().as_bytes());
-    
+
     // Decimals: single byte (0-18)
     data.push(decimals);
 
@@ -256,7 +251,7 @@ mod tests {
         expected_input.extend_from_slice(b"HEALTH");
         expected_input.extend_from_slice(b"np"); // DAOType::NP as 2 bytes
         expected_input.push(8); // decimals
-        
+
         let expected = blake3::hash(&expected_input);
         assert_eq!(id, *expected.as_bytes());
     }

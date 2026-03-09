@@ -8,7 +8,7 @@
 //! - **Testability**: Pure functions for template generation and path construction
 
 use crate::argument_parsing::ServiceAction;
-use crate::error::{CliResult, CliError};
+use crate::error::{CliError, CliResult};
 
 use std::path::PathBuf;
 
@@ -86,7 +86,10 @@ pub fn validate_service_user(user: &str) -> CliResult<()> {
     }
 
     // Allow alphanumeric, underscores, and hyphens for usernames
-    if !user.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+    if !user
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    {
         return Err(CliError::ConfigError(format!(
             "Invalid service user: {}. Use only alphanumeric characters, hyphens, and underscores",
             user
@@ -245,10 +248,16 @@ async fn install_systemd_service(user: &str, enable: bool) -> CliResult<()> {
     println!("  sudo systemctl daemon-reload");
 
     if enable {
-        println!("  sudo systemctl enable {}.service", get_systemd_service_name());
+        println!(
+            "  sudo systemctl enable {}.service",
+            get_systemd_service_name()
+        );
     }
 
-    println!("  sudo systemctl start {}.service", get_systemd_service_name());
+    println!(
+        "  sudo systemctl start {}.service",
+        get_systemd_service_name()
+    );
     println!("\nOr use: sudo zhtp-cli service install --enable");
 
     Ok(())
@@ -294,7 +303,8 @@ async fn install_windows_service(enable: bool) -> CliResult<()> {
     println!("Binary: {}", binary_path.display());
 
     println!("\nTo install (requires elevated privileges):");
-    println!("  sc create {} binPath= \\\"{}\\\" start= {} DisplayName= \\\"ZHTP Node\\\"",
+    println!(
+        "  sc create {} binPath= \\\"{}\\\" start= {} DisplayName= \\\"ZHTP Node\\\"",
         get_windows_service_name(),
         binary_path.display(),
         if enable { "auto" } else { "demand" }
@@ -314,16 +324,31 @@ async fn uninstall_service_impl(platform: Platform, _force: bool) -> CliResult<(
     match platform {
         Platform::Linux => {
             println!("To uninstall systemd service:");
-            println!("  sudo systemctl stop {}.service", get_systemd_service_name());
-            println!("  sudo systemctl disable {}.service", get_systemd_service_name());
-            println!("  sudo rm /etc/systemd/system/{}.service", get_systemd_service_name());
+            println!(
+                "  sudo systemctl stop {}.service",
+                get_systemd_service_name()
+            );
+            println!(
+                "  sudo systemctl disable {}.service",
+                get_systemd_service_name()
+            );
+            println!(
+                "  sudo rm /etc/systemd/system/{}.service",
+                get_systemd_service_name()
+            );
             println!("  sudo systemctl daemon-reload");
             Ok(())
         }
         Platform::MacOS => {
             println!("To uninstall launchd service:");
-            println!("  launchctl unload ~/Library/LaunchAgents/{}.plist", get_launchd_service_name());
-            println!("  rm ~/Library/LaunchAgents/{}.plist", get_launchd_service_name());
+            println!(
+                "  launchctl unload ~/Library/LaunchAgents/{}.plist",
+                get_launchd_service_name()
+            );
+            println!(
+                "  rm ~/Library/LaunchAgents/{}.plist",
+                get_launchd_service_name()
+            );
             Ok(())
         }
         Platform::Windows => {
@@ -343,7 +368,10 @@ async fn start_service_impl(platform: Platform) -> CliResult<()> {
     match platform {
         Platform::Linux => {
             println!("To start the service:");
-            println!("  sudo systemctl start {}.service", get_systemd_service_name());
+            println!(
+                "  sudo systemctl start {}.service",
+                get_systemd_service_name()
+            );
             println!("\nStatus:");
             println!("  systemctl status {}.service", get_systemd_service_name());
             Ok(())
@@ -369,7 +397,10 @@ async fn stop_service_impl(platform: Platform) -> CliResult<()> {
     match platform {
         Platform::Linux => {
             println!("To stop the service:");
-            println!("  sudo systemctl stop {}.service", get_systemd_service_name());
+            println!(
+                "  sudo systemctl stop {}.service",
+                get_systemd_service_name()
+            );
             Ok(())
         }
         Platform::MacOS => {
@@ -393,7 +424,10 @@ async fn status_service_impl(platform: Platform) -> CliResult<()> {
     match platform {
         Platform::Linux => {
             println!("Checking systemd service status...");
-            println!("Run: systemctl status {}.service", get_systemd_service_name());
+            println!(
+                "Run: systemctl status {}.service",
+                get_systemd_service_name()
+            );
             Ok(())
         }
         Platform::MacOS => {
@@ -417,7 +451,11 @@ async fn logs_service_impl(platform: Platform, lines: usize, _follow: bool) -> C
     match platform {
         Platform::Linux => {
             println!("Viewing systemd service logs (last {} lines):", lines);
-            println!("Run: journalctl -u {}.service -n {}", get_systemd_service_name(), lines);
+            println!(
+                "Run: journalctl -u {}.service -n {}",
+                get_systemd_service_name(),
+                lines
+            );
             println!("\nFor continuous logs:");
             println!("  journalctl -u {}.service -f", get_systemd_service_name());
             Ok(())
@@ -431,8 +469,11 @@ async fn logs_service_impl(platform: Platform, lines: usize, _follow: bool) -> C
         }
         Platform::Windows => {
             println!("Viewing Windows service event logs:");
-            println!("Run: Get-EventLog -LogName System -Source {} -Newest {} | Format-List",
-                get_windows_service_name(), lines);
+            println!(
+                "Run: Get-EventLog -LogName System -Source {} -Newest {} | Format-List",
+                get_windows_service_name(),
+                lines
+            );
             Ok(())
         }
         Platform::Other => Err(CliError::ConfigError(
@@ -517,8 +558,14 @@ mod tests {
 
     #[test]
     fn test_operation_description() {
-        assert_eq!(ServiceOperation::Install.description(), "Install system service");
-        assert_eq!(ServiceOperation::Uninstall.description(), "Uninstall system service");
+        assert_eq!(
+            ServiceOperation::Install.description(),
+            "Install system service"
+        );
+        assert_eq!(
+            ServiceOperation::Uninstall.description(),
+            "Uninstall system service"
+        );
         assert_eq!(ServiceOperation::Start.description(), "Start service");
         assert_eq!(ServiceOperation::Stop.description(), "Stop service");
         assert_eq!(ServiceOperation::Status.description(), "Get service status");

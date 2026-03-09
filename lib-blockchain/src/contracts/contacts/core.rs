@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::integration::crypto_integration::PublicKey;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Contact registry entry
@@ -25,12 +25,9 @@ pub struct ContactEntry {
 
 impl ContactEntry {
     /// Create a new contact entry
-    pub fn new(
-        owner: PublicKey,
-        display_name: String,
-        public_key: PublicKey,
-    ) -> Self {
-        let contact_id = crate::contracts::utils::generate_contact_id(&owner.key_id, &public_key.key_id);
+    pub fn new(owner: PublicKey, display_name: String, public_key: PublicKey) -> Self {
+        let contact_id =
+            crate::contracts::utils::generate_contact_id(&owner.key_id, &public_key.key_id);
         let added_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -257,15 +254,14 @@ impl ContactContract {
     }
 
     /// Search contacts by display name
-    pub fn search_contacts(
-        &self,
-        owner: &PublicKey,
-        search_term: &str,
-    ) -> Vec<&ContactEntry> {
+    pub fn search_contacts(&self, owner: &PublicKey, search_term: &str) -> Vec<&ContactEntry> {
         self.get_user_contacts(owner)
             .into_iter()
             .filter(|contact| {
-                contact.display_name.to_lowercase().contains(&search_term.to_lowercase())
+                contact
+                    .display_name
+                    .to_lowercase()
+                    .contains(&search_term.to_lowercase())
             })
             .collect()
     }
@@ -288,7 +284,8 @@ impl ContactContract {
 
     /// Check if two users have each other as contacts (mutual)
     pub fn are_mutual_contacts(&self, user1: &PublicKey, user2: &PublicKey) -> bool {
-        let user1_has_user2 = self.user_contacts
+        let user1_has_user2 = self
+            .user_contacts
             .get(user1)
             .map(|contacts| {
                 contacts.iter().any(|contact_id| {
@@ -301,7 +298,8 @@ impl ContactContract {
             })
             .unwrap_or(false);
 
-        let user2_has_user1 = self.user_contacts
+        let user2_has_user1 = self
+            .user_contacts
             .get(user2)
             .map(|contacts| {
                 contacts.iter().any(|contact_id| {
@@ -334,10 +332,7 @@ impl ContactContract {
 
     /// Export contacts for backup
     pub fn export_contacts(&self, owner: &PublicKey) -> Vec<ContactEntry> {
-        self.get_user_contacts(owner)
-            .into_iter()
-            .cloned()
-            .collect()
+        self.get_user_contacts(owner).into_iter().cloned().collect()
     }
 
     /// Import contacts from backup
@@ -351,7 +346,7 @@ impl ContactContract {
         for mut contact in contacts {
             // Update owner to match current user
             contact.owner = owner.clone();
-            
+
             // Regenerate contact ID
             contact.contact_id = crate::contracts::utils::generate_contact_id(
                 &owner.key_id,
@@ -359,7 +354,8 @@ impl ContactContract {
             );
 
             // Check if contact already exists
-            let already_exists = self.user_contacts
+            let already_exists = self
+                .user_contacts
                 .get(owner)
                 .map(|existing_contacts| {
                     existing_contacts.iter().any(|id| {
@@ -407,8 +403,9 @@ impl ContactContract {
         let total_contacts = self.contacts.len();
         let total_users = self.user_contacts.len();
         let verified_contacts = self.contacts.values().filter(|c| c.verified).count();
-        
-        let mut contact_counts: Vec<usize> = self.user_contacts
+
+        let mut contact_counts: Vec<usize> = self
+            .user_contacts
             .values()
             .map(|contacts| contacts.len())
             .collect();
@@ -464,7 +461,7 @@ mod tests {
     fn test_contact_entry_creation() {
         let owner = create_test_public_key(1);
         let contact_pk = create_test_public_key(2);
-        
+
         let contact = ContactEntry::new(
             owner.clone(),
             "Test Contact".to_string(),
@@ -487,11 +484,13 @@ mod tests {
         let mut contract = ContactContract::new();
 
         // Add contact
-        let contact_id = contract.add_contact(
-            owner.clone(),
-            "Test Contact".to_string(),
-            contact_pk.clone(),
-        ).unwrap();
+        let contact_id = contract
+            .add_contact(
+                owner.clone(),
+                "Test Contact".to_string(),
+                contact_pk.clone(),
+            )
+            .unwrap();
 
         // Verify contact was added
         assert_eq!(contract.get_contact_count(&owner), 1);
@@ -510,11 +509,13 @@ mod tests {
         let mut contract = ContactContract::new();
 
         // Add contact
-        contract.add_contact(
-            owner.clone(),
-            "First Contact".to_string(),
-            contact_pk.clone(),
-        ).unwrap();
+        contract
+            .add_contact(
+                owner.clone(),
+                "First Contact".to_string(),
+                contact_pk.clone(),
+            )
+            .unwrap();
 
         // Try to add the same contact again
         let result = contract.add_contact(
@@ -533,20 +534,24 @@ mod tests {
         let contact_pk = create_test_public_key(2);
         let mut contract = ContactContract::new();
 
-        let contact_id = contract.add_contact(
-            owner.clone(),
-            "Original Name".to_string(),
-            contact_pk.clone(),
-        ).unwrap();
+        let contact_id = contract
+            .add_contact(
+                owner.clone(),
+                "Original Name".to_string(),
+                contact_pk.clone(),
+            )
+            .unwrap();
 
         // Update contact
-        contract.update_contact(
-            &owner,
-            &contact_id,
-            Some("Updated Name".to_string()),
-            Some("avatar_hash".to_string()),
-            Some("Online".to_string()),
-        ).unwrap();
+        contract
+            .update_contact(
+                &owner,
+                &contact_id,
+                Some("Updated Name".to_string()),
+                Some("avatar_hash".to_string()),
+                Some("Online".to_string()),
+            )
+            .unwrap();
 
         let contact = contract.get_contact(&contact_id).unwrap();
         assert_eq!(contact.display_name, "Updated Name");
@@ -560,11 +565,13 @@ mod tests {
         let contact_pk = create_test_public_key(2);
         let mut contract = ContactContract::new();
 
-        let contact_id = contract.add_contact(
-            owner.clone(),
-            "Test Contact".to_string(),
-            contact_pk.clone(),
-        ).unwrap();
+        let contact_id = contract
+            .add_contact(
+                owner.clone(),
+                "Test Contact".to_string(),
+                contact_pk.clone(),
+            )
+            .unwrap();
 
         assert_eq!(contract.get_contact_count(&owner), 1);
 
@@ -581,21 +588,17 @@ mod tests {
         let mut contract = ContactContract::new();
 
         // User1 adds User2 as contact
-        contract.add_contact(
-            user1.clone(),
-            "User2".to_string(),
-            user2.clone(),
-        ).unwrap();
+        contract
+            .add_contact(user1.clone(), "User2".to_string(), user2.clone())
+            .unwrap();
 
         // Not mutual yet
         assert!(!contract.are_mutual_contacts(&user1, &user2));
 
         // User2 adds User1 as contact
-        contract.add_contact(
-            user2.clone(),
-            "User1".to_string(),
-            user1.clone(),
-        ).unwrap();
+        contract
+            .add_contact(user2.clone(), "User1".to_string(), user1.clone())
+            .unwrap();
 
         // Now they are mutual contacts
         assert!(contract.are_mutual_contacts(&user1, &user2));
@@ -608,17 +611,13 @@ mod tests {
         let contact2_pk = create_test_public_key(3);
         let mut contract = ContactContract::new();
 
-        contract.add_contact(
-            owner.clone(),
-            "Alice Smith".to_string(),
-            contact1_pk,
-        ).unwrap();
+        contract
+            .add_contact(owner.clone(), "Alice Smith".to_string(), contact1_pk)
+            .unwrap();
 
-        contract.add_contact(
-            owner.clone(),
-            "Bob Johnson".to_string(),
-            contact2_pk,
-        ).unwrap();
+        contract
+            .add_contact(owner.clone(), "Bob Johnson".to_string(), contact2_pk)
+            .unwrap();
 
         // Search for "alice"
         let results = contract.search_contacts(&owner, "alice");
@@ -637,11 +636,9 @@ mod tests {
         let contact_pk = create_test_public_key(2);
         let mut contract = ContactContract::new();
 
-        let contact_id = contract.add_contact(
-            owner.clone(),
-            "Test Contact".to_string(),
-            contact_pk,
-        ).unwrap();
+        let contact_id = contract
+            .add_contact(owner.clone(), "Test Contact".to_string(), contact_pk)
+            .unwrap();
 
         // Initially not verified
         let contact = contract.get_contact(&contact_id).unwrap();

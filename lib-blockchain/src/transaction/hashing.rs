@@ -2,10 +2,12 @@
 //!
 //! Provides secure hashing functionality for ZHTP blockchain transactions.
 
+use crate::integration::crypto_integration::{
+    PrivateKey, PublicKey, Signature, SignatureAlgorithm,
+};
+use crate::integration::zk_integration::ZkTransactionProof;
 use crate::transaction::core::{Transaction, TransactionInput, TransactionOutput};
 use crate::types::Hash;
-use crate::integration::crypto_integration::{Signature, PublicKey, PrivateKey, SignatureAlgorithm};
-use crate::integration::zk_integration::ZkTransactionProof;
 use tracing::debug;
 
 /// Hash a complete transaction
@@ -20,15 +22,15 @@ pub fn hash_transaction(transaction: &Transaction) -> Hash {
         public_key: PublicKey {
             dilithium_pk: Vec::new(),
             kyber_pk: Vec::new(),
-            key_id: [0u8; 32],  // All zeros - must match client's zeroed signature
+            key_id: [0u8; 32], // All zeros - must match client's zeroed signature
         },
         algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: 0,
     };
-    
+
     // Serialize and hash
-    let serialized = bincode::serialize(&tx_for_hash)
-        .expect("Transaction serialization should never fail");
+    let serialized =
+        bincode::serialize(&tx_for_hash).expect("Transaction serialization should never fail");
 
     // Log serialized bytes for comparison with client (debug only)
     debug!(
@@ -58,17 +60,17 @@ pub fn hash_transaction_for_signing(transaction: &Transaction) -> Hash {
 
 /// Hash a transaction input
 pub fn hash_transaction_input(input: &TransactionInput) -> Hash {
-    let serialized = bincode::serialize(input)
-        .expect("TransactionInput serialization should never fail");
-    
+    let serialized =
+        bincode::serialize(input).expect("TransactionInput serialization should never fail");
+
     crate::types::hash::blake3_hash(&serialized)
 }
 
 /// Hash a transaction output
 pub fn hash_transaction_output(output: &TransactionOutput) -> Hash {
-    let serialized = bincode::serialize(output)
-        .expect("TransactionOutput serialization should never fail");
-    
+    let serialized =
+        bincode::serialize(output).expect("TransactionOutput serialization should never fail");
+
     crate::types::hash::blake3_hash(&serialized)
 }
 
@@ -79,26 +81,23 @@ pub fn calculate_transaction_merkle_root(transactions: &[Transaction]) -> Hash {
     }
 
     // Get all transaction hashes
-    let mut hashes: Vec<Hash> = transactions
-        .iter()
-        .map(hash_transaction)
-        .collect();
+    let mut hashes: Vec<Hash> = transactions.iter().map(hash_transaction).collect();
 
     // Build Merkle tree bottom-up
     while hashes.len() > 1 {
         let mut next_level = Vec::new();
-        
+
         for chunk in hashes.chunks(2) {
             let left = chunk[0];
             let right = chunk.get(1).copied().unwrap_or(left); // Duplicate if odd
-            
+
             let mut combined = Vec::new();
             combined.extend_from_slice(left.as_bytes());
             combined.extend_from_slice(right.as_bytes());
             let parent_hash = crate::types::hash::blake3_hash(&combined);
             next_level.push(parent_hash);
         }
-        
+
         hashes = next_level;
     }
 
@@ -107,31 +106,25 @@ pub fn calculate_transaction_merkle_root(transactions: &[Transaction]) -> Hash {
 
 /// Generate nullifier for transaction input
 /// Nullifiers prevent double-spending in zero-knowledge systems
-pub fn generate_nullifier(
-    secret_key: &[u8],
-    commitment: &Hash,
-    position: u64,
-) -> Hash {
+pub fn generate_nullifier(secret_key: &[u8], commitment: &Hash, position: u64) -> Hash {
     let mut data = Vec::new();
     data.extend_from_slice(secret_key);
     data.extend_from_slice(commitment.as_bytes());
     data.extend_from_slice(&position.to_le_bytes());
-    
+
     crate::types::hash::blake3_hash(&data)
 }
 
 /// Create commitment hash for transaction output
 /// Commitments hide transaction amounts in zero-knowledge systems
-pub fn create_commitment(
-    amount: u64,
-    blinding_factor: &[u8],
-    recipient_key: &PublicKey,
-) -> Hash {
+pub fn create_commitment(amount: u64, blinding_factor: &[u8], recipient_key: &PublicKey) -> Hash {
     let mut data = Vec::new();
     data.extend_from_slice(&amount.to_le_bytes());
     data.extend_from_slice(blinding_factor);
-    data.extend_from_slice(&crate::integration::crypto_integration::public_key_bytes(recipient_key));
-    
+    data.extend_from_slice(&crate::integration::crypto_integration::public_key_bytes(
+        recipient_key,
+    ));
+
     crate::types::hash::blake3_hash(&data)
 }
 
@@ -148,11 +141,14 @@ pub fn create_encrypted_note(
     note_data.extend_from_slice(&amount.to_le_bytes());
     note_data.extend_from_slice(&(memo.len() as u32).to_le_bytes());
     note_data.extend_from_slice(memo);
-    
+
     // Use the provided keys for encryption
-    debug!("Creating encrypted note using recipient key: {} bytes, sender key: {} bytes", 
-           recipient_key.dilithium_pk.len(), sender_key.dilithium_sk.len());
-    
+    debug!(
+        "Creating encrypted note using recipient key: {} bytes, sender key: {} bytes",
+        recipient_key.dilithium_pk.len(),
+        sender_key.dilithium_sk.len()
+    );
+
     // Add sender's signature to the note for authenticity
     let mut signed_note_data = note_data.clone();
     // Create authenticated note with sender signature using lib-identity
@@ -164,7 +160,7 @@ pub fn create_encrypted_note(
         security_level: 5,
         key_id: format!("tx_signing_{}", hex::encode(&sender_key.dilithium_sk[..8])),
     };
-    
+
     // Sign the note data using lib-identity's post-quantum signing
     if let Ok(signature) = lib_identity::cryptography::signatures::sign_with_identity(
         &post_quantum_keypair,
@@ -174,11 +170,12 @@ pub fn create_encrypted_note(
         // Append the actual signature to note data
         signed_note_data.extend_from_slice(&signature.signature);
     }
-    
+
     // Encrypt the note using hybrid encryption with the recipient's public key
-    let encrypted_note = crate::integration::crypto_integration::hybrid_encrypt(&signed_note_data, recipient_key)
-        .map_err(|e| format!("Note encryption failed: {}", e))?;
-    
+    let encrypted_note =
+        crate::integration::crypto_integration::hybrid_encrypt(&signed_note_data, recipient_key)
+            .map_err(|e| format!("Note encryption failed: {}", e))?;
+
     // Return hash of encrypted note
     Ok(crate::types::hash::blake3_hash(&encrypted_note))
 }
@@ -209,8 +206,8 @@ pub fn hash_for_signature(transaction: &Transaction) -> Hash {
     sorted_inputs.sort_by_key(|input| (input.previous_output, input.output_index));
     hasher.update(&(sorted_inputs.len() as u64).to_le_bytes());
     for input in &sorted_inputs {
-        let input_bytes = bincode::serialize(input)
-            .expect("TransactionInput serialization should never fail");
+        let input_bytes =
+            bincode::serialize(input).expect("TransactionInput serialization should never fail");
         hasher.update(&input_bytes);
     }
 
@@ -219,8 +216,8 @@ pub fn hash_for_signature(transaction: &Transaction) -> Hash {
     sorted_outputs.sort_by_key(|output| output.commitment);
     hasher.update(&(sorted_outputs.len() as u64).to_le_bytes());
     for output in &sorted_outputs {
-        let output_bytes = bincode::serialize(output)
-            .expect("TransactionOutput serialization should never fail");
+        let output_bytes =
+            bincode::serialize(output).expect("TransactionOutput serialization should never fail");
         hasher.update(&output_bytes);
     }
 
@@ -258,8 +255,8 @@ fn hash_optional_field<T: serde::Serialize>(hasher: &mut blake3::Hasher, field: 
     match field {
         Some(data) => {
             hasher.update(&[0x01]); // Present marker
-            let bytes = bincode::serialize(data)
-                .expect("Optional field serialization should never fail");
+            let bytes =
+                bincode::serialize(data).expect("Optional field serialization should never fail");
             hasher.update(&bytes);
         }
         None => {
@@ -316,13 +313,13 @@ pub mod utils {
     pub fn calculate_witness_hash(transaction: &Transaction) -> Hash {
         // In ZHTP, ZK proofs are part of witness data
         let mut witness_data = Vec::new();
-        
+
         for input in &transaction.inputs {
             let proof_bytes = bincode::serialize(&input.zk_proof)
                 .expect("ZkTransactionProof serialization should never fail");
             witness_data.extend_from_slice(&proof_bytes);
         }
-        
+
         if witness_data.is_empty() {
             Hash::default()
         } else {
@@ -340,12 +337,12 @@ pub mod utils {
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         };
-        
+
         // Clear ZK proofs for content-only hash
         for input in &mut tx_content.inputs {
             input.zk_proof = ZkTransactionProof::default();
         }
-        
+
         hash_transaction(&tx_content)
     }
 

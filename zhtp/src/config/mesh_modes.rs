@@ -55,9 +55,9 @@ impl MeshMode {
                 bluetooth_le: true,
                 wifi_direct: true,
                 lorawan: true,
-                tcp_ip: false,        // No TCP/IP - QUIC-only
-                websockets: false,    // No WebSockets
-                quic: true,           // QUIC is required and primary transport
+                tcp_ip: false,     // No TCP/IP - QUIC-only
+                websockets: false, // No WebSockets
+                quic: true,        // QUIC is required and primary transport
             },
             #[allow(deprecated)]
             MeshMode::Hybrid => {
@@ -73,13 +73,13 @@ impl MeshMode {
             }
         }
     }
-    
+
     /// Check if this mode requires long-range relays
     pub fn requires_long_range_relays(&self) -> bool {
         match self {
-            MeshMode::PureMesh => true,  // Critical for global coverage without ISPs
+            MeshMode::PureMesh => true, // Critical for global coverage without ISPs
             #[allow(deprecated)]
-            MeshMode::Hybrid => true,     // Hybrid is deprecated - treat as mesh-only
+            MeshMode::Hybrid => true, // Hybrid is deprecated - treat as mesh-only
         }
     }
 
@@ -91,7 +91,7 @@ impl MeshMode {
             MeshMode::Hybrid => BootstrapStrategy::MeshDiscovery, // Hybrid is deprecated - use mesh discovery
         }
     }
-    
+
     /// Validate that required capabilities are available for this mode
     pub fn validate_capabilities(&self, available_protocols: &[String]) -> Result<(), String> {
         let _required = self.get_protocol_selection();
@@ -99,18 +99,18 @@ impl MeshMode {
         match self {
             MeshMode::PureMesh => {
                 // Must have at least one mesh protocol
-                let has_mesh_protocol = available_protocols.iter().any(|p| {
-                    matches!(p.as_str(), "bluetooth" | "wifi_direct" | "lorawan")
-                });
+                let has_mesh_protocol = available_protocols
+                    .iter()
+                    .any(|p| matches!(p.as_str(), "bluetooth" | "wifi_direct" | "lorawan"));
 
                 if !has_mesh_protocol {
                     return Err("Pure mesh mode requires at least one mesh protocol (Bluetooth, WiFi Direct, or LoRaWAN)".to_string());
                 }
 
                 // QUIC is required in all modes
-                let has_quic = available_protocols.iter().any(|p| {
-                    matches!(p.as_str(), "quic")
-                });
+                let has_quic = available_protocols
+                    .iter()
+                    .any(|p| matches!(p.as_str(), "quic"));
 
                 if !has_quic {
                     return Err("QUIC is required for all mesh modes".to_string());

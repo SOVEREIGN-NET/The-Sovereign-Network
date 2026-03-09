@@ -7,7 +7,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{warn, debug};
+use tracing::{debug, warn};
 
 /// Configuration for rate limiting
 #[derive(Debug, Clone)]
@@ -89,7 +89,7 @@ impl PouwRateLimiter {
     /// Check if a request from the given IP is allowed
     pub async fn check_ip(&self, ip: IpAddr) -> RateLimitResult {
         let mut limits = self.ip_limits.write().await;
-        
+
         let count = if let Some(entry) = limits.get_mut(&ip) {
             entry.increment(self.config.window_duration)
         } else {
@@ -105,14 +105,16 @@ impl PouwRateLimiter {
             }
         } else {
             debug!(ip = %ip, count = count, limit = self.config.max_requests_per_ip, "IP rate check passed");
-            RateLimitResult::Allowed { remaining: self.config.max_requests_per_ip - count }
+            RateLimitResult::Allowed {
+                remaining: self.config.max_requests_per_ip - count,
+            }
         }
     }
 
     /// Check if a request from the given client DID is allowed
     pub async fn check_did(&self, did: &str) -> RateLimitResult {
         let mut limits = self.did_limits.write().await;
-        
+
         let count = if let Some(entry) = limits.get_mut(did) {
             entry.increment(self.config.window_duration)
         } else {
@@ -128,7 +130,9 @@ impl PouwRateLimiter {
             }
         } else {
             debug!(did = %did, count = count, limit = self.config.max_requests_per_did, "DID rate check passed");
-            RateLimitResult::Allowed { remaining: self.config.max_requests_per_did - count }
+            RateLimitResult::Allowed {
+                remaining: self.config.max_requests_per_did - count,
+            }
         }
     }
 
@@ -147,13 +151,19 @@ impl PouwRateLimiter {
     /// Validate batch size
     pub fn check_batch_size(&self, size: usize) -> RateLimitResult {
         if size > self.config.max_batch_size {
-            warn!(size = size, limit = self.config.max_batch_size, "Batch size limit exceeded");
+            warn!(
+                size = size,
+                limit = self.config.max_batch_size,
+                "Batch size limit exceeded"
+            );
             RateLimitResult::Denied {
                 reason: RateLimitReason::BatchSizeExceeded,
                 retry_after: Duration::ZERO,
             }
         } else {
-            RateLimitResult::Allowed { remaining: (self.config.max_batch_size - size) as u32 }
+            RateLimitResult::Allowed {
+                remaining: (self.config.max_batch_size - size) as u32,
+            }
         }
     }
 
@@ -165,14 +175,14 @@ impl PouwRateLimiter {
     /// Clean up expired entries (call periodically)
     pub async fn cleanup_expired(&self) {
         let now = Instant::now();
-        
+
         {
             let mut ip_limits = self.ip_limits.write().await;
             ip_limits.retain(|_, entry| {
                 now.duration_since(entry.window_start) <= self.config.window_duration * 2
             });
         }
-        
+
         {
             let mut did_limits = self.did_limits.write().await;
             did_limits.retain(|_, entry| {
@@ -296,6 +306,9 @@ mod tests {
         assert!(!limiter.check_request(ip, did).await.is_allowed());
 
         // Different DID should still be allowed for same IP
-        assert!(limiter.check_request(ip, "did:sov:other").await.is_allowed());
+        assert!(limiter
+            .check_request(ip, "did:sov:other")
+            .await
+            .is_allowed());
     }
 }

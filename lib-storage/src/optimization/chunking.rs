@@ -87,7 +87,7 @@ impl ContentChunker {
 
         while offset < data.len() {
             let mut chunk_end = offset + min_size;
-            
+
             // Ensure we don't exceed data length
             if chunk_end >= data.len() {
                 // Last chunk
@@ -197,13 +197,13 @@ mod tests {
             avg_size: 8,
             max_size: 16,
         });
-        
+
         let data = b"This is a test of content-defined chunking algorithm";
         let chunks = chunker.chunk(data).unwrap();
 
         // Should produce multiple chunks
         assert!(chunks.len() > 1);
-        
+
         // All chunks should be within size bounds
         for chunk in &chunks {
             assert!(chunk.size() >= 4 || chunks.last().unwrap().offset == chunk.offset);
@@ -217,7 +217,7 @@ mod tests {
         let data = b"test data here";
 
         let chunks = chunker.chunk(data).unwrap();
-        
+
         for chunk in chunks {
             assert!(chunk.verify());
         }
@@ -230,7 +230,7 @@ mod tests {
             avg_size: 200,
             max_size: 400,
         });
-        
+
         let data = b"small";
         let chunks = chunker.chunk(data).unwrap();
 

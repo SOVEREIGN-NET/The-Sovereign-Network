@@ -34,9 +34,7 @@ impl StateRootComputation {
     pub fn compute_state_root(&self, block_height: u64) -> StorageResult<[u8; 32]> {
         // Scan all versioned entries for this block height
         let prefix = format!("state:{}:", block_height);
-        let mut entries = self
-            .storage
-            .scan_prefix(prefix.as_bytes())?;
+        let mut entries = self.storage.scan_prefix(prefix.as_bytes())?;
 
         if entries.is_empty() {
             // Empty state has a specific root
@@ -145,11 +143,7 @@ mod tests {
 
     #[test]
     fn test_merkle_root_multiple_entries() {
-        let entries = vec![
-            b"entry1".to_vec(),
-            b"entry2".to_vec(),
-            b"entry3".to_vec(),
-        ];
+        let entries = vec![b"entry1".to_vec(), b"entry2".to_vec(), b"entry3".to_vec()];
         let root = StateRootComputation::merkle_root(&entries);
         assert_eq!(root.len(), 32);
 
@@ -160,11 +154,7 @@ mod tests {
 
     #[test]
     fn test_merkle_root_determinism() {
-        let entries = vec![
-            b"alpha".to_vec(),
-            b"beta".to_vec(),
-            b"gamma".to_vec(),
-        ];
+        let entries = vec![b"alpha".to_vec(), b"beta".to_vec(), b"gamma".to_vec()];
 
         let root1 = StateRootComputation::merkle_root(&entries);
         let root2 = StateRootComputation::merkle_root(&entries);
@@ -208,9 +198,7 @@ mod tests {
         let computed_root = computer.compute_state_root(100).unwrap();
 
         // Verify with correct root
-        assert!(computer
-            .verify_state_root(100, &computed_root)
-            .unwrap());
+        assert!(computer.verify_state_root(100, &computed_root).unwrap());
 
         // Verify fails with wrong root
         let wrong_root = [0u8; 32];

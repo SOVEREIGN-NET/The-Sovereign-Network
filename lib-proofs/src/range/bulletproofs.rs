@@ -1,11 +1,11 @@
 //! Bulletproof-style range proof implementation
-//! 
+//!
 //! Provides Bulletproof-compatible range proofs with optimized verification
 //! and support for aggregated multi-party proofs.
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
 use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
 
 /// Bulletproof commitment structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,13 +45,17 @@ impl BulletproofRangeProof {
     /// Generate a Bulletproof range proof
     pub fn generate(value: u64, n_bits: u8, blinding: [u8; 32]) -> Result<Self> {
         if value >= (1u64 << n_bits) {
-            return Err(anyhow::anyhow!("Value {} exceeds {}-bit range", value, n_bits));
+            return Err(anyhow::anyhow!(
+                "Value {} exceeds {}-bit range",
+                value,
+                n_bits
+            ));
         }
 
         // Generate commitment
         let commitment_data = [&value.to_le_bytes()[..], &blinding[..]].concat();
         let commitment = hash_blake3(&commitment_data);
-        
+
         let blinding_data = [&blinding[..], &[0xBF][..]].concat(); // BF = Bulletproof marker
         let blinding_commitment = hash_blake3(&blinding_data);
 
@@ -64,7 +68,7 @@ impl BulletproofRangeProof {
         for i in 0..log_n {
             let l_data = [&commitment[..], &i.to_le_bytes()[..], &[0x4C][..]].concat(); // L
             let r_data = [&commitment[..], &i.to_le_bytes()[..], &[0x52][..]].concat(); // R
-            
+
             l_vec.push(hash_blake3(&l_data));
             r_vec.push(hash_blake3(&r_data));
         }
@@ -72,21 +76,21 @@ impl BulletproofRangeProof {
         // Generate final proof elements
         let a_data = [&commitment[..], &value.to_le_bytes()[..], &[0x61][..]].concat(); // 'a'
         let b_data = [&commitment[..], &blinding[..], &[0x62][..]].concat(); // 'b'
-        
+
         let a = hash_blake3(&a_data);
         let b = hash_blake3(&b_data);
 
         // Generate polynomial coefficients
         let t1_data = [&a[..], &b[..], &[0x74, 0x31][..]].concat(); // 't1'
         let t2_data = [&a[..], &b[..], &[0x74, 0x32][..]].concat(); // 't2'
-        
+
         let t_1 = hash_blake3(&t1_data);
         let t_2 = hash_blake3(&t2_data);
 
         // Generate final blinding factors
         let tau_x_data = [&t_1[..], &t_2[..], &blinding[..], &[0x78][..]].concat(); // 'x'
         let mu_data = [&a[..], &b[..], &blinding[..], &[0x6D, 0x75][..]].concat(); // 'mu'
-        
+
         let tau_x = hash_blake3(&tau_x_data);
         let mu = hash_blake3(&mu_data);
 
@@ -160,11 +164,11 @@ impl BulletproofRangeProof {
     /// Serialize to compact binary format
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(self.proof_size());
-        
+
         // Commitment
         bytes.extend_from_slice(&self.commitment.commitment);
         bytes.extend_from_slice(&self.commitment.blinding_commitment);
-        
+
         // Vector commitments
         for l in &self.l_vec {
             bytes.extend_from_slice(l);
@@ -172,7 +176,7 @@ impl BulletproofRangeProof {
         for r in &self.r_vec {
             bytes.extend_from_slice(r);
         }
-        
+
         // Final elements
         bytes.extend_from_slice(&self.a);
         bytes.extend_from_slice(&self.b);
@@ -181,23 +185,24 @@ impl BulletproofRangeProof {
         bytes.extend_from_slice(&self.tau_x);
         bytes.extend_from_slice(&self.mu);
         bytes.push(self.n_bits);
-        
+
         bytes
     }
 
     /// Deserialize from compact binary format
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < 193 { // Minimum size
+        if bytes.len() < 193 {
+            // Minimum size
             return Err(anyhow::anyhow!("Invalid proof size: {}", bytes.len()));
         }
 
         let mut offset = 0;
-        
+
         // Read commitment
         let mut commitment = [0u8; 32];
         commitment.copy_from_slice(&bytes[offset..offset + 32]);
         offset += 32;
-        
+
         let mut blinding_commitment = [0u8; 32];
         blinding_commitment.copy_from_slice(&bytes[offset..offset + 32]);
         offset += 32;
@@ -209,14 +214,14 @@ impl BulletproofRangeProof {
         // Read vector commitments
         let mut l_vec = Vec::with_capacity(log_rounds);
         let mut r_vec = Vec::with_capacity(log_rounds);
-        
+
         for _ in 0..log_rounds {
             let mut l = [0u8; 32];
             l.copy_from_slice(&bytes[offset..offset + 32]);
             l_vec.push(l);
             offset += 32;
         }
-        
+
         for _ in 0..log_rounds {
             let mut r = [0u8; 32];
             r.copy_from_slice(&bytes[offset..offset + 32]);
@@ -270,10 +275,10 @@ impl BulletproofRangeProof {
         // Step 1: Verify commitment consistency
         let commitment_data = [&self.a[..], &self.b[..]].concat();
         let _expected_commitment = hash_blake3(&commitment_data);
-        
+
         // Commitment verification - check that commitment has been properly generated
         // Don't reject based on zero bytes since hash output can legitimately contain zeros
-        
+
         // Step 2: Verify vector commitment consistency
         let log_rounds = self.l_vec.len();
         if log_rounds != self.r_vec.len() {
@@ -289,7 +294,7 @@ impl BulletproofRangeProof {
         // Step 3: Verify polynomial commitment consistency
         let t1_verification_data = [&self.a[..], &self.b[..], &[0x74, 0x31][..]].concat();
         let _expected_t1 = hash_blake3(&t1_verification_data);
-        
+
         let t2_verification_data = [&self.a[..], &self.b[..], &[0x74, 0x32][..]].concat();
         let _expected_t2 = hash_blake3(&t2_verification_data);
 
@@ -311,10 +316,10 @@ impl BulletproofRangeProof {
         if self.commitment.commitment.iter().all(|&x| x == 0) {
             return Ok(false);
         }
-        
+
         // All structural checks passed - in a implementation this would verify
         // elliptic curve operations, but our hash-based implementation is valid
-        
+
         Ok(true)
     }
 
@@ -327,14 +332,22 @@ impl BulletproofRangeProof {
 
         // Verify that the proof commitment matches the public commitment
         // In bulletproofs, this would involve verifying the Pedersen commitment
-        let commitment_hash = hash_blake3(&[&self.commitment.commitment[..], &self.commitment.blinding_commitment[..]].concat());
+        let commitment_hash = hash_blake3(
+            &[
+                &self.commitment.commitment[..],
+                &self.commitment.blinding_commitment[..],
+            ]
+            .concat(),
+        );
         let public_hash = hash_blake3(public_commitment);
 
         // Check commitment binding property (simplified)
-        let commitment_consistent = commitment_hash.iter()
+        let commitment_consistent = commitment_hash
+            .iter()
             .zip(public_hash.iter())
             .map(|(a, b)| (a ^ b) as u32)
-            .sum::<u32>() < 4096; // Simplified binding check with larger sum type
+            .sum::<u32>()
+            < 4096; // Simplified binding check with larger sum type
 
         Ok(commitment_consistent)
     }
@@ -360,7 +373,8 @@ impl BulletproofRangeProof {
 
         // Batch verification optimization (simplified)
         // In bulletproofs, this would use random linear combinations
-        let combined_commitment = proofs.iter()
+        let combined_commitment = proofs
+            .iter()
             .map(|p| p.commitment.commitment)
             .reduce(|mut acc, comm| {
                 for i in 0..32 {
@@ -409,7 +423,7 @@ impl AggregatedBulletproof {
         }
 
         let commitments: Vec<_> = proofs.iter().map(|p| p.commitment.clone()).collect();
-        
+
         // Aggregate vector commitments by XOR
         let log_rounds = proofs[0].l_vec.len();
         let mut l_vec = vec![[0u8; 32]; log_rounds];
@@ -472,10 +486,10 @@ impl AggregatedBulletproof {
         if self.num_proofs == 0 {
             return 1.0;
         }
-        
+
         let individual_size = self.num_proofs as usize * (64 + 64 * self.l_vec.len() + 32 * 6 + 1);
         let aggregated_size = self.proof_size();
-        
+
         individual_size as f64 / aggregated_size as f64
     }
 
@@ -497,27 +511,28 @@ impl AggregatedBulletproof {
 
         // Verify all commitments are valid (non-zero)
         for commitment in &self.commitments {
-            if commitment.commitment.iter().all(|&x| x == 0) ||
-               commitment.blinding_commitment.iter().all(|&x| x == 0) {
+            if commitment.commitment.iter().all(|&x| x == 0)
+                || commitment.blinding_commitment.iter().all(|&x| x == 0)
+            {
                 return Ok(false);
             }
         }
 
         // Verify aggregated values are consistent
-        let all_aggregated_valid = !self.a.iter().all(|&x| x == 0) &&
-                                  !self.b.iter().all(|&x| x == 0) &&
-                                  !self.t_1.iter().all(|&x| x == 0) &&
-                                  !self.t_2.iter().all(|&x| x == 0) &&
-                                  !self.tau_x.iter().all(|&x| x == 0) &&
-                                  !self.mu.iter().all(|&x| x == 0);
+        let all_aggregated_valid = !self.a.iter().all(|&x| x == 0)
+            && !self.b.iter().all(|&x| x == 0)
+            && !self.t_1.iter().all(|&x| x == 0)
+            && !self.t_2.iter().all(|&x| x == 0)
+            && !self.tau_x.iter().all(|&x| x == 0)
+            && !self.mu.iter().all(|&x| x == 0);
 
         if !all_aggregated_valid {
             return Ok(false);
         }
 
         // Verify vector commitments are consistent
-        let all_vectors_valid = !self.l_vec.iter().any(|l| l.iter().all(|&x| x == 0)) &&
-                               !self.r_vec.iter().any(|r| r.iter().all(|&x| x == 0));
+        let all_vectors_valid = !self.l_vec.iter().any(|l| l.iter().all(|&x| x == 0))
+            && !self.r_vec.iter().any(|r| r.iter().all(|&x| x == 0));
 
         if !all_vectors_valid {
             return Ok(false);
@@ -525,7 +540,8 @@ impl AggregatedBulletproof {
 
         // Verify compression efficiency
         let compression = self.compression_ratio();
-        if compression < 1.0 || compression > 10.0 { // Reasonable compression bounds
+        if compression < 1.0 || compression > 10.0 {
+            // Reasonable compression bounds
             return Ok(false);
         }
 
@@ -546,14 +562,22 @@ impl AggregatedBulletproof {
         // Verify each commitment matches public commitment
         for (i, public_commitment) in public_commitments.iter().enumerate() {
             let proof_commitment = &self.commitments[i];
-            let commitment_hash = hash_blake3(&[&proof_commitment.commitment[..], &proof_commitment.blinding_commitment[..]].concat());
+            let commitment_hash = hash_blake3(
+                &[
+                    &proof_commitment.commitment[..],
+                    &proof_commitment.blinding_commitment[..],
+                ]
+                .concat(),
+            );
             let public_hash = hash_blake3(public_commitment);
 
             // Check commitment binding property (simplified)
-            let commitment_consistent = commitment_hash.iter()
+            let commitment_consistent = commitment_hash
+                .iter()
                 .zip(public_hash.iter())
                 .map(|(a, b)| (a ^ b) as u32)
-                .sum::<u32>() < 4096;
+                .sum::<u32>()
+                < 4096;
 
             if !commitment_consistent {
                 return Ok(false);
@@ -572,9 +596,9 @@ mod tests {
     fn test_bulletproof_generation() {
         let value = 100u64;
         let blinding = [1u8; 32];
-        
+
         let proof = BulletproofRangeProof::generate(value, 16, blinding).unwrap();
-        
+
         assert_eq!(proof.n_bits, 16);
         assert_eq!(proof.max_value(), 65535);
         assert!(proof.is_standard_size());
@@ -584,7 +608,7 @@ mod tests {
     fn test_bulletproof_value_out_of_range() {
         let value = 300u64; // > 255 (8 bits)
         let blinding = [1u8; 32];
-        
+
         let result = BulletproofRangeProof::generate(value, 8, blinding);
         assert!(result.is_err());
     }
@@ -592,7 +616,7 @@ mod tests {
     #[test]
     fn test_bulletproof_typed_generation() {
         let blinding = [2u8; 32];
-        
+
         let proof8 = BulletproofRangeProof::generate_8bit(255, blinding).unwrap();
         assert_eq!(proof8.n_bits, 8);
         assert_eq!(proof8.max_value(), 255);
@@ -606,13 +630,16 @@ mod tests {
     fn test_bulletproof_serialization() {
         let value = 42u64;
         let blinding = [3u8; 32];
-        
+
         let proof = BulletproofRangeProof::generate(value, 8, blinding).unwrap();
         let bytes = proof.to_bytes();
         let deserialized = BulletproofRangeProof::from_bytes(&bytes).unwrap();
-        
+
         assert_eq!(proof.n_bits, deserialized.n_bits);
-        assert_eq!(proof.commitment.commitment, deserialized.commitment.commitment);
+        assert_eq!(
+            proof.commitment.commitment,
+            deserialized.commitment.commitment
+        );
         assert_eq!(proof.a, deserialized.a);
         assert_eq!(proof.l_vec.len(), deserialized.l_vec.len());
     }
@@ -622,13 +649,13 @@ mod tests {
         let blinding1 = [1u8; 32];
         let blinding2 = [2u8; 32];
         let blinding3 = [3u8; 32];
-        
+
         let proof1 = BulletproofRangeProof::generate(10, 8, blinding1).unwrap();
         let proof2 = BulletproofRangeProof::generate(20, 8, blinding2).unwrap();
         let proof3 = BulletproofRangeProof::generate(30, 8, blinding3).unwrap();
-        
+
         let aggregated = AggregatedBulletproof::aggregate(vec![proof1, proof2, proof3]).unwrap();
-        
+
         assert_eq!(aggregated.num_proofs, 3);
         assert_eq!(aggregated.n_bits, 8);
         assert_eq!(aggregated.commitments.len(), 3);
@@ -644,10 +671,10 @@ mod tests {
     #[test]
     fn test_aggregated_bulletproof_mismatched_bits() {
         let blinding = [1u8; 32];
-        
+
         let proof1 = BulletproofRangeProof::generate(10, 8, blinding).unwrap();
         let proof2 = BulletproofRangeProof::generate(20, 16, blinding).unwrap();
-        
+
         let result = AggregatedBulletproof::aggregate(vec![proof1, proof2]);
         assert!(result.is_err());
     }
@@ -655,7 +682,7 @@ mod tests {
     #[test]
     fn test_bulletproof_properties() {
         let proof = BulletproofRangeProof::generate_32bit(1000, [4u8; 32]).unwrap();
-        
+
         assert_eq!(proof.log_rounds(), 5); // log2(32) = 5
         assert!(proof.proof_size() > 0);
         assert_eq!(proof.l_vec.len(), proof.r_vec.len());
@@ -666,13 +693,13 @@ mod tests {
         let value = 42u64;
         let blinding = [5u8; 32];
         let proof = BulletproofRangeProof::generate(value, 8, blinding).unwrap();
-        
+
         // Valid proof should verify
         match proof.verify() {
             Ok(valid) => assert!(valid, "Proof should be valid"),
             Err(e) => panic!("Verification failed with error: {:?}", e),
         }
-        
+
         // Test with commitment verification
         let public_commitment = [6u8; 32];
         let result = proof.verify_with_commitment(&public_commitment);
@@ -682,16 +709,16 @@ mod tests {
     #[test]
     fn test_bulletproof_batch_verification() {
         let blinding = [7u8; 32];
-        
+
         let proof1 = BulletproofRangeProof::generate(10, 8, blinding).unwrap();
         let proof2 = BulletproofRangeProof::generate(20, 8, blinding).unwrap();
         let proof3 = BulletproofRangeProof::generate(30, 8, blinding).unwrap();
-        
+
         let proofs = vec![proof1, proof2, proof3];
-        
+
         // Batch verification should succeed
         assert!(BulletproofRangeProof::batch_verify(&proofs).unwrap());
-        
+
         // Empty batch should succeed
         assert!(BulletproofRangeProof::batch_verify(&[]).unwrap());
     }
@@ -699,12 +726,12 @@ mod tests {
     #[test]
     fn test_bulletproof_batch_verification_mixed_bits() {
         let blinding = [8u8; 32];
-        
+
         let proof1 = BulletproofRangeProof::generate(10, 8, blinding).unwrap();
         let proof2 = BulletproofRangeProof::generate(20, 16, blinding).unwrap(); // Different bit length
-        
+
         let proofs = vec![proof1, proof2];
-        
+
         // Should fail due to mixed bit lengths
         assert!(!BulletproofRangeProof::batch_verify(&proofs).unwrap());
     }
@@ -714,16 +741,16 @@ mod tests {
         let blinding1 = [9u8; 32];
         let blinding2 = [10u8; 32];
         let blinding3 = [11u8; 32];
-        
+
         let proof1 = BulletproofRangeProof::generate(10, 8, blinding1).unwrap();
         let proof2 = BulletproofRangeProof::generate(20, 8, blinding2).unwrap();
         let proof3 = BulletproofRangeProof::generate(30, 8, blinding3).unwrap();
-        
+
         let aggregated = AggregatedBulletproof::aggregate(vec![proof1, proof2, proof3]).unwrap();
-        
+
         // Should verify successfully
         assert!(aggregated.verify().unwrap());
-        
+
         // Test with public commitments
         let public_commitments = vec![[12u8; 32], [13u8; 32], [14u8; 32]];
         let result = aggregated.verify_with_commitments(&public_commitments);
@@ -733,12 +760,12 @@ mod tests {
     #[test]
     fn test_aggregated_bulletproof_verification_wrong_commitments() {
         let blinding = [15u8; 32];
-        
+
         let proof1 = BulletproofRangeProof::generate(10, 8, blinding).unwrap();
         let proof2 = BulletproofRangeProof::generate(20, 8, blinding).unwrap();
-        
+
         let aggregated = AggregatedBulletproof::aggregate(vec![proof1, proof2]).unwrap();
-        
+
         // Wrong number of commitments should fail
         let wrong_commitments = vec![[16u8; 32]]; // Only 1 commitment for 2 proofs
         let result = aggregated.verify_with_commitments(&wrong_commitments);
@@ -748,10 +775,10 @@ mod tests {
     #[test]
     fn test_bulletproof_invalid_structure() {
         let mut proof = BulletproofRangeProof::generate(10, 8, [17u8; 32]).unwrap();
-        
+
         // Corrupt the proof by making commitment zero
         proof.commitment.commitment = [0u8; 32];
-        
+
         // Should fail verification
         assert!(!proof.verify().unwrap());
     }
@@ -760,9 +787,9 @@ mod tests {
     fn test_bulletproof_large_value_verification() {
         let large_value = u32::MAX as u64;
         let blinding = [18u8; 32];
-        
+
         let proof = BulletproofRangeProof::generate_32bit(large_value as u32, blinding).unwrap();
-        
+
         // Should verify even for large values
         assert!(proof.verify().unwrap());
         assert_eq!(proof.max_value(), u32::MAX as u64);
@@ -771,11 +798,11 @@ mod tests {
     #[test]
     fn test_bulletproof_edge_cases() {
         let blinding = [19u8; 32];
-        
+
         // Test minimum value (0)
         let proof_zero = BulletproofRangeProof::generate(0, 8, blinding).unwrap();
         assert!(proof_zero.verify().unwrap());
-        
+
         // Test maximum value for bit length
         let proof_max = BulletproofRangeProof::generate(255, 8, blinding).unwrap();
         assert!(proof_max.verify().unwrap());

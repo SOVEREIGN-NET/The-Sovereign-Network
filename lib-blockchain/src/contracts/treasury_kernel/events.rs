@@ -58,8 +58,8 @@
 //! - Governance audit trails
 //! - Crash recovery validation
 
-use super::types::{KernelState, KernelUbiEvent, RejectionReason};
 use super::interface::MintReason;
+use super::types::{KernelState, KernelUbiEvent, RejectionReason};
 
 /// Event emission for Treasury Kernel
 impl KernelState {
@@ -492,7 +492,8 @@ mod tests {
 
         // Emit status for multiple epochs
         for epoch in 100..105 {
-            let result = state.emit_pool_status(epoch, 100 * epoch, epoch * 1000, 1_000_000 - epoch * 1000);
+            let result =
+                state.emit_pool_status(epoch, 100 * epoch, epoch * 1000, 1_000_000 - epoch * 1000);
             assert!(result.is_ok(), "Failed for epoch {}", epoch);
         }
     }
@@ -586,13 +587,13 @@ mod tests {
     fn test_emit_vesting_created_success() {
         let state = KernelState::new();
         let result = state.emit_vesting_created(
-            [1u8; 32],  // vesting_id
-            [2u8; 32],  // beneficiary
-            10000,      // total_amount
-            100,        // start_epoch
-            110,        // cliff_epoch
-            200,        // end_epoch
-            false,      // revocable
+            [1u8; 32], // vesting_id
+            [2u8; 32], // beneficiary
+            10000,     // total_amount
+            100,       // start_epoch
+            110,       // cliff_epoch
+            200,       // end_epoch
+            false,     // revocable
         );
         assert!(result.is_ok());
     }
@@ -601,13 +602,9 @@ mod tests {
     fn test_emit_vesting_created_invalid_cliff_before_start() {
         let state = KernelState::new();
         let result = state.emit_vesting_created(
-            [1u8; 32],
-            [2u8; 32],
-            10000,
-            100,  // start
-            90,   // cliff < start (invalid)
-            200,
-            false,
+            [1u8; 32], [2u8; 32], 10000, 100, // start
+            90,  // cliff < start (invalid)
+            200, false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("cliff before start"));
@@ -617,12 +614,8 @@ mod tests {
     fn test_emit_vesting_created_invalid_end_before_cliff() {
         let state = KernelState::new();
         let result = state.emit_vesting_created(
-            [1u8; 32],
-            [2u8; 32],
-            10000,
-            100,
-            150,  // cliff
-            140,  // end < cliff (invalid)
+            [1u8; 32], [2u8; 32], 10000, 100, 150, // cliff
+            140, // end < cliff (invalid)
             false,
         );
         assert!(result.is_err());
@@ -633,13 +626,8 @@ mod tests {
     fn test_emit_vesting_created_invalid_zero_amount() {
         let state = KernelState::new();
         let result = state.emit_vesting_created(
-            [1u8; 32],
-            [2u8; 32],
-            0,    // zero amount (invalid)
-            100,
-            110,
-            200,
-            false,
+            [1u8; 32], [2u8; 32], 0, // zero amount (invalid)
+            100, 110, 200, false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("zero amount"));
@@ -649,12 +637,12 @@ mod tests {
     fn test_emit_vesting_released_success() {
         let state = KernelState::new();
         let result = state.emit_vesting_released(
-            [1u8; 32],  // vesting_id
-            [2u8; 32],  // beneficiary
-            5000,       // amount_released
-            5000,       // total_released
-            5000,       // remaining_locked
-            150,        // current_epoch
+            [1u8; 32], // vesting_id
+            [2u8; 32], // beneficiary
+            5000,      // amount_released
+            5000,      // total_released
+            5000,      // remaining_locked
+            150,       // current_epoch
         );
         assert!(result.is_ok());
     }
@@ -663,12 +651,8 @@ mod tests {
     fn test_emit_vesting_released_zero_amount_fails() {
         let state = KernelState::new();
         let result = state.emit_vesting_released(
-            [1u8; 32],
-            [2u8; 32],
-            0,     // zero amount (invalid)
-            0,
-            10000,
-            150,
+            [1u8; 32], [2u8; 32], 0, // zero amount (invalid)
+            0, 10000, 150,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("zero amount"));
@@ -678,12 +662,12 @@ mod tests {
     fn test_emit_vesting_revoked_success() {
         let state = KernelState::new();
         let result = state.emit_vesting_revoked(
-            [1u8; 32],  // vesting_id
-            [2u8; 32],  // beneficiary
-            5000,       // amount_vested (kept)
-            5000,       // amount_returned (to treasury)
-            [3u8; 32],  // return_to
-            150,        // revoke_epoch
+            [1u8; 32], // vesting_id
+            [2u8; 32], // beneficiary
+            5000,      // amount_vested (kept)
+            5000,      // amount_returned (to treasury)
+            [3u8; 32], // return_to
+            150,       // revoke_epoch
         );
         assert!(result.is_ok());
     }
@@ -693,12 +677,9 @@ mod tests {
         let state = KernelState::new();
         // Revoked before any vesting
         let result = state.emit_vesting_revoked(
-            [1u8; 32],
-            [2u8; 32],
-            0,      // nothing vested
-            10000,  // all returned
-            [3u8; 32],
-            100,
+            [1u8; 32], [2u8; 32], 0,     // nothing vested
+            10000, // all returned
+            [3u8; 32], 100,
         );
         assert!(result.is_ok());
     }

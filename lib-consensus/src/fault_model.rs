@@ -36,7 +36,9 @@ pub const LIVENESS_THRESHOLD_DENOMINATOR: u64 = 3;
 
 /// Maximum allowed Byzantine validators given n total.
 pub const fn max_byzantine(n: u64) -> u64 {
-    if n == 0 { return 0; }
+    if n == 0 {
+        return 0;
+    }
     (n - 1) / 3
 }
 

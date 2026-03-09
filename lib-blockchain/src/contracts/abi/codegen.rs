@@ -12,14 +12,75 @@ pub struct AbiCodegen;
 impl AbiCodegen {
     /// Rust reserved keywords that require raw identifier syntax
     const RUST_RESERVED_KEYWORDS: &'static [&'static str] = &[
-        "abstract", "as", "async", "await", "become", "box", "break", "const", "continue",
-        "crate", "do", "dyn", "else", "enum", "extern", "false", "final", "fn", "for",
-        "foreach", "from", "fun", "go", "goto", "if", "impl", "in", "inline", "into",
-        "is", "let", "loop", "macro", "match", "mod", "move", "mut", "new", "none",
-        "of", "once", "only", "pub", "pure", "ref", "return", "self", "Self", "sizeof",
-        "static", "struct", "super", "switch", "synchronized", "then", "trait", "true",
-        "try", "type", "typeof", "union", "unsafe", "use", "var", "virtual", "where",
-        "while", "with", "yield",
+        "abstract",
+        "as",
+        "async",
+        "await",
+        "become",
+        "box",
+        "break",
+        "const",
+        "continue",
+        "crate",
+        "do",
+        "dyn",
+        "else",
+        "enum",
+        "extern",
+        "false",
+        "final",
+        "fn",
+        "for",
+        "foreach",
+        "from",
+        "fun",
+        "go",
+        "goto",
+        "if",
+        "impl",
+        "in",
+        "inline",
+        "into",
+        "is",
+        "let",
+        "loop",
+        "macro",
+        "match",
+        "mod",
+        "move",
+        "mut",
+        "new",
+        "none",
+        "of",
+        "once",
+        "only",
+        "pub",
+        "pure",
+        "ref",
+        "return",
+        "self",
+        "Self",
+        "sizeof",
+        "static",
+        "struct",
+        "super",
+        "switch",
+        "synchronized",
+        "then",
+        "trait",
+        "true",
+        "try",
+        "type",
+        "typeof",
+        "union",
+        "unsafe",
+        "use",
+        "var",
+        "virtual",
+        "where",
+        "while",
+        "with",
+        "yield",
     ];
 
     /// Generate Rust type-safe bindings from ABI
@@ -151,9 +212,14 @@ impl AbiCodegen {
 
     fn generate_rust_type(name: &str, typedef: &TypeDefinition) -> Result<String> {
         match typedef {
-            TypeDefinition::Enum { variants, descriptions } => {
+            TypeDefinition::Enum {
+                variants,
+                descriptions,
+            } => {
                 let mut output = String::new();
-                output.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]\n");
+                output.push_str(
+                    "#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]\n",
+                );
                 output.push_str(&format!("pub enum {} {{\n", name));
 
                 for variant in variants {
@@ -191,8 +257,14 @@ impl AbiCodegen {
 
         output.push_str("// ===== Validator =====\n\n");
         output.push_str(&format!("/// Validator for {} contract calls\n", contract));
-        output.push_str(&format!("pub struct {}Validator;\n\n", Self::to_pascal_case(contract)));
-        output.push_str(&format!("impl {}Validator {{\n", Self::to_pascal_case(contract)));
+        output.push_str(&format!(
+            "pub struct {}Validator;\n\n",
+            Self::to_pascal_case(contract)
+        ));
+        output.push_str(&format!(
+            "impl {}Validator {{\n",
+            Self::to_pascal_case(contract)
+        ));
         output.push_str("    /// Validate contract state\n");
         output.push_str("    pub fn validate() -> Result<()> {\n");
         output.push_str("        // Validation logic would go here\n");
@@ -241,7 +313,10 @@ impl AbiCodegen {
         }
 
         // Contract interface
-        output.push_str(&format!("export interface I{} {{\n", Self::to_pascal_case(&abi.contract)));
+        output.push_str(&format!(
+            "export interface I{} {{\n",
+            Self::to_pascal_case(&abi.contract)
+        ));
         for method in &abi.methods {
             output.push_str(&format!(
                 "  {}(args: Call{}): Promise<any>;\n",
@@ -418,18 +493,74 @@ impl AbiCodegen {
     /// Otherwise return as-is. Invalid chars are NOT fixed - callers should validate with AbiValidator first.
     fn sanitize_ts_identifier(name: &str) -> String {
         let ts_keywords = [
-            "abstract", "arguments", "await", "boolean", "break", "byte", "case", "catch",
-            "char", "class", "const", "continue", "debugger", "default", "delete", "do",
-            "double", "else", "enum", "eval", "export", "extends", "false", "final",
-            "finally", "float", "for", "function", "goto", "if", "implements", "import",
-            "in", "instanceof", "int", "interface", "let", "long", "native", "new",
-            "null", "package", "private", "protected", "public", "return", "short",
-            "static", "super", "switch", "synchronized", "this", "throw", "throws",
-            "transient", "true", "try", "typeof", "var", "void", "volatile", "while",
-            "with", "yield",
+            "abstract",
+            "arguments",
+            "await",
+            "boolean",
+            "break",
+            "byte",
+            "case",
+            "catch",
+            "char",
+            "class",
+            "const",
+            "continue",
+            "debugger",
+            "default",
+            "delete",
+            "do",
+            "double",
+            "else",
+            "enum",
+            "eval",
+            "export",
+            "extends",
+            "false",
+            "final",
+            "finally",
+            "float",
+            "for",
+            "function",
+            "goto",
+            "if",
+            "implements",
+            "import",
+            "in",
+            "instanceof",
+            "int",
+            "interface",
+            "let",
+            "long",
+            "native",
+            "new",
+            "null",
+            "package",
+            "private",
+            "protected",
+            "public",
+            "return",
+            "short",
+            "static",
+            "super",
+            "switch",
+            "synchronized",
+            "this",
+            "throw",
+            "throws",
+            "transient",
+            "true",
+            "try",
+            "typeof",
+            "var",
+            "void",
+            "volatile",
+            "while",
+            "with",
+            "yield",
         ];
 
-        if ts_keywords.contains(&name) || name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        if ts_keywords.contains(&name) || name.chars().next().map_or(false, |c| c.is_ascii_digit())
+        {
             format!("_{}", name)
         } else {
             name.to_string()
@@ -465,7 +596,10 @@ mod tests {
     fn test_pascal_case_conversion() {
         assert_eq!(AbiCodegen::to_pascal_case("claim_ubi"), "ClaimUbi");
         assert_eq!(AbiCodegen::to_pascal_case("test"), "Test");
-        assert_eq!(AbiCodegen::to_pascal_case("multi_word_name"), "MultiWordName");
+        assert_eq!(
+            AbiCodegen::to_pascal_case("multi_word_name"),
+            "MultiWordName"
+        );
     }
 
     #[test]
@@ -503,14 +637,12 @@ mod tests {
         let mut abi = ContractAbi::new("Test", "1.0.0");
         abi.methods.push(MethodSchema {
             name: "test_method".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "if".to_string(), // Reserved keyword!
-                    r#type: ParameterType::U64,
-                    description: None,
-                    optional: None,
-                }
-            ],
+            parameters: vec![Parameter {
+                name: "if".to_string(), // Reserved keyword!
+                r#type: ParameterType::U64,
+                description: None,
+                optional: None,
+            }],
             returns: ReturnType::Void,
             privilege: None,
             semantics: ExecutionSemantics::Intent,

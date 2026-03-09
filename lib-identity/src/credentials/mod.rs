@@ -1,11 +1,11 @@
 //! Credential system implementations
 
-pub mod zk_credential;
 pub mod attestation;
-pub mod verification;
 pub mod creation;
+pub mod verification;
+pub mod zk_credential;
 
 // Re-exports
-pub use zk_credential::ZkCredential;
+pub use crate::types::{AttestationType, CredentialType};
 pub use attestation::IdentityAttestation;
-pub use crate::types::{CredentialType, AttestationType};
+pub use zk_credential::ZkCredential;

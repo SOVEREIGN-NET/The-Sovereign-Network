@@ -156,10 +156,7 @@ fn sanitize_device_name(name: &str) -> String {
         .map(|c| if is_allowed_device_char(c) { c } else { '-' })
         .collect();
 
-    if sanitized
-        .chars()
-        .any(|c| c.is_ascii_alphanumeric())
-    {
+    if sanitized.chars().any(|c| c.is_ascii_alphanumeric()) {
         sanitized
     } else {
         String::new()

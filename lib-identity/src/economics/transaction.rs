@@ -1,8 +1,8 @@
 //! Transaction types and economic integration from the original identity.rs
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use lib_crypto::Hash;
+use serde::{Deserialize, Serialize};
 
 /// Transaction types supported by SOV
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -87,8 +87,10 @@ impl Transaction {
         tx_id_data.extend_from_slice(&to);
         tx_id_data.extend_from_slice(&lib_crypto::hash_blake3(&amount.to_le_bytes()));
         tx_id_data.extend_from_slice(&lib_crypto::hash_blake3(&timestamp.to_le_bytes()));
-        tx_id_data.extend_from_slice(&lib_crypto::hash_blake3(&serde_json::to_vec(&tx_type).unwrap_or_default()));
-        
+        tx_id_data.extend_from_slice(&lib_crypto::hash_blake3(
+            &serde_json::to_vec(&tx_type).unwrap_or_default(),
+        ));
+
         let tx_id = Hash::from_bytes(&lib_crypto::hash_blake3(&tx_id_data));
 
         // Generate DAO fee proof
@@ -125,7 +127,7 @@ impl Transaction {
             Priority::High => 15,
             Priority::Urgent => 50,
         };
-        
+
         // Minimum fee is 1 SOV, scales with transaction size
         std::cmp::max(1, (tx_size * base_rate) / 1000)
     }
@@ -138,10 +140,12 @@ impl Transaction {
         tx_id_data.extend_from_slice(&self.to);
         tx_id_data.extend_from_slice(&lib_crypto::hash_blake3(&self.amount.to_le_bytes()));
         tx_id_data.extend_from_slice(&lib_crypto::hash_blake3(&self.timestamp.to_le_bytes()));
-        tx_id_data.extend_from_slice(&lib_crypto::hash_blake3(&serde_json::to_vec(&self.tx_type).unwrap_or_default()));
-        
+        tx_id_data.extend_from_slice(&lib_crypto::hash_blake3(
+            &serde_json::to_vec(&self.tx_type).unwrap_or_default(),
+        ));
+
         let expected_tx_id = Hash::from_bytes(&lib_crypto::hash_blake3(&tx_id_data));
-        
+
         if self.tx_id != expected_tx_id {
             return Ok(false);
         }
@@ -158,7 +162,7 @@ impl Transaction {
             proof_data.extend_from_slice(&lib_crypto::hash_blake3(&self.timestamp.to_le_bytes()));
             proof_data.extend_from_slice(&lib_crypto::hash_blake3(b"dao_fee_proof"));
             let expected_proof = lib_crypto::hash_blake3(&proof_data);
-            
+
             if dao_fee_proof != expected_proof {
                 return Ok(false);
             }

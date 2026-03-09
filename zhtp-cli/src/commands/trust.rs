@@ -7,10 +7,10 @@
 //! - **Error Handling**: Domain-specific error handling with context
 //! - **Testability**: Pure functions for operation description and message generation
 
-use anyhow::{anyhow, Result, Context};
-use std::path::PathBuf;
+use crate::argument_parsing::{TrustAction, TrustArgs};
+use anyhow::{anyhow, Context, Result};
 use lib_network::web4::{TrustAuditEntry, TrustConfig, TrustDb};
-use crate::argument_parsing::{TrustArgs, TrustAction};
+use std::path::PathBuf;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -59,14 +59,18 @@ pub fn action_to_operation(action: &TrustAction) -> TrustOperation {
 ///
 /// Pure function - path construction only
 pub fn get_trustdb_path() -> Result<String> {
-    Ok(TrustConfig::default_trustdb_path()?.to_string_lossy().to_string())
+    Ok(TrustConfig::default_trustdb_path()?
+        .to_string_lossy()
+        .to_string())
 }
 
 /// Get default audit log path
 ///
 /// Pure function - path construction only
 pub fn get_audit_path() -> String {
-    TrustConfig::default_audit_path().to_string_lossy().to_string()
+    TrustConfig::default_audit_path()
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Format audit entry for display
@@ -139,7 +143,10 @@ async fn list_trust_impl() -> Result<()> {
 
     println!("{}", format_anchor_header(db.anchors.len()));
     for (addr, anchor) in db.anchors.iter() {
-        println!("{}", format_anchor_entry(addr, anchor.node_did.as_deref(), &anchor.spki_sha256));
+        println!(
+            "{}",
+            format_anchor_entry(addr, anchor.node_did.as_deref(), &anchor.spki_sha256)
+        );
         println!("    Policy: {:?}", anchor.policy);
         println!("    First seen: {}", anchor.first_seen);
         println!("    Last seen: {}", anchor.last_seen);
@@ -203,17 +210,25 @@ mod tests {
 
     #[test]
     fn test_action_to_operation_list() {
-        assert_eq!(action_to_operation(&TrustAction::List), TrustOperation::List);
+        assert_eq!(
+            action_to_operation(&TrustAction::List),
+            TrustOperation::List
+        );
     }
 
     #[test]
     fn test_action_to_operation_audit() {
-        assert_eq!(action_to_operation(&TrustAction::Audit), TrustOperation::Audit);
+        assert_eq!(
+            action_to_operation(&TrustAction::Audit),
+            TrustOperation::Audit
+        );
     }
 
     #[test]
     fn test_action_to_operation_reset() {
-        let action = TrustAction::Reset { node: "localhost:9002".to_string() };
+        let action = TrustAction::Reset {
+            node: "localhost:9002".to_string(),
+        };
         assert_eq!(action_to_operation(&action), TrustOperation::Reset);
     }
 

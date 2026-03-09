@@ -219,7 +219,11 @@ pub fn assert_connection_limits(
     }
 
     // Invariant 2: weighted total cap
-    let new_weight = if is_pending { WEIGHT_PENDING } else { WEIGHT_ESTABLISHED_UNAUTHED };
+    let new_weight = if is_pending {
+        WEIGHT_PENDING
+    } else {
+        WEIGHT_ESTABLISHED_UNAUTHED
+    };
     let projected_weighted = snapshot.weighted_total() + new_weight;
     if projected_weighted > MAX_TOTAL_CONNECTIONS {
         return Err(format!(
@@ -311,9 +315,9 @@ mod tests {
     #[test]
     fn weighted_total_counts_correctly() {
         let snap = ConnectionSnapshot {
-            pending_count: 5,             // 5 * 2 = 10
-            established_authed: 10,       // 10 * 1 = 10
-            established_unauthed: 3,      // 3 * 2 = 6
+            pending_count: 5,        // 5 * 2 = 10
+            established_authed: 10,  // 10 * 1 = 10
+            established_unauthed: 3, // 3 * 2 = 6
             per_ip_counts: HashMap::new(),
         };
         assert_eq!(snap.weighted_total(), 10 + 10 + 6); // = 26
@@ -386,7 +390,10 @@ mod tests {
         let ip = ipv4(5, 6, 7, 8);
         // Adding a non-pending (weight 2 for unauthed) would be 99 + 2 = 101 > 100. Should fail.
         let result = assert_connection_limits(&snap, &ip, false);
-        assert!(result.is_err(), "99 authed + 1 unauthed (weight 2) = 101 > 100");
+        assert!(
+            result.is_err(),
+            "99 authed + 1 unauthed (weight 2) = 101 > 100"
+        );
     }
 
     // ---- assert_pending_limit ----

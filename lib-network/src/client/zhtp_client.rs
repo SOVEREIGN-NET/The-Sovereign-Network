@@ -3,23 +3,20 @@
 //! This client provides authenticated QUIC transport for all API calls.
 //! It handles connection establishment, UHP handshake, and request/response framing.
 
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Context, Result};
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{info, debug, warn};
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 
-use quinn::{Endpoint, Connection, ClientConfig};
+use quinn::{ClientConfig, Connection, Endpoint};
 
 use lib_identity::ZhtpIdentity;
-use lib_protocols::wire::{
-    ZhtpRequestWire,
-    read_response, write_request,
-};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
+use lib_protocols::wire::{read_response, write_request, ZhtpRequestWire};
 
-use crate::handshake::{HandshakeContext, NonceCache};
 use crate::handshake::security::derive_v2_session_keys;
+use crate::handshake::{HandshakeContext, NonceCache};
 use crate::protocols::quic_handshake;
 use crate::web4::trust::{TrustConfig, ZhtpTrustVerifier};
 
@@ -105,8 +102,8 @@ impl ZhtpClient {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         // Create QUIC endpoint
-        let endpoint = Endpoint::client("0.0.0.0:0".parse()?)
-            .context("Failed to create QUIC endpoint")?;
+        let endpoint =
+            Endpoint::client("0.0.0.0:0".parse()?).context("Failed to create QUIC endpoint")?;
 
         // Create nonce cache.
         // Bootstrap mode uses a fixed shared path so all short-lived bootstrap clients
@@ -167,7 +164,10 @@ impl ZhtpClient {
     }
 
     /// Create client in bootstrap mode with explicit config (DEV ONLY - no TLS verification)
-    pub async fn new_bootstrap_with_config(identity: ZhtpIdentity, config: ZhtpClientConfig) -> Result<Self> {
+    pub async fn new_bootstrap_with_config(
+        identity: ZhtpIdentity,
+        config: ZhtpClientConfig,
+    ) -> Result<Self> {
         if !config.allow_bootstrap {
             return Err(anyhow!(
                 "Bootstrap mode requires ZhtpClientConfig::allow_bootstrap to be true"
@@ -181,7 +181,10 @@ impl ZhtpClient {
     ///
     /// Deprecated: Use `new_bootstrap_with_config()` with explicit config instead.
     /// This method is maintained for backwards compatibility.
-    #[deprecated(since = "1.1.0", note = "Use new_bootstrap_with_config with explicit config")]
+    #[deprecated(
+        since = "1.1.0",
+        note = "Use new_bootstrap_with_config with explicit config"
+    )]
     pub async fn new_bootstrap(identity: ZhtpIdentity) -> Result<Self> {
         warn!("ZHTP client in BOOTSTRAP MODE - NO TLS VERIFICATION");
         let config = ZhtpClientConfig {
@@ -228,8 +231,7 @@ impl ZhtpClient {
 
     /// Connect to a ZHTP node
     pub async fn connect(&mut self, addr: &str) -> Result<()> {
-        let socket_addr: SocketAddr = addr.parse()
-            .context("Invalid server address")?;
+        let socket_addr: SocketAddr = addr.parse().context("Invalid server address")?;
 
         info!("Connecting to ZHTP node at {}", socket_addr);
 
@@ -254,7 +256,8 @@ impl ZhtpClient {
         self.endpoint.set_default_client_config(client_config);
 
         // Establish QUIC connection
-        let connection = self.endpoint
+        let connection = self
+            .endpoint
             .connect(socket_addr, "zhtp-node")?
             .await
             .context("QUIC connection failed")?;
@@ -266,7 +269,9 @@ impl ZhtpClient {
             &connection,
             &self.identity,
             &self.handshake_ctx,
-        ).await.context("UHP v2 handshake failed")?;
+        )
+        .await
+        .context("UHP v2 handshake failed")?;
 
         let peer_did = handshake_result.verified_peer.identity.did.clone();
 
@@ -283,7 +288,8 @@ impl ZhtpClient {
         let v2_keys = derive_v2_session_keys(
             &handshake_result.session_key,
             &handshake_result.handshake_hash,
-        ).context("Failed to derive V2 session keys")?;
+        )
+        .context("Failed to derive V2 session keys")?;
 
         debug!(
             peer_did = %peer_did,
@@ -304,7 +310,7 @@ impl ZhtpClient {
             mac_key: v2_keys.mac_key,
             peer_did,
             session_id: handshake_result.session_id,
-            sequence: AtomicU64::new(1),  // Start at 1 (server's last_counter starts at 0)
+            sequence: AtomicU64::new(1), // Start at 1 (server's last_counter starts at 0)
         });
 
         Ok(())
@@ -324,7 +330,7 @@ impl ZhtpClient {
         crypto.alpn_protocols = crate::constants::client_control_plane_alpns();
 
         let mut config = ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?
+            quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,
         ));
 
         let mut transport = quinn::TransportConfig::default();
@@ -336,7 +342,9 @@ impl ZhtpClient {
 
     /// Send a request and receive response
     pub async fn request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| anyhow!("Not connected to node"))?;
 
         // V2 protocol requires auth on ALL requests (not just mutations)
@@ -351,7 +359,11 @@ impl ZhtpClient {
 
         if let Some(auth) = &wire_request.auth_context {
             // Canonical size is a useful invariant to debug MAC mismatches.
-            let canonical_len = 1 + 2 + wire_request.request.uri.as_bytes().len() + 4 + wire_request.request.body.len();
+            let canonical_len = 1
+                + 2
+                + wire_request.request.uri.as_bytes().len()
+                + 4
+                + wire_request.request.body.len();
             debug!(
                 request_id = %wire_request.request_id_hex(),
                 seq = seq,
@@ -374,19 +386,23 @@ impl ZhtpClient {
         );
 
         // Open bidirectional stream
-        let (mut send, mut recv) = conn.quic_conn.open_bi().await
+        let (mut send, mut recv) = conn
+            .quic_conn
+            .open_bi()
+            .await
             .context("Failed to open QUIC stream")?;
 
         // Send request
-        write_request(&mut send, &wire_request).await
+        write_request(&mut send, &wire_request)
+            .await
             .context("Failed to send request")?;
 
         // Finish sending
-        send.finish()
-            .context("Failed to finish send stream")?;
+        send.finish().context("Failed to finish send stream")?;
 
         // Read response
-        let wire_response = read_response(&mut recv).await
+        let wire_response = read_response(&mut recv)
+            .await
             .context("Failed to read response")?;
 
         // Verify request ID matches
@@ -446,8 +462,7 @@ impl ZhtpClient {
                 response.status_message
             ));
         }
-        serde_json::from_slice(&response.body)
-            .context("Failed to parse response JSON")
+        serde_json::from_slice(&response.body).context("Failed to parse response JSON")
     }
 }
 

@@ -7,4 +7,4 @@
 
 pub mod middleware;
 
-pub use middleware::{Middleware, CorsMiddleware, RateLimitMiddleware, AuthMiddleware};
+pub use middleware::{AuthMiddleware, CorsMiddleware, Middleware, RateLimitMiddleware};

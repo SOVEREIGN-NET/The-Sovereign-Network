@@ -11,7 +11,11 @@ mod backend_tests {
     /// Test backend compliance for basic CRUD operations
     fn test_backend_crud<B: StorageBackend>(backend: B) -> Result<()> {
         // Test put/get
-        assert_eq!(backend.get(b"key1")?, None, "Key should not exist initially");
+        assert_eq!(
+            backend.get(b"key1")?,
+            None,
+            "Key should not exist initially"
+        );
         backend.put(b"key1", b"value1")?;
         assert_eq!(
             backend.get(b"key1")?,
@@ -21,13 +25,25 @@ mod backend_tests {
 
         // Test put returns previous value
         let prev = backend.put(b"key1", b"value2")?;
-        assert_eq!(prev, Some(b"value1".to_vec()), "Should return previous value");
+        assert_eq!(
+            prev,
+            Some(b"value1".to_vec()),
+            "Should return previous value"
+        );
         assert_eq!(backend.get(b"key1")?, Some(b"value2".to_vec()));
 
         // Test remove
         let removed = backend.remove(b"key1")?;
-        assert_eq!(removed, Some(b"value2".to_vec()), "Should return removed value");
-        assert_eq!(backend.get(b"key1")?, None, "Key should not exist after removal");
+        assert_eq!(
+            removed,
+            Some(b"value2".to_vec()),
+            "Should return removed value"
+        );
+        assert_eq!(
+            backend.get(b"key1")?,
+            None,
+            "Key should not exist after removal"
+        );
 
         Ok(())
     }
@@ -47,7 +63,11 @@ mod backend_tests {
 
     /// Test backend compliance for keys listing
     fn test_backend_keys<B: StorageBackend>(backend: B) -> Result<()> {
-        assert_eq!(backend.keys()?, Vec::<Vec<u8>>::new(), "Should be empty initially");
+        assert_eq!(
+            backend.keys()?,
+            Vec::<Vec<u8>>::new(),
+            "Should be empty initially"
+        );
 
         backend.put(b"key1", b"value1")?;
         backend.put(b"key2", b"value2")?;

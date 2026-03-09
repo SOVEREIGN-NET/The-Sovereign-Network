@@ -7,16 +7,18 @@
 //! - Check balances
 //! - List all tokens
 
-use crate::argument_parsing::{TokenArgs, TokenAction, ZhtpCli, format_output};
+use crate::argument_parsing::{format_output, TokenAction, TokenArgs, ZhtpCli};
 use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
-use crate::error::{CliResult, CliError};
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
-use lib_blockchain::{ContractCall, ContractTransactionBuilder, Transaction, TransactionOutput, Hash};
 use lib_blockchain::transaction::{TokenCreationPayloadV1, TokenMintData, TokenTransferData};
 use lib_blockchain::types::TransactionType;
+use lib_blockchain::{
+    ContractCall, ContractTransactionBuilder, Hash, Transaction, TransactionOutput,
+};
+use lib_crypto::keypair::KeyPair;
 use lib_network::client::ZhtpClient;
 use serde_json::json;
-use lib_crypto::keypair::KeyPair;
 use std::path::PathBuf;
 
 // ============================================================================
@@ -54,7 +56,9 @@ fn parse_token_id(token_id: &str) -> CliResult<[u8; 32]> {
     let bytes = hex::decode(hex_str)
         .map_err(|_| CliError::ConfigError("Invalid token_id hex".to_string()))?;
     if bytes.len() != 32 {
-        return Err(CliError::ConfigError("Token ID must be 32 bytes".to_string()));
+        return Err(CliError::ConfigError(
+            "Token ID must be 32 bytes".to_string(),
+        ));
     }
     let mut id = [0u8; 32];
     id.copy_from_slice(&bytes);
@@ -103,7 +107,8 @@ fn build_signed_token_tx(keypair: &KeyPair, call: ContractCall) -> CliResult<Tra
         .build(keypair)
         .map_err(|e| CliError::ConfigError(format!("Failed to build temp tx: {}", e)))?;
 
-    let min_fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(temp_tx.size());
+    let min_fee =
+        lib_blockchain::transaction::creation::utils::calculate_minimum_fee(temp_tx.size());
     builder.set_fee(min_fee);
 
     builder
@@ -215,10 +220,7 @@ async fn fetch_token_nonce(
 // ============================================================================
 
 /// Handle token command
-pub async fn handle_token_command(
-    args: TokenArgs,
-    cli: &ZhtpCli,
-) -> CliResult<()> {
+pub async fn handle_token_command(args: TokenArgs, cli: &ZhtpCli) -> CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_token_command_with_output(args, cli, &output).await
 }
@@ -235,27 +237,23 @@ pub async fn handle_token_command_with_output<O: Output>(
             symbol,
             supply,
             treasury_recipient,
-        } => {
-            handle_create(cli, output, &name, &symbol, supply, &treasury_recipient).await
-        }
-        TokenAction::Mint { token_id, amount, to } => {
-            handle_mint(cli, output, &token_id, amount, &to).await
-        }
-        TokenAction::Transfer { token_id, to, amount } => {
-            handle_transfer(cli, output, &token_id, &to, amount).await
-        }
-        TokenAction::Burn { token_id, amount } => {
-            handle_burn(cli, output, &token_id, amount).await
-        }
-        TokenAction::Info { token_id } => {
-            handle_info(cli, output, &token_id).await
-        }
+        } => handle_create(cli, output, &name, &symbol, supply, &treasury_recipient).await,
+        TokenAction::Mint {
+            token_id,
+            amount,
+            to,
+        } => handle_mint(cli, output, &token_id, amount, &to).await,
+        TokenAction::Transfer {
+            token_id,
+            to,
+            amount,
+        } => handle_transfer(cli, output, &token_id, &to, amount).await,
+        TokenAction::Burn { token_id, amount } => handle_burn(cli, output, &token_id, amount).await,
+        TokenAction::Info { token_id } => handle_info(cli, output, &token_id).await,
         TokenAction::Balance { token_id, address } => {
             handle_balance(cli, output, &token_id, &address).await
         }
-        TokenAction::List => {
-            handle_list(cli, output).await
-        }
+        TokenAction::List => handle_list(cli, output).await,
     }
 }
 
@@ -289,18 +287,21 @@ async fn handle_create<O: Output>(
         treasury_allocation_bps: 2_000,
         treasury_recipient: treasury_key.key_id,
     };
-    let memo = payload
-        .encode_memo()
-        .map_err(|e| CliError::ConfigError(format!("Failed to encode token creation payload: {e}")))?;
+    let memo = payload.encode_memo().map_err(|e| {
+        CliError::ConfigError(format!("Failed to encode token creation payload: {e}"))
+    })?;
     // Use a zero-cost placeholder so that signing_hash() reflects real tx fields
     // before we overwrite it with the actual signature below.
-    let mut tx = Transaction::new_token_creation_with_chain_id(0x03, lib_crypto::Signature::default(), memo);
+    let mut tx =
+        Transaction::new_token_creation_with_chain_id(0x03, lib_crypto::Signature::default(), memo);
     tx.fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
     tx.signature = keypair
         .sign(tx.signing_hash().as_bytes())
         .map_err(|e| CliError::ConfigError(format!("Failed to sign token creation tx: {e}")))?;
     if tx.transaction_type != TransactionType::TokenCreation {
-        return Err(CliError::ConfigError("Failed to build TokenCreation transaction".to_string()));
+        return Err(CliError::ConfigError(
+            "Failed to build TokenCreation transaction".to_string(),
+        ));
     }
     let tx_bytes = bincode::serialize(&tx)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
@@ -317,18 +318,31 @@ async fn handle_create<O: Output>(
             reason: e.to_string(),
         })?;
 
-    let response_json: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
+    let response_json: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: "/api/v1/token/create".to_string(),
             status: 0,
             reason: format!("Failed to parse response: {}", e),
         })?;
 
-    if response_json.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if response_json
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         output.success("Token created successfully!")?;
-        output.info(&format!("Token ID: {}", response_json.get("token_id").and_then(|v| v.as_str()).unwrap_or("unknown")))?;
+        output.info(&format!(
+            "Token ID: {}",
+            response_json
+                .get("token_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+        ))?;
     } else {
-        let error = response_json.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        let error = response_json
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
         output.error(&format!("Failed to create token: {}", error))?;
     }
 
@@ -369,17 +383,24 @@ async fn handle_mint<O: Output>(
             reason: e.to_string(),
         })?;
 
-    let response_json: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
+    let response_json: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: "/api/v1/token/mint".to_string(),
             status: 0,
             reason: format!("Failed to parse response: {}", e),
         })?;
 
-    if response_json.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if response_json
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         output.success("Tokens minted successfully!")?;
     } else {
-        let error = response_json.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        let error = response_json
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
         output.error(&format!("Failed to mint tokens: {}", error))?;
     }
 
@@ -409,7 +430,8 @@ async fn handle_transfer<O: Output>(
     let sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
     if token_id_bytes == sov_id {
         return Err(CliError::ConfigError(
-            "SOV (native token) transfers must use 'wallet transfer', not 'token transfer'".to_string(),
+            "SOV (native token) transfers must use 'wallet transfer', not 'token transfer'"
+                .to_string(),
         ));
     }
 
@@ -417,7 +439,8 @@ async fn handle_transfer<O: Output>(
     let client = connect_default(&cli.server).await?;
     let nonce = fetch_token_nonce(&client, &token_id_bytes, &keypair.public_key.key_id).await?;
     output.info(&format!("Using transfer nonce: {}", nonce))?;
-    let tx = build_signed_token_transfer_tx(&keypair, token_id_bytes, to_pubkey.key_id, amount, nonce)?;
+    let tx =
+        build_signed_token_transfer_tx(&keypair, token_id_bytes, to_pubkey.key_id, amount, nonce)?;
     let tx_bytes = bincode::serialize(&tx)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
     let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
@@ -431,17 +454,24 @@ async fn handle_transfer<O: Output>(
             reason: e.to_string(),
         })?;
 
-    let response_json: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
+    let response_json: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: "/api/v1/token/transfer".to_string(),
             status: 0,
             reason: format!("Failed to parse response: {}", e),
         })?;
 
-    if response_json.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if response_json
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         output.success("Transfer successful!")?;
     } else {
-        let error = response_json.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        let error = response_json
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
         output.error(&format!("Transfer failed: {}", error))?;
     }
 
@@ -464,25 +494,23 @@ async fn handle_burn<O: Output>(
 }
 
 /// Handle token info query
-async fn handle_info<O: Output>(
-    cli: &ZhtpCli,
-    output: &O,
-    token_id: &str,
-) -> CliResult<()> {
+async fn handle_info<O: Output>(cli: &ZhtpCli, output: &O, token_id: &str) -> CliResult<()> {
     output.info(&format!("Fetching token info for: {}", token_id))?;
 
     let client = connect_default(&cli.server).await?;
 
     let path = build_info_path(token_id);
-    let response = client.get(&path).await
+    let response = client
+        .get(&path)
+        .await
         .map_err(|e| CliError::ApiCallFailed {
             endpoint: path.clone(),
             status: 0,
             reason: e.to_string(),
         })?;
 
-    let response_json: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
+    let response_json: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: path,
             status: 0,
             reason: format!("Failed to parse response: {}", e),
@@ -501,27 +529,35 @@ async fn handle_balance<O: Output>(
     token_id: &str,
     address: &str,
 ) -> CliResult<()> {
-    output.info(&format!("Fetching balance for {} on token {}", address, token_id))?;
+    output.info(&format!(
+        "Fetching balance for {} on token {}",
+        address, token_id
+    ))?;
 
     let client = connect_default(&cli.server).await?;
 
     let path = build_balance_path(token_id, address);
-    let response = client.get(&path).await
+    let response = client
+        .get(&path)
+        .await
         .map_err(|e| CliError::ApiCallFailed {
             endpoint: path.clone(),
             status: 0,
             reason: e.to_string(),
         })?;
 
-    let response_json: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
+    let response_json: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: path,
             status: 0,
             reason: format!("Failed to parse response: {}", e),
         })?;
 
     if let Some(balance) = response_json.get("balance") {
-        let symbol = response_json.get("symbol").and_then(|v| v.as_str()).unwrap_or("tokens");
+        let symbol = response_json
+            .get("symbol")
+            .and_then(|v| v.as_str())
+            .unwrap_or("tokens");
         output.success(&format!("Balance: {} {}", balance, symbol))?;
     }
 
@@ -532,23 +568,22 @@ async fn handle_balance<O: Output>(
 }
 
 /// Handle token list
-async fn handle_list<O: Output>(
-    cli: &ZhtpCli,
-    output: &O,
-) -> CliResult<()> {
+async fn handle_list<O: Output>(cli: &ZhtpCli, output: &O) -> CliResult<()> {
     output.info("Listing all tokens...")?;
 
     let client = connect_default(&cli.server).await?;
 
-    let response = client.get("/api/v1/token/list").await
+    let response = client
+        .get("/api/v1/token/list")
+        .await
         .map_err(|e| CliError::ApiCallFailed {
             endpoint: "/api/v1/token/list".to_string(),
             status: 0,
             reason: e.to_string(),
         })?;
 
-    let response_json: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
+    let response_json: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: "/api/v1/token/list".to_string(),
             status: 0,
             reason: format!("Failed to parse response: {}", e),
@@ -684,8 +719,7 @@ mod tests {
         let to = [0x02u8; 32];
         let amount = 1_000u64;
 
-        let tx = build_signed_token_mint_tx(&keypair, token_id, to, amount)
-            .expect("build mint tx");
+        let tx = build_signed_token_mint_tx(&keypair, token_id, to, amount).expect("build mint tx");
 
         assert_eq!(tx.transaction_type, TransactionType::TokenMint);
         let mint_data = tx.token_mint_data.expect("must have mint data");

@@ -1,10 +1,10 @@
 //! Protocol-Level Filtering for Bootstrap Nodes
-//! 
+//!
 //! Ensures bootstrap nodes only serve blockchain data, not general internet routing.
 //! Users can connect through ISPs but can ONLY access blockchain protocols.
 
-use anyhow::{Result, bail};
-use tracing::{warn, debug};
+use anyhow::{bail, Result};
+use tracing::{debug, warn};
 
 /// Protocol types recognized by the system
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +56,7 @@ impl Protocol {
             _ => Protocol::Unknown,
         }
     }
-    
+
     /// Check if this is a blockchain protocol
     pub fn is_blockchain_protocol(&self) -> bool {
         matches!(
@@ -64,7 +64,7 @@ impl Protocol {
             Protocol::Zhtp | Protocol::Dht | Protocol::Blockchain | Protocol::Mesh | Protocol::Quic
         )
     }
-    
+
     /// Check if this is a general internet protocol (should be blocked on bootstrap)
     pub fn is_internet_protocol(&self) -> bool {
         matches!(
@@ -109,7 +109,7 @@ impl ProtocolFilter {
             ],
         }
     }
-    
+
     /// Create permissive filter (allow all)
     pub fn new_permissive() -> Self {
         Self {
@@ -119,71 +119,79 @@ impl ProtocolFilter {
             blocked_protocols: vec![],
         }
     }
-    
+
     /// Check if a protocol is allowed
     pub fn is_allowed(&self, protocol_str: &str) -> bool {
         let protocol = Protocol::from_str(protocol_str);
-        
+
         // Check custom whitelist first
         if !self.allowed_protocols.is_empty() {
-            return self.allowed_protocols.iter().any(|p| p.eq_ignore_ascii_case(protocol_str));
+            return self
+                .allowed_protocols
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(protocol_str));
         }
-        
+
         // Check custom blacklist
-        if self.blocked_protocols.iter().any(|p| p.eq_ignore_ascii_case(protocol_str)) {
+        if self
+            .blocked_protocols
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case(protocol_str))
+        {
             return false;
         }
-        
+
         // Apply general rules
         if protocol.is_blockchain_protocol() && self.allow_blockchain {
             return true;
         }
-        
+
         if protocol.is_internet_protocol() && self.block_internet {
             return false;
         }
-        
+
         // Unknown protocols: block if we're in strict mode
         if self.block_internet {
             return false;
         }
-        
+
         true
     }
-    
+
     /// Validate and filter a connection request
     pub fn validate_connection(&self, protocol: &str, purpose: &str) -> Result<()> {
         if !self.is_allowed(protocol) {
             warn!("🚫 Protocol blocked: {} (purpose: {})", protocol, purpose);
             bail!("Protocol '{}' is not allowed on this bootstrap node. Only blockchain protocols are supported.", protocol);
         }
-        
+
         debug!(" Protocol allowed: {} (purpose: {})", protocol, purpose);
         Ok(())
     }
-    
+
     /// Check if request is attempting to route general internet traffic
     pub fn is_routing_attempt(&self, uri: &str) -> bool {
         // Check for common proxy/routing patterns
         if uri.starts_with("http://") || uri.starts_with("https://") {
             return true;
         }
-        
+
         // Check for IP addresses (potential routing)
         if uri.contains("://") {
             if let Some(host) = uri.split("://").nth(1).and_then(|s| s.split('/').next()) {
                 // Check if it's an external domain (not blockchain-related)
-                if !host.contains("blockchain") 
-                    && !host.contains("sovereign") 
+                if !host.contains("blockchain")
+                    && !host.contains("sovereign")
                     && !host.contains("zhtp")
                     && !host.starts_with("192.168.")
                     && !host.starts_with("10.")
-                    && !host.starts_with("172.16.") {
+                    && !host.starts_with("172.16.")
+                {
                     return true;
                 }
             }
         }
-        
+
         false
     }
 }
@@ -211,12 +219,12 @@ mod tests {
     #[test]
     fn test_bootstrap_filter() {
         let filter = ProtocolFilter::new_bootstrap();
-        
+
         // Blockchain protocols should be allowed
         assert!(filter.is_allowed("zhtp"));
         assert!(filter.is_allowed("dht"));
         assert!(filter.is_allowed("blockchain"));
-        
+
         // Internet protocols should be blocked
         assert!(!filter.is_allowed("http"));
         assert!(!filter.is_allowed("https"));
@@ -226,11 +234,11 @@ mod tests {
     #[test]
     fn test_routing_detection() {
         let filter = ProtocolFilter::new_bootstrap();
-        
+
         // These should be detected as routing attempts
         assert!(filter.is_routing_attempt("http://google.com"));
         assert!(filter.is_routing_attempt("https://example.com/api"));
-        
+
         // These should NOT be detected as routing (blockchain-related)
         assert!(!filter.is_routing_attempt("zhtp://blockchain.local/block/123"));
         assert!(!filter.is_routing_attempt("dht://192.168.1.1/store"));
@@ -239,7 +247,7 @@ mod tests {
     #[test]
     fn test_permissive_filter() {
         let filter = ProtocolFilter::new_permissive();
-        
+
         // Everything should be allowed in permissive mode
         assert!(filter.is_allowed("zhtp"));
         assert!(filter.is_allowed("http"));

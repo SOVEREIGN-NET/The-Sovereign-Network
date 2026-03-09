@@ -2,10 +2,10 @@
 //!
 //! Provides health and readiness checks for the PoUW subsystem.
 
-use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc};
 
 /// Overall health status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,7 +196,7 @@ impl HealthCheckResult {
 pub trait HealthCheck {
     /// Name of the component being checked
     fn name(&self) -> &str;
-    
+
     /// Perform the health check
     async fn check(&self) -> HealthCheckResult;
 }
@@ -294,7 +294,7 @@ mod tests {
     #[tokio::test]
     async fn test_health_checker_default() {
         let checker = PouwHealthChecker::new("1.0.0".to_string());
-        
+
         let response = checker.check_health().await;
         assert_eq!(response.status, HealthStatus::Healthy);
         assert_eq!(response.version, "1.0.0");
@@ -304,10 +304,14 @@ mod tests {
     #[tokio::test]
     async fn test_register_checks() {
         let checker = PouwHealthChecker::new("1.0.0".to_string());
-        
-        checker.register_check(Box::new(DatabaseHealthCheck::new())).await;
-        checker.register_check(Box::new(RateLimiterHealthCheck::new())).await;
-        
+
+        checker
+            .register_check(Box::new(DatabaseHealthCheck::new()))
+            .await;
+        checker
+            .register_check(Box::new(RateLimiterHealthCheck::new()))
+            .await;
+
         let response = checker.check_health().await;
         assert_eq!(response.components.len(), 2);
     }
@@ -315,7 +319,7 @@ mod tests {
     #[tokio::test]
     async fn test_liveness_readiness() {
         let checker = PouwHealthChecker::new("1.0.0".to_string());
-        
+
         assert!(checker.is_alive());
         assert!(checker.is_ready().await);
     }

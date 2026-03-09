@@ -61,7 +61,7 @@ pub fn server_alpns() -> Vec<Vec<u8>> {
 /// Client ALPNs for control plane operations (CLI, Web4 deploy)
 pub fn client_control_plane_alpns() -> Vec<Vec<u8>> {
     vec![
-        ALPN_CONTROL_PLANE.to_vec(),   // Primary: control plane with UHP v1
+        ALPN_CONTROL_PLANE.to_vec(), // Primary: control plane with UHP v1
     ]
 }
 
@@ -75,7 +75,7 @@ pub fn client_control_plane_v2_alpns() -> Vec<Vec<u8>> {
 /// Client ALPNs for public read-only operations (mobile apps reading content)
 pub fn client_public_alpns() -> Vec<Vec<u8>> {
     vec![
-        ALPN_PUBLIC.to_vec(),          // Public read-only (preferred)
+        ALPN_PUBLIC.to_vec(), // Public read-only (preferred)
     ]
 }
 
@@ -100,7 +100,6 @@ mod tests {
         assert!(!alpns.iter().any(|v| v.as_slice() == ALPN_H3));
     }
 }
-
 
 // =============================================================================
 // Handshake Constants
@@ -296,9 +295,7 @@ pub fn validate_network_config(config: &NetworkConfig) -> Result<(), String> {
 
     // Invariant 3: cipher suite list must not be empty.
     if config.cipher_suites.is_empty() {
-        return Err(
-            "INVARIANT VIOLATED: cipher_suites must not be empty".to_string()
-        );
+        return Err("INVARIANT VIOLATED: cipher_suites must not be empty".to_string());
     }
 
     // Invariant 4: every configured suite must be in the approved list.
@@ -357,7 +354,9 @@ mod transport_tests {
         };
         let result = validate_network_config(&cfg);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cipher_suites must not be empty"));
+        assert!(result
+            .unwrap_err()
+            .contains("cipher_suites must not be empty"));
     }
 
     #[test]
@@ -368,7 +367,9 @@ mod transport_tests {
         };
         let result = validate_network_config(&cfg);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not in REQUIRED_CIPHER_SUITES"));
+        assert!(result
+            .unwrap_err()
+            .contains("not in REQUIRED_CIPHER_SUITES"));
     }
 
     #[test]

@@ -1,19 +1,19 @@
 //! DNS Resolution API Handler
-//! 
+//!
 //! Provides HTTP API endpoints for resolving .zhtp domains to DHT content hashes
 //! Integrates with blockchain contracts and Web4 domain registry
 
+use chrono;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error, debug};
-use chrono;
+use tracing::{debug, error, info, warn};
 
-use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod, ZhtpStatus};
-use crate::web4_stub::Web4Manager;
 use crate::runtime::blockchain_provider::get_global_blockchain;
+use crate::web4_stub::Web4Manager;
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 /// DNS resolution request
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,7 +81,7 @@ impl DnsHandler {
     /// Create a new DNS handler
     pub fn new() -> Self {
         let registry = HashMap::new();
-        
+
         // DNS registry starts empty - domains will be registered through proper deployment process
         info!("DNS handler initialized with empty registry - ready for domain deployments");
 
@@ -101,7 +101,7 @@ impl DnsHandler {
     /// Resolve a .zhtp domain to content hash
     pub async fn resolve_domain(&self, domain: &str) -> ZhtpResult<ZhtpResponse> {
         info!("Resolving domain: {}", domain);
-        
+
         // Update stats
         {
             let mut stats = self.stats.write().await;
@@ -115,36 +115,45 @@ impl DnsHandler {
         if let Some(web4_manager) = &self.web4_manager {
             info!(" Querying Web4Manager for domain: {}", domain);
             let manager = web4_manager.read().await;
-            
+
             match manager.registry.lookup_domain(domain).await {
                 Ok(domain_info) if domain_info.found => {
                     info!(" Domain {} found in Web4 registry", domain);
-                    
-                    let owner_display = domain_info.record.as_ref()
+
+                    let owner_display = domain_info
+                        .record
+                        .as_ref()
                         .and_then(|r| r.get("owner").and_then(|v| v.as_str()))
                         .unwrap_or("unknown")
                         .to_string();
-                    
-                    let registered_at = domain_info.record.as_ref()
+
+                    let registered_at = domain_info
+                        .record
+                        .as_ref()
                         .and_then(|r| r.get("registered_at").and_then(|v| v.as_u64()))
                         .unwrap_or(0);
-                    
+
                     info!("   Owner: {}", owner_display);
                     info!("   Registered: {}", registered_at);
                     info!("   Content routes: {}", domain_info.content_mappings.len());
-                    
+
                     // Get default content hash (usually for root path "/")
-                    let content_hash = domain_info.content_mappings.get("/")
+                    let content_hash = domain_info
+                        .content_mappings
+                        .get("/")
                         .or_else(|| domain_info.content_mappings.values().next())
                         .cloned();
-                    
+
                     if let Some(hash) = content_hash {
                         let mut metadata = HashMap::new();
                         metadata.insert("owner".to_string(), owner_display);
                         metadata.insert("registered_at".to_string(), registered_at.to_string());
-                        metadata.insert("routes".to_string(), domain_info.content_mappings.len().to_string());
+                        metadata.insert(
+                            "routes".to_string(),
+                            domain_info.content_mappings.len().to_string(),
+                        );
                         metadata.insert("source".to_string(), "web4_registry".to_string());
-                        
+
                         let response = DnsResolveResponse {
                             domain: domain.to_string(),
                             resolved: true,
@@ -165,7 +174,10 @@ impl DnsHandler {
                     }
                 }
                 Ok(_) => {
-                    debug!("Domain {} not found in Web4 registry (not found flag)", domain);
+                    debug!(
+                        "Domain {} not found in Web4 registry (not found flag)",
+                        domain
+                    );
                 }
                 Err(e) => {
                     debug!("Domain {} not found in Web4 registry: {}", domain, e);
@@ -175,13 +187,13 @@ impl DnsHandler {
 
         // Fallback: Check local domain registry
         let registry = self.domain_registry.read().await;
-        
+
         if let Some(record) = registry.get(domain) {
             // Check if domain hasn't expired
             let current_time = chrono::Utc::now().timestamp() as u64;
             if record.expires_at < current_time {
                 warn!("Domain {} has expired", domain);
-                
+
                 let response = DnsResolveResponse {
                     domain: domain.to_string(),
                     resolved: false,
@@ -205,18 +217,33 @@ impl DnsHandler {
             }
 
             // Verify contract on blockchain
-            match self.verify_domain_contract(&record.contract_address, domain).await {
+            match self
+                .verify_domain_contract(&record.contract_address, domain)
+                .await
+            {
                 Ok(true) => {
-                    info!("Domain {} resolved to content hash: {}", domain, record.content_hash);
-                    
+                    info!(
+                        "Domain {} resolved to content hash: {}",
+                        domain, record.content_hash
+                    );
+
                     let mut metadata = HashMap::new();
                     metadata.insert("title".to_string(), record.metadata.title.clone());
-                    metadata.insert("description".to_string(), record.metadata.description.clone());
+                    metadata.insert(
+                        "description".to_string(),
+                        record.metadata.description.clone(),
+                    );
                     metadata.insert("owner".to_string(), record.metadata.owner.clone());
-                    metadata.insert("content_type".to_string(), record.metadata.content_type.clone());
+                    metadata.insert(
+                        "content_type".to_string(),
+                        record.metadata.content_type.clone(),
+                    );
                     metadata.insert("size".to_string(), record.metadata.size.to_string());
-                    metadata.insert("deployed_at".to_string(), record.metadata.deployed_at.to_string());
-                    
+                    metadata.insert(
+                        "deployed_at".to_string(),
+                        record.metadata.deployed_at.to_string(),
+                    );
+
                     let response = DnsResolveResponse {
                         domain: domain.to_string(),
                         resolved: true,
@@ -237,7 +264,7 @@ impl DnsHandler {
                 }
                 Ok(false) => {
                     error!("Domain {} contract verification failed", domain);
-                    
+
                     let response = DnsResolveResponse {
                         domain: domain.to_string(),
                         resolved: false,
@@ -247,7 +274,10 @@ impl DnsHandler {
                         ttl: 300,
                         metadata: {
                             let mut meta = HashMap::new();
-                            meta.insert("error".to_string(), "Contract verification failed".to_string());
+                            meta.insert(
+                                "error".to_string(),
+                                "Contract verification failed".to_string(),
+                            );
                             meta
                         },
                         timestamp: current_time,
@@ -261,7 +291,7 @@ impl DnsHandler {
                 }
                 Err(e) => {
                     error!("Error verifying contract for domain {}: {}", domain, e);
-                    
+
                     let response = DnsResolveResponse {
                         domain: domain.to_string(),
                         resolved: false,
@@ -286,7 +316,7 @@ impl DnsHandler {
             }
         } else {
             warn!("Domain {} not found in registry", domain);
-            
+
             let current_time = chrono::Utc::now().timestamp() as u64;
             let response = DnsResolveResponse {
                 domain: domain.to_string(),
@@ -298,7 +328,10 @@ impl DnsHandler {
                 metadata: {
                     let mut meta = HashMap::new();
                     meta.insert("error".to_string(), "Domain not registered".to_string());
-                    meta.insert("suggestion".to_string(), "Register this domain in Web4 registry".to_string());
+                    meta.insert(
+                        "suggestion".to_string(),
+                        "Register this domain in Web4 registry".to_string(),
+                    );
                     meta
                 },
                 timestamp: current_time,
@@ -313,9 +346,15 @@ impl DnsHandler {
     }
 
     /// Register a new domain in the registry
-    pub async fn register_domain(&self, domain: String, content_hash: String, contract_address: String, metadata: Web4SiteMetadata) -> Result<(), String> {
+    pub async fn register_domain(
+        &self,
+        domain: String,
+        content_hash: String,
+        contract_address: String,
+        metadata: Web4SiteMetadata,
+    ) -> Result<(), String> {
         info!("Registering domain: {} -> {}", domain, content_hash);
-        
+
         let current_time = chrono::Utc::now().timestamp() as u64;
         let record = DomainRecord {
             _domain: domain.clone(),
@@ -329,29 +368,39 @@ impl DnsHandler {
 
         let mut registry = self.domain_registry.write().await;
         registry.insert(domain.clone(), record);
-        
+
         info!("Domain {} registered successfully", domain);
         Ok(())
     }
 
     /// Verify domain contract on blockchain
-    async fn verify_domain_contract(&self, contract_address: &str, domain: &str) -> Result<bool, anyhow::Error> {
-        debug!("Verifying contract {} for domain {}", contract_address, domain);
-        
+    async fn verify_domain_contract(
+        &self,
+        contract_address: &str,
+        domain: &str,
+    ) -> Result<bool, anyhow::Error> {
+        debug!(
+            "Verifying contract {} for domain {}",
+            contract_address, domain
+        );
+
         // Get blockchain access
         match get_global_blockchain().await {
             Ok(blockchain) => {
                 let _blockchain_guard = blockchain.read().await;
-                
+
                 // In production, this would:
                 // 1. Query blockchain for contract at contract_address
                 // 2. Verify contract contains domain mapping for 'domain'
                 // 3. Check contract owner and permissions
                 // 4. Verify contract signature and state
-                
+
                 // For now, verify that we have a valid-looking contract address
                 if contract_address.len() >= 16 && !contract_address.contains("0x1234") {
-                    info!("Contract verification passed for {} at {}", domain, contract_address);
+                    info!(
+                        "Contract verification passed for {} at {}",
+                        domain, contract_address
+                    );
                     Ok(true)
                 } else {
                     warn!("Invalid or test contract address for domain {}", domain);
@@ -359,7 +408,10 @@ impl DnsHandler {
                 }
             }
             Err(e) => {
-                error!("Failed to access blockchain for contract verification: {}", e);
+                error!(
+                    "Failed to access blockchain for contract verification: {}",
+                    e
+                );
                 Err(e)
             }
         }
@@ -368,10 +420,10 @@ impl DnsHandler {
     /// Get DNS statistics
     async fn get_dns_statistics(&self) -> ZhtpResult<ZhtpResponse> {
         debug!("Getting DNS statistics");
-        
+
         let stats = self.stats.read().await;
         let registry = self.domain_registry.read().await;
-        
+
         let response = serde_json::json!({
             "requests_handled": stats.requests_handled,
             "successful_resolutions": stats.successful_resolutions,
@@ -391,19 +443,22 @@ impl DnsHandler {
     /// List all registered domains
     async fn list_domains(&self) -> ZhtpResult<ZhtpResponse> {
         info!("Listing registered domains");
-        
+
         let registry = self.domain_registry.read().await;
-        let domains: Vec<_> = registry.iter().map(|(domain, record)| {
-            serde_json::json!({
-                "domain": domain,
-                "content_hash": record.content_hash,
-                "contract_address": record.contract_address,
-                "owner": record.owner,
-                "registered_at": record.registered_at,
-                "expires_at": record.expires_at,
-                "metadata": record.metadata
+        let domains: Vec<_> = registry
+            .iter()
+            .map(|(domain, record)| {
+                serde_json::json!({
+                    "domain": domain,
+                    "content_hash": record.content_hash,
+                    "contract_address": record.contract_address,
+                    "owner": record.owner,
+                    "registered_at": record.registered_at,
+                    "expires_at": record.expires_at,
+                    "metadata": record.metadata
+                })
             })
-        }).collect();
+            .collect();
 
         let response = serde_json::json!({
             "domains": domains,
@@ -459,16 +514,22 @@ impl ZhtpRequestHandler for DnsHandler {
                 }
                 _ => {
                     warn!("❓ Unknown DNS GET endpoint: {}", request.uri);
-                    Ok(ZhtpResponse::not_found("Unknown DNS GET endpoint".to_string()))
+                    Ok(ZhtpResponse::not_found(
+                        "Unknown DNS GET endpoint".to_string(),
+                    ))
                 }
             },
             ZhtpMethod::Post => {
                 warn!("DNS POST methods not implemented yet: {}", request.uri);
-                Ok(ZhtpResponse::method_not_allowed("POST not supported for DNS endpoints".to_string()))
+                Ok(ZhtpResponse::method_not_allowed(
+                    "POST not supported for DNS endpoints".to_string(),
+                ))
             }
             _ => {
                 warn!("Unsupported DNS method: {:?}", request.method);
-                Ok(ZhtpResponse::method_not_allowed("Method not allowed for DNS endpoint".to_string()))
+                Ok(ZhtpResponse::method_not_allowed(
+                    "Method not allowed for DNS endpoint".to_string(),
+                ))
             }
         }
     }

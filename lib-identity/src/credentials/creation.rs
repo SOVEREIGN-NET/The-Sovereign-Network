@@ -1,12 +1,12 @@
 //! Credential creation functionality from the original identity.rs
 
-use serde::{Deserialize, Serialize};
+use crate::credentials::ZkCredential;
+use crate::types::{CredentialType, IdentityId};
 use anyhow::Result;
-use std::collections::HashMap;
 use lib_crypto::Hash;
 use lib_proofs::ZeroKnowledgeProof;
-use crate::types::{IdentityId, CredentialType};
-use crate::credentials::ZkCredential;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Credential creation factory
 #[derive(Debug, Clone)]
@@ -76,7 +76,11 @@ impl CredentialFactory {
     }
 
     /// Add a trusted issuer
-    pub fn add_trusted_issuer(&mut self, issuer_id: IdentityId, credential_types: Vec<CredentialType>) {
+    pub fn add_trusted_issuer(
+        &mut self,
+        issuer_id: IdentityId,
+        credential_types: Vec<CredentialType>,
+    ) {
         self.trusted_issuers.insert(issuer_id, credential_types);
     }
 
@@ -90,9 +94,7 @@ impl CredentialFactory {
         issuer_id: IdentityId,
     ) -> Result<CreationResult> {
         let start_time = std::time::SystemTime::now();
-        let current_time = start_time
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
+        let current_time = start_time.duration_since(std::time::UNIX_EPOCH)?.as_secs();
 
         // Verify issuer is trusted for this credential type
         if let Some(trusted_types) = self.trusted_issuers.get(&issuer_id) {
@@ -100,7 +102,11 @@ impl CredentialFactory {
                 return Ok(CreationResult {
                     success: false,
                     credential: self.create_empty_credential(subject_id, credential_type)?,
-                    metadata: self.create_metadata(issuer_id, "failed_untrusted_issuer".to_string(), 0),
+                    metadata: self.create_metadata(
+                        issuer_id,
+                        "failed_untrusted_issuer".to_string(),
+                        0,
+                    ),
                     messages: vec!["Issuer not trusted for this credential type".to_string()],
                 });
             }
@@ -119,11 +125,14 @@ impl CredentialFactory {
                 subject_id.0.as_slice(),
                 claim.as_bytes(),
                 &current_time.to_le_bytes(),
-            ].concat()
+            ]
+            .concat(),
         );
 
         // Create ZK proof for the credential
-        let zk_proof = self.generate_credential_proof(&subject_id, &credential_type, &claim).await?;
+        let zk_proof = self
+            .generate_credential_proof(&subject_id, &credential_type, &claim)
+            .await?;
 
         // Create the credential
         let credential = ZkCredential {
@@ -144,7 +153,11 @@ impl CredentialFactory {
 
         // Update statistics
         self.creation_stats.total_created += 1;
-        *self.creation_stats.by_type.entry(credential_type).or_insert(0) += 1;
+        *self
+            .creation_stats
+            .by_type
+            .entry(credential_type)
+            .or_insert(0) += 1;
         self.creation_stats.creation_times.push(current_time);
 
         Ok(CreationResult {
@@ -164,17 +177,22 @@ impl CredentialFactory {
         issuer_id: IdentityId,
     ) -> Result<CreationResult> {
         let claim = format!("age_verified_{}", age);
-        
+
         // Use the base create_zk_credential method which includes issuer validation
         self.create_zk_credential(
             subject_id,
             CredentialType::AgeVerification,
             claim,
-            Some(std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap()
-                .as_secs() + (365 * 24 * 3600)), // Valid for 1 year
+            Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    + (365 * 24 * 3600),
+            ), // Valid for 1 year
             issuer_id,
-        ).await
+        )
+        .await
     }
 
     /// Create reputation credential - SPECIALIZED FROM ORIGINAL
@@ -191,11 +209,16 @@ impl CredentialFactory {
             subject_id,
             CredentialType::Reputation,
             claim,
-            Some(std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap()
-                .as_secs() + (30 * 24 * 3600)), // Valid for 30 days
+            Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    + (30 * 24 * 3600),
+            ), // Valid for 30 days
             issuer_id,
-        ).await
+        )
+        .await
     }
 
     /// Generate credential proof - ZK IMPLEMENTATION FROM ORIGINAL
@@ -206,21 +229,20 @@ impl CredentialFactory {
         claim: &str,
     ) -> Result<ZeroKnowledgeProof> {
         // Create ZK proof for the credential
-        let proof_data = lib_crypto::hash_blake3(&[
-            subject_id.0.as_slice(),
-            claim.as_bytes(),
-            &serde_json::to_vec(credential_type)?,
-        ].concat());
+        let proof_data = lib_crypto::hash_blake3(
+            &[
+                subject_id.0.as_slice(),
+                claim.as_bytes(),
+                &serde_json::to_vec(credential_type)?,
+            ]
+            .concat(),
+        );
 
-        let public_inputs = lib_crypto::hash_blake3(&[
-            subject_id.0.as_slice(),
-            &self.factory_id.0,
-        ].concat());
+        let public_inputs =
+            lib_crypto::hash_blake3(&[subject_id.0.as_slice(), &self.factory_id.0].concat());
 
-        let verification_key = lib_crypto::hash_blake3(&[
-            proof_data.as_slice(),
-            public_inputs.as_slice(),
-        ].concat());
+        let verification_key =
+            lib_crypto::hash_blake3(&[proof_data.as_slice(), public_inputs.as_slice()].concat());
 
         Ok(ZeroKnowledgeProof {
             proof_system: "lib-CredentialProof".to_string(),
@@ -273,7 +295,11 @@ impl CredentialFactory {
     }
 
     /// Create empty credential for failed cases
-    fn create_empty_credential(&self, subject_id: IdentityId, credential_type: CredentialType) -> Result<ZkCredential> {
+    fn create_empty_credential(
+        &self,
+        subject_id: IdentityId,
+        credential_type: CredentialType,
+    ) -> Result<ZkCredential> {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
@@ -298,7 +324,12 @@ impl CredentialFactory {
     }
 
     /// Create creation metadata
-    fn create_metadata(&self, creator_id: IdentityId, method: String, proof_time: u64) -> CreationMetadata {
+    fn create_metadata(
+        &self,
+        creator_id: IdentityId,
+        method: String,
+        proof_time: u64,
+    ) -> CreationMetadata {
         CreationMetadata {
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -332,15 +363,21 @@ mod tests {
         factory.add_trusted_issuer(issuer_id.clone(), vec![CredentialType::AgeVerification]);
 
         // Create age verification credential
-        let result = factory.create_age_verification_credential(
-            subject_id.clone(),
-            18,
-            None, // Zero-knowledge proof
-            issuer_id,
-        ).await.unwrap();
+        let result = factory
+            .create_age_verification_credential(
+                subject_id.clone(),
+                18,
+                None, // Zero-knowledge proof
+                issuer_id,
+            )
+            .await
+            .unwrap();
 
         assert!(result.success);
-        assert_eq!(result.credential.credential_type, CredentialType::AgeVerification);
+        assert_eq!(
+            result.credential.credential_type,
+            CredentialType::AgeVerification
+        );
         assert_eq!(result.credential.subject, subject_id);
     }
 
@@ -355,14 +392,16 @@ mod tests {
         factory.add_trusted_issuer(issuer_id.clone(), vec![CredentialType::Reputation]);
 
         // Create reputation credential
-        let result = factory.create_reputation_credential(
-            subject_id.clone(),
-            750,
-            issuer_id,
-        ).await.unwrap();
+        let result = factory
+            .create_reputation_credential(subject_id.clone(), 750, issuer_id)
+            .await
+            .unwrap();
 
         assert!(result.success);
-        assert_eq!(result.credential.credential_type, CredentialType::Reputation);
+        assert_eq!(
+            result.credential.credential_type,
+            CredentialType::Reputation
+        );
         assert_eq!(result.credential.subject, subject_id);
     }
 }

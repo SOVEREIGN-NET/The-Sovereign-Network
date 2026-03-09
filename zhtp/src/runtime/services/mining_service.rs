@@ -1,5 +1,5 @@
 //! Mining Service
-//! 
+//!
 //! Manages blockchain mining with consensus coordination.
 //! Features:
 //! - Coordinated mining with validator selection
@@ -7,12 +7,12 @@
 //! - Proof-of-Work mining
 //! - Block validation and addition
 
+use crate::runtime::dht_indexing::index_block_in_dht;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
-use tracing::{info, warn, debug};
-use crate::runtime::dht_indexing::index_block_in_dht;
+use tracing::{debug, info, warn};
 
 use lib_blockchain::Blockchain;
 use lib_consensus::ValidatorManager;
@@ -53,7 +53,12 @@ impl MiningService {
         let node_identity_clone = self.node_identity_arc.clone();
 
         let mining_handle = tokio::spawn(async move {
-            Self::mining_loop(blockchain_clone, validator_manager_clone, node_identity_clone).await;
+            Self::mining_loop(
+                blockchain_clone,
+                validator_manager_clone,
+                node_identity_clone,
+            )
+            .await;
             warn!(" Mining loop exited unexpectedly!");
         });
 
@@ -81,8 +86,18 @@ impl MiningService {
         // Build UBI TokenMint transactions for this block (block-authoritative)
         let mut ubi_txs: Vec<lib_blockchain::Transaction> = Vec::new();
         for entry in blockchain.collect_ubi_mint_entries(next_height) {
-            let memo = format!("UBI_DISTRIBUTION_V1:{}:{}", entry.identity_id, entry.wallet_id).into_bytes();
-            match crate::runtime::token_utils::build_sov_mint_tx(&entry.recipient_wallet_id, entry.payout, memo).await {
+            let memo = format!(
+                "UBI_DISTRIBUTION_V1:{}:{}",
+                entry.identity_id, entry.wallet_id
+            )
+            .into_bytes();
+            match crate::runtime::token_utils::build_sov_mint_tx(
+                &entry.recipient_wallet_id,
+                entry.payout,
+                memo,
+            )
+            .await
+            {
                 Ok(tx) => ubi_txs.push(tx),
                 Err(e) => warn!("Failed to build UBI TokenMint tx: {}", e),
             }
@@ -104,10 +119,11 @@ impl MiningService {
         let remaining = 10usize.saturating_sub(transactions_for_block.len());
         if remaining > 0 {
             transactions_for_block.extend(
-                blockchain.pending_transactions
+                blockchain
+                    .pending_transactions
                     .iter()
                     .take(remaining)
-                    .cloned()
+                    .cloned(),
             );
         }
 
@@ -116,12 +132,11 @@ impl MiningService {
         }
 
         // Check if this block contains system transactions (empty inputs = UBI/rewards)
-        let has_system_transactions = transactions_for_block
-            .iter()
-            .any(|tx| tx.inputs.is_empty());
+        let has_system_transactions = transactions_for_block.iter().any(|tx| tx.inputs.is_empty());
 
         // Get the previous block hash
-        let previous_hash = blockchain.latest_block()
+        let previous_hash = blockchain
+            .latest_block()
             .map(|b| b.hash())
             .unwrap_or_default();
 
@@ -130,9 +145,15 @@ impl MiningService {
         let block_difficulty = mining_config.difficulty.clone();
 
         if has_system_transactions {
-            info!("Mining system transaction block with difficulty: {:#x}", block_difficulty.bits());
+            info!(
+                "Mining system transaction block with difficulty: {:#x}",
+                block_difficulty.bits()
+            );
         } else {
-            info!("Mining normal transaction block with difficulty: {:#x}", block_difficulty.bits());
+            info!(
+                "Mining normal transaction block with difficulty: {:#x}",
+                block_difficulty.bits()
+            );
         }
 
         // Create the block using lib-blockchain methods
@@ -143,11 +164,18 @@ impl MiningService {
             block_difficulty,
         )?;
 
-        info!("⛏️ Mining block with {} profile (difficulty: {:#x}, max_iter: {})...",
-              if mining_config.allow_instant_mining { "Bootstrap" } else { "Standard" },
-              block_difficulty.bits(),
-              mining_config.max_iterations);
-        let new_block = lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
+        info!(
+            "⛏️ Mining block with {} profile (difficulty: {:#x}, max_iter: {})...",
+            if mining_config.allow_instant_mining {
+                "Bootstrap"
+            } else {
+                "Standard"
+            },
+            block_difficulty.bits(),
+            mining_config.max_iterations
+        );
+        let new_block =
+            lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
         info!("✓ Block mined with nonce: {}", new_block.header.nonce);
 
         // Add the block to the blockchain WITH proof generation
@@ -158,11 +186,17 @@ impl MiningService {
                 info!("Block Height: {}", blockchain.height);
                 info!("Transactions in Block: {}", new_block.transactions.len());
                 info!("Total UTXOs: {}", blockchain.utxo_set.len());
-                info!("Identity Registry: {} entries", blockchain.identity_registry.len());
-                
+                info!(
+                    "Identity Registry: {} entries",
+                    blockchain.identity_registry.len()
+                );
+
                 // Log economic transactions stored
                 if !blockchain.economics_transactions.is_empty() {
-                    info!("Economics Transactions: {}", blockchain.economics_transactions.len());
+                    info!(
+                        "Economics Transactions: {}",
+                        blockchain.economics_transactions.len()
+                    );
                 }
                 if let Err(e) = index_block_in_dht(&new_block).await {
                     warn!("DHT indexing failed (mining_service): {}", e);
@@ -187,40 +221,43 @@ impl MiningService {
         info!(" Mining loop started - waiting 2 seconds for consensus to wire...");
         tokio::time::sleep(Duration::from_secs(2)).await;
         info!(" Starting mining checks every 30 seconds");
-        
+
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         let mut block_counter = 1u64;
         let mut consensus_round = 0u32;
-        
+
         loop {
             debug!("⏰ Mining loop tick #{}", block_counter);
             interval.tick().await;
-            
+
             // Use global blockchain provider
             match crate::runtime::blockchain_provider::get_global_blockchain().await {
                 Ok(shared_blockchain) => {
                     let blockchain_guard = shared_blockchain.read().await;
                     let pending_count = blockchain_guard.pending_transactions.len();
                     let current_height = blockchain_guard.height;
-                    
-                    info!("Mining check #{} - Height: {}, Pending: {}, UTXOs: {}, Identities: {}", 
+
+                    info!(
+                        "Mining check #{} - Height: {}, Pending: {}, UTXOs: {}, Identities: {}",
                         block_counter,
-                        current_height, 
+                        current_height,
                         pending_count,
                         blockchain_guard.utxo_set.len(),
                         blockchain_guard.identity_registry.len()
                     );
-                    
+
                     // Check if we have pending transactions
                     if pending_count > 0 {
                         let validator_manager_opt = validator_manager_arc.read().await.clone();
                         let node_identity_opt = node_identity_arc.read().await.clone();
-                        
+
                         // Check if consensus coordination is enabled
-                        let should_mine = if let (Some(vm), Some(node_id)) = (validator_manager_opt, node_identity_opt) {
+                        let should_mine = if let (Some(vm), Some(node_id)) =
+                            (validator_manager_opt, node_identity_opt)
+                        {
                             let vm_guard = vm.read().await;
                             let active_validators = vm_guard.get_active_validators();
-                            
+
                             if active_validators.is_empty() {
                                 // Bootstrap mode - any node can mine
                                 warn!("⛏️ BOOTSTRAP MODE: No validators registered, mining without coordination");
@@ -228,17 +265,28 @@ impl MiningService {
                             } else {
                                 // Select proposer using consensus
                                 let next_height = current_height + 1;
-                                if let Some(proposer) = vm_guard.select_proposer(next_height, consensus_round) {
+                                if let Some(proposer) =
+                                    vm_guard.select_proposer(next_height, consensus_round)
+                                {
                                     let node_id_hex = hex::encode(node_id.as_bytes());
                                     let mut is_proposer = false;
-                                    
+
                                     // Find which user controls this node
-                                    for (did_string, identity_data) in blockchain_guard.identity_registry.iter() {
+                                    for (did_string, identity_data) in
+                                        blockchain_guard.identity_registry.iter()
+                                    {
                                         if identity_data.controlled_nodes.contains(&node_id_hex) {
-                                            if let Some(identity_hex) = did_string.strip_prefix("did:zhtp:") {
-                                                if let Ok(identity_bytes) = hex::decode(identity_hex) {
-                                                    let user_identity_hash = lib_crypto::Hash::from_bytes(&identity_bytes[..32]);
-                                                    
+                                            if let Some(identity_hex) =
+                                                did_string.strip_prefix("did:zhtp:")
+                                            {
+                                                if let Ok(identity_bytes) =
+                                                    hex::decode(identity_hex)
+                                                {
+                                                    let user_identity_hash =
+                                                        lib_crypto::Hash::from_bytes(
+                                                            &identity_bytes[..32],
+                                                        );
+
                                                     if user_identity_hash == proposer.identity {
                                                         is_proposer = true;
                                                         info!(" CONSENSUS: This node selected as block proposer");
@@ -248,7 +296,7 @@ impl MiningService {
                                             }
                                         }
                                     }
-                                    
+
                                     is_proposer
                                 } else {
                                     warn!(" CONSENSUS: No proposer selected, falling back to permissionless mining");
@@ -259,11 +307,14 @@ impl MiningService {
                             warn!("⛏️ Mining without consensus coordination");
                             true
                         };
-                        
+
                         if should_mine {
                             drop(blockchain_guard);
-                            info!("Mining block #{} with {} pending transactions...", block_counter, pending_count);
-                            
+                            info!(
+                                "Mining block #{} with {} pending transactions...",
+                                block_counter, pending_count
+                            );
+
                             let mut blockchain_guard = shared_blockchain.write().await;
                             match Self::mine_block(&mut *blockchain_guard).await {
                                 Ok(()) => {

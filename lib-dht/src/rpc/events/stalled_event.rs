@@ -1,26 +1,25 @@
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::messages::inter::message_base::MessageBase;
 use crate::rpc::events::inter::event::Event;
 use crate::rpc::events::inter::message_event::MessageEvent;
 use crate::utils::node::Node;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct StalledEvent<'a> {
     prevent_default: bool,
     message: &'a dyn MessageBase,
     node: Option<Node>,
     received_time: u128,
-    sent_time: u128
+    sent_time: u128,
 }
 
 impl<'a> StalledEvent<'a> {
-
     pub fn new(message: &'a dyn MessageBase) -> Self {
         Self {
             prevent_default: false,
             message,
             node: None,
             received_time: 0,
-            sent_time: 0
+            sent_time: 0,
         }
     }
 
@@ -34,7 +33,6 @@ impl<'a> StalledEvent<'a> {
 }
 
 impl<'a> Event for StalledEvent<'a> {
-
     fn is_prevent_default(&self) -> bool {
         self.prevent_default
     }
@@ -45,7 +43,6 @@ impl<'a> Event for StalledEvent<'a> {
 }
 
 impl<'a> MessageEvent for StalledEvent<'a> {
-
     fn get_message(&self) -> &dyn MessageBase {
         self.message
     }

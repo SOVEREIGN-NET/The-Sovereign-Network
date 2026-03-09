@@ -1,14 +1,14 @@
 //! DHT (Distributed Hash Table) type definitions
-//! 
+//!
 //! Contains all types related to the DHT layer foundation of the storage system,
 //! including nodes, messages, routing, and zero-knowledge values.
 
-use crate::types::{NodeId, DhtKey, ChunkMetadata};
+use crate::types::{ChunkMetadata, DhtKey, NodeId};
 use lib_crypto::PostQuantumSignature;
 use lib_proofs::{ZeroKnowledgeProof, ZkProof};
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
 use std::collections::HashMap;
+use std::time::SystemTime;
 
 // Re-export DhtPeerIdentity from lib-identity for convenience
 pub use lib_identity::DhtPeerIdentity;
@@ -581,20 +581,11 @@ pub struct ReplicationStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DhtMessageLegacy {
     /// Ping to check node availability
-    Ping {
-        sender: DhtNode,
-        timestamp: u64,
-    },
+    Ping { sender: DhtNode, timestamp: u64 },
     /// Pong response to ping
-    Pong {
-        sender: DhtNode,
-        timestamp: u64,
-    },
+    Pong { sender: DhtNode, timestamp: u64 },
     /// Find nodes closest to target
-    FindNode {
-        target: NodeId,
-        sender: DhtNode,
-    },
+    FindNode { target: NodeId, sender: DhtNode },
     /// Response with closest nodes
     NodesFound {
         nodes: Vec<DhtNode>,

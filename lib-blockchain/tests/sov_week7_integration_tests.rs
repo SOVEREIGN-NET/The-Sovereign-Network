@@ -12,12 +12,12 @@
 //! 4. Consensus Integration Tests (8 tests) - Fee collection hook integration
 //! 5. Performance Validation Tests (5 tests) - Scalability validation (1M citizens)
 
+use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::transaction::{
+    core::{ProfitDeclarationData, RevenueSource, UbiClaimData},
     Transaction, TransactionInput, TransactionOutput,
-    core::{UbiClaimData, ProfitDeclarationData, RevenueSource},
 };
-use lib_blockchain::types::{Hash, transaction_type::TransactionType};
-use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
+use lib_blockchain::types::{transaction_type::TransactionType, Hash};
 
 // =============================================================================
 // TEST FIXTURES & UTILITIES
@@ -60,11 +60,7 @@ fn create_test_input() -> TransactionInput {
 
 /// Create a test transaction output
 fn create_test_output() -> TransactionOutput {
-    TransactionOutput::new(
-        Hash::default(),
-        Hash::default(),
-        create_test_public_key(1),
-    )
+    TransactionOutput::new(Hash::default(), Hash::default(), create_test_public_key(1))
 }
 
 /// Create a test claim ID
@@ -81,7 +77,7 @@ fn create_test_claim_id(citizen_id: u8, month: u64) -> Hash {
 // =============================================================================
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_01_consensus_block_finalization() {
     // Test: Fee collection triggered at block finalization
     // Validates: FeeRouter receives fees from consensus layer
@@ -89,7 +85,7 @@ fn test_fee_pipeline_01_consensus_block_finalization() {
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_02_fee_distribution_split() {
     // Test: 45% to UBI, 30% to governance, 15% to validation, 10% to treasury
     // Validates: FeeRouter calculates correct allocation percentages
@@ -97,7 +93,7 @@ fn test_fee_pipeline_02_fee_distribution_split() {
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_03_ubi_pool_receives_45_percent() {
     // Test: UBI distributor receives 45% of collected fees
     // Validates: UbiDistributor balance increases by exact amount
@@ -105,7 +101,7 @@ fn test_fee_pipeline_03_ubi_pool_receives_45_percent() {
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_04_citizen_claims_from_pool() {
     // Test: Citizen creates UBIClaim transaction to claim from pool
     // Validates: UBIClaim transaction is created with correct data
@@ -113,7 +109,7 @@ fn test_fee_pipeline_04_citizen_claims_from_pool() {
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_05_claim_validation_passes() {
     // Test: UBIClaim validation succeeds with valid data
     // Validates: validate_ubi_claim_transaction() approves valid claims
@@ -121,7 +117,7 @@ fn test_fee_pipeline_05_claim_validation_passes() {
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_06_claim_processing() {
     // Test: UbiDistributor.claim_ubi() processes valid claim
     // Validates: Balance deducted, citizen marked as paid
@@ -129,7 +125,7 @@ fn test_fee_pipeline_06_claim_processing() {
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_07_double_claim_prevention() {
     // Test: Second claim in same month rejected
     // Validates: has_claimed() check prevents double claims
@@ -137,7 +133,7 @@ fn test_fee_pipeline_07_double_claim_prevention() {
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_08_insufficient_balance_handling() {
     // Test: Claim rejected when UBI pool insufficient
     // Validates: InsufficientBalance error returned
@@ -145,7 +141,7 @@ fn test_fee_pipeline_08_insufficient_balance_handling() {
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_09_audit_trail_integrity() {
     // Test: Fee collection recorded in audit trail
     // Validates: total_collected, total_distributed match
@@ -153,7 +149,7 @@ fn test_fee_pipeline_09_audit_trail_integrity() {
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_10_end_to_end_scenario() {
     // Test: Complete flow - block finalization → fee collection → claim → processing
     // Validates: All pipeline stages work together
@@ -161,7 +157,7 @@ fn test_fee_pipeline_10_end_to_end_scenario() {
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_11_fee_collection_with_large_amounts() {
     // Test: Pipeline handles large fee amounts correctly
     // Validates: No overflow, correct arithmetic
@@ -169,7 +165,7 @@ fn test_fee_pipeline_11_fee_collection_with_large_amounts() {
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_fee_pipeline_12_fee_collection_with_zero_fees() {
     // Test: Pipeline handles blocks with zero fees gracefully
     // Validates: No errors, proper zero handling
@@ -231,7 +227,7 @@ fn test_ubi_claim_03_validation_zero_amount() {
         claim_id: create_test_claim_id(1, 0),
         claimant_identity: "did:zhtp:citizen001".to_string(),
         month_index: 0,
-        claim_amount: 0,  // Invalid: zero amount
+        claim_amount: 0, // Invalid: zero amount
         recipient_wallet: create_test_public_key(1),
         claimed_at: 1000,
         claimed_at_height: 100,
@@ -253,10 +249,13 @@ fn test_ubi_claim_04_validation_missing_proof() {
         recipient_wallet: create_test_public_key(1),
         claimed_at: 1000,
         claimed_at_height: 100,
-        citizenship_proof: vec![],  // Invalid: empty proof
+        citizenship_proof: vec![], // Invalid: empty proof
     };
 
-    assert!(!claim_data.validate(), "Missing proof should fail validation");
+    assert!(
+        !claim_data.validate(),
+        "Missing proof should fail validation"
+    );
     println!("✓ Test 2.4: Claims missing citizenship proof are rejected");
 }
 
@@ -275,7 +274,10 @@ fn test_ubi_claim_05_multiple_citizens() {
             citizenship_proof: vec![citizen_id as u8],
         };
 
-        assert!(claim_data.validate(), "All citizens should have valid claims");
+        assert!(
+            claim_data.validate(),
+            "All citizens should have valid claims"
+        );
     }
     println!("✓ Test 2.5: Multiple citizens can create claims");
 }
@@ -286,7 +288,7 @@ fn test_ubi_claim_06_month_validation() {
     let claim_data = UbiClaimData {
         claim_id: create_test_claim_id(1, 0),
         claimant_identity: "did:zhtp:citizen001".to_string(),
-        month_index: 999999,  // Far future month
+        month_index: 999999, // Far future month
         claim_amount: 1000,
         recipient_wallet: create_test_public_key(1),
         claimed_at: 1000,
@@ -296,7 +298,10 @@ fn test_ubi_claim_06_month_validation() {
 
     // Should pass structural validation but fail stateful check
     assert!(claim_data.validate(), "Structure should be valid");
-    assert!(!claim_data.is_valid_month(100), "Future month should be invalid");
+    assert!(
+        !claim_data.is_valid_month(100),
+        "Future month should be invalid"
+    );
     println!("✓ Test 2.6: Claims for future months are rejected");
 }
 
@@ -304,7 +309,7 @@ fn test_ubi_claim_06_month_validation() {
 fn test_ubi_claim_07_different_amounts_per_month() {
     // Test: Different amounts can be claimed in different months
     for month in 0..5 {
-        let amount = 1000 * (month + 1);  // Different amount per month
+        let amount = 1000 * (month + 1); // Different amount per month
         let claim_data = UbiClaimData {
             claim_id: create_test_claim_id(1, 0),
             claimant_identity: "did:zhtp:citizen001".to_string(),
@@ -398,15 +403,16 @@ fn test_profit_declaration_01_transaction_creation() {
         declarant_identity: "did:zhtp:forprofit001".to_string(),
         fiscal_period: "2026-Q1".to_string(),
         profit_amount: 100_000,
-        tribute_amount: 20_000,  // 20% of 100k
+        tribute_amount: 20_000, // 20% of 100k
         nonprofit_treasury: create_test_public_key(10),
         forprofit_treasury: create_test_public_key(11),
         declared_at: 1000,
         authorization_signature: vec![0x01, 0x02],
         audit_proof_hash: None,
-        revenue_sources: vec![
-            RevenueSource { category: "Sales".to_string(), amount: 100_000 },
-        ],
+        revenue_sources: vec![RevenueSource {
+            category: "Sales".to_string(),
+            amount: 100_000,
+        }],
     };
 
     let tx = Transaction::new_profit_declaration(
@@ -426,7 +432,7 @@ fn test_profit_declaration_01_transaction_creation() {
 fn test_profit_declaration_02_tribute_calculation_valid() {
     // Test: 20% tribute calculation is validated correctly
     let profit = 100_000;
-    let tribute = 20_000;  // Exactly 20%
+    let tribute = 20_000; // Exactly 20%
 
     let decl_data = ProfitDeclarationData {
         declaration_id: Hash::default(),
@@ -439,9 +445,10 @@ fn test_profit_declaration_02_tribute_calculation_valid() {
         declared_at: 1000,
         authorization_signature: vec![0x01],
         audit_proof_hash: None,
-        revenue_sources: vec![
-            RevenueSource { category: "Sales".to_string(), amount: profit },
-        ],
+        revenue_sources: vec![RevenueSource {
+            category: "Sales".to_string(),
+            amount: profit,
+        }],
     };
 
     assert!(decl_data.validate_tribute_calculation());
@@ -452,7 +459,7 @@ fn test_profit_declaration_02_tribute_calculation_valid() {
 fn test_profit_declaration_03_tribute_calculation_invalid() {
     // Test: Incorrect tribute amount fails validation
     let profit = 100_000;
-    let tribute = 15_000;  // Only 15%, should be 20_000
+    let tribute = 15_000; // Only 15%, should be 20_000
 
     let decl_data = ProfitDeclarationData {
         declaration_id: Hash::default(),
@@ -465,9 +472,10 @@ fn test_profit_declaration_03_tribute_calculation_invalid() {
         declared_at: 1000,
         authorization_signature: vec![0x01],
         audit_proof_hash: None,
-        revenue_sources: vec![
-            RevenueSource { category: "Sales".to_string(), amount: profit },
-        ],
+        revenue_sources: vec![RevenueSource {
+            category: "Sales".to_string(),
+            amount: profit,
+        }],
     };
 
     assert!(!decl_data.validate_tribute_calculation());
@@ -486,13 +494,14 @@ fn test_profit_declaration_04_anti_circumvention_same_treasury() {
         profit_amount: 100_000,
         tribute_amount: 20_000,
         nonprofit_treasury: nonprofit_and_forprofit.clone(),
-        forprofit_treasury: nonprofit_and_forprofit,  // SAME treasury - invalid!
+        forprofit_treasury: nonprofit_and_forprofit, // SAME treasury - invalid!
         declared_at: 1000,
         authorization_signature: vec![0x01],
         audit_proof_hash: None,
-        revenue_sources: vec![
-            RevenueSource { category: "Sales".to_string(), amount: 100_000 },
-        ],
+        revenue_sources: vec![RevenueSource {
+            category: "Sales".to_string(),
+            amount: 100_000,
+        }],
     };
 
     assert!(!decl_data.anti_circumvention_check());
@@ -514,8 +523,14 @@ fn test_profit_declaration_05_revenue_sources_validation() {
         authorization_signature: vec![0x01],
         audit_proof_hash: None,
         revenue_sources: vec![
-            RevenueSource { category: "Sales".to_string(), amount: 60_000 },
-            RevenueSource { category: "Services".to_string(), amount: 40_000 },
+            RevenueSource {
+                category: "Sales".to_string(),
+                amount: 60_000,
+            },
+            RevenueSource {
+                category: "Services".to_string(),
+                amount: 40_000,
+            },
             // Sum = 100_000 (matches profit_amount) ✓
         ],
     };
@@ -541,12 +556,17 @@ fn test_profit_declaration_06_fiscal_period_validation() {
             declared_at: 1000,
             authorization_signature: vec![0x01],
             audit_proof_hash: None,
-            revenue_sources: vec![
-                RevenueSource { category: "Sales".to_string(), amount: 100_000 },
-            ],
+            revenue_sources: vec![RevenueSource {
+                category: "Sales".to_string(),
+                amount: 100_000,
+            }],
         };
 
-        assert!(decl_data.is_valid_fiscal_period(), "Period {} should be valid", period);
+        assert!(
+            decl_data.is_valid_fiscal_period(),
+            "Period {} should be valid",
+            period
+        );
     }
 
     println!("✓ Test 3.6: Fiscal period format validation");
@@ -567,9 +587,18 @@ fn test_profit_declaration_07_multiple_revenue_sources() {
         authorization_signature: vec![0x01],
         audit_proof_hash: None,
         revenue_sources: vec![
-            RevenueSource { category: "Sales".to_string(), amount: 300_000 },
-            RevenueSource { category: "Services".to_string(), amount: 150_000 },
-            RevenueSource { category: "Investments".to_string(), amount: 50_000 },
+            RevenueSource {
+                category: "Sales".to_string(),
+                amount: 300_000,
+            },
+            RevenueSource {
+                category: "Services".to_string(),
+                amount: 150_000,
+            },
+            RevenueSource {
+                category: "Investments".to_string(),
+                amount: 50_000,
+            },
         ],
     };
 
@@ -586,7 +615,7 @@ fn test_profit_declaration_08_zero_profit_rejection() {
         declaration_id: Hash::default(),
         declarant_identity: "did:zhtp:forprofit001".to_string(),
         fiscal_period: "2026-Q1".to_string(),
-        profit_amount: 0,  // ZERO - invalid
+        profit_amount: 0, // ZERO - invalid
         tribute_amount: 0,
         nonprofit_treasury: create_test_public_key(10),
         forprofit_treasury: create_test_public_key(11),
@@ -614,9 +643,10 @@ fn test_profit_declaration_09_transaction_structure() {
         declared_at: 1000,
         authorization_signature: vec![0x01],
         audit_proof_hash: None,
-        revenue_sources: vec![
-            RevenueSource { category: "Sales".to_string(), amount: 100_000 },
-        ],
+        revenue_sources: vec![RevenueSource {
+            category: "Sales".to_string(),
+            amount: 100_000,
+        }],
     };
 
     let tx = Transaction::new_profit_declaration(
@@ -648,9 +678,10 @@ fn test_profit_declaration_10_declarant_identity() {
         declared_at: 1000,
         authorization_signature: vec![0x01],
         audit_proof_hash: None,
-        revenue_sources: vec![
-            RevenueSource { category: "Sales".to_string(), amount: 100_000 },
-        ],
+        revenue_sources: vec![RevenueSource {
+            category: "Sales".to_string(),
+            amount: 100_000,
+        }],
     };
 
     assert_eq!(decl_data.declarant(), identity);
@@ -662,56 +693,56 @@ fn test_profit_declaration_10_declarant_identity() {
 // =============================================================================
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_consensus_integration_01_fee_router_initialization() {
     // Test: FeeRouter can be initialized in ConsensusEngine
     println!("✓ Test 4.1: FeeRouter initializes in ConsensusEngine");
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_consensus_integration_02_block_metadata_creation() {
     // Test: BlockMetadata created from committed block
     println!("✓ Test 4.2: BlockMetadata created from committed block");
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_consensus_integration_03_fee_collection_hook() {
     // Test: Fee collection hook executes in process_committed_block()
     println!("✓ Test 4.3: Fee collection hook executes properly");
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_consensus_integration_04_fee_distribution_triggered() {
     // Test: FeeRouter.distribute() called after block finalization
     println!("✓ Test 4.4: Fee distribution triggered at finalization");
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_consensus_integration_05_atomic_fee_collection() {
     // Test: Fee collection is atomic - all-or-nothing
     println!("✓ Test 4.5: Fee collection is atomic");
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_consensus_integration_06_reward_and_fee_together() {
     // Test: Reward distribution and fee collection work together
     println!("✓ Test 4.6: Reward distribution + fee collection");
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_consensus_integration_07_fee_collection_with_zero_fees() {
     // Test: Process handles blocks with zero fees
     println!("✓ Test 4.7: Handles zero-fee blocks");
 }
 
 #[test]
-#[ignore]  // TODO: Implement full test - currently stub only
+#[ignore] // TODO: Implement full test - currently stub only
 fn test_consensus_integration_08_deterministic_fee_simulation() {
     // Test: Deterministic fee simulation for Week 7 testing
     println!("✓ Test 4.8: Deterministic fee simulation");
@@ -722,7 +753,7 @@ fn test_consensus_integration_08_deterministic_fee_simulation() {
 // =============================================================================
 
 #[test]
-#[ignore]  // Ignored by default - run with: cargo test -- --include-ignored
+#[ignore] // Ignored by default - run with: cargo test -- --include-ignored
 fn test_performance_01_1m_citizen_registration() {
     // Test: Register 1M citizens efficiently
     // Performance goal: < 60 seconds

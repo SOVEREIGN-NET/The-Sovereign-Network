@@ -1,8 +1,8 @@
 //! Activity tracking implementation from the original identity.rs
 
+use crate::types::IdentityId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::types::IdentityId;
 
 /// Activity tracking for identities
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,16 +109,17 @@ impl ActivityTracker {
             .as_secs();
 
         // Update or create activity record
-        let record = self.activities.entry(identity_id.clone()).or_insert_with(|| {
-            ActivityRecord {
+        let record = self
+            .activities
+            .entry(identity_id.clone())
+            .or_insert_with(|| ActivityRecord {
                 identity_id: identity_id.clone(),
                 last_active: current_time,
                 created_at: current_time,
                 activity_count: 0,
                 activity_types: Vec::new(),
                 sessions: Vec::new(),
-            }
-        });
+            });
 
         // Update record
         record.last_active = current_time;
@@ -127,11 +128,21 @@ impl ActivityTracker {
 
         // Update global statistics
         self.global_stats.total_activities += 1;
-        *self.global_stats.activity_distribution.entry(activity_type).or_insert(0) += 1;
-        
+        *self
+            .global_stats
+            .activity_distribution
+            .entry(activity_type)
+            .or_insert(0) += 1;
+
         // Update most active identity
-        if self.global_stats.most_active_identity.is_none() || 
-           record.activity_count > self.activities.get(&self.global_stats.most_active_identity.as_ref().unwrap()).unwrap().activity_count {
+        if self.global_stats.most_active_identity.is_none()
+            || record.activity_count
+                > self
+                    .activities
+                    .get(&self.global_stats.most_active_identity.as_ref().unwrap())
+                    .unwrap()
+                    .activity_count
+        {
             self.global_stats.most_active_identity = Some(identity_id.clone());
         }
 
@@ -179,16 +190,29 @@ impl ActivityTracker {
             .as_secs();
 
         if let Some(record) = self.activities.get_mut(identity_id) {
-            if let Some(session) = record.sessions.iter_mut().find(|s| s.session_id == session_id) {
+            if let Some(session) = record
+                .sessions
+                .iter_mut()
+                .find(|s| s.session_id == session_id)
+            {
                 session.end_time = Some(current_time);
             }
         }
     }
 
     /// Add activity to current session
-    pub fn add_activity_to_session(&mut self, identity_id: &IdentityId, session_id: &str, activity: ActivityType) {
+    pub fn add_activity_to_session(
+        &mut self,
+        identity_id: &IdentityId,
+        session_id: &str,
+        activity: ActivityType,
+    ) {
         if let Some(record) = self.activities.get_mut(identity_id) {
-            if let Some(session) = record.sessions.iter_mut().find(|s| s.session_id == session_id) {
+            if let Some(session) = record
+                .sessions
+                .iter_mut()
+                .find(|s| s.session_id == session_id)
+            {
                 session.activities.push(activity);
             }
         }
@@ -218,14 +242,14 @@ mod tests {
     fn test_activity_tracking() {
         let mut tracker = ActivityTracker::new();
         let identity_id = Hash([1u8; 32]);
-        
+
         tracker.record_activity(&identity_id, ActivityType::IdentityCreation);
         tracker.record_activity(&identity_id, ActivityType::WalletCreated);
-        
+
         let record = tracker.get_activity_record(&identity_id).unwrap();
         assert_eq!(record.activity_count, 2);
         assert_eq!(record.activity_types.len(), 2);
-        
+
         let stats = tracker.get_global_stats();
         assert_eq!(stats.total_activities, 2);
     }
@@ -234,14 +258,14 @@ mod tests {
     fn test_session_tracking() {
         let mut tracker = ActivityTracker::new();
         let identity_id = Hash([1u8; 32]);
-        
+
         // Create initial record
         tracker.record_activity(&identity_id, ActivityType::IdentityCreation);
-        
+
         let session_id = tracker.start_session(&identity_id);
         tracker.add_activity_to_session(&identity_id, &session_id, ActivityType::WalletCreated);
         tracker.end_session(&identity_id, &session_id);
-        
+
         let record = tracker.get_activity_record(&identity_id).unwrap();
         assert_eq!(record.sessions.len(), 1);
         assert!(record.sessions[0].end_time.is_some());

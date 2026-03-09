@@ -5,7 +5,6 @@ fn main() -> anyhow::Result<()> {
     println!(" Hierarchical DAO Wallet System Demonstration");
     println!("================================================");
 
-    
     match dao_hierarchy_demo::demonstrate_dao_hierarchy() {
         Ok(()) => {
             println!("\nHierarchical DAO system demonstration completed successfully!");
@@ -15,6 +14,6 @@ fn main() -> anyhow::Result<()> {
             return Err(e);
         }
     }
-    
+
     Ok(())
 }

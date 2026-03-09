@@ -10,12 +10,12 @@ use tempfile::TempDir;
 
 use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::execution::{BlockExecutor, ExecutorConfig};
+use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+use lib_blockchain::integration::zk_integration::ZkTransactionProof;
 use lib_blockchain::protocol::ProtocolParams;
-use lib_blockchain::storage::{BlockchainStore, SledStore, Address, OutPoint, TxHash};
+use lib_blockchain::storage::{Address, BlockchainStore, OutPoint, SledStore, TxHash};
 use lib_blockchain::transaction::{Transaction, TransactionInput, TransactionOutput};
 use lib_blockchain::types::{Difficulty, Hash, TransactionType};
-use lib_blockchain::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
-use lib_blockchain::integration::zk_integration::ZkTransactionProof;
 use lib_proofs::types::ZkProof;
 
 // =============================================================================
@@ -28,7 +28,10 @@ fn create_test_store() -> (TempDir, Arc<dyn BlockchainStore>) {
     (dir, store)
 }
 
-fn create_executor_with_fee_sink(store: Arc<dyn BlockchainStore>, fee_sink: Address) -> BlockExecutor {
+fn create_executor_with_fee_sink(
+    store: Arc<dyn BlockchainStore>,
+    fee_sink: Address,
+) -> BlockExecutor {
     let protocol_params = ProtocolParams::default().with_fee_sink(fee_sink);
     let mut config = ExecutorConfig::default();
     config.protocol_params = protocol_params;
@@ -81,13 +84,11 @@ fn create_coinbase_with_fees(
     _block_reward: u64,
     fees: u64,
 ) -> Transaction {
-    let mut outputs = vec![
-        TransactionOutput {
-            commitment: Hash::default(),
-            note: Hash::default(),
-            recipient: reward_recipient.clone(),
-        },
-    ];
+    let mut outputs = vec![TransactionOutput {
+        commitment: Hash::default(),
+        note: Hash::default(),
+        recipient: reward_recipient.clone(),
+    }];
 
     // Add fee sink output if there are fees
     if fees > 0 {
@@ -117,16 +118,16 @@ fn create_coinbase_with_fees(
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-            token_mint_data: None,
-                    governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        token_mint_data: None,
+        governance_config_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
@@ -188,16 +189,16 @@ fn create_transfer_tx(
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-            token_mint_data: None,
-                    governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        token_mint_data: None,
+        governance_config_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
@@ -251,7 +252,9 @@ fn test_fees_collected_match_executor_accounting() {
     let coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, 0);
     let genesis = create_genesis_with_coinbase(coinbase);
 
-    let outcome = executor.apply_block(&genesis).expect("Genesis should succeed");
+    let outcome = executor
+        .apply_block(&genesis)
+        .expect("Genesis should succeed");
 
     // Genesis has no fees
     assert_eq!(outcome.fees_collected, 0, "Genesis should have 0 fees");
@@ -273,7 +276,9 @@ fn test_fee_sink_receives_collected_fees() {
     let genesis_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, 0);
     let genesis = create_genesis_with_coinbase(genesis_coinbase.clone());
 
-    executor.apply_block(&genesis).expect("Genesis should succeed");
+    executor
+        .apply_block(&genesis)
+        .expect("Genesis should succeed");
 
     // Get coinbase tx hash for spending
     let coinbase_hash = hash_transaction(&genesis_coinbase);
@@ -284,12 +289,8 @@ fn test_fee_sink_receives_collected_fees() {
     let transfer = create_transfer_tx(coinbase_hash, 0, recipient_pk, transfer_fee);
 
     // Coinbase for block 1: reward + fees to fee sink
-    let block1_coinbase = create_coinbase_with_fees(
-        miner_pk.clone(),
-        &fee_sink,
-        50_000_000,
-        transfer_fee,
-    );
+    let block1_coinbase =
+        create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, transfer_fee);
 
     let block1 = create_block_with_txs(
         1,
@@ -298,10 +299,15 @@ fn test_fee_sink_receives_collected_fees() {
         vec![transfer],
     );
 
-    let outcome = executor.apply_block(&block1).expect("Block 1 should succeed");
+    let outcome = executor
+        .apply_block(&block1)
+        .expect("Block 1 should succeed");
 
     // Verify fees collected matches the transfer fee
-    assert_eq!(outcome.fees_collected, transfer_fee, "Fees collected should match transfer fee");
+    assert_eq!(
+        outcome.fees_collected, transfer_fee,
+        "Fees collected should match transfer fee"
+    );
 }
 
 /// Test: Fee sink balance increases deterministically across blocks
@@ -357,16 +363,16 @@ fn test_fee_sink_balance_increases_deterministically() {
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-            token_mint_data: None,
-                    governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        token_mint_data: None,
+        governance_config_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     };
 
     let genesis = create_genesis_with_coinbase(genesis_coinbase.clone());
@@ -378,19 +384,37 @@ fn test_fee_sink_balance_increases_deterministically() {
     let fee1 = 500u64;
     let transfer1 = create_transfer_tx(coinbase_hash, 0, create_recipient_pk(20), fee1);
     let block1_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, fee1);
-    let block1 = create_block_with_txs(1, genesis.header.block_hash, block1_coinbase.clone(), vec![transfer1]);
+    let block1 = create_block_with_txs(
+        1,
+        genesis.header.block_hash,
+        block1_coinbase.clone(),
+        vec![transfer1],
+    );
 
     let outcome1 = executor.apply_block(&block1).unwrap();
-    assert_eq!(outcome1.fees_collected, fee1, "Block 1 fees should be {}", fee1);
+    assert_eq!(
+        outcome1.fees_collected, fee1,
+        "Block 1 fees should be {}",
+        fee1
+    );
 
     // Block 2 with fee of 750 (spend output 1 from genesis)
     let fee2 = 750u64;
     let transfer2 = create_transfer_tx(coinbase_hash, 1, create_recipient_pk(21), fee2);
     let block2_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, fee2);
-    let block2 = create_block_with_txs(2, block1.header.block_hash, block2_coinbase, vec![transfer2]);
+    let block2 = create_block_with_txs(
+        2,
+        block1.header.block_hash,
+        block2_coinbase,
+        vec![transfer2],
+    );
 
     let outcome2 = executor.apply_block(&block2).unwrap();
-    assert_eq!(outcome2.fees_collected, fee2, "Block 2 fees should be {}", fee2);
+    assert_eq!(
+        outcome2.fees_collected, fee2,
+        "Block 2 fees should be {}",
+        fee2
+    );
 
     // Verify the fees are tracked correctly per block
     let total_fees = fee1 + fee2;
@@ -401,7 +425,11 @@ fn test_fee_sink_balance_increases_deterministically() {
     );
 
     // Verify chain height progressed
-    assert_eq!(store.latest_height().unwrap(), 2, "Chain should be at height 2");
+    assert_eq!(
+        store.latest_height().unwrap(),
+        2,
+        "Chain should be at height 2"
+    );
 }
 
 /// Test: Coinbase without fee sink output rejected when fees > 0
@@ -450,22 +478,25 @@ fn test_coinbase_without_fee_sink_rejected() {
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-            token_mint_data: None,
-                    governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        token_mint_data: None,
+        governance_config_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     };
 
     let block1 = create_block_with_txs(1, genesis.header.block_hash, bad_coinbase, vec![transfer]);
 
     let result = executor.apply_block(&block1);
-    assert!(result.is_err(), "Block with missing fee sink output should be rejected");
+    assert!(
+        result.is_err(),
+        "Block with missing fee sink output should be rejected"
+    );
 }
 
 /// Test: Zero fees don't require fee sink output
@@ -501,22 +532,25 @@ fn test_zero_fees_no_fee_sink_required() {
         ubi_claim_data: None,
         profit_declaration_data: None,
         token_transfer_data: None,
-            token_mint_data: None,
-                    governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        token_mint_data: None,
+        governance_config_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     };
 
     let genesis = create_genesis_with_coinbase(coinbase);
     let result = executor.apply_block(&genesis);
 
-    assert!(result.is_ok(), "Genesis with no fees should succeed without fee sink output");
+    assert!(
+        result.is_ok(),
+        "Genesis with no fees should succeed without fee sink output"
+    );
 }
 
 /// Test: Executor outcome reports fee routing correctly
@@ -541,13 +575,25 @@ fn test_executor_outcome_reports_fee_routing() {
     // Block 1 with known fee
     let expected_fee = 5000u64;
     let transfer = create_transfer_tx(coinbase_hash, 0, create_recipient_pk(2), expected_fee);
-    let block1_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, expected_fee);
-    let block1 = create_block_with_txs(1, genesis.header.block_hash, block1_coinbase, vec![transfer]);
+    let block1_coinbase =
+        create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, expected_fee);
+    let block1 = create_block_with_txs(
+        1,
+        genesis.header.block_hash,
+        block1_coinbase,
+        vec![transfer],
+    );
 
     let outcome = executor.apply_block(&block1).unwrap();
 
     // Verify the outcome correctly reports fees
-    assert_eq!(outcome.fees_collected, expected_fee, "Outcome should report correct fees");
+    assert_eq!(
+        outcome.fees_collected, expected_fee,
+        "Outcome should report correct fees"
+    );
     assert_eq!(outcome.height, 1, "Height should be 1");
-    assert_eq!(outcome.tx_count, 2, "Should have 2 txs (coinbase + transfer)");
+    assert_eq!(
+        outcome.tx_count, 2,
+        "Should have 2 txs (coinbase + transfer)"
+    );
 }

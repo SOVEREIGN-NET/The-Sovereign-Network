@@ -511,17 +511,28 @@ pub extern "C" fn zhtp_client_sign_pouw_receipt_json(
     let receipt_json = unsafe {
         match std::ffi::CStr::from_ptr(receipt_json).to_str() {
             Ok(s) => s,
-            Err(_) => return ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+            Err(_) => {
+                return ByteBuffer {
+                    data: std::ptr::null_mut(),
+                    len: 0,
+                }
+            }
         }
     };
 
     match sign_pouw_receipt_json(identity, receipt_json) {
         Ok(mut sig) => {
-            let buf = ByteBuffer { data: sig.as_mut_ptr(), len: sig.len() };
+            let buf = ByteBuffer {
+                data: sig.as_mut_ptr(),
+                len: sig.len(),
+            };
             std::mem::forget(sig);
             buf
         }
-        Err(_) => ByteBuffer { data: std::ptr::null_mut(), len: 0 },
+        Err(_) => ByteBuffer {
+            data: std::ptr::null_mut(),
+            len: 0,
+        },
     }
 }
 
@@ -1091,8 +1102,13 @@ pub extern "C" fn zhtp_client_get_sov_token_id() -> *mut std::ffi::c_char {
 /// Override fee parameters used by client-side fee calculation.
 /// This should be called after fetching the fee config from the node.
 #[no_mangle]
-pub extern "C" fn zhtp_client_set_fee_config(base_fee: u64, bytes_per_sov: u64, witness_cap: u32) {
-    token_tx::set_fee_config(base_fee, bytes_per_sov, witness_cap);
+pub extern "C" fn zhtp_client_set_fee_config(
+    base_fee: u64,
+    bytes_per_sov: u64,
+    witness_cap: u32,
+    token_creation_fee: u64,
+) {
+    token_tx::set_fee_config(base_fee, bytes_per_sov, witness_cap, token_creation_fee);
 }
 
 /// Set fee config from JSON (response of /api/v1/blockchain/fee-config).
@@ -1230,8 +1246,14 @@ pub extern "system" fn Java_com_sovereignnetworkmobile_Identity_nativeSetFeeConf
     base_fee: jni::sys::jlong,
     bytes_per_sov: jni::sys::jlong,
     witness_cap: jni::sys::jint,
+    token_creation_fee: jni::sys::jlong,
 ) {
-    zhtp_client_set_fee_config(base_fee as u64, bytes_per_sov as u64, witness_cap as u32);
+    zhtp_client_set_fee_config(
+        base_fee as u64,
+        bytes_per_sov as u64,
+        witness_cap as u32,
+        token_creation_fee as u64,
+    );
 }
 
 #[cfg(target_os = "android")]

@@ -173,9 +173,20 @@ fn Footer() -> impl IntoView {
 
 #[component]
 fn Dashboard() -> impl IntoView {
-    let stats = create_resource(|| (), |_| async move { fetch_json::<StatsResponse>("/api/v1/blockchain/stats").await });
-    let blocks = create_resource(|| (), |_| async move { fetch_json::<BlocksResponse>("/api/v1/blockchain/blocks?limit=6").await });
-    let txs = create_resource(|| (), |_| async move { fetch_json::<TransactionsResponse>("/api/v1/blockchain/transactions?limit=6").await });
+    let stats = create_resource(
+        || (),
+        |_| async move { fetch_json::<StatsResponse>("/api/v1/blockchain/stats").await },
+    );
+    let blocks = create_resource(
+        || (),
+        |_| async move { fetch_json::<BlocksResponse>("/api/v1/blockchain/blocks?limit=6").await },
+    );
+    let txs = create_resource(
+        || (),
+        |_| async move {
+            fetch_json::<TransactionsResponse>("/api/v1/blockchain/transactions?limit=6").await
+        },
+    );
 
     view! {
         <section class="hero">
@@ -366,7 +377,9 @@ fn BlockView() -> impl IntoView {
     let block = create_resource(
         move || hash(),
         |h| async move {
-            if h.is_empty() { return None; }
+            if h.is_empty() {
+                return None;
+            }
             fetch_json::<BlockDetailResponse>(&format!("/api/v1/blockchain/block/{}", h)).await
         },
     );
@@ -402,8 +415,14 @@ fn TxView() -> impl IntoView {
     let tx = create_resource(
         move || hash(),
         |h| async move {
-            if h.is_empty() { return None; }
-            fetch_json::<TransactionDetailResponse>(&format!("/api/v1/blockchain/transaction/{}", h)).await
+            if h.is_empty() {
+                return None;
+            }
+            fetch_json::<TransactionDetailResponse>(&format!(
+                "/api/v1/blockchain/transaction/{}",
+                h
+            ))
+            .await
         },
     );
 
@@ -451,9 +470,15 @@ fn WalletView() -> impl IntoView {
     let wallets = create_resource(
         move || id(),
         |wallet_id| async move {
-            if wallet_id.is_empty() { return None; }
+            if wallet_id.is_empty() {
+                return None;
+            }
             let encoded = js_sys::encode_uri_component(&wallet_id);
-            fetch_json::<WalletsResponse>(&format!("/api/v1/blockchain/wallets?owner_identity={}", encoded)).await
+            fetch_json::<WalletsResponse>(&format!(
+                "/api/v1/blockchain/wallets?owner_identity={}",
+                encoded
+            ))
+            .await
         },
     );
 
@@ -504,7 +529,9 @@ fn IdentityView() -> impl IntoView {
     let identity = create_resource(
         move || id(),
         |did| async move {
-            if did.is_empty() { return None; }
+            if did.is_empty() {
+                return None;
+            }
             fetch_json::<IdentityResponse>(&format!("/api/v1/blockchain/identities/{}", did)).await
         },
     );

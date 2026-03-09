@@ -15,13 +15,12 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 // Blockchain imports
-use lib_blockchain::integration::crypto_integration::Signature as BlockchainSignature;
 use lib_blockchain::transaction::{
     ContractDeploymentPayloadV1, DecodedContractExecutionMemo, Transaction,
     CONTRACT_DEPLOYMENT_MEMO_PREFIX,
 };
 use lib_blockchain::types::Hash;
-use lib_blockchain::types::{transaction_type::TransactionType, ContractCall, ContractType};
+use lib_blockchain::types::{transaction_type::TransactionType, ContractType};
 use lib_blockchain::Blockchain;
 
 /// Clean blockchain handler implementation
@@ -437,6 +436,7 @@ struct FeeConfigResponse {
     base_fee: u64,
     bytes_per_sov: u64,
     witness_cap: u32,
+    token_creation_fee: u64,
     updated_at_height: u64,
     chain_height: u64,
 }
@@ -522,6 +522,7 @@ struct FeeEstimateRequest {
     _amount: u64,
     _priority: Option<String>, // "low", "medium", "high"
     is_system_transaction: Option<bool>,
+    transaction_type: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -568,6 +569,49 @@ fn estimate_signed_tx_size(raw_tx: &[u8]) -> usize {
 /// Capped at 512 KiB — generous enough for any valid transaction but small
 /// enough to bound allocations on hostile input (DoS guard for comment #1340).
 const MAX_CANONICAL_TX_BYTES: usize = 512 * 1024;
+
+fn normalize_transaction_type_hint(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
+fn transaction_type_requires_semantic_fee_quote(value: &str) -> bool {
+    matches!(
+        normalize_transaction_type_hint(value).as_str(),
+        "tokencreation" | "tokenmint" | "tokentransfer" | "coinbase"
+    )
+}
+
+fn canonical_fee_for_transaction(
+    transaction: &Transaction,
+    fee_config: &lib_blockchain::transaction::TxFeeConfig,
+) -> Option<u64> {
+    match transaction.transaction_type {
+        TransactionType::Coinbase | TransactionType::TokenTransfer | TransactionType::TokenMint => {
+            Some(0)
+        }
+        TransactionType::TokenCreation => Some(
+            lib_blockchain::transaction::required_token_creation_fee(fee_config),
+        ),
+        _ if transaction.inputs.is_empty() => Some(0),
+        _ => None,
+    }
+}
+
+fn quote_fee_for_transaction(
+    transaction: &Transaction,
+    tx_size: usize,
+    fee_config: &lib_blockchain::transaction::TxFeeConfig,
+) -> u64 {
+    canonical_fee_for_transaction(transaction, fee_config).unwrap_or_else(|| {
+        lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
+            tx_size, fee_config,
+        )
+    })
+}
 
 impl BlockchainHandler {
     fn decode_canonical_transaction_hex(hex_data: &str) -> Result<Transaction> {
@@ -1758,6 +1802,15 @@ impl BlockchainHandler {
     async fn handle_estimate_transaction_fee(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         let req_data: FeeEstimateRequest = serde_json::from_slice(&request.body)?;
 
+        if let Some(transaction_type) = req_data.transaction_type.as_deref() {
+            if transaction_type_requires_semantic_fee_quote(transaction_type) {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::BadRequest,
+                    "Semantic-fee transaction types must use /api/v1/blockchain/transaction/quote-fee; TokenCreation may also use /api/v1/blockchain/fee-config".to_string(),
+                ));
+            }
+        }
+
         let blockchain_arc = self.get_blockchain().await?;
         let blockchain = blockchain_arc.read().await;
 
@@ -1812,6 +1865,7 @@ impl BlockchainHandler {
             base_fee: fee_config.base_fee,
             bytes_per_sov: fee_config.bytes_per_sov,
             witness_cap: fee_config.witness_cap,
+            token_creation_fee: fee_config.token_creation_fee,
             updated_at_height: blockchain.tx_fee_config_updated_at_height,
             chain_height: blockchain.get_height(),
         };
@@ -1832,23 +1886,48 @@ impl BlockchainHandler {
         let blockchain = blockchain_arc.read().await;
         let fee_config = blockchain.get_tx_fee_config();
 
-        let tx_size = if let Some(hex_tx) = req_data.transaction_hex.as_ref() {
+        let (tx_size, estimated_fee) = if let Some(hex_tx) = req_data.transaction_hex.as_ref() {
             match hex::decode(hex_tx) {
-                Ok(bytes) => estimate_signed_tx_size(&bytes),
-                Err(_) => req_data.transaction_size.unwrap_or(250),
+                Ok(bytes) => {
+                    let tx_size = estimate_signed_tx_size(&bytes);
+                    match Self::decode_canonical_transaction_hex(hex_tx) {
+                        Ok(transaction) => (
+                            tx_size,
+                            quote_fee_for_transaction(&transaction, tx_size, fee_config),
+                        ),
+                        Err(_) => (
+                            tx_size,
+                            lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
+                                tx_size,
+                                fee_config,
+                            ),
+                        ),
+                    }
+                }
+                Err(_) => {
+                    let tx_size = req_data.transaction_size.unwrap_or(250);
+                    (
+                        tx_size,
+                        lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
+                            tx_size,
+                            fee_config,
+                        ),
+                    )
+                }
             }
         } else {
-            req_data.transaction_size.unwrap_or(250)
+            let tx_size = req_data.transaction_size.unwrap_or(250);
+            (
+                tx_size,
+                lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
+                    tx_size, fee_config,
+                ),
+            )
         };
-
-        let min_fee =
-            lib_blockchain::transaction::creation::utils::calculate_minimum_fee_with_config(
-                tx_size, fee_config,
-            );
 
         let response_data = FeeQuoteResponse {
             status: "success".to_string(),
-            estimated_fee: min_fee,
+            estimated_fee,
             base_fee: fee_config.base_fee,
             bytes_per_sov: fee_config.bytes_per_sov,
             witness_cap: fee_config.witness_cap,
@@ -2704,7 +2783,10 @@ impl BlockchainHandler {
 mod tests {
     use super::*;
     use lib_blockchain::integration::crypto_integration::PublicKey;
+    use lib_blockchain::integration::crypto_integration::Signature as BlockchainSignature;
     use lib_blockchain::transaction::encode_contract_execution_memo_v2;
+    use lib_blockchain::transaction::{TokenCreationPayloadV1, TxFeeConfig};
+    use lib_blockchain::types::ContractCall;
     use lib_blockchain::{TransactionInput, TransactionOutput};
     use lib_crypto::SignatureAlgorithm;
 
@@ -2765,6 +2847,22 @@ mod tests {
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
         }
+    }
+
+    fn build_token_creation_tx() -> Transaction {
+        let payload = TokenCreationPayloadV1 {
+            name: "Quoted Token".to_string(),
+            symbol: "QTK".to_string(),
+            initial_supply: 1_000_000,
+            decimals: 8,
+            treasury_allocation_bps: 2_000,
+            treasury_recipient: [8u8; 32],
+        };
+        Transaction::new_token_creation_with_chain_id(
+            0x03,
+            test_signature(9),
+            payload.encode_memo().unwrap(),
+        )
     }
 
     #[test]
@@ -2883,5 +2981,47 @@ mod tests {
             Some(contract_id),
         );
         assert!(result.is_ok(), "matching URI contract_id must validate");
+    }
+
+    #[test]
+    fn quote_fee_uses_canonical_token_creation_fee() {
+        let fee_config = TxFeeConfig {
+            token_creation_fee: 1_000,
+            ..TxFeeConfig::default()
+        };
+        let tx = build_token_creation_tx();
+
+        let quoted = quote_fee_for_transaction(&tx, tx.size(), &fee_config);
+
+        assert_eq!(quoted, 1_000);
+    }
+
+    #[test]
+    fn estimate_fee_hint_rejects_semantic_fee_transaction_types() {
+        assert!(transaction_type_requires_semantic_fee_quote(
+            "TokenCreation"
+        ));
+        assert!(transaction_type_requires_semantic_fee_quote(
+            "token_creation"
+        ));
+        assert!(transaction_type_requires_semantic_fee_quote("token-mint"));
+        assert!(!transaction_type_requires_semantic_fee_quote("Transfer"));
+    }
+
+    #[test]
+    fn fee_config_response_includes_token_creation_fee() {
+        let response = FeeConfigResponse {
+            status: "success".to_string(),
+            base_fee: 100,
+            bytes_per_sov: 100,
+            witness_cap: 500,
+            token_creation_fee: 1_000,
+            updated_at_height: 12,
+            chain_height: 34,
+        };
+
+        let value = serde_json::to_value(response).unwrap();
+
+        assert_eq!(value["token_creation_fee"], 1_000);
     }
 }

@@ -14,7 +14,7 @@ mod red_tests {
     // When Treasury Kernel is implemented, these tests will be activated to verify
     // the constraints are actually enforced.
 
-    #![allow(unused_variables)]  // Variables in red tests document requirements
+    #![allow(unused_variables)] // Variables in red tests document requirements
 
     /// RED TEST: UBI Contract Cannot Mint Directly
     ///
@@ -124,7 +124,9 @@ mod red_tests {
         // 2. Only registered citizens processed
         // 3. Revoked citizens permanently excluded
         // 4. No error details exposed (privacy)
-        panic!("REQUIREMENT: Citizenship required - only registered, non-revoked citizens can claim");
+        panic!(
+            "REQUIREMENT: Citizenship required - only registered, non-revoked citizens can claim"
+        );
     }
 
     /// RED TEST: One Claim Per Epoch
@@ -260,11 +262,11 @@ mod red_tests {
 
         // Example calculations:
         let test_cases = vec![
-            (0, 0),           // Block 0 -> epoch 0
-            (60_479, 0),      // Last block of epoch 0
-            (60_480, 1),      // First block of epoch 1
-            (120_960, 2),     // First block of epoch 2
-            (10_000_000, 165),// Random future block
+            (0, 0),            // Block 0 -> epoch 0
+            (60_479, 0),       // Last block of epoch 0
+            (60_480, 1),       // First block of epoch 1
+            (120_960, 2),      // First block of epoch 2
+            (10_000_000, 165), // Random future block
         ];
 
         for (block_height, expected_epoch) in test_cases {

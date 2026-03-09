@@ -3,22 +3,22 @@
 //! Complete token management API for custom token creation, minting, and transfer.
 //! Enables users to create their own tokens on the ZHTP blockchain.
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{info, warn, debug};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{debug, info, warn};
 
 // ZHTP protocol imports
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 // Blockchain imports
-use lib_blockchain::Blockchain;
-use lib_blockchain::transaction::{TokenCreationPayloadV1, Transaction};
 use lib_blockchain::contracts::utils::generate_custom_token_id;
+use lib_blockchain::transaction::{TokenCreationPayloadV1, Transaction};
 use lib_blockchain::types::transaction_type::TransactionType;
+use lib_blockchain::Blockchain;
 use lib_crypto::types::keys::PublicKey;
 
 /// Helper function to create JSON responses
@@ -126,10 +126,7 @@ impl TokenHandler {
             Ok(parsed) => parsed,
             Err(e) => {
                 tracing::warn!("[FLOW] token/create: decode_signed_tx FAILED: {}", e);
-                return Ok(create_error_response(
-                    ZhtpStatus::BadRequest,
-                    e.to_string(),
-                ));
+                return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
             }
         };
         tracing::warn!(
@@ -143,7 +140,8 @@ impl TokenHandler {
 
         if tx.transaction_type != TransactionType::TokenCreation {
             let reason = if tx.transaction_type == TransactionType::ContractExecution {
-                "Deprecated token create transaction type. Use canonical TokenCreation transaction".to_string()
+                "Deprecated token create transaction type. Use canonical TokenCreation transaction"
+                    .to_string()
             } else {
                 format!(
                     "Invalid transaction type for token/create: expected TokenCreation, got {:?}",
@@ -207,20 +205,23 @@ impl TokenHandler {
         {
             let blockchain = self.blockchain.read().await;
             if blockchain.get_token_contract(&token_id).is_some() {
-                tracing::warn!("[FLOW] token/create: DUPLICATE token_id={}", hex::encode(token_id));
+                tracing::warn!(
+                    "[FLOW] token/create: DUPLICATE token_id={}",
+                    hex::encode(token_id)
+                );
                 return Ok(create_error_response(
                     ZhtpStatus::Conflict,
-                    format!("Token with name '{}' and symbol '{}' already exists", name, symbol),
+                    format!(
+                        "Token with name '{}' and symbol '{}' already exists",
+                        name, symbol
+                    ),
                 ));
             }
         }
 
         if let Err(e) = self.submit_to_mempool(tx).await {
             tracing::warn!("[FLOW] token/create submit_to_mempool FAILED: {}", e);
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                e.to_string(),
-            ));
+            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
         }
         tracing::warn!("[FLOW] token/create: submit_to_mempool OK");
 
@@ -249,10 +250,7 @@ impl TokenHandler {
         let tx = match self.decode_signed_tx_raw(&mint_req.signed_tx) {
             Ok(parsed) => parsed,
             Err(e) => {
-                return Ok(create_error_response(
-                    ZhtpStatus::BadRequest,
-                    e.to_string(),
-                ));
+                return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
             }
         };
 
@@ -277,10 +275,7 @@ impl TokenHandler {
         let amount = mint.amount;
 
         if let Err(e) = self.submit_to_mempool(tx).await {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                e.to_string(),
-            ));
+            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
         }
 
         info!("Mint submitted for token {}", hex::encode(token_id));
@@ -305,7 +300,10 @@ impl TokenHandler {
     /// 2. If not found, try identity_registry[to] - DID key_id lookup
     /// 3. Fail if neither found or ambiguous
     async fn handle_transfer_token(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        tracing::info!("[TRANSFER] START handle_transfer_token, body_len={}", request.body.len());
+        tracing::info!(
+            "[TRANSFER] START handle_transfer_token, body_len={}",
+            request.body.len()
+        );
 
         let transfer_req: TransferTokenRequest = match serde_json::from_slice(&request.body) {
             Ok(r) => r,
@@ -318,48 +316,56 @@ impl TokenHandler {
             }
         };
 
-        tracing::info!("[TRANSFER] signed_tx hex len={}", transfer_req.signed_tx.len());
+        tracing::info!(
+            "[TRANSFER] signed_tx hex len={}",
+            transfer_req.signed_tx.len()
+        );
 
         let tx = match self.decode_signed_tx_raw(&transfer_req.signed_tx) {
             Ok(parsed) => {
                 tracing::info!(
                     "[TRANSFER] decoded tx OK: type={:?}, version={}, chain_id={}",
-                    parsed.transaction_type, parsed.version, parsed.chain_id
+                    parsed.transaction_type,
+                    parsed.version,
+                    parsed.chain_id
                 );
                 parsed
             }
             Err(e) => {
                 tracing::error!("[TRANSFER] FAIL: decode_signed_tx_raw: {}", e);
-                return Ok(create_error_response(
-                    ZhtpStatus::BadRequest,
-                    e.to_string(),
-                ));
+                return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
             }
         };
 
         // Canonical path: TokenTransfer only.
-        let (recipient_hex, token_id_hex, amount) = if tx.transaction_type == lib_blockchain::TransactionType::TokenTransfer {
-            // Native TokenTransfer path
-            match tx.token_transfer_data.as_ref() {
-                Some(d) => (hex::encode(d.to), hex::encode(d.token_id), d.amount),
-                None => {
-                    tracing::error!("[TRANSFER] FAIL: TokenTransfer but token_transfer_data is None");
-                    return Ok(create_error_response(
-                        ZhtpStatus::BadRequest,
-                        "TokenTransfer missing data".to_string(),
-                    ));
+        let (recipient_hex, token_id_hex, amount) =
+            if tx.transaction_type == lib_blockchain::TransactionType::TokenTransfer {
+                // Native TokenTransfer path
+                match tx.token_transfer_data.as_ref() {
+                    Some(d) => (hex::encode(d.to), hex::encode(d.token_id), d.amount),
+                    None => {
+                        tracing::error!(
+                            "[TRANSFER] FAIL: TokenTransfer but token_transfer_data is None"
+                        );
+                        return Ok(create_error_response(
+                            ZhtpStatus::BadRequest,
+                            "TokenTransfer missing data".to_string(),
+                        ));
+                    }
                 }
-            }
-        } else {
-            tracing::error!(
-                "[TRANSFER] FAIL: wrong tx type: {:?} (expected TokenTransfer)",
-                tx.transaction_type
-            );
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                format!("Token transfer requires TransactionType::TokenTransfer, got {:?}", tx.transaction_type),
-            ));
-        };
+            } else {
+                tracing::error!(
+                    "[TRANSFER] FAIL: wrong tx type: {:?} (expected TokenTransfer)",
+                    tx.transaction_type
+                );
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!(
+                        "Token transfer requires TransactionType::TokenTransfer, got {:?}",
+                        tx.transaction_type
+                    ),
+                ));
+            };
         tracing::info!(
             "[TRANSFER] to={}, token_id={}, amount={}",
             &recipient_hex[..16.min(recipient_hex.len())],
@@ -367,7 +373,8 @@ impl TokenHandler {
             amount
         );
 
-        let is_sov = token_id_hex == hex::encode(lib_blockchain::contracts::utils::generate_lib_token_id())
+        let is_sov = token_id_hex
+            == hex::encode(lib_blockchain::contracts::utils::generate_lib_token_id())
             || token_id_hex == "0000000000000000000000000000000000000000000000000000000000000000";
 
         // Recipient validation: check wallet_registry, identity_registry, and
@@ -386,7 +393,13 @@ impl TokenHandler {
 
         tracing::info!(
             "[TRANSFER] recipient check: wallet_registry={}, identity_registry={} (did={})",
-            in_wallet, in_identity, if is_sov { "<wallet_id>" } else { "did:zhtp:..." }
+            in_wallet,
+            in_identity,
+            if is_sov {
+                "<wallet_id>"
+            } else {
+                "did:zhtp:..."
+            }
         );
 
         if !in_wallet && !in_identity {
@@ -398,15 +411,13 @@ impl TokenHandler {
 
         if let Err(e) = self.submit_to_mempool(tx).await {
             tracing::error!("[TRANSFER] FAIL: mempool submission: {}", e);
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                e.to_string(),
-            ));
+            return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
         }
 
         tracing::info!(
             "[TRANSFER] SUCCESS: submitted to mempool, to={}, amount={}",
-            &recipient_hex[..16.min(recipient_hex.len())], amount
+            &recipient_hex[..16.min(recipient_hex.len())],
+            amount
         );
         create_json_response(json!({
             "success": true,
@@ -425,10 +436,7 @@ impl TokenHandler {
         let tx = match self.decode_signed_tx_raw(&burn_req.signed_tx) {
             Ok(parsed) => parsed,
             Err(e) => {
-                return Ok(create_error_response(
-                    ZhtpStatus::BadRequest,
-                    e.to_string(),
-                ));
+                return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
             }
         };
         let _ = tx;
@@ -440,13 +448,13 @@ impl TokenHandler {
 
     /// GET /api/v1/token/{id} - Get token info
     async fn handle_get_token_info(&self, token_id_hex: &str) -> Result<ZhtpResponse> {
-        let token_id = hex::decode(token_id_hex)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id =
+            hex::decode(token_id_hex).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
 
         if token_id.len() != 32 {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                "Token ID must be 32 bytes".to_string()
+                "Token ID must be 32 bytes".to_string(),
             ));
         }
 
@@ -454,7 +462,8 @@ impl TokenHandler {
 
         let blockchain = self.blockchain.read().await;
 
-        let token = blockchain.get_token_contract(&token_id_array)
+        let token = blockchain
+            .get_token_contract(&token_id_array)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         let created_at = blockchain.contract_blocks.get(&token_id_array).copied();
@@ -465,7 +474,11 @@ impl TokenHandler {
             symbol: token.symbol.clone(),
             decimals: token.decimals,
             total_supply: token.total_supply,
-            max_supply: if token.max_supply == u64::MAX { None } else { Some(token.max_supply) },
+            max_supply: if token.max_supply == u64::MAX {
+                None
+            } else {
+                Some(token.max_supply)
+            },
             creator: format!("0x{}", hex::encode(&token.creator.key_id)),
             is_deflationary: token.is_deflationary,
             created_at_block: created_at,
@@ -476,13 +489,13 @@ impl TokenHandler {
 
     /// GET /api/v1/token/{id}/balance/{address} - Get token balance
     async fn handle_get_balance(&self, token_id_hex: &str, address: &str) -> Result<ZhtpResponse> {
-        let token_id = hex::decode(token_id_hex)
-            .map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id =
+            hex::decode(token_id_hex).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
 
         if token_id.len() != 32 {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                "Token ID must be 32 bytes".to_string()
+                "Token ID must be 32 bytes".to_string(),
             ));
         }
 
@@ -493,11 +506,13 @@ impl TokenHandler {
 
         let blockchain = self.blockchain.read().await;
 
-        let token = blockchain.get_token_contract(&token_id_array)
+        let token = blockchain
+            .get_token_contract(&token_id_array)
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         let balance = if is_sov {
-            let wallet_id = self.resolve_wallet_id_for_sov(address, &blockchain)
+            let wallet_id = self
+                .resolve_wallet_id_for_sov(address, &blockchain)
                 .ok_or_else(|| anyhow::anyhow!("SOV balance lookup requires a valid wallet_id"))?;
             // When BlockExecutor is active it writes to the token_balances Sled tree.
             // The in-memory token_contracts is NOT updated after executor-path transfers,
@@ -505,7 +520,9 @@ impl TokenHandler {
             if let Some(store) = blockchain.get_store() {
                 let storage_token_id = lib_blockchain::storage::TokenId(token_id_array);
                 let addr = lib_blockchain::storage::Address::new(wallet_id);
-                store.get_token_balance(&storage_token_id, &addr).unwrap_or(0) as u64
+                store
+                    .get_token_balance(&storage_token_id, &addr)
+                    .unwrap_or(0) as u64
             } else {
                 let wallet_key = PublicKey {
                     dilithium_pk: vec![],
@@ -517,7 +534,9 @@ impl TokenHandler {
         } else {
             let pubkey = self.identity_to_pubkey(address)?;
             let target_key_id = pubkey.key_id;
-            token.balances.iter()
+            token
+                .balances
+                .iter()
                 .find(|(pk, _)| pk.key_id == target_key_id)
                 .map(|(_, bal)| *bal)
                 .unwrap_or(0)
@@ -535,7 +554,8 @@ impl TokenHandler {
     async fn handle_list_tokens(&self) -> Result<ZhtpResponse> {
         let blockchain = self.blockchain.read().await;
 
-        let tokens: Vec<TokenListItem> = blockchain.token_contracts
+        let tokens: Vec<TokenListItem> = blockchain
+            .token_contracts
             .iter()
             .map(|(id, token)| TokenListItem {
                 token_id: hex::encode(id),
@@ -554,18 +574,24 @@ impl TokenHandler {
     }
 
     /// GET /api/v1/token/nonce/{token_id}/{address} - Get expected nonce for transfer replay protection
-    async fn handle_get_nonce(&self, token_id_hex: &str, address_hex: &str) -> Result<ZhtpResponse> {
+    async fn handle_get_nonce(
+        &self,
+        token_id_hex: &str,
+        address_hex: &str,
+    ) -> Result<ZhtpResponse> {
         let token_id_bytes = match hex::decode(token_id_hex) {
             Ok(b) => b,
-            Err(_) => return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Invalid token_id hex".to_string()
-            )),
+            Err(_) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    "Invalid token_id hex".to_string(),
+                ))
+            }
         };
         if token_id_bytes.len() != 32 {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                "token_id must be 32 bytes (64 hex chars)".to_string()
+                "token_id must be 32 bytes (64 hex chars)".to_string(),
             ));
         }
         let mut token_id = [0u8; 32];
@@ -573,15 +599,17 @@ impl TokenHandler {
 
         let address_bytes = match hex::decode(address_hex) {
             Ok(b) => b,
-            Err(_) => return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Invalid address hex".to_string()
-            )),
+            Err(_) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    "Invalid address hex".to_string(),
+                ))
+            }
         };
         if address_bytes.len() != 32 {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                "Address must be 32 bytes (64 hex chars)".to_string()
+                "Address must be 32 bytes (64 hex chars)".to_string(),
             ));
         }
         let mut address = [0u8; 32];
@@ -603,29 +631,26 @@ impl TokenHandler {
         let symbol_upper = symbol.to_uppercase();
 
         // Check if any existing token uses this symbol (case-insensitive)
-        let existing_token = blockchain.token_contracts
+        let existing_token = blockchain
+            .token_contracts
             .values()
             .find(|token| token.symbol.to_uppercase() == symbol_upper);
 
         match existing_token {
-            Some(token) => {
-                create_json_response(json!({
-                    "symbol": symbol,
-                    "available": false,
-                    "reason": format!("Symbol already used by token '{}'", token.name),
-                    "existing_token": {
-                        "token_id": hex::encode(token.token_id),
-                        "name": token.name.clone(),
-                        "symbol": token.symbol.clone()
-                    }
-                }))
-            }
-            None => {
-                create_json_response(json!({
-                    "symbol": symbol,
-                    "available": true
-                }))
-            }
+            Some(token) => create_json_response(json!({
+                "symbol": symbol,
+                "available": false,
+                "reason": format!("Symbol already used by token '{}'", token.name),
+                "existing_token": {
+                    "token_id": hex::encode(token.token_id),
+                    "name": token.name.clone(),
+                    "symbol": token.symbol.clone()
+                }
+            })),
+            None => create_json_response(json!({
+                "symbol": symbol,
+                "available": true
+            })),
         }
     }
 
@@ -668,7 +693,9 @@ impl TokenHandler {
                     0
                 }
             } else {
-                token.balances.iter()
+                token
+                    .balances
+                    .iter()
                     .find(|(pk, _)| pk.key_id == target_key_id)
                     .map(|(_, bal)| *bal)
                     .unwrap_or(0)
@@ -696,9 +723,9 @@ impl TokenHandler {
         }
 
         // Always include native SOV entry (even if balance is 0) so clients get the token_id.
-        let has_sov = balances.iter().any(|b| {
-            b.get("token_id").and_then(|v| v.as_str()) == Some(&native_token_id_hex)
-        });
+        let has_sov = balances
+            .iter()
+            .any(|b| b.get("token_id").and_then(|v| v.as_str()) == Some(&native_token_id_hex));
         if !has_sov {
             let (name, symbol, decimals) = blockchain
                 .token_contracts
@@ -706,14 +733,17 @@ impl TokenHandler {
                 .map(|t| (t.name.clone(), t.symbol.clone(), t.decimals))
                 .unwrap_or_else(|| ("Sovereign".to_string(), "SOV".to_string(), 8));
 
-            balances.insert(0, json!({
-                "token_id": native_token_id_hex,
-                "name": name,
-                "symbol": symbol,
-                "decimals": decimals,
-                "balance": 0,
-                "is_creator": false
-            }));
+            balances.insert(
+                0,
+                json!({
+                    "token_id": native_token_id_hex,
+                    "name": name,
+                    "symbol": symbol,
+                    "decimals": decimals,
+                    "balance": 0,
+                    "is_creator": false
+                }),
+            );
         }
 
         create_json_response(json!({
@@ -732,14 +762,11 @@ impl TokenHandler {
         // Handle different identity formats
         let key_bytes = if identity.starts_with("did:zhtp:") {
             let hex_part = identity.strip_prefix("did:zhtp:").unwrap_or(identity);
-            hex::decode(hex_part)
-                .map_err(|_| anyhow::anyhow!("Invalid DID format"))?
+            hex::decode(hex_part).map_err(|_| anyhow::anyhow!("Invalid DID format"))?
         } else if identity.starts_with("0x") {
-            hex::decode(&identity[2..])
-                .map_err(|_| anyhow::anyhow!("Invalid hex address"))?
+            hex::decode(&identity[2..]).map_err(|_| anyhow::anyhow!("Invalid hex address"))?
         } else {
-            hex::decode(identity)
-                .map_err(|_| anyhow::anyhow!("Invalid identity format"))?
+            hex::decode(identity).map_err(|_| anyhow::anyhow!("Invalid identity format"))?
         };
 
         if key_bytes.len() == 32 {
@@ -797,8 +824,8 @@ impl TokenHandler {
 
     fn decode_signed_tx_raw(&self, signed_tx: &str) -> Result<Transaction> {
         tracing::warn!("[FLOW] decode_signed_tx_raw: len={}", signed_tx.len());
-        let tx_bytes = hex::decode(signed_tx)
-            .map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
+        let tx_bytes =
+            hex::decode(signed_tx).map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
         let tx: Transaction = bincode::deserialize(&tx_bytes)
             .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
         Ok(tx)
@@ -812,7 +839,8 @@ impl TokenHandler {
             tx.fee
         );
         let mut blockchain = self.blockchain.write().await;
-        blockchain.add_pending_transaction(tx)
+        blockchain
+            .add_pending_transaction(tx)
             .map_err(|e| anyhow::anyhow!("Failed to submit transaction to mempool: {}", e))?;
         tracing::warn!("[FLOW] token/create submit_to_mempool: ok");
         Ok(())
@@ -821,37 +849,34 @@ impl TokenHandler {
 
 #[async_trait::async_trait]
 impl ZhtpRequestHandler for TokenHandler {
-    async fn handle_request(&self, request: ZhtpRequest) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
+    async fn handle_request(
+        &self,
+        request: ZhtpRequest,
+    ) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
         info!("Token handler: {} {}", request.method, request.uri);
 
         let response = match (request.method.clone(), request.uri.as_str()) {
             // POST /api/v1/token/create
-            (ZhtpMethod::Post, "/api/v1/token/create") => {
-                self.handle_create_token(request).await
-            }
+            (ZhtpMethod::Post, "/api/v1/token/create") => self.handle_create_token(request).await,
             // POST /api/v1/token/mint
-            (ZhtpMethod::Post, "/api/v1/token/mint") => {
-                self.handle_mint_token(request).await
-            }
+            (ZhtpMethod::Post, "/api/v1/token/mint") => self.handle_mint_token(request).await,
             // POST /api/v1/token/transfer
             (ZhtpMethod::Post, "/api/v1/token/transfer") => {
                 self.handle_transfer_token(request).await
             }
             // POST /api/v1/token/burn
-            (ZhtpMethod::Post, "/api/v1/token/burn") => {
-                self.handle_burn_token(request).await
-            }
+            (ZhtpMethod::Post, "/api/v1/token/burn") => self.handle_burn_token(request).await,
             // GET /api/v1/token/list
-            (ZhtpMethod::Get, "/api/v1/token/list") => {
-                self.handle_list_tokens().await
-            }
+            (ZhtpMethod::Get, "/api/v1/token/list") => self.handle_list_tokens().await,
             // GET /api/v1/token/symbol/available/{symbol} - Check if symbol is available
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/symbol/available/") => {
-                let symbol = path.strip_prefix("/api/v1/token/symbol/available/").unwrap_or("");
+                let symbol = path
+                    .strip_prefix("/api/v1/token/symbol/available/")
+                    .unwrap_or("");
                 if symbol.is_empty() {
                     Ok(create_error_response(
                         ZhtpStatus::BadRequest,
-                        "Symbol required".to_string()
+                        "Symbol required".to_string(),
                     ))
                 } else {
                     self.handle_check_symbol_available(symbol).await
@@ -863,7 +888,7 @@ impl ZhtpRequestHandler for TokenHandler {
                 if address.is_empty() {
                     Ok(create_error_response(
                         ZhtpStatus::BadRequest,
-                        "Address required".to_string()
+                        "Address required".to_string(),
                     ))
                 } else {
                     self.handle_get_balances_for_address(address).await
@@ -879,14 +904,16 @@ impl ZhtpRequestHandler for TokenHandler {
                 if token_id.is_empty() || address.is_empty() {
                     Ok(create_error_response(
                         ZhtpStatus::BadRequest,
-                        "token_id and address required".to_string()
+                        "token_id and address required".to_string(),
                     ))
                 } else {
                     self.handle_get_nonce(token_id, address).await
                 }
             }
             // GET /api/v1/token/{id}
-            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/token/") && !path.contains("/balance") => {
+            (ZhtpMethod::Get, path)
+                if path.starts_with("/api/v1/token/") && !path.contains("/balance") =>
+            {
                 let token_id = path.strip_prefix("/api/v1/token/").unwrap_or("");
                 if token_id.is_empty() || token_id == "list" {
                     self.handle_list_tokens().await
@@ -906,16 +933,17 @@ impl ZhtpRequestHandler for TokenHandler {
                 } else {
                     Ok(create_error_response(
                         ZhtpStatus::BadRequest,
-                        "Invalid balance path format".to_string()
+                        "Invalid balance path format".to_string(),
                     ))
                 }
             }
-            _ => {
-                Ok(create_error_response(
-                    ZhtpStatus::NotFound,
-                    format!("Token endpoint not found: {} {}", request.method, request.uri)
-                ))
-            }
+            _ => Ok(create_error_response(
+                ZhtpStatus::NotFound,
+                format!(
+                    "Token endpoint not found: {} {}",
+                    request.method, request.uri
+                ),
+            )),
         };
 
         response.map_err(|e| {
@@ -944,14 +972,11 @@ mod tests {
     fn parse_identity(identity: &str) -> Result<PublicKey> {
         let key_bytes = if identity.starts_with("did:zhtp:") {
             let hex_part = identity.strip_prefix("did:zhtp:").unwrap_or(identity);
-            hex::decode(hex_part)
-                .map_err(|_| anyhow::anyhow!("Invalid DID format"))?
+            hex::decode(hex_part).map_err(|_| anyhow::anyhow!("Invalid DID format"))?
         } else if identity.starts_with("0x") {
-            hex::decode(&identity[2..])
-                .map_err(|_| anyhow::anyhow!("Invalid hex address"))?
+            hex::decode(&identity[2..]).map_err(|_| anyhow::anyhow!("Invalid hex address"))?
         } else {
-            hex::decode(identity)
-                .map_err(|_| anyhow::anyhow!("Invalid identity format"))?
+            hex::decode(identity).map_err(|_| anyhow::anyhow!("Invalid identity format"))?
         };
 
         if key_bytes.len() == 32 {

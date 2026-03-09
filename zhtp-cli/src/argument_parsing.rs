@@ -1392,7 +1392,7 @@ pub async fn run_cli() -> Result<()> {
     // Initialize network genesis for replay protection
     // Uses testnet genesis hash from shared constant - CLI commands need this for network communication
     let _ = lib_identity::types::node_id::try_set_network_genesis(
-        lib_identity::constants::TESTNET_GENESIS_HASH
+        lib_identity::constants::TESTNET_GENESIS_HASH,
     );
 
     let cli = ZhtpCli::parse();
@@ -1404,34 +1404,104 @@ pub async fn run_cli() -> Result<()> {
     }
 
     match &cli.command {
-        ZhtpCommand::Node(args) => commands::node::handle_node_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Wallet(args) => commands::wallet::handle_wallet_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Dao(args) => commands::dao::handle_dao_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Oracle(args) => commands::oracle::handle_oracle_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Citizen(args) => commands::citizen::handle_citizen_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Ubi(args) => commands::ubi::handle_ubi_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Identity(args) => commands::identity::handle_identity_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Network(args) => commands::network::handle_network_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Blockchain(args) => commands::blockchain::handle_blockchain_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Monitor(args) => commands::monitor::handle_monitor_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Version(args) => commands::version::handle_version_command(args.clone()).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Completion(args) => commands::completion::handle_completion_command(args.clone()).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Config(args) => commands::config::handle_config_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Diagnostics(args) => commands::diagnostics::handle_diagnostics_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Backup(args) => commands::backup::handle_backup_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Component(args) => commands::component::handle_component_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Interactive(args) => commands::interactive::handle_interactive_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Server(args) => commands::server::handle_server_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Reward(args) => commands::rewards::handle_reward_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Isolation(args) => commands::isolation::handle_isolation_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Deploy(args) => commands::deploy::handle_deploy_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Domain(args) => commands::domain::handle_domain_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Trust(args) => commands::trust::handle_trust_command(args.clone()).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Man(args) => commands::man::handle_man_command(args.clone()).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Update(args) => commands::update::handle_update_command(args.clone()).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Service(args) => commands::service::handle_service_command(args.clone()).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Token(args) => commands::token::handle_token_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
-        ZhtpCommand::Curve(args) => commands::curve::handle_curve_command(args.clone(), &cli).await.map_err(anyhow::Error::msg),
+        ZhtpCommand::Node(args) => commands::node::handle_node_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Wallet(args) => commands::wallet::handle_wallet_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Dao(args) => commands::dao::handle_dao_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Oracle(args) => commands::oracle::handle_oracle_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Citizen(args) => commands::citizen::handle_citizen_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Ubi(args) => commands::ubi::handle_ubi_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Identity(args) => {
+            commands::identity::handle_identity_command(args.clone(), &cli)
+                .await
+                .map_err(anyhow::Error::msg)
+        }
+        ZhtpCommand::Network(args) => commands::network::handle_network_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Blockchain(args) => {
+            commands::blockchain::handle_blockchain_command(args.clone(), &cli)
+                .await
+                .map_err(anyhow::Error::msg)
+        }
+        ZhtpCommand::Monitor(args) => commands::monitor::handle_monitor_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Version(args) => commands::version::handle_version_command(args.clone())
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Completion(args) => {
+            commands::completion::handle_completion_command(args.clone())
+                .await
+                .map_err(anyhow::Error::msg)
+        }
+        ZhtpCommand::Config(args) => commands::config::handle_config_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Diagnostics(args) => {
+            commands::diagnostics::handle_diagnostics_command(args.clone(), &cli)
+                .await
+                .map_err(anyhow::Error::msg)
+        }
+        ZhtpCommand::Backup(args) => commands::backup::handle_backup_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Component(args) => {
+            commands::component::handle_component_command(args.clone(), &cli)
+                .await
+                .map_err(anyhow::Error::msg)
+        }
+        ZhtpCommand::Interactive(args) => {
+            commands::interactive::handle_interactive_command(args.clone(), &cli)
+                .await
+                .map_err(anyhow::Error::msg)
+        }
+        ZhtpCommand::Server(args) => commands::server::handle_server_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Reward(args) => commands::rewards::handle_reward_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Isolation(args) => {
+            commands::isolation::handle_isolation_command(args.clone(), &cli)
+                .await
+                .map_err(anyhow::Error::msg)
+        }
+        ZhtpCommand::Deploy(args) => commands::deploy::handle_deploy_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Domain(args) => commands::domain::handle_domain_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Trust(args) => commands::trust::handle_trust_command(args.clone())
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Man(args) => commands::man::handle_man_command(args.clone())
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Update(args) => commands::update::handle_update_command(args.clone())
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Service(args) => commands::service::handle_service_command(args.clone())
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Token(args) => commands::token::handle_token_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
+        ZhtpCommand::Curve(args) => commands::curve::handle_curve_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
     }
 }
 
@@ -1477,7 +1547,8 @@ pub fn parse_arguments() -> ZhtpCli {
 
 /// Display startup banner
 pub fn display_startup_banner() {
-    println!("
+    println!(
+        "
     ███████╗██╗  ██╗████████╗██████╗ 
     ╚══███╔╝██║  ██║╚══██╔══╝██╔══██╗
       ███╔╝ ███████║   ██║   ██████╔╝
@@ -1487,7 +1558,8 @@ pub fn display_startup_banner() {
     
     Zero-Knowledge Hypertext Transfer Protocol
     Orchestrator - Level 2 Components Manager
-    ");
+    "
+    );
 }
 
 /// Interactive shell structure

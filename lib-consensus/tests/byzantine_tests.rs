@@ -1,9 +1,7 @@
 //! Tests for Byzantine fault detection system
 
 use anyhow::Result;
-use lib_consensus::{
-    ByzantineFaultDetector, ByzantineFaultType, FaultSeverity, ValidatorManager,
-};
+use lib_consensus::{ByzantineFaultDetector, ByzantineFaultType, FaultSeverity, ValidatorManager};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -238,7 +236,11 @@ fn test_fault_record_cleanup() {
 
     // After cleanup with far future timestamp, old faults should be cleaned
     let faults_after = detector.detect_faults(&validator_manager).unwrap();
-    assert_eq!(faults_after.len(), 0, "Expected cleanup to remove old faults");
+    assert_eq!(
+        faults_after.len(),
+        0,
+        "Expected cleanup to remove old faults"
+    );
 }
 
 #[test]

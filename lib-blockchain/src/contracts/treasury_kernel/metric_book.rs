@@ -13,8 +13,8 @@
 //! Uses BTreeMap for deterministic iteration.
 
 use super::metric_types::{
-    Attestation, AttestationPolicy, AttesterRole, EpochError, EpochState, EpochStatus,
-    MetricError, MetricKey, MetricRecord, MetricType,
+    Attestation, AttestationPolicy, AttesterRole, EpochError, EpochState, EpochStatus, MetricError,
+    MetricKey, MetricRecord, MetricType,
 };
 use super::role_types::AssignmentId;
 use serde::{Deserialize, Serialize};
@@ -144,7 +144,11 @@ impl MetricBook {
     ///
     /// This function exists only to document the prohibition.
     #[allow(dead_code)]
-    pub fn overwrite_metric(&mut self, _key: &MetricKey, _new_value: u64) -> Result<(), MetricError> {
+    pub fn overwrite_metric(
+        &mut self,
+        _key: &MetricKey,
+        _new_value: u64,
+    ) -> Result<(), MetricError> {
         Err(MetricError::OverwriteForbidden)
     }
 
@@ -204,7 +208,10 @@ impl MetricBook {
 
         // Check for duplicate attestation
         let existing_attestations = self.attestations.entry(key.clone()).or_default();
-        if existing_attestations.iter().any(|a| &a.attester == attester) {
+        if existing_attestations
+            .iter()
+            .any(|a| &a.attester == attester)
+        {
             return Err(MetricError::DuplicateAttestation {
                 key: key.clone(),
                 attester: *attester,
@@ -220,7 +227,10 @@ impl MetricBook {
 
     /// Get attestations for a metric
     pub fn get_attestations(&self, key: &MetricKey) -> &[Attestation] {
-        self.attestations.get(key).map(|v| v.as_slice()).unwrap_or(&[])
+        self.attestations
+            .get(key)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Check if metric has sufficient attestations
@@ -240,7 +250,10 @@ impl MetricBook {
 
         // Check required roles
         for required_role in &policy.required_roles {
-            if !attestations.iter().any(|a| &a.attester_role == required_role) {
+            if !attestations
+                .iter()
+                .any(|a| &a.attester_role == required_role)
+            {
                 return false;
             }
         }
@@ -389,11 +402,7 @@ impl EpochClock {
     /// Begin closing an epoch (transitions Open -> Closing)
     ///
     /// After this, no new metrics can be recorded but attestations are still allowed.
-    pub fn begin_close_epoch(
-        &mut self,
-        epoch: u64,
-        caller: &[u8; 32],
-    ) -> Result<(), EpochError> {
+    pub fn begin_close_epoch(&mut self, epoch: u64, caller: &[u8; 32]) -> Result<(), EpochError> {
         // Verify caller is governance
         if caller != &self.governance_authority {
             return Err(EpochError::Unauthorized);
@@ -826,14 +835,8 @@ mod tests {
         assert!(!book.is_sufficiently_attested(&key));
 
         // Add peer - now sufficient
-        book.attest_metric(
-            &key,
-            &[70u8; 32],
-            AttesterRole::Peer,
-            &test_signature(),
-            1,
-        )
-        .unwrap();
+        book.attest_metric(&key, &[70u8; 32], AttesterRole::Peer, &test_signature(), 1)
+            .unwrap();
         assert!(book.is_sufficiently_attested(&key));
     }
 

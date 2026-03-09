@@ -184,57 +184,71 @@ impl CurveType {
                 // Solving for S2 given cost C:
                 // S2 = (-base + sqrt(base² + 2×slope×C + 2×base×slope×S1 + slope²×S1²)) / slope - S1
                 // Simplified: use iterative approach for accuracy
-                
+
                 if slope == 0 {
                     // Constant price: tokens = stable / base
                     return (stable_amount as u128)
                         .saturating_mul(100_000_000)
-                        .saturating_div(base_price.max(1) as u128) as u64;
+                        .saturating_div(base_price.max(1) as u128)
+                        as u64;
                 }
 
                 let supply_whole = current_supply / 100_000_000;
                 let mut tokens_out: u64 = 0;
                 let mut remaining_stable = stable_amount;
-                let mut current_price = base_price.saturating_add(slope.saturating_mul(supply_whole));
+                let mut current_price =
+                    base_price.saturating_add(slope.saturating_mul(supply_whole));
 
                 // Iterative approximation (max 1000 iterations for safety)
                 for _ in 0..1000 {
                     if remaining_stable == 0 || current_price == 0 {
                         break;
                     }
-                    
+
                     // Buy 1 token at a time (in atomic units)
-                    let token_chunk = remaining_stable.saturating_div(current_price).min(100_000_000);
+                    let token_chunk = remaining_stable
+                        .saturating_div(current_price)
+                        .min(100_000_000);
                     if token_chunk == 0 {
                         break;
                     }
-                    
+
                     tokens_out = tokens_out.saturating_add(token_chunk);
                     remaining_stable = remaining_stable.saturating_sub(
                         (token_chunk as u128)
                             .saturating_mul(current_price as u128)
-                            .saturating_div(100_000_000) as u64
+                            .saturating_div(100_000_000) as u64,
                     );
-                    
+
                     // Update price for next iteration
                     let new_supply_whole = supply_whole.saturating_add(tokens_out / 100_000_000);
-                    current_price = base_price.saturating_add(slope.saturating_mul(new_supply_whole));
+                    current_price =
+                        base_price.saturating_add(slope.saturating_mul(new_supply_whole));
                 }
 
                 tokens_out
             }
-            CurveType::Exponential { base_price, growth_rate_bps } => {
+            CurveType::Exponential {
+                base_price,
+                growth_rate_bps,
+            } => {
                 // Approximate: treat as linear with average growth
                 let supply_whole = current_supply / 100_000_000;
                 let current_price = base_price.saturating_add(
-                    base_price.saturating_mul(growth_rate_bps.saturating_mul(supply_whole.min(100))) / 10_000
+                    base_price
+                        .saturating_mul(growth_rate_bps.saturating_mul(supply_whole.min(100)))
+                        / 10_000,
                 );
-                
+
                 (stable_amount as u128)
                     .saturating_mul(100_000_000)
                     .saturating_div(current_price.max(1) as u128) as u64
             }
-            CurveType::Sigmoid { max_price, midpoint_supply, steepness: _ } => {
+            CurveType::Sigmoid {
+                max_price,
+                midpoint_supply,
+                steepness: _,
+            } => {
                 // Approximate based on current price level
                 let current_price = if current_supply <= midpoint_supply {
                     let ratio = (current_supply as u128)
@@ -246,7 +260,7 @@ impl CurveType {
                 } else {
                     max_price.saturating_div(2)
                 };
-                
+
                 (stable_amount as u128)
                     .saturating_mul(100_000_000)
                     .saturating_div(current_price.max(1) as u128) as u64
@@ -269,35 +283,44 @@ impl CurveType {
                 let supply_whole = current_supply / 100_000_000;
                 let tokens_whole = token_amount / 100_000_000;
                 let start_supply = supply_whole.saturating_sub(tokens_whole);
-                
+
                 // Integral: base×tokens + slope/2×(supply² - start²)
                 let base_component = base_price.saturating_mul(tokens_whole);
-                
+
                 let slope_component = slope.saturating_mul(
-                    supply_whole.saturating_mul(supply_whole)
-                        .saturating_sub(start_supply.saturating_mul(start_supply))
+                    supply_whole
+                        .saturating_mul(supply_whole)
+                        .saturating_sub(start_supply.saturating_mul(start_supply)),
                 ) / 2;
-                
+
                 base_component.saturating_add(slope_component)
             }
-            CurveType::Exponential { base_price, growth_rate_bps } => {
+            CurveType::Exponential {
+                base_price,
+                growth_rate_bps,
+            } => {
                 let supply_whole = current_supply / 100_000_000;
                 let tokens_whole = token_amount / 100_000_000;
                 let avg_supply = supply_whole.saturating_sub(tokens_whole / 2);
-                
+
                 let avg_price = base_price.saturating_add(
-                    base_price.saturating_mul(growth_rate_bps.saturating_mul(avg_supply.min(100))) / 10_000
+                    base_price.saturating_mul(growth_rate_bps.saturating_mul(avg_supply.min(100)))
+                        / 10_000,
                 );
-                
+
                 (token_amount as u128)
                     .saturating_mul(avg_price as u128)
                     .saturating_div(100_000_000) as u64
             }
-            CurveType::Sigmoid { max_price, midpoint_supply, steepness: _ } => {
+            CurveType::Sigmoid {
+                max_price,
+                midpoint_supply,
+                steepness: _,
+            } => {
                 let supply_whole = current_supply / 100_000_000;
                 let tokens_whole = token_amount / 100_000_000;
                 let avg_supply = supply_whole.saturating_sub(tokens_whole / 2);
-                
+
                 let avg_price = if avg_supply <= midpoint_supply {
                     let ratio = (avg_supply as u128)
                         .saturating_mul(100_000_000)
@@ -308,7 +331,7 @@ impl CurveType {
                 } else {
                     max_price.saturating_div(2)
                 };
-                
+
                 (token_amount as u128)
                     .saturating_mul(avg_price as u128)
                     .saturating_div(100_000_000) as u64
@@ -328,9 +351,15 @@ pub enum Threshold {
     /// Minimum token supply
     SupplyAmount(u64),
     /// Time elapsed AND minimum reserve
-    TimeAndReserve { min_time_seconds: u64, min_reserve: u64 },
+    TimeAndReserve {
+        min_time_seconds: u64,
+        min_reserve: u64,
+    },
     /// Time elapsed AND minimum supply
-    TimeAndSupply { min_time_seconds: u64, min_supply: u64 },
+    TimeAndSupply {
+        min_time_seconds: u64,
+        min_supply: u64,
+    },
 }
 
 impl Threshold {
@@ -491,7 +520,11 @@ impl std::fmt::Display for CurveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CurveError::InvalidPhase { current, required } => {
-                write!(f, "Invalid phase: current={}, required={}", current, required)
+                write!(
+                    f,
+                    "Invalid phase: current={}, required={}",
+                    current, required
+                )
             }
             CurveError::AlreadyGraduated => write!(f, "Token has already graduated"),
             CurveError::InsufficientReserve => write!(f, "Insufficient reserve for operation"),
@@ -560,8 +593,8 @@ mod tests {
         };
 
         assert!(!threshold.is_met(100_000_000, 0, 3599)); // Time not met
-        assert!(threshold.is_met(100_000_000, 0, 3600));  // Both met
-        assert!(!threshold.is_met(99_999_999, 0, 3600));  // Reserve not met
+        assert!(threshold.is_met(100_000_000, 0, 3600)); // Both met
+        assert!(!threshold.is_met(99_999_999, 0, 3600)); // Reserve not met
     }
 
     #[test]

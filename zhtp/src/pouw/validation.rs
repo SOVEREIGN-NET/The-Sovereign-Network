@@ -14,13 +14,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use lib_identity::IdentityManager;
 use super::session_log::SharedSessionLog;
+use lib_identity::IdentityManager;
 
 use super::challenge::ChallengeGenerator;
 use super::types::{
-    ChallengeIssue, Policy, ProofType, Receipt, ReceiptBatch, SignedReceipt,
-    POUW_VERSION,
+    ChallengeIssue, Policy, ProofType, Receipt, ReceiptBatch, SignedReceipt, POUW_VERSION,
 };
 
 /// Rejection reason codes (Spec 8.2)
@@ -132,7 +131,10 @@ pub struct DisputeLogEntry {
 
 impl ReceiptValidator {
     /// Create a new receipt validator
-    pub fn new(challenge_generator: Arc<ChallengeGenerator>, identity_manager: Arc<RwLock<IdentityManager>>) -> Self {
+    pub fn new(
+        challenge_generator: Arc<ChallengeGenerator>,
+        identity_manager: Arc<RwLock<IdentityManager>>,
+    ) -> Self {
         Self {
             challenge_generator,
             seen_nonces: Arc::new(RwLock::new(HashSet::new())),
@@ -166,10 +168,7 @@ impl ReceiptValidator {
     }
 
     /// Validate a batch of receipts
-    pub async fn validate_batch(
-        &self,
-        batch: &ReceiptBatch,
-    ) -> Result<SubmitResponse> {
+    pub async fn validate_batch(&self, batch: &ReceiptBatch) -> Result<SubmitResponse> {
         let mut accepted = Vec::new();
         let mut rejected = Vec::new();
 
@@ -187,14 +186,17 @@ impl ReceiptValidator {
 
         // Process each receipt
         for signed_receipt in &batch.receipts {
-            let result = self.validate_receipt(signed_receipt, &batch.client_did).await;
+            let result = self
+                .validate_receipt(signed_receipt, &batch.client_did)
+                .await;
 
             if result.accepted {
                 accepted.push(result.receipt_nonce);
             } else {
                 rejected.push(RejectedReceipt {
                     receipt_nonce: result.receipt_nonce,
-                    reason: result.rejection_reason
+                    reason: result
+                        .rejection_reason
                         .map(|r| r.as_str().to_string())
                         .unwrap_or_else(|| "UNKNOWN".to_string()),
                 });
@@ -219,7 +221,13 @@ impl ReceiptValidator {
 
         // Step 1: Format validation
         if let Err(reason) = self.validate_format(receipt) {
-            self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), reason, "Format validation failed").await;
+            self.log_dispute(
+                batch_client_did,
+                Some(&receipt.receipt_nonce),
+                reason,
+                "Format validation failed",
+            )
+            .await;
             return ReceiptValidationResult {
                 receipt_nonce: nonce_hex,
                 accepted: false,
@@ -229,8 +237,13 @@ impl ReceiptValidator {
 
         // Step 2: Client DID validation
         if receipt.client_did != batch_client_did {
-            self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), RejectionReason::ClientInvalid,
-                "Client DID mismatch with batch").await;
+            self.log_dispute(
+                batch_client_did,
+                Some(&receipt.receipt_nonce),
+                RejectionReason::ClientInvalid,
+                "Client DID mismatch with batch",
+            )
+            .await;
             return ReceiptValidationResult {
                 receipt_nonce: nonce_hex,
                 accepted: false,
@@ -240,7 +253,13 @@ impl ReceiptValidator {
 
         // Step 2.1: Identity age enforcement (if configured)
         if let Err(reason) = self.validate_identity_age(batch_client_did).await {
-            self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), reason, "Identity too new for reward eligibility").await;
+            self.log_dispute(
+                batch_client_did,
+                Some(&receipt.receipt_nonce),
+                reason,
+                "Identity too new for reward eligibility",
+            )
+            .await;
             return ReceiptValidationResult {
                 receipt_nonce: nonce_hex,
                 accepted: false,
@@ -250,7 +269,13 @@ impl ReceiptValidator {
 
         // Step 2.5: Proof-of-presence — Web4 receipts must include a valid QUIC session ID
         if let Err(reason) = self.verify_session_presence(receipt).await {
-            self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), reason, "Session presence check failed").await;
+            self.log_dispute(
+                batch_client_did,
+                Some(&receipt.receipt_nonce),
+                reason,
+                "Session presence check failed",
+            )
+            .await;
             return ReceiptValidationResult {
                 receipt_nonce: nonce_hex,
                 accepted: false,
@@ -260,7 +285,13 @@ impl ReceiptValidator {
 
         // Step 3: Signature verification
         if let Err(reason) = self.verify_signature(signed_receipt).await {
-            self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), reason, "Signature verification failed").await;
+            self.log_dispute(
+                batch_client_did,
+                Some(&receipt.receipt_nonce),
+                reason,
+                "Signature verification failed",
+            )
+            .await;
             return ReceiptValidationResult {
                 receipt_nonce: nonce_hex,
                 accepted: false,
@@ -270,7 +301,13 @@ impl ReceiptValidator {
 
         // Step 4: Replay detection
         if let Err(reason) = self.check_replay(&receipt.receipt_nonce).await {
-            self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), reason, "Replay detected").await;
+            self.log_dispute(
+                batch_client_did,
+                Some(&receipt.receipt_nonce),
+                reason,
+                "Replay detected",
+            )
+            .await;
             return ReceiptValidationResult {
                 receipt_nonce: nonce_hex,
                 accepted: false,
@@ -282,7 +319,13 @@ impl ReceiptValidator {
         let challenge = match self.verify_challenge_binding(receipt).await {
             Ok(c) => c,
             Err(reason) => {
-                self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), reason, "Challenge binding failed").await;
+                self.log_dispute(
+                    batch_client_did,
+                    Some(&receipt.receipt_nonce),
+                    reason,
+                    "Challenge binding failed",
+                )
+                .await;
                 return ReceiptValidationResult {
                     receipt_nonce: nonce_hex,
                     accepted: false,
@@ -293,7 +336,13 @@ impl ReceiptValidator {
 
         // Step 6: Policy enforcement
         if let Err(reason) = self.enforce_policy(receipt, &challenge.policy) {
-            self.log_dispute(batch_client_did, Some(&receipt.receipt_nonce), reason, "Policy violation").await;
+            self.log_dispute(
+                batch_client_did,
+                Some(&receipt.receipt_nonce),
+                reason,
+                "Policy violation",
+            )
+            .await;
             return ReceiptValidationResult {
                 receipt_nonce: nonce_hex,
                 accepted: false,
@@ -355,9 +404,12 @@ impl ReceiptValidator {
         // Web4 proof types require manifest_cid in the aux field
         match receipt.proof_type {
             ProofType::Web4ManifestRoute | ProofType::Web4ContentServed => {
-                let aux_obj = receipt.aux.as_deref()
+                let aux_obj = receipt
+                    .aux
+                    .as_deref()
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
-                let manifest_cid = aux_obj.as_ref()
+                let manifest_cid = aux_obj
+                    .as_ref()
                     .and_then(|v| v.get("manifest_cid"))
                     .and_then(|v| v.as_str());
                 if manifest_cid.is_none() || manifest_cid.unwrap_or("").is_empty() {
@@ -365,7 +417,8 @@ impl ReceiptValidator {
                 }
                 // Web4ContentServed additionally requires served_from_cache
                 if receipt.proof_type == ProofType::Web4ContentServed {
-                    let has_cache_field = aux_obj.as_ref()
+                    let has_cache_field = aux_obj
+                        .as_ref()
                         .and_then(|v| v.get("served_from_cache"))
                         .is_some();
                     if !has_cache_field {
@@ -384,20 +437,27 @@ impl ReceiptValidator {
     /// The ZHTP identity system is pure post-quantum (Dilithium5 only).
     /// Classical Ed25519 keys are not stored in identities, so only "dilithium5"
     /// is a valid sig_scheme. Any other value is rejected with BadSig.
-    async fn verify_signature(&self, signed_receipt: &SignedReceipt) -> Result<(), RejectionReason> {
-        let receipt_bytes = self.serialize_receipt(&signed_receipt.receipt)
+    async fn verify_signature(
+        &self,
+        signed_receipt: &SignedReceipt,
+    ) -> Result<(), RejectionReason> {
+        let receipt_bytes = self
+            .serialize_receipt(&signed_receipt.receipt)
             .map_err(|_| RejectionReason::BadProof)?;
 
         match signed_receipt.sig_scheme.to_lowercase().as_str() {
             "dilithium5" => {
-                let pubkey = self.get_client_pubkey_dilithium(&signed_receipt.receipt.client_did).await
+                let pubkey = self
+                    .get_client_pubkey_dilithium(&signed_receipt.receipt.client_did)
+                    .await
                     .map_err(|_| RejectionReason::ClientInvalid)?;
 
                 let valid = lib_crypto::post_quantum::dilithium::dilithium_verify(
                     &receipt_bytes,
                     &signed_receipt.signature,
                     &pubkey,
-                ).map_err(|_| RejectionReason::BadSig)?;
+                )
+                .map_err(|_| RejectionReason::BadSig)?;
 
                 if !valid {
                     return Err(RejectionReason::BadSig);
@@ -447,9 +507,12 @@ impl ReceiptValidator {
         };
 
         // Extract quic_session_id from aux JSON
-        let aux_obj = receipt.aux.as_deref()
+        let aux_obj = receipt
+            .aux
+            .as_deref()
             .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
-        let session_id_hex = aux_obj.as_ref()
+        let session_id_hex = aux_obj
+            .as_ref()
             .and_then(|v| v.get("quic_session_id"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
@@ -459,8 +522,8 @@ impl ReceiptValidator {
             return Err(RejectionReason::BadProof);
         }
 
-        let session_id_bytes = hex::decode(session_id_hex)
-            .map_err(|_| RejectionReason::BadProof)?;
+        let session_id_bytes =
+            hex::decode(session_id_hex).map_err(|_| RejectionReason::BadProof)?;
         if session_id_bytes.len() != 8 {
             return Err(RejectionReason::BadProof);
         }
@@ -487,7 +550,8 @@ impl ReceiptValidator {
         };
 
         let mgr = self.identity_manager.read().await;
-        let identity = mgr.get_identity_by_did(client_did)
+        let identity = mgr
+            .get_identity_by_did(client_did)
             .ok_or(RejectionReason::ClientInvalid)?;
 
         let now = self.now_secs();
@@ -506,9 +570,13 @@ impl ReceiptValidator {
     }
 
     /// Step 4: Verify challenge binding
-    async fn verify_challenge_binding(&self, receipt: &Receipt) -> Result<ChallengeIssue, RejectionReason> {
+    async fn verify_challenge_binding(
+        &self,
+        receipt: &Receipt,
+    ) -> Result<ChallengeIssue, RejectionReason> {
         // Look up challenge by nonce
-        let challenge = self.challenge_generator
+        let challenge = self
+            .challenge_generator
             .get_challenge(&receipt.challenge_nonce)
             .await
             .ok_or(RejectionReason::Expired)?;
@@ -549,29 +617,38 @@ impl ReceiptValidator {
     /// Get client's Dilithium5 public key from DID
     async fn get_client_pubkey_dilithium(&self, client_did: &str) -> Result<Vec<u8>> {
         let mgr = self.identity_manager.read().await;
-        let identity = mgr.get_identity_by_did(client_did)
+        let identity = mgr
+            .get_identity_by_did(client_did)
             .ok_or_else(|| anyhow::anyhow!("DID not registered: {}", client_did))?;
         Ok(identity.public_key.dilithium_pk.clone())
     }
 
     /// Parse Web4 context fields from receipt aux JSON
-    fn parse_web4_aux(receipt: &Receipt) -> (Option<String>, Option<String>, Option<u8>, Option<bool>) {
-        let aux_obj = receipt.aux.as_deref()
+    fn parse_web4_aux(
+        receipt: &Receipt,
+    ) -> (Option<String>, Option<String>, Option<u8>, Option<bool>) {
+        let aux_obj = receipt
+            .aux
+            .as_deref()
             .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
-        let manifest_cid = aux_obj.as_ref()
+        let manifest_cid = aux_obj
+            .as_ref()
             .and_then(|v| v.get("manifest_cid"))
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
-        let domain = aux_obj.as_ref()
+        let domain = aux_obj
+            .as_ref()
             .and_then(|v| v.get("domain"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let route_hops = aux_obj.as_ref()
+        let route_hops = aux_obj
+            .as_ref()
             .and_then(|v| v.get("route_hops"))
             .and_then(|v| v.as_u64())
             .map(|n| n.min(255) as u8);
-        let served_from_cache = aux_obj.as_ref()
+        let served_from_cache = aux_obj
+            .as_ref()
             .and_then(|v| v.get("served_from_cache"))
             .and_then(|v| v.as_bool());
         (manifest_cid, domain, route_hops, served_from_cache)
@@ -604,7 +681,13 @@ impl ReceiptValidator {
     }
 
     /// Log a dispute for audit trail
-    async fn log_dispute(&self, client_did: &str, nonce: Option<&[u8]>, reason: RejectionReason, details: &str) {
+    async fn log_dispute(
+        &self,
+        client_did: &str,
+        nonce: Option<&[u8]>,
+        reason: RejectionReason,
+        details: &str,
+    ) {
         let entry = DisputeLogEntry {
             timestamp: self.now_secs(),
             client_did: client_did.to_string(),
@@ -745,7 +828,8 @@ mod tests {
     async fn test_format_validation() {
         let (priv_key, pub_key) = test_keys();
         let generator = Arc::new(ChallengeGenerator::new(priv_key, pub_key));
-        let validator = ReceiptValidator::new(generator, Arc::new(RwLock::new(IdentityManager::new())));
+        let validator =
+            ReceiptValidator::new(generator, Arc::new(RwLock::new(IdentityManager::new())));
 
         // Test invalid version
         let receipt = Receipt {
@@ -772,7 +856,8 @@ mod tests {
     async fn test_replay_detection() {
         let (priv_key, pub_key) = test_keys();
         let generator = Arc::new(ChallengeGenerator::new(priv_key, pub_key));
-        let validator = ReceiptValidator::new(generator, Arc::new(RwLock::new(IdentityManager::new())));
+        let validator =
+            ReceiptValidator::new(generator, Arc::new(RwLock::new(IdentityManager::new())));
 
         let nonce = vec![1u8; 32];
 
@@ -790,16 +875,23 @@ mod tests {
     async fn test_challenge_binding() {
         let (priv_key, pub_key) = test_keys();
         let generator = Arc::new(ChallengeGenerator::new(priv_key, pub_key));
-        let validator = ReceiptValidator::new(generator.clone(), Arc::new(RwLock::new(IdentityManager::new())));
+        let validator = ReceiptValidator::new(
+            generator.clone(),
+            Arc::new(RwLock::new(IdentityManager::new())),
+        );
 
         // Generate a challenge
-        let challenge_response = generator.generate_challenge(Some("hash"), None, None, None).await.unwrap();
+        let challenge_response = generator
+            .generate_challenge(Some("hash"), None, None, None)
+            .await
+            .unwrap();
 
         // Decode the token to get nonce and task_id
         let token_bytes = base64::Engine::decode(
             &base64::engine::general_purpose::STANDARD,
             &challenge_response.token,
-        ).unwrap();
+        )
+        .unwrap();
         let token: ChallengeToken = serde_json::from_slice(&token_bytes).unwrap();
 
         // Create a receipt with matching binding
@@ -828,7 +920,8 @@ mod tests {
     async fn test_policy_enforcement() {
         let (priv_key, pub_key) = test_keys();
         let generator = Arc::new(ChallengeGenerator::new(priv_key, pub_key));
-        let validator = ReceiptValidator::new(generator, Arc::new(RwLock::new(IdentityManager::new())));
+        let validator =
+            ReceiptValidator::new(generator, Arc::new(RwLock::new(IdentityManager::new())));
 
         let policy = Policy {
             max_receipts: 20,

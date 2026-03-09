@@ -2,19 +2,21 @@
 //!
 //! Architecture: Functional Core, Imperative Shell (FCIS)
 
-use crate::argument_parsing::{DaoAction, DaoArgs, ZhtpCli, format_output};
+use crate::argument_parsing::{format_output, DaoAction, DaoArgs, ZhtpCli};
 use crate::commands::transaction_utils::{broadcast_signed_tx, parse_hex_32};
-use crate::commands::web4_utils::{connect_default, default_keystore_path, load_identity_from_keystore};
+use crate::commands::web4_utils::{
+    connect_default, default_keystore_path, load_identity_from_keystore,
+};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_blockchain::contracts::derive_dao_id;
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::transaction::DaoExecutionData;
-use lib_blockchain::types::Hash as BcHash;
 use lib_blockchain::types::dao::DAOType;
+use lib_blockchain::types::Hash as BcHash;
 use lib_blockchain::Transaction;
 use lib_network::client::ZhtpClient;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +43,10 @@ impl DaoOperation {
 
     pub fn method(&self) -> &'static str {
         match self {
-            DaoOperation::Info | DaoOperation::Balance | DaoOperation::RegistryList | DaoOperation::RegistryGet => "GET",
+            DaoOperation::Info
+            | DaoOperation::Balance
+            | DaoOperation::RegistryList
+            | DaoOperation::RegistryGet => "GET",
             DaoOperation::Propose | DaoOperation::Vote => "POST",
         }
     }
@@ -83,7 +88,9 @@ pub fn action_to_operation(action: &DaoAction) -> Option<DaoOperation> {
 
 pub fn validate_proposal_id(id: &str) -> CliResult<()> {
     if id.is_empty() {
-        return Err(CliError::ConfigError("Proposal ID cannot be empty".to_string()));
+        return Err(CliError::ConfigError(
+            "Proposal ID cannot be empty".to_string(),
+        ));
     }
     if !id.chars().all(|c| c.is_alphanumeric() || c == '-') {
         return Err(CliError::ConfigError(format!(
@@ -107,7 +114,9 @@ pub fn validate_vote_choice(choice: &str) -> CliResult<()> {
 
 pub fn validate_proposal_title(title: &str) -> CliResult<()> {
     if title.is_empty() {
-        return Err(CliError::ConfigError("Proposal title cannot be empty".to_string()));
+        return Err(CliError::ConfigError(
+            "Proposal title cannot be empty".to_string(),
+        ));
     }
     if title.len() > 255 {
         return Err(CliError::ConfigError(format!(
@@ -154,7 +163,10 @@ fn build_request_body(
     choice: Option<&str>,
 ) -> Value {
     match operation {
-        DaoOperation::Info | DaoOperation::Balance | DaoOperation::RegistryList | DaoOperation::RegistryGet => json!({}),
+        DaoOperation::Info
+        | DaoOperation::Balance
+        | DaoOperation::RegistryList
+        | DaoOperation::RegistryGet => json!({}),
         DaoOperation::Propose => json!({
             "title": title,
             "description": description,
@@ -228,7 +240,13 @@ fn build_signed_dao_registry_tx(
 
     let execution_data = DaoExecutionData {
         proposal_id: BcHash::from_slice(&lib_crypto::hash_blake3(
-            &[execution_type.as_bytes(), identity_did.as_bytes(), &now.to_le_bytes(), &token_id].concat(),
+            &[
+                execution_type.as_bytes(),
+                identity_did.as_bytes(),
+                &now.to_le_bytes(),
+                &token_id,
+            ]
+            .concat(),
         )),
         executor: identity_did.to_string(),
         execution_type: execution_type.to_string(),
@@ -289,13 +307,36 @@ async fn handle_dao_command_impl(
         DaoAction::Propose { title, description } => {
             validate_proposal_title(&title)?;
             let operation = DaoOperation::Propose;
-            handle_dao_operation_impl(&client, operation, Some(&title), Some(&description), None, None, cli, output).await
+            handle_dao_operation_impl(
+                &client,
+                operation,
+                Some(&title),
+                Some(&description),
+                None,
+                None,
+                cli,
+                output,
+            )
+            .await
         }
-        DaoAction::Vote { proposal_id, choice } => {
+        DaoAction::Vote {
+            proposal_id,
+            choice,
+        } => {
             validate_proposal_id(&proposal_id)?;
             validate_vote_choice(&choice)?;
             let operation = DaoOperation::Vote;
-            handle_dao_operation_impl(&client, operation, None, None, Some(&proposal_id), Some(&choice), cli, output).await
+            handle_dao_operation_impl(
+                &client,
+                operation,
+                None,
+                None,
+                Some(&proposal_id),
+                Some(&choice),
+                cli,
+                output,
+            )
+            .await
         }
         DaoAction::Balance | DaoAction::TreasuryBalance => {
             let operation = DaoOperation::Balance;
@@ -309,21 +350,29 @@ async fn handle_dao_command_impl(
             parse_hex_32("dao_id", &dao_id)?;
             let endpoint = build_registry_get_endpoint(&dao_id);
             output.info("Fetching DAO registry entry...")?;
-            let response = client.get(&endpoint).await.map_err(|e| CliError::ApiCallFailed {
-                endpoint: endpoint.clone(),
-                status: 0,
-                reason: e.to_string(),
-            })?;
-            let result: Value = ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
-                endpoint: endpoint.clone(),
-                status: 0,
-                reason: format!("Failed to parse response: {e}"),
-            })?;
+            let response = client
+                .get(&endpoint)
+                .await
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.clone(),
+                    status: 0,
+                    reason: e.to_string(),
+                })?;
+            let result: Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.clone(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {e}"),
+                })?;
             output.header("DAO Registry Entry")?;
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
         }
-        DaoAction::RegistryRegister { token_id, class, metadata_hash } => {
+        DaoAction::RegistryRegister {
+            token_id,
+            class,
+            metadata_hash,
+        } => {
             let token_id = parse_hex_32("token_id", &token_id)?;
             let class = parse_dao_class(&class)?;
             let metadata_hash = parse_hex_32("metadata_hash", &metadata_hash)?;
@@ -345,7 +394,11 @@ async fn handle_dao_command_impl(
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
         }
-        DaoAction::FactoryCreate { token_id, class, metadata_hash } => {
+        DaoAction::FactoryCreate {
+            token_id,
+            class,
+            metadata_hash,
+        } => {
             let token_id = parse_hex_32("token_id", &token_id)?;
             let class = parse_dao_class(&class)?;
             let metadata_hash = parse_hex_32("metadata_hash", &metadata_hash)?;
@@ -380,12 +433,21 @@ async fn handle_dao_operation_impl(
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    output.info(&get_operation_message(operation, title, proposal_id, choice))?;
+    output.info(&get_operation_message(
+        operation,
+        title,
+        proposal_id,
+        choice,
+    ))?;
 
     let request_body = build_request_body(operation, title, description, proposal_id, choice);
     let response = match operation.method() {
         "GET" => client.get(operation.endpoint_path()).await,
-        "POST" => client.post_json(operation.endpoint_path(), &request_body).await,
+        "POST" => {
+            client
+                .post_json(operation.endpoint_path(), &request_body)
+                .await
+        }
         _ => client.get(operation.endpoint_path()).await,
     }
     .map_err(|e| CliError::ApiCallFailed {
@@ -412,7 +474,10 @@ mod tests {
 
     #[test]
     fn test_action_to_operation_info() {
-        assert_eq!(action_to_operation(&DaoAction::Info), Some(DaoOperation::Info));
+        assert_eq!(
+            action_to_operation(&DaoAction::Info),
+            Some(DaoOperation::Info)
+        );
     }
 
     #[test]
@@ -435,7 +500,10 @@ mod tests {
 
     #[test]
     fn test_action_to_operation_registry_and_factory() {
-        assert_eq!(action_to_operation(&DaoAction::RegistryList), Some(DaoOperation::RegistryList));
+        assert_eq!(
+            action_to_operation(&DaoAction::RegistryList),
+            Some(DaoOperation::RegistryList)
+        );
         assert_eq!(
             action_to_operation(&DaoAction::RegistryGet {
                 dao_id: "00".repeat(32),
@@ -457,9 +525,18 @@ mod tests {
         assert_eq!(DaoOperation::Info.description(), "Get DAO information");
         assert_eq!(DaoOperation::Propose.description(), "Create proposal");
         assert_eq!(DaoOperation::Vote.description(), "Vote on proposal");
-        assert_eq!(DaoOperation::Balance.description(), "Get DAO treasury balance");
-        assert_eq!(DaoOperation::RegistryList.description(), "List DAO registry entries");
-        assert_eq!(DaoOperation::RegistryGet.description(), "Get DAO registry entry");
+        assert_eq!(
+            DaoOperation::Balance.description(),
+            "Get DAO treasury balance"
+        );
+        assert_eq!(
+            DaoOperation::RegistryList.description(),
+            "List DAO registry entries"
+        );
+        assert_eq!(
+            DaoOperation::RegistryGet.description(),
+            "Get DAO registry entry"
+        );
     }
 
     #[test]
@@ -475,10 +552,19 @@ mod tests {
     #[test]
     fn test_operation_endpoint_path() {
         assert_eq!(DaoOperation::Info.endpoint_path(), "/api/v1/dao/data");
-        assert_eq!(DaoOperation::Propose.endpoint_path(), "/api/v1/dao/proposal/create");
+        assert_eq!(
+            DaoOperation::Propose.endpoint_path(),
+            "/api/v1/dao/proposal/create"
+        );
         assert_eq!(DaoOperation::Vote.endpoint_path(), "/api/v1/dao/vote/cast");
-        assert_eq!(DaoOperation::Balance.endpoint_path(), "/api/v1/dao/treasury/status");
-        assert_eq!(DaoOperation::RegistryList.endpoint_path(), "/api/v1/dao/registry/list");
+        assert_eq!(
+            DaoOperation::Balance.endpoint_path(),
+            "/api/v1/dao/treasury/status"
+        );
+        assert_eq!(
+            DaoOperation::RegistryList.endpoint_path(),
+            "/api/v1/dao/registry/list"
+        );
     }
 
     #[test]
@@ -561,8 +647,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(tx.transaction_type, lib_blockchain::TransactionType::DaoExecution);
-        assert_eq!(tx.dao_execution_data.as_ref().unwrap().execution_type, "dao_registry_register_v1");
+        assert_eq!(
+            tx.transaction_type,
+            lib_blockchain::TransactionType::DaoExecution
+        );
+        assert_eq!(
+            tx.dao_execution_data.as_ref().unwrap().execution_type,
+            "dao_registry_register_v1"
+        );
         assert!(!tx.signature.signature.is_empty());
         assert_ne!(dao_id, [0u8; 32]);
     }
@@ -583,15 +675,27 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(tx.dao_execution_data.as_ref().unwrap().execution_type, "dao_factory_create_v1");
+        assert_eq!(
+            tx.dao_execution_data.as_ref().unwrap().execution_type,
+            "dao_factory_create_v1"
+        );
         assert!(!tx.signature.signature.is_empty());
     }
 
     #[test]
     fn test_build_request_body_propose() {
-        let body = build_request_body(DaoOperation::Propose, Some("Title"), Some("Description"), None, None);
+        let body = build_request_body(
+            DaoOperation::Propose,
+            Some("Title"),
+            Some("Description"),
+            None,
+            None,
+        );
         assert_eq!(body.get("title").and_then(|v| v.as_str()), Some("Title"));
-        assert_eq!(body.get("description").and_then(|v| v.as_str()), Some("Description"));
+        assert_eq!(
+            body.get("description").and_then(|v| v.as_str()),
+            Some("Description")
+        );
     }
 
     #[test]

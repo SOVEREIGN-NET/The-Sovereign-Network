@@ -32,7 +32,7 @@
 //! println!("Delivered to {}/{} validators", result.delivered, result.attempted);
 //! ```
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -135,10 +135,7 @@ pub trait MessageBroadcaster: Send + Sync {
     ///
     /// # Returns
     /// Count of validators currently reachable and verified in PeerRegistry
-    async fn reachable_validator_count(
-        &self,
-        target_validators: &[PublicKey],
-    ) -> Result<usize>;
+    async fn reachable_validator_count(&self, target_validators: &[PublicKey]) -> Result<usize>;
 
     /// Check if specific validator is currently reachable
     ///
@@ -147,10 +144,7 @@ pub trait MessageBroadcaster: Send + Sync {
     ///
     /// # Returns
     /// Ok(true) if validator is reachable and verified, Ok(false) otherwise
-    async fn is_validator_reachable(
-        &self,
-        validator_pubkey: &PublicKey,
-    ) -> Result<bool>;
+    async fn is_validator_reachable(&self, validator_pubkey: &PublicKey) -> Result<bool>;
 }
 
 /// Production implementation using MeshMessageRouter for delivery
@@ -184,16 +178,14 @@ impl MeshMessageBroadcaster {
     /// GUARD MB-5: Only returns verified peers (is_verified() == true).
     /// Bootstrap-mode peers are excluded to prevent unverified peers from
     /// participating in consensus message delivery.
-    async fn find_validators(
-        &self,
-        target_validators: &[PublicKey],
-    ) -> Vec<UnifiedPeerId> {
+    async fn find_validators(&self, target_validators: &[PublicKey]) -> Vec<UnifiedPeerId> {
         let registry = self.peer_registry.read().await;
 
         target_validators
             .iter()
             .filter_map(|pubkey| {
-                registry.find_by_public_key(pubkey)
+                registry
+                    .find_by_public_key(pubkey)
                     .map(|entry| entry.peer_id.clone())
             })
             .filter(|peer| peer.is_verified()) // GUARD MB-5: Only verified peers
@@ -239,11 +231,15 @@ impl MessageBroadcaster for MeshMessageBroadcaster {
             let mesh_message = ZhtpMeshMessage::ValidatorMessage(message.clone());
 
             // Route message via mesh router
-            match self.mesh_router.route_message(
-                mesh_message,
-                validator.public_key().clone(),
-                sender_pubkey.clone(),
-            ).await {
+            match self
+                .mesh_router
+                .route_message(
+                    mesh_message,
+                    validator.public_key().clone(),
+                    sender_pubkey.clone(),
+                )
+                .await
+            {
                 Ok(_) => delivered += 1,
                 Err(e) => {
                     failed += 1;
@@ -253,7 +249,8 @@ impl MessageBroadcaster for MeshMessageBroadcaster {
                         e
                     );
                     // Use validator's node_id as IdentityId
-                    failed_validators.push(lib_crypto::Hash::from_bytes(validator.node_id().as_bytes()));
+                    failed_validators
+                        .push(lib_crypto::Hash::from_bytes(validator.node_id().as_bytes()));
                 }
             }
         }
@@ -284,10 +281,7 @@ impl MessageBroadcaster for MeshMessageBroadcaster {
 
         // GUARD MB-6: Prevent self-send to avoid loops and re-entrancy
         if validator.peer_id == self.local_peer_id {
-            return Err(anyhow!(
-                "Cannot send to self: {}",
-                validator.peer_id.did()
-            ));
+            return Err(anyhow!("Cannot send to self: {}", validator.peer_id.did()));
         }
 
         // GUARD MB-5: Strengthen peer verification - only verified peers can receive
@@ -300,27 +294,23 @@ impl MessageBroadcaster for MeshMessageBroadcaster {
 
         let mesh_message = ZhtpMeshMessage::ValidatorMessage(message);
 
-        self.mesh_router.route_message(
-            mesh_message,
-            validator.peer_id.public_key().clone(),
-            self.local_peer_id.public_key().clone(),
-        ).await?;
+        self.mesh_router
+            .route_message(
+                mesh_message,
+                validator.peer_id.public_key().clone(),
+                self.local_peer_id.public_key().clone(),
+            )
+            .await?;
 
         Ok(())
     }
 
-    async fn reachable_validator_count(
-        &self,
-        target_validators: &[PublicKey],
-    ) -> Result<usize> {
+    async fn reachable_validator_count(&self, target_validators: &[PublicKey]) -> Result<usize> {
         let validators = self.find_validators(target_validators).await;
         Ok(validators.len())
     }
 
-    async fn is_validator_reachable(
-        &self,
-        validator_pubkey: &PublicKey,
-    ) -> Result<bool> {
+    async fn is_validator_reachable(&self, validator_pubkey: &PublicKey) -> Result<bool> {
         let registry = self.peer_registry.read().await;
 
         match registry.find_by_public_key(validator_pubkey) {
@@ -438,8 +428,8 @@ impl MessageBroadcaster for MockMessageBroadcaster {
             if self.should_fail(validator_pubkey).await {
                 failed += 1;
                 // Convert PublicKey to Hash for failed_validators list
-                let pubkey_bytes = bincode::serialize(validator_pubkey)
-                    .unwrap_or_else(|_| vec![0u8; 32]);
+                let pubkey_bytes =
+                    bincode::serialize(validator_pubkey).unwrap_or_else(|_| vec![0u8; 32]);
                 failed_validators.push(lib_crypto::Hash::from_bytes(&pubkey_bytes[..]));
             } else {
                 delivered += 1;
@@ -461,7 +451,10 @@ impl MessageBroadcaster for MockMessageBroadcaster {
         message: ValidatorMessage,
     ) -> Result<()> {
         // Record the send
-        self.sends.lock().await.push((validator_pubkey.clone(), message));
+        self.sends
+            .lock()
+            .await
+            .push((validator_pubkey.clone(), message));
 
         // Check if validator is reachable
         if !self.is_reachable(validator_pubkey).await {
@@ -476,10 +469,7 @@ impl MessageBroadcaster for MockMessageBroadcaster {
         Ok(())
     }
 
-    async fn reachable_validator_count(
-        &self,
-        target_validators: &[PublicKey],
-    ) -> Result<usize> {
+    async fn reachable_validator_count(&self, target_validators: &[PublicKey]) -> Result<usize> {
         let mut count = 0;
         for validator_pubkey in target_validators {
             if self.is_reachable(validator_pubkey).await {
@@ -489,10 +479,7 @@ impl MessageBroadcaster for MockMessageBroadcaster {
         Ok(count)
     }
 
-    async fn is_validator_reachable(
-        &self,
-        validator_pubkey: &PublicKey,
-    ) -> Result<bool> {
+    async fn is_validator_reachable(&self, validator_pubkey: &PublicKey) -> Result<bool> {
         Ok(self.is_reachable(validator_pubkey).await)
     }
 }
@@ -538,7 +525,10 @@ mod tests {
         let mock = MockMessageBroadcaster::new(5);
         let validator_pubkey = PublicKey::new(vec![0u8; 32]);
 
-        let reachable = mock.is_validator_reachable(&validator_pubkey).await.unwrap();
+        let reachable = mock
+            .is_validator_reachable(&validator_pubkey)
+            .await
+            .unwrap();
         assert!(reachable);
     }
 }

@@ -5,7 +5,7 @@
 
 use super::core::RootRegistry;
 use super::dao_prefix_router::DaoPrefixRouter;
-use super::types::{NameStatus, ZoneController, PublicKey};
+use super::types::{NameStatus, PublicKey, ZoneController};
 
 fn test_public_key(id: u8) -> PublicKey {
     [id; 32]
@@ -91,7 +91,12 @@ fn test_parent_expiry_propagates_suspension() {
     let duration_blocks = 100;
 
     let parent_hash = registry
-        .register_commercial_unverified("parent.sov", owner.clone(), current_height, duration_blocks)
+        .register_commercial_unverified(
+            "parent.sov",
+            owner.clone(),
+            current_height,
+            duration_blocks,
+        )
         .expect("register parent");
     let child_hash = registry
         .register_commercial_unverified("child.parent.sov", owner, current_height, duration_blocks)
@@ -100,7 +105,9 @@ fn test_parent_expiry_propagates_suspension() {
     // Expire at a height after the expiry period
     let past_expiry = current_height + duration_blocks + 1;
     #[allow(deprecated)]
-    registry.expire_name(&parent_hash, past_expiry).expect("expire parent");
+    registry
+        .expire_name(&parent_hash, past_expiry)
+        .expect("expire parent");
 
     let child = registry.get_record(&child_hash).expect("child record");
     assert_eq!(child.status, NameStatus::SuspendedByParent);
@@ -240,13 +247,17 @@ fn test_phase2_dao_prefix_router_detection() {
 /// Test: dao.dao.sov resolution → INVALID
 #[test]
 fn test_phase2_dao_dao_sov_invalid() {
-    assert!(!DaoPrefixRouter::is_valid_dao_prefix_resolution("dao.dao.sov"));
+    assert!(!DaoPrefixRouter::is_valid_dao_prefix_resolution(
+        "dao.dao.sov"
+    ));
 }
 
 /// Test: dao.food.dao.sov resolution → Valid (returns governance of food.dao.sov)
 #[test]
 fn test_phase2_dao_food_dao_sov_valid() {
-    assert!(DaoPrefixRouter::is_valid_dao_prefix_resolution("dao.food.dao.sov"));
+    assert!(DaoPrefixRouter::is_valid_dao_prefix_resolution(
+        "dao.food.dao.sov"
+    ));
 }
 
 /// Test: dao.sub.shoes.sov → Controlled by sub.shoes.sov, not shoes.sov
@@ -280,8 +291,12 @@ fn test_phase2_invariant_no_dao_records_stored() {
     let owner = test_public_key(1);
 
     // Register some normal domains
-    registry.register_commercial_unverified("shoes.sov", owner.clone(), 0, 100).unwrap();
-    registry.register_commercial_unverified("boots.sov", owner.clone(), 0, 100).unwrap();
+    registry
+        .register_commercial_unverified("shoes.sov", owner.clone(), 0, 100)
+        .unwrap();
+    registry
+        .register_commercial_unverified("boots.sov", owner.clone(), 0, 100)
+        .unwrap();
 
     // Try to register dao-prefixed (should all fail)
     let _ = registry.register_commercial_unverified("dao.shoes.sov", owner.clone(), 0, 100);
@@ -318,7 +333,10 @@ fn test_touch_commercial_past_grace_releases() {
 
     // Way past grace period: should finalize and return None (released)
     let record = registry.touch(&name_hash, 500_000);
-    assert!(record.is_none(), "Commercial domain should be released past grace");
+    assert!(
+        record.is_none(),
+        "Commercial domain should be released past grace"
+    );
 
     // After release, the record should still exist but be Released
     let final_record = registry.get_record(&name_hash).expect("record exists");
@@ -340,15 +358,23 @@ fn test_touch_welfare_returns_to_governance() {
         .expect("register root");
 
     // Link the sector DAO
-    registry.link_welfare_sector_dao(WelfareSector::Food, dao_id).unwrap();
+    registry
+        .link_welfare_sector_dao(WelfareSector::Food, dao_id)
+        .unwrap();
 
     // Way past grace: should finalize to ReturnedToGovernance
     let record = registry.touch(&root_hash, 500_000);
-    assert!(record.is_some(), "Welfare domain should return Some (not None like commercial)");
+    assert!(
+        record.is_some(),
+        "Welfare domain should return Some (not None like commercial)"
+    );
 
     // Check custodian is set
     let final_record = registry.get_record(&root_hash).expect("record exists");
-    assert!(final_record.custodian.is_some(), "Custodian should be set for welfare domain");
+    assert!(
+        final_record.custodian.is_some(),
+        "Custodian should be set for welfare domain"
+    );
 }
 
 /// Test touch() doesn't mutate active domains
@@ -450,9 +476,15 @@ fn test_sweep_expired_height_order() {
     let owner = test_public_key(1);
 
     // Register domains with different expiry times
-    registry.register_commercial_unverified("first.sov", owner.clone(), 0, 50).unwrap();
-    registry.register_commercial_unverified("second.sov", owner.clone(), 0, 100).unwrap();
-    registry.register_commercial_unverified("third.sov", owner.clone(), 0, 150).unwrap();
+    registry
+        .register_commercial_unverified("first.sov", owner.clone(), 0, 50)
+        .unwrap();
+    registry
+        .register_commercial_unverified("second.sov", owner.clone(), 0, 100)
+        .unwrap();
+    registry
+        .register_commercial_unverified("third.sov", owner.clone(), 0, 150)
+        .unwrap();
 
     // Way past all grace periods
     let swept = registry.sweep_expired(600_000, 10);
@@ -467,7 +499,9 @@ fn test_sweep_expired_respects_limit() {
 
     // Register 5 domains
     for i in 0..5 {
-        registry.register_commercial_unverified(&format!("domain{}.sov", i), owner.clone(), 0, 100).unwrap();
+        registry
+            .register_commercial_unverified(&format!("domain{}.sov", i), owner.clone(), 0, 100)
+            .unwrap();
     }
 
     // Sweep with limit of 2
@@ -482,8 +516,12 @@ fn test_sweep_expired_skips_active() {
     let owner = test_public_key(1);
 
     // Register one active, one expired
-    registry.register_commercial_unverified("active.sov", owner.clone(), 0, 1_000_000).unwrap();
-    registry.register_commercial_unverified("expired.sov", owner.clone(), 0, 100).unwrap();
+    registry
+        .register_commercial_unverified("active.sov", owner.clone(), 0, 1_000_000)
+        .unwrap();
+    registry
+        .register_commercial_unverified("expired.sov", owner.clone(), 0, 100)
+        .unwrap();
 
     // Sweep at height where only expired.sov is past grace
     let swept = registry.sweep_expired(600_000, 10);
@@ -494,8 +532,8 @@ fn test_sweep_expired_skips_active() {
 // Phase 5: Verification Requirements Tests (Issue #661)
 // ============================================================================
 
-use super::types::{VerificationLevel, VerificationProof, ZkProofData};
 use super::namespace_policy::NamespacePolicy;
+use super::types::{VerificationLevel, VerificationProof, ZkProofData};
 
 fn test_verification_proof() -> VerificationProof {
     VerificationProof {
@@ -574,11 +612,18 @@ fn test_phase5_l2_verified_entity_succeeds() {
         0,
         100,
     );
-    assert!(result.is_ok(), "L2 should succeed for commercial: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "L2 should succeed for commercial: {:?}",
+        result
+    );
 
     let name_hash = result.unwrap();
     let record = registry.get_record(&name_hash).expect("record exists");
-    assert_eq!(record.verification_level, VerificationLevel::L2VerifiedEntity);
+    assert_eq!(
+        record.verification_level,
+        VerificationLevel::L2VerifiedEntity
+    );
 }
 
 /// Test: L3 (ConstitutionalActor) also succeeds for commercial root (exceeds minimum)
@@ -596,7 +641,11 @@ fn test_phase5_l3_exceeds_minimum_succeeds() {
         0,
         100,
     );
-    assert!(result.is_ok(), "L3 should exceed L2 requirement: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "L3 should exceed L2 requirement: {:?}",
+        result
+    );
 }
 
 /// Test: Missing proof fails even with valid level
@@ -719,13 +768,16 @@ fn test_phase5_namespace_policy_required_levels() {
 /// Test: VerificationLevel ordering is correct
 #[test]
 fn test_phase5_verification_level_ordering() {
-    assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L2VerifiedEntity));
+    assert!(
+        VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L2VerifiedEntity)
+    );
     assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L1BasicDID));
     assert!(VerificationLevel::L3ConstitutionalActor.meets_minimum(VerificationLevel::L0Unverified));
 
     assert!(VerificationLevel::L2VerifiedEntity.meets_minimum(VerificationLevel::L1BasicDID));
     assert!(VerificationLevel::L2VerifiedEntity.meets_minimum(VerificationLevel::L0Unverified));
-    assert!(!VerificationLevel::L2VerifiedEntity.meets_minimum(VerificationLevel::L3ConstitutionalActor));
+    assert!(!VerificationLevel::L2VerifiedEntity
+        .meets_minimum(VerificationLevel::L3ConstitutionalActor));
 
     assert!(VerificationLevel::L1BasicDID.meets_minimum(VerificationLevel::L0Unverified));
     assert!(!VerificationLevel::L1BasicDID.meets_minimum(VerificationLevel::L2VerifiedEntity));

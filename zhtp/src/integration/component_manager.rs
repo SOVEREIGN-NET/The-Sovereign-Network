@@ -1,16 +1,16 @@
 //! Component Manager for ZHTP
-//! 
+//!
 //! Manages the lifecycle and coordination of all ZHTP components
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex};
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, Instant};
-use tracing::{info, warn, error, debug};
-use serde::{Serialize, Deserialize};
+use tracing::{debug, error, info, warn};
 
-use crate::runtime::{ComponentId, Component, ComponentStatus};
+use crate::runtime::{Component, ComponentId, ComponentStatus};
 
 /// Component registration information
 #[derive(Debug, Clone)]
@@ -160,7 +160,7 @@ impl ComponentManager {
         {
             let mut components = self.components.write().await;
             let mut handles = self.handles.write().await;
-            
+
             components.insert(id.clone(), registration);
             handles.insert(id.clone(), handle);
         }
@@ -173,7 +173,10 @@ impl ComponentManager {
     }
 
     /// Register a component with specific configuration
-    pub async fn register_component_with_config(&self, registration: ComponentRegistration) -> Result<()> {
+    pub async fn register_component_with_config(
+        &self,
+        registration: ComponentRegistration,
+    ) -> Result<()> {
         let id = registration.id.clone();
         info!("Registering component with config: {}", id);
 
@@ -183,7 +186,7 @@ impl ComponentManager {
         {
             let mut components = self.components.write().await;
             let mut handles = self.handles.write().await;
-            
+
             components.insert(id.clone(), registration);
             handles.insert(id.clone(), handle);
         }
@@ -204,13 +207,14 @@ impl ComponentManager {
 
         let (component, timeout, retry_attempts) = {
             let components = self.components.read().await;
-            let registration = components.get(component_id)
+            let registration = components
+                .get(component_id)
                 .ok_or_else(|| anyhow::anyhow!("Component {} not registered", component_id))?;
-            
+
             (
                 registration.component.clone(),
                 registration.startup_timeout,
-                registration.retry_attempts
+                registration.retry_attempts,
             )
         };
 
@@ -228,7 +232,7 @@ impl ComponentManager {
 
         while attempts < retry_attempts {
             attempts += 1;
-            
+
             match tokio::time::timeout(timeout, component.start()).await {
                 Ok(Ok(())) => {
                     // Successfully started
@@ -238,18 +242,22 @@ impl ComponentManager {
                             handle.mark_running();
                         }
                     }
-                    
+
                     info!("Component {} started successfully", component_id);
                     return Ok(());
                 }
                 Ok(Err(e)) => {
-                    warn!("Component {} start failed (attempt {}): {}", 
-                          component_id, attempts, e);
+                    warn!(
+                        "Component {} start failed (attempt {}): {}",
+                        component_id, attempts, e
+                    );
                     last_error = Some(e.to_string());
                 }
                 Err(_) => {
-                    warn!("⏰ Component {} start timed out (attempt {})", 
-                          component_id, attempts);
+                    warn!(
+                        "⏰ Component {} start timed out (attempt {})",
+                        component_id, attempts
+                    );
                     last_error = Some("Startup timeout".to_string());
                 }
             }
@@ -268,8 +276,12 @@ impl ComponentManager {
             }
         }
 
-        Err(anyhow::anyhow!("Failed to start component {} after {} attempts: {}", 
-                           component_id, retry_attempts, error_msg))
+        Err(anyhow::anyhow!(
+            "Failed to start component {} after {} attempts: {}",
+            component_id,
+            retry_attempts,
+            error_msg
+        ))
     }
 
     /// Stop a specific component
@@ -278,10 +290,14 @@ impl ComponentManager {
 
         let (component, timeout) = {
             let components = self.components.read().await;
-            let registration = components.get(component_id)
+            let registration = components
+                .get(component_id)
                 .ok_or_else(|| anyhow::anyhow!("Component {} not registered", component_id))?;
-            
-            (registration.component.clone(), registration.shutdown_timeout)
+
+            (
+                registration.component.clone(),
+                registration.shutdown_timeout,
+            )
         };
 
         // Update status to stopping
@@ -315,8 +331,11 @@ impl ComponentManager {
                 Err(e)
             }
             Err(_) => {
-                warn!("⏰ Component {} stop timed out, forcing shutdown", component_id);
-                
+                warn!(
+                    "⏰ Component {} stop timed out, forcing shutdown",
+                    component_id
+                );
+
                 // Force shutdown if timeout
                 match component.force_stop().await {
                     Ok(()) => {
@@ -356,7 +375,8 @@ impl ComponentManager {
                 return Ok(());
             }
 
-            self.start_component(&component_id).await
+            self.start_component(&component_id)
+                .await
                 .with_context(|| format!("Failed to start component {}", component_id))?;
         }
 
@@ -382,7 +402,8 @@ impl ComponentManager {
         for component_id in shutdown_order {
             let status = {
                 let handles = self.handles.read().await;
-                handles.get(&component_id)
+                handles
+                    .get(&component_id)
                     .map(|h| h.status.clone())
                     .unwrap_or(ComponentStatus::Stopped)
             };
@@ -399,9 +420,14 @@ impl ComponentManager {
     }
 
     /// Get a component by ID
-    pub async fn get_component(&self, component_id: &ComponentId) -> Result<Option<Arc<dyn Component>>> {
+    pub async fn get_component(
+        &self,
+        component_id: &ComponentId,
+    ) -> Result<Option<Arc<dyn Component>>> {
         let components = self.components.read().await;
-        Ok(components.get(component_id).map(|reg| reg.component.clone()))
+        Ok(components
+            .get(component_id)
+            .map(|reg| reg.component.clone()))
     }
 
     /// Check if a component is registered
@@ -417,13 +443,19 @@ impl ComponentManager {
     }
 
     /// Get component status
-    pub async fn get_component_status(&self, component_id: &ComponentId) -> Result<Option<ComponentStatus>> {
+    pub async fn get_component_status(
+        &self,
+        component_id: &ComponentId,
+    ) -> Result<Option<ComponentStatus>> {
         let handles = self.handles.read().await;
         Ok(handles.get(component_id).map(|h| h.status.clone()))
     }
 
     /// Get component handle
-    pub async fn get_component_handle(&self, component_id: &ComponentId) -> Result<Option<ComponentHandle>> {
+    pub async fn get_component_handle(
+        &self,
+        component_id: &ComponentId,
+    ) -> Result<Option<ComponentHandle>> {
         let handles = self.handles.read().await;
         Ok(handles.get(component_id).cloned())
     }
@@ -440,14 +472,18 @@ impl ComponentManager {
 
         // Stop first
         if let Err(e) = self.stop_component(component_id).await {
-            warn!("Failed to stop component {} for restart: {}", component_id, e);
+            warn!(
+                "Failed to stop component {} for restart: {}",
+                component_id, e
+            );
         }
 
         // Wait a moment
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Start again
-        self.start_component(component_id).await
+        self.start_component(component_id)
+            .await
             .with_context(|| format!("Failed to restart component {}", component_id))?;
 
         info!("Component {} restarted successfully", component_id);
@@ -457,7 +493,7 @@ impl ComponentManager {
     /// Health check for component manager
     pub async fn health_check(&self) -> Result<bool> {
         let handles = self.handles.read().await;
-        
+
         // Check if all running components are healthy
         for (id, handle) in handles.iter() {
             if matches!(handle.status, ComponentStatus::Running) {
@@ -465,7 +501,8 @@ impl ComponentManager {
                 if let Some(last_check) = handle.last_health_check {
                     let health_interval = {
                         let components = self.components.read().await;
-                        components.get(id)
+                        components
+                            .get(id)
                             .map(|c| c.health_check_interval)
                             .unwrap_or(Duration::from_secs(30))
                     };
@@ -488,7 +525,8 @@ impl ComponentManager {
     async fn check_dependencies(&self, component_id: &ComponentId) -> Result<()> {
         let dependencies = {
             let components = self.components.read().await;
-            components.get(component_id)
+            components
+                .get(component_id)
                 .map(|reg| reg.dependencies.clone())
                 .unwrap_or_default()
         };
@@ -496,14 +534,17 @@ impl ComponentManager {
         let handles = self.handles.read().await;
 
         for dep_id in dependencies {
-            let dep_status = handles.get(&dep_id)
+            let dep_status = handles
+                .get(&dep_id)
                 .map(|h| h.status.clone())
                 .unwrap_or(ComponentStatus::Stopped);
 
             if !matches!(dep_status, ComponentStatus::Running) {
                 return Err(anyhow::anyhow!(
                     "Dependency {} of component {} is not running (status: {:?})",
-                    dep_id, component_id, dep_status
+                    dep_id,
+                    component_id,
+                    dep_status
                 ));
             }
         }
@@ -546,7 +587,10 @@ impl ComponentManager {
         order: &mut Vec<ComponentId>,
     ) -> Result<()> {
         if temp_visited.contains(component_id) {
-            return Err(anyhow::anyhow!("Circular dependency detected involving {}", component_id));
+            return Err(anyhow::anyhow!(
+                "Circular dependency detected involving {}",
+                component_id
+            ));
         }
 
         if visited.contains(component_id) {
@@ -587,7 +631,8 @@ impl ComponentManager {
                 // Perform health checks on all running components
                 let component_list = {
                     let handles_guard = handles.read().await;
-                    handles_guard.iter()
+                    handles_guard
+                        .iter()
                         .filter(|(_, handle)| matches!(handle.status, ComponentStatus::Running))
                         .map(|(id, _)| id.clone())
                         .collect::<Vec<_>>()
@@ -597,7 +642,10 @@ impl ComponentManager {
                     let (component, health_interval) = {
                         let components_guard = components.read().await;
                         if let Some(registration) = components_guard.get(&component_id) {
-                            (registration.component.clone(), registration.health_check_interval)
+                            (
+                                registration.component.clone(),
+                                registration.health_check_interval,
+                            )
                         } else {
                             continue;
                         }
@@ -607,7 +655,8 @@ impl ComponentManager {
                     let should_check = {
                         let handles_guard = handles.read().await;
                         if let Some(handle) = handles_guard.get(&component_id) {
-                            handle.last_health_check
+                            handle
+                                .last_health_check
                                 .map(|last| last.elapsed() >= health_interval)
                                 .unwrap_or(true)
                         } else {
@@ -624,10 +673,16 @@ impl ComponentManager {
                                 }
                                 match health.status {
                                     crate::runtime::ComponentStatus::Running => {
-                                        debug!("Health check passed for component: {}", component_id);
+                                        debug!(
+                                            "Health check passed for component: {}",
+                                            component_id
+                                        );
                                     }
                                     _ => {
-                                        warn!("Health check failed for component: {} (status: {:?})", component_id, health.status);
+                                        warn!(
+                                            "Health check failed for component: {} (status: {:?})",
+                                            component_id, health.status
+                                        );
                                     }
                                 }
                             }
@@ -663,7 +718,7 @@ impl ComponentManager {
     /// Get component manager statistics
     pub async fn get_stats(&self) -> Result<ComponentManagerStats> {
         let handles = self.handles.read().await;
-        
+
         let total_components = handles.len();
         let mut running_components = 0;
         let mut failed_components = 0;

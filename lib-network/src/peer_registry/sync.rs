@@ -48,19 +48,22 @@ impl ObserverRegistryStats {
         if self.registration_times.is_empty() {
             return None;
         }
-        
+
         let now = Instant::now();
-        let total_secs: f64 = self.registration_times.values()
+        let total_secs: f64 = self
+            .registration_times
+            .values()
             .map(|&reg_time| now.duration_since(reg_time).as_secs_f64())
             .sum();
-        
+
         Some(total_secs / self.registration_times.len() as f64)
     }
-    
+
     /// Get the longest-running observer
     pub fn longest_running_observer(&self) -> Option<(&String, f64)> {
         let now = Instant::now();
-        self.registration_times.iter()
+        self.registration_times
+            .iter()
             .map(|(name, &reg_time)| (name, now.duration_since(reg_time).as_secs_f64()))
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
     }
@@ -74,20 +77,20 @@ pub enum PeerRegistryEvent {
         peer_id: UnifiedPeerId,
         entry: PeerEntry,
     },
-    
+
     /// Peer metadata updated
     PeerUpdated {
         peer_id: UnifiedPeerId,
         old_entry: PeerEntry,
         new_entry: PeerEntry,
     },
-    
+
     /// Peer removed from registry
     PeerRemoved {
         peer_id: UnifiedPeerId,
         entry: PeerEntry,
     },
-    
+
     /// Batch update completed (multiple peers changed atomically)
     BatchUpdate {
         added: Vec<UnifiedPeerId>,
@@ -119,7 +122,7 @@ pub trait PeerRegistryObserver: Send + Sync {
     /// - For expensive operations, queue work and return quickly
     /// - Return errors for critical failures that should abort the update
     async fn on_peer_event(&self, event: PeerRegistryEvent) -> Result<()>;
-    
+
     /// Get observer name for logging/debugging
     fn name(&self) -> &str;
 }
@@ -153,8 +156,12 @@ impl PeerRegistryObserver for DhtObserver {
                 // Future: router.add_node(entry.to_dht_node())?
                 Ok(())
             }
-            
-            PeerRegistryEvent::PeerUpdated { peer_id, old_entry: _, new_entry: _ } => {
+
+            PeerRegistryEvent::PeerUpdated {
+                peer_id,
+                old_entry: _,
+                new_entry: _,
+            } => {
                 tracing::debug!(
                     observer = %self.name,
                     peer_id = %peer_id.node_id(),
@@ -163,7 +170,7 @@ impl PeerRegistryObserver for DhtObserver {
                 // Future: router.update_node(new_entry.to_dht_node())?
                 Ok(())
             }
-            
+
             PeerRegistryEvent::PeerRemoved { peer_id, entry: _ } => {
                 tracing::debug!(
                     observer = %self.name,
@@ -173,8 +180,12 @@ impl PeerRegistryObserver for DhtObserver {
                 // Future: router.remove_node(peer_id.node_id())?
                 Ok(())
             }
-            
-            PeerRegistryEvent::BatchUpdate { added, updated, removed } => {
+
+            PeerRegistryEvent::BatchUpdate {
+                added,
+                updated,
+                removed,
+            } => {
                 tracing::info!(
                     observer = %self.name,
                     added = added.len(),
@@ -188,7 +199,7 @@ impl PeerRegistryObserver for DhtObserver {
             }
         }
     }
-    
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -224,8 +235,12 @@ impl PeerRegistryObserver for MeshObserver {
                 // Future: mesh_topology.add_node(entry)?
                 Ok(())
             }
-            
-            PeerRegistryEvent::PeerUpdated { peer_id, old_entry: _, new_entry: _ } => {
+
+            PeerRegistryEvent::PeerUpdated {
+                peer_id,
+                old_entry: _,
+                new_entry: _,
+            } => {
                 tracing::debug!(
                     observer = %self.name,
                     peer_id = %peer_id.node_id(),
@@ -234,7 +249,7 @@ impl PeerRegistryObserver for MeshObserver {
                 // Future: mesh_topology.update_node(new_entry)?
                 Ok(())
             }
-            
+
             PeerRegistryEvent::PeerRemoved { peer_id, entry: _ } => {
                 tracing::debug!(
                     observer = %self.name,
@@ -244,8 +259,12 @@ impl PeerRegistryObserver for MeshObserver {
                 // Future: mesh_topology.remove_node(peer_id)?
                 Ok(())
             }
-            
-            PeerRegistryEvent::BatchUpdate { added, updated, removed } => {
+
+            PeerRegistryEvent::BatchUpdate {
+                added,
+                updated,
+                removed,
+            } => {
                 tracing::info!(
                     observer = %self.name,
                     added = added.len(),
@@ -257,7 +276,7 @@ impl PeerRegistryObserver for MeshObserver {
             }
         }
     }
-    
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -293,8 +312,12 @@ impl PeerRegistryObserver for BlockchainObserver {
                 // validator_set.add(peer_id)?
                 Ok(())
             }
-            
-            PeerRegistryEvent::PeerUpdated { peer_id, old_entry: _, new_entry: _ } => {
+
+            PeerRegistryEvent::PeerUpdated {
+                peer_id,
+                old_entry: _,
+                new_entry: _,
+            } => {
                 tracing::debug!(
                     observer = %self.name,
                     peer_id = %peer_id.node_id(),
@@ -303,7 +326,7 @@ impl PeerRegistryObserver for BlockchainObserver {
                 // Future: Check if validator status changed and update accordingly
                 Ok(())
             }
-            
+
             PeerRegistryEvent::PeerRemoved { peer_id, entry: _ } => {
                 tracing::debug!(
                     observer = %self.name,
@@ -314,8 +337,12 @@ impl PeerRegistryObserver for BlockchainObserver {
                 // validator_set.remove(peer_id)?
                 Ok(())
             }
-            
-            PeerRegistryEvent::BatchUpdate { added, updated, removed } => {
+
+            PeerRegistryEvent::BatchUpdate {
+                added,
+                updated,
+                removed,
+            } => {
                 tracing::info!(
                     observer = %self.name,
                     added = added.len(),
@@ -327,7 +354,7 @@ impl PeerRegistryObserver for BlockchainObserver {
             }
         }
     }
-    
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -381,7 +408,7 @@ impl ObserverRegistry {
     pub fn new() -> Self {
         Self::with_config(ObserverRegistryConfig::default())
     }
-    
+
     /// Create a new observer registry with custom configuration
     pub fn with_config(config: ObserverRegistryConfig) -> Self {
         Self {
@@ -390,7 +417,7 @@ impl ObserverRegistry {
             registration_times: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     /// Register an observer for peer change notifications
     ///
     /// # Memory Management
@@ -399,7 +426,7 @@ impl ObserverRegistry {
     /// - Returns error if observer limit would be exceeded
     pub async fn register(&self, observer: Arc<dyn PeerRegistryObserver>) -> Result<()> {
         let mut observers = self.observers.write().await;
-        
+
         // Memory management: Prevent observer count explosion
         if observers.len() >= self.max_observers {
             return Err(anyhow!(
@@ -408,18 +435,21 @@ impl ObserverRegistry {
                 self.max_observers
             ));
         }
-        
+
         // Track registration time for cleanup
         let observer_name = observer.name().to_string();
         let mut registration_times = self.registration_times.write().await;
         registration_times.insert(observer_name.clone(), Instant::now());
-        
-        tracing::info!(observer = observer_name, "Registering peer registry observer");
+
+        tracing::info!(
+            observer = observer_name,
+            "Registering peer registry observer"
+        );
         observers.push(observer);
-        
+
         Ok(())
     }
-    
+
     /// Unregister an observer by name
     ///
     /// # Memory Management
@@ -427,20 +457,20 @@ impl ObserverRegistry {
     pub async fn unregister(&self, name: &str) -> bool {
         let mut observers = self.observers.write().await;
         let mut registration_times = self.registration_times.write().await;
-        
+
         let initial_len = observers.len();
         observers.retain(|obs| obs.name() != name);
         registration_times.remove(name);
-        
+
         let removed = initial_len != observers.len();
-        
+
         if removed {
             tracing::info!(observer = name, "Unregistered peer registry observer");
         }
-        
+
         removed
     }
-    
+
     /// Clean up stale observers based on timeout
     ///
     /// # Memory Management
@@ -451,12 +481,13 @@ impl ObserverRegistry {
         let now = Instant::now();
         let mut registration_times = self.registration_times.write().await;
         let mut observers = self.observers.write().await;
-        
-        let stale_observers: Vec<String> = registration_times.iter()
+
+        let stale_observers: Vec<String> = registration_times
+            .iter()
             .filter(|(_, &reg_time)| now.duration_since(reg_time).as_secs() > timeout_secs)
             .map(|(name, _)| name.clone())
             .collect();
-        
+
         let count = stale_observers.len();
         if count > 0 {
             tracing::info!(
@@ -464,7 +495,7 @@ impl ObserverRegistry {
                 timeout_secs = timeout_secs,
                 "Cleaning up stale observers"
             );
-            
+
             // Remove stale observers
             for name in stale_observers {
                 observers.retain(|obs| obs.name() != &name);
@@ -472,10 +503,10 @@ impl ObserverRegistry {
                 tracing::debug!(observer = name, "Removed stale observer");
             }
         }
-        
+
         count
     }
-    
+
     /// Get observer statistics for monitoring
     ///
     /// # Performance Monitoring
@@ -483,7 +514,7 @@ impl ObserverRegistry {
     pub async fn get_stats(&self) -> ObserverRegistryStats {
         let observers = self.observers.read().await;
         let registration_times = self.registration_times.read().await;
-        
+
         ObserverRegistryStats {
             observer_count: observers.len(),
             max_observers: self.max_observers,
@@ -491,7 +522,7 @@ impl ObserverRegistry {
             registration_times: registration_times.clone(),
         }
     }
-    
+
     /// Dispatch an event to all registered observers
     ///
     /// # Atomicity
@@ -503,17 +534,17 @@ impl ObserverRegistry {
     /// the error is propagated to the caller. This ensures transactional semantics.
     pub async fn dispatch(&self, event: PeerRegistryEvent) -> Result<()> {
         let observers = self.observers.read().await;
-        
+
         if observers.is_empty() {
             return Ok(());
         }
-        
+
         tracing::trace!(
             event = ?event,
             observer_count = observers.len(),
             "Dispatching peer registry event"
         );
-        
+
         // Dispatch to all observers sequentially
         // Sequential dispatch ensures deterministic order and simplifies error handling
         for observer in observers.iter() {
@@ -526,10 +557,10 @@ impl ObserverRegistry {
                 e
             })?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Get count of registered observers
     pub async fn count(&self) -> usize {
         self.observers.read().await.len()
@@ -561,41 +592,48 @@ impl BatchUpdate {
             removed: Vec::new(),
         }
     }
-    
+
     /// Add a peer to the batch
     pub fn add_peer(&mut self, peer_id: UnifiedPeerId, entry: PeerEntry) {
         self.added.push((peer_id, entry));
     }
-    
+
     /// Update a peer in the batch
-    pub fn update_peer(&mut self, peer_id: UnifiedPeerId, old_entry: PeerEntry, new_entry: PeerEntry) {
+    pub fn update_peer(
+        &mut self,
+        peer_id: UnifiedPeerId,
+        old_entry: PeerEntry,
+        new_entry: PeerEntry,
+    ) {
         self.updated.push((peer_id, old_entry, new_entry));
     }
-    
+
     /// Remove a peer from the batch
     pub fn remove_peer(&mut self, peer_id: UnifiedPeerId, entry: PeerEntry) {
         self.removed.push((peer_id, entry));
     }
-    
+
     /// Get total number of changes in the batch
     pub fn len(&self) -> usize {
         self.added.len() + self.updated.len() + self.removed.len()
     }
-    
+
     /// Check if batch is empty
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    
+
     /// Extract batch data for event dispatch
-    pub(crate) fn into_event_data(self) -> (Vec<UnifiedPeerId>, Vec<UnifiedPeerId>, Vec<UnifiedPeerId>) {
+    pub(crate) fn into_event_data(
+        self,
+    ) -> (Vec<UnifiedPeerId>, Vec<UnifiedPeerId>, Vec<UnifiedPeerId>) {
         let added_ids: Vec<_> = self.added.iter().map(|(id, _)| id.clone()).collect();
         let updated_ids: Vec<_> = self.updated.iter().map(|(id, _, _)| id.clone()).collect();
         let removed_ids: Vec<_> = self.removed.iter().map(|(id, _)| id.clone()).collect();
-        
+
         (added_ids, updated_ids, removed_ids)
     }
-    
+
     /// Get references to batch operations
     pub fn operations(&self) -> BatchOperations<'_> {
         BatchOperations {
@@ -624,13 +662,13 @@ mod tests {
     use super::*;
     use crate::peer_registry::{NodeId, PublicKey};
     use crate::protocols::NetworkProtocol;
-    
+
     /// Mock observer for testing
     struct TestObserver {
         name: String,
         events: Arc<RwLock<Vec<PeerRegistryEvent>>>,
     }
-    
+
     impl TestObserver {
         fn new(name: &str) -> (Self, Arc<RwLock<Vec<PeerRegistryEvent>>>) {
             let events = Arc::new(RwLock::new(Vec::new()));
@@ -641,19 +679,19 @@ mod tests {
             (observer, events)
         }
     }
-    
+
     #[async_trait::async_trait]
     impl PeerRegistryObserver for TestObserver {
         async fn on_peer_event(&self, event: PeerRegistryEvent) -> Result<()> {
             self.events.write().await.push(event);
             Ok(())
         }
-        
+
         fn name(&self) -> &str {
             &self.name
         }
     }
-    
+
     fn create_test_peer_entry(_node_id_bytes: [u8; 32]) -> PeerEntry {
         use crate::peer_registry::*;
         use lib_identity::ZhtpIdentity;
@@ -664,10 +702,11 @@ mod tests {
             None,
             "test-device",
             None,
-        ).expect("Failed to create test identity");
+        )
+        .expect("Failed to create test identity");
 
-        let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)
-            .expect("Failed to create UnifiedPeerId");
+        let peer_id =
+            UnifiedPeerId::from_zhtp_identity(&identity).expect("Failed to create UnifiedPeerId");
 
         let connection_metrics = ConnectionMetrics {
             signal_strength: 1.0,
@@ -714,170 +753,170 @@ mod tests {
             1.0,
         )
     }
-    
+
     #[tokio::test]
     async fn test_observer_registration() {
         let registry = ObserverRegistry::new();
         assert_eq!(registry.count().await, 0);
-        
+
         let (observer1, _) = TestObserver::new("test1");
         registry.register(Arc::new(observer1)).await;
         assert_eq!(registry.count().await, 1);
-        
+
         let (observer2, _) = TestObserver::new("test2");
         registry.register(Arc::new(observer2)).await;
         assert_eq!(registry.count().await, 2);
     }
-    
+
     #[tokio::test]
     async fn test_observer_unregistration() {
         let registry = ObserverRegistry::new();
-        
+
         let (observer1, _) = TestObserver::new("test1");
         let (observer2, _) = TestObserver::new("test2");
         registry.register(Arc::new(observer1)).await;
         registry.register(Arc::new(observer2)).await;
         assert_eq!(registry.count().await, 2);
-        
+
         let removed = registry.unregister("test1").await;
         assert!(removed);
         assert_eq!(registry.count().await, 1);
-        
+
         let not_removed = registry.unregister("nonexistent").await;
         assert!(!not_removed);
         assert_eq!(registry.count().await, 1);
     }
-    
+
     #[tokio::test]
     async fn test_event_dispatch() {
         let registry = ObserverRegistry::new();
         let (observer, events) = TestObserver::new("test");
         registry.register(Arc::new(observer)).await;
-        
+
         let peer_entry = create_test_peer_entry([1u8; 32]);
         let peer_id = peer_entry.peer_id.clone();
-        
+
         let event = PeerRegistryEvent::PeerAdded {
             peer_id,
             entry: peer_entry,
         };
-        
+
         registry.dispatch(event.clone()).await.unwrap();
-        
+
         let received_events = events.read().await;
         assert_eq!(received_events.len(), 1);
         matches!(received_events[0], PeerRegistryEvent::PeerAdded { .. });
     }
-    
+
     #[tokio::test]
     async fn test_multiple_observers_receive_events() {
         let registry = ObserverRegistry::new();
-        
+
         let (observer1, events1) = TestObserver::new("test1");
         let (observer2, events2) = TestObserver::new("test2");
         registry.register(Arc::new(observer1)).await;
         registry.register(Arc::new(observer2)).await;
-        
+
         let peer_entry = create_test_peer_entry([2u8; 32]);
         let peer_id = peer_entry.peer_id.clone();
-        
+
         let event = PeerRegistryEvent::PeerRemoved {
             peer_id,
             entry: peer_entry,
         };
-        
+
         registry.dispatch(event).await.unwrap();
-        
+
         assert_eq!(events1.read().await.len(), 1);
         assert_eq!(events2.read().await.len(), 1);
     }
-    
+
     #[tokio::test]
     async fn test_batch_update_builder() {
         let mut batch = BatchUpdate::new();
         assert!(batch.is_empty());
         assert_eq!(batch.len(), 0);
-        
+
         let entry1 = create_test_peer_entry([1u8; 32]);
         let entry2 = create_test_peer_entry([2u8; 32]);
         let entry3 = create_test_peer_entry([3u8; 32]);
-        
+
         batch.add_peer(entry1.peer_id.clone(), entry1.clone());
         batch.update_peer(entry2.peer_id.clone(), entry2.clone(), entry2.clone());
         batch.remove_peer(entry3.peer_id.clone(), entry3.clone());
-        
+
         assert!(!batch.is_empty());
         assert_eq!(batch.len(), 3);
-        
+
         let ops = batch.operations();
         assert_eq!(ops.added.len(), 1);
         assert_eq!(ops.updated.len(), 1);
         assert_eq!(ops.removed.len(), 1);
     }
-    
+
     #[tokio::test]
     async fn test_dht_observer() {
         let observer = Arc::new(DhtObserver::new());
         assert_eq!(observer.name(), "DhtObserver");
-        
+
         let peer_entry = create_test_peer_entry([4u8; 32]);
         let event = PeerRegistryEvent::PeerAdded {
             peer_id: peer_entry.peer_id.clone(),
             entry: peer_entry,
         };
-        
+
         // Should not error (currently no-op implementation)
         observer.on_peer_event(event).await.unwrap();
     }
-    
+
     #[tokio::test]
     async fn test_mesh_observer() {
         let observer = Arc::new(MeshObserver::new());
         assert_eq!(observer.name(), "MeshObserver");
-        
+
         let peer_entry = create_test_peer_entry([5u8; 32]);
         let event = PeerRegistryEvent::PeerUpdated {
             peer_id: peer_entry.peer_id.clone(),
             old_entry: peer_entry.clone(),
             new_entry: peer_entry,
         };
-        
+
         observer.on_peer_event(event).await.unwrap();
     }
-    
+
     #[tokio::test]
     async fn test_blockchain_observer() {
         let observer = Arc::new(BlockchainObserver::new());
         assert_eq!(observer.name(), "BlockchainObserver");
-        
+
         let peer_entry = create_test_peer_entry([6u8; 32]);
         let event = PeerRegistryEvent::PeerRemoved {
             peer_id: peer_entry.peer_id.clone(),
             entry: peer_entry,
         };
-        
+
         observer.on_peer_event(event).await.unwrap();
     }
-    
+
     #[tokio::test]
     async fn test_batch_update_event() {
         let registry = ObserverRegistry::new();
         let (observer, events) = TestObserver::new("test");
         registry.register(Arc::new(observer)).await.unwrap();
-        
+
         let event = PeerRegistryEvent::BatchUpdate {
             added: vec![],
             updated: vec![],
             removed: vec![],
         };
-        
+
         registry.dispatch(event).await.unwrap();
-        
+
         let received = events.read().await;
         assert_eq!(received.len(), 1);
         matches!(received[0], PeerRegistryEvent::BatchUpdate { .. });
     }
-    
+
     #[tokio::test]
     async fn test_observer_limit_enforcement() {
         let config = ObserverRegistryConfig {
@@ -886,31 +925,31 @@ mod tests {
             observer_timeout_secs: 60,
         };
         let registry = ObserverRegistry::with_config(config);
-        
+
         // Should succeed for first two observers
         let (observer1, _) = TestObserver::new("test1");
         registry.register(Arc::new(observer1)).await.unwrap();
-        
+
         let (observer2, _) = TestObserver::new("test2");
         registry.register(Arc::new(observer2)).await.unwrap();
-        
+
         // Should fail for third observer (limit reached)
         let (observer3, _) = TestObserver::new("test3");
         let result = registry.register(Arc::new(observer3)).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("limit reached"));
     }
-    
+
     #[tokio::test]
     async fn test_observer_stats() {
         let registry = ObserverRegistry::new();
-        
+
         let (observer1, _) = TestObserver::new("test1");
         registry.register(Arc::new(observer1)).await.unwrap();
-        
+
         let (observer2, _) = TestObserver::new("test2");
         registry.register(Arc::new(observer2)).await.unwrap();
-        
+
         let stats = registry.get_stats().await;
         assert_eq!(stats.observer_count, 2);
         assert_eq!(stats.max_observers, 50);
@@ -918,7 +957,7 @@ mod tests {
         assert!(stats.average_lifetime_secs().is_some());
         assert!(stats.longest_running_observer().is_some());
     }
-    
+
     #[tokio::test]
     async fn test_stale_observer_cleanup() {
         let config = ObserverRegistryConfig {
@@ -927,10 +966,10 @@ mod tests {
             observer_timeout_secs: 1, // Very short for testing
         };
         let registry = ObserverRegistry::with_config(config);
-        
+
         let (observer1, _) = TestObserver::new("test1");
         registry.register(Arc::new(observer1)).await.unwrap();
-        
+
         // Simulate old registration by manipulating time
         // (In real scenario, this would happen naturally over time)
         let mut registration_times = registry.registration_times.write().await;
@@ -939,31 +978,31 @@ mod tests {
             *time = Instant::now() - std::time::Duration::from_secs(10);
         }
         drop(registration_times);
-        
+
         // Cleanup should remove the stale observer
         let removed = registry.cleanup_stale_observers(5).await; // 5 second timeout
         assert_eq!(removed, 1);
-        
+
         // Verify observer was removed
         let stats = registry.get_stats().await;
         assert_eq!(stats.observer_count, 0);
     }
-    
+
     #[tokio::test]
     async fn test_observer_unregister_cleanup() {
         let registry = ObserverRegistry::new();
-        
+
         let (observer, _) = TestObserver::new("test");
         registry.register(Arc::new(observer)).await.unwrap();
-        
+
         // Verify registration time was tracked
         let stats_before = registry.get_stats().await;
         assert_eq!(stats_before.registration_times.len(), 1);
-        
+
         // Unregister should cleanup both observer and registration time
         let removed = registry.unregister("test").await;
         assert!(removed);
-        
+
         let stats_after = registry.get_stats().await;
         assert_eq!(stats_after.registration_times.len(), 0);
     }

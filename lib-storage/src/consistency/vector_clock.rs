@@ -1,8 +1,8 @@
 //! Vector clock implementation for distributed causality tracking
 
+use crate::types::NodeId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::types::NodeId;
 
 /// Vector clock for tracking causality in distributed systems
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

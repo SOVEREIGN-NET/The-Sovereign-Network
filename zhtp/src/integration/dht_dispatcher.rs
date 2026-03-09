@@ -3,12 +3,12 @@
 //! Goal: relocate DHT bootstrap/transport wiring out of mesh/core. This dispatcher
 //! carries intent to an integration handler without pulling lib-storage into mesh.
 
-use std::path::PathBuf;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tracing::{info, warn};
 use lib_types::NodeId;
-use std::sync::{Arc, Mutex, OnceLock};
 use std::fs;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::{info, warn};
 
 /// DHT integration intents emitted from mesh/core.
 #[derive(Debug, Clone)]
@@ -25,8 +25,8 @@ pub enum DhtIntegrationEvent {
     },
 }
 
-static LATEST_DHT_SENDER: OnceLock<Arc<Mutex<Option<UnboundedSender<(Vec<u8>, NodeId)>>>>>
-    = OnceLock::new();
+static LATEST_DHT_SENDER: OnceLock<Arc<Mutex<Option<UnboundedSender<(Vec<u8>, NodeId)>>>>> =
+    OnceLock::new();
 
 /// Simple dispatcher that fans events out to a receiver for the integration layer.
 #[derive(Clone)]
@@ -45,7 +45,10 @@ impl DhtIntegrationDispatcher {
 }
 
 /// Build an event channel for DHT integration.
-pub fn dht_integration_channel() -> (DhtIntegrationDispatcher, UnboundedReceiver<DhtIntegrationEvent>) {
+pub fn dht_integration_channel() -> (
+    DhtIntegrationDispatcher,
+    UnboundedReceiver<DhtIntegrationEvent>,
+) {
     let (tx, rx) = unbounded_channel();
     (DhtIntegrationDispatcher::new(tx), rx)
 }
@@ -53,7 +56,11 @@ pub fn dht_integration_channel() -> (DhtIntegrationDispatcher, UnboundedReceiver
 pub async fn drain_dht_events(mut rx: UnboundedReceiver<DhtIntegrationEvent>) {
     while let Some(evt) = rx.recv().await {
         match evt {
-            DhtIntegrationEvent::InitStorage { local_node_id, persist_path, max_bytes } => {
+            DhtIntegrationEvent::InitStorage {
+                local_node_id,
+                persist_path,
+                max_bytes,
+            } => {
                 // Ensure parent dir exists so callers can safely persist.
                 if let Some(parent) = persist_path.parent() {
                     if let Err(e) = fs::create_dir_all(parent) {

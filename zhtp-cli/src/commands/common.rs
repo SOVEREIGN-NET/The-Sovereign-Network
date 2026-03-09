@@ -3,7 +3,7 @@
 //! This module contains shared validation logic used by multiple command modules
 //! to maintain DRY principles and ensure consistent validation behavior.
 
-use crate::error::{CliResult, CliError};
+use crate::error::{CliError, CliResult};
 
 /// Minimum length for a valid identity ID
 const MIN_IDENTITY_ID_LENGTH: usize = 10;
@@ -11,7 +11,7 @@ const MIN_IDENTITY_ID_LENGTH: usize = 10;
 /// Validate identity ID format
 ///
 /// Pure function - format validation only
-/// 
+///
 /// Identity IDs should:
 /// - Not be empty
 /// - Be at least 10 characters long

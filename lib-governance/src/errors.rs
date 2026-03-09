@@ -1,14 +1,16 @@
 //! Governance Errors
 
-use thiserror::Error;
 use lib_types::{BlockHeight, TokenId};
+use thiserror::Error;
 
 use crate::fields::ConfigField;
 
 /// Error during governance operations
 #[derive(Error, Debug, Clone)]
 pub enum GovernanceError {
-    #[error("Immediate activation not allowed: activates_at={activates_at}, current={current_height}")]
+    #[error(
+        "Immediate activation not allowed: activates_at={activates_at}, current={current_height}"
+    )]
     ImmediateActivation {
         activates_at: BlockHeight,
         current_height: BlockHeight,

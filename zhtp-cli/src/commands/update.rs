@@ -8,10 +8,10 @@
 //! - **Testability**: Pure functions for version parsing and comparison
 
 use crate::argument_parsing::UpdateAction;
-use crate::error::{CliResult, CliError};
+use crate::error::{CliError, CliResult};
 
-use std::path::{Path, PathBuf};
 use semver::Version;
+use std::path::{Path, PathBuf};
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -99,12 +99,8 @@ pub fn should_backup_exist(binary_path: &Path) -> CliResult<()> {
 ///
 /// Pure function - environment inspection only
 pub fn get_binary_path() -> CliResult<PathBuf> {
-    std::env::current_exe().map_err(|e| {
-        CliError::ConfigError(format!(
-            "Failed to get current executable path: {}",
-            e
-        ))
-    })
+    std::env::current_exe()
+        .map_err(|e| CliError::ConfigError(format!("Failed to get current executable path: {}", e)))
 }
 
 /// Get GitHub release download URL
@@ -224,7 +220,11 @@ async fn rollback_update_impl() -> CliResult<()> {
     // 4. Verify rollback succeeded
 
     println!("\nNote: Manual rollback steps:");
-    println!("  1. mv {} {}", backup_path.display(), binary_path.display());
+    println!(
+        "  1. mv {} {}",
+        backup_path.display(),
+        binary_path.display()
+    );
     println!("  2. chmod +x {}", binary_path.display());
     println!("  3. zhtp-cli version");
 
@@ -254,31 +254,49 @@ mod tests {
 
     #[test]
     fn test_action_to_operation_check() {
-        assert_eq!(action_to_operation(&UpdateAction::Check), UpdateOperation::Check);
+        assert_eq!(
+            action_to_operation(&UpdateAction::Check),
+            UpdateOperation::Check
+        );
     }
 
     #[test]
     fn test_action_to_operation_install() {
-        let action = UpdateAction::Install { force: false, backup: true };
+        let action = UpdateAction::Install {
+            force: false,
+            backup: true,
+        };
         assert_eq!(action_to_operation(&action), UpdateOperation::Install);
     }
 
     #[test]
     fn test_action_to_operation_rollback() {
-        assert_eq!(action_to_operation(&UpdateAction::Rollback), UpdateOperation::Rollback);
+        assert_eq!(
+            action_to_operation(&UpdateAction::Rollback),
+            UpdateOperation::Rollback
+        );
     }
 
     #[test]
     fn test_action_to_operation_version() {
-        assert_eq!(action_to_operation(&UpdateAction::Version), UpdateOperation::ShowVersion);
+        assert_eq!(
+            action_to_operation(&UpdateAction::Version),
+            UpdateOperation::ShowVersion
+        );
     }
 
     #[test]
     fn test_operation_description() {
         assert_eq!(UpdateOperation::Check.description(), "Check for updates");
         assert_eq!(UpdateOperation::Install.description(), "Install update");
-        assert_eq!(UpdateOperation::Rollback.description(), "Rollback to previous version");
-        assert_eq!(UpdateOperation::ShowVersion.description(), "Show current version");
+        assert_eq!(
+            UpdateOperation::Rollback.description(),
+            "Rollback to previous version"
+        );
+        assert_eq!(
+            UpdateOperation::ShowVersion.description(),
+            "Show current version"
+        );
     }
 
     #[test]

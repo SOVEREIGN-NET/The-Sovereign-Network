@@ -20,17 +20,19 @@ pub mod session_log;
 pub mod types;
 pub mod validation;
 
-pub use session_log::{SessionLog, SessionLogEntry, SharedSessionLog, new_shared_session_log};
 pub use challenge::ChallengeGenerator;
-pub use disputes::{DisputeService, Dispute, DisputeType, DisputeStatus, DisputeError};
-pub use health::{PouwHealthChecker, HealthCheckResponse, HealthStatus, HealthCheck};
-pub use load_test::{SyntheticReceiptGenerator, LoadTestConfig, LoadTestResults, run_load_test};
+pub use disputes::{Dispute, DisputeError, DisputeService, DisputeStatus, DisputeType};
+pub use health::{HealthCheck, HealthCheckResponse, HealthStatus, PouwHealthChecker};
+pub use load_test::{run_load_test, LoadTestConfig, LoadTestResults, SyntheticReceiptGenerator};
 pub use metrics::{PouwMetrics, PouwMetricsSnapshot, RejectionType};
-pub use rate_limiter::{PouwRateLimiter, RateLimitConfig, RateLimitResult, RateLimitReason};
-pub use rewards::{RewardCalculator, Reward, RewardTransaction, PayoutStatus, EpochClientStats};
+pub use rate_limiter::{PouwRateLimiter, RateLimitConfig, RateLimitReason, RateLimitResult};
+pub use rewards::{EpochClientStats, PayoutStatus, Reward, RewardCalculator, RewardTransaction};
+pub use session_log::{new_shared_session_log, SessionLog, SessionLogEntry, SharedSessionLog};
 pub use types::*;
-pub use validation::{ReceiptValidator, ReceiptValidationResult, SubmitResponse, RejectionReason, spawn_mesh_routing_listener};
-
+pub use validation::{
+    spawn_mesh_routing_listener, ReceiptValidationResult, ReceiptValidator, RejectionReason,
+    SubmitResponse,
+};
 
 /// Spawn the POUW reward payout background task.
 ///
@@ -55,7 +57,10 @@ pub fn spawn_pouw_payout_task(
             // Reset any previously-failed rewards so they get retried this cycle
             let reset_count = calculator.reset_failed_rewards().await;
             if reset_count > 0 {
-                tracing::info!(count = reset_count, "Reset failed POUW rewards to Pending for retry");
+                tracing::info!(
+                    count = reset_count,
+                    "Reset failed POUW rewards to Pending for retry"
+                );
             }
 
             let pending = calculator.get_pending_rewards().await;
@@ -78,14 +83,16 @@ pub fn spawn_pouw_payout_task(
                 // Derive recipient key_id from DID
                 // Expected format: did:zhtp:<hex-encoded-32-byte-key-id>
                 let key_id_result: anyhow::Result<[u8; 32]> = (|| {
-                    let hex_part = reward.client_did
+                    let hex_part = reward
+                        .client_did
                         .strip_prefix("did:zhtp:")
                         .ok_or_else(|| anyhow::anyhow!("DID missing did:zhtp: prefix"))?;
                     let bytes = hex::decode(hex_part)
                         .map_err(|e| anyhow::anyhow!("Invalid DID hex: {}", e))?;
                     if bytes.len() != 32 {
                         return Err(anyhow::anyhow!(
-                            "DID key_id must be 32 bytes, got {}", bytes.len()
+                            "DID key_id must be 32 bytes, got {}",
+                            bytes.len()
                         ));
                     }
                     let mut arr = [0u8; 32];
@@ -109,17 +116,19 @@ pub fn spawn_pouw_payout_task(
                 // Mint SOV on the blockchain and persist immediately
                 let mint_result = {
                     let mut bc = blockchain.write().await;
-                    bc.mint_sov_for_pouw(key_id, reward.final_amount).and_then(|_| {
-                        // Phase 2: Use incremental storage if available, else fall back to file
-                        if bc.get_store().is_some() {
-                            // Store handles persistence incrementally
-                            Ok(())
-                        } else {
-                            #[allow(deprecated)]
-                            bc.save_to_file(&blockchain_dat_path)
-                                .map_err(|e| anyhow::anyhow!("save_to_file after POUW mint: {}", e))
-                        }
-                    })
+                    bc.mint_sov_for_pouw(key_id, reward.final_amount)
+                        .and_then(|_| {
+                            // Phase 2: Use incremental storage if available, else fall back to file
+                            if bc.get_store().is_some() {
+                                // Store handles persistence incrementally
+                                Ok(())
+                            } else {
+                                #[allow(deprecated)]
+                                bc.save_to_file(&blockchain_dat_path).map_err(|e| {
+                                    anyhow::anyhow!("save_to_file after POUW mint: {}", e)
+                                })
+                            }
+                        })
                 };
 
                 match mint_result {

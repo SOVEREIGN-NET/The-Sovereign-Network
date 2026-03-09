@@ -7,11 +7,11 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Traits for client and output injection
 
-use crate::argument_parsing::{NetworkArgs, NetworkAction, ZhtpCli, format_output};
+use crate::argument_parsing::{format_output, NetworkAction, NetworkArgs, ZhtpCli};
 use crate::commands::web4_utils::connect_default;
-use crate::error::{CliResult, CliError};
-use crate::output::Output;
+use crate::error::{CliError, CliResult};
 use crate::logic;
+use crate::output::Output;
 use lib_network::client::ZhtpClient;
 use std::time::{Duration, Instant};
 
@@ -121,7 +121,11 @@ async fn fetch_and_display_network_info(
 ) -> CliResult<()> {
     let response = match endpoint.method() {
         "GET" => client.get(endpoint.endpoint_path()).await,
-        "POST" => client.post_json(endpoint.endpoint_path(), &serde_json::json!({})).await,
+        "POST" => {
+            client
+                .post_json(endpoint.endpoint_path(), &serde_json::json!({}))
+                .await
+        }
         _ => client.get(endpoint.endpoint_path()).await,
     }
     .map_err(|e| CliError::ApiCallFailed {
@@ -130,8 +134,8 @@ async fn fetch_and_display_network_info(
         reason: e.to_string(),
     })?;
 
-    let result: serde_json::Value = ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ApiCallFailed {
+    let result: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: endpoint.endpoint_path().to_string(),
             status: 0,
             reason: format!("Failed to parse response: {}", e),
@@ -236,9 +240,18 @@ mod tests {
 
     #[test]
     fn test_network_endpoint_paths() {
-        assert_eq!(NetworkEndpoint::Status.endpoint_path(), "/api/v1/network/status");
-        assert_eq!(NetworkEndpoint::Peers.endpoint_path(), "/api/v1/network/peers");
-        assert_eq!(NetworkEndpoint::Test.endpoint_path(), "/api/v1/network/test");
+        assert_eq!(
+            NetworkEndpoint::Status.endpoint_path(),
+            "/api/v1/network/status"
+        );
+        assert_eq!(
+            NetworkEndpoint::Peers.endpoint_path(),
+            "/api/v1/network/peers"
+        );
+        assert_eq!(
+            NetworkEndpoint::Test.endpoint_path(),
+            "/api/v1/network/test"
+        );
     }
 
     #[test]

@@ -5,9 +5,9 @@
 //!
 //! Week 9: Full transaction execution layer foundation
 
-use std::collections::{HashMap, BinaryHeap};
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use serde::{Serialize, Deserialize};
+use std::collections::{BinaryHeap, HashMap};
 
 /// Transaction wrapper with metadata for priority calculation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,7 +88,8 @@ impl PartialOrd for MempoolPriority {
 impl Ord for MempoolPriority {
     fn cmp(&self, other: &Self) -> Ordering {
         // Higher priority should be popped first from BinaryHeap (max-heap)
-        self.priority.cmp(&other.priority)
+        self.priority
+            .cmp(&other.priority)
             .then_with(|| self.tx.fee.cmp(&other.tx.fee))
             .then_with(|| self.tx.received_at_height.cmp(&other.tx.received_at_height))
     }
@@ -158,10 +159,7 @@ impl Mempool {
 
         let priority = tx.priority_score(current_height);
         self.transactions.insert(tx_hash, tx.clone());
-        self.priority_queue.push(MempoolPriority {
-            tx,
-            priority,
-        });
+        self.priority_queue.push(MempoolPriority { tx, priority });
 
         self.total_fees_pending += fee;
         self.total_size_bytes += size as u64;
@@ -189,7 +187,10 @@ impl Mempool {
                 // Check if transaction is still in mempool and should be selected
                 if self.transactions.contains_key(&priority_tx.tx.tx_hash) {
                     // Check if transaction has expired
-                    if priority_tx.tx.should_retry(self.max_mempool_age, current_height) {
+                    if priority_tx
+                        .tx
+                        .should_retry(self.max_mempool_age, current_height)
+                    {
                         selected.push(priority_tx.tx.tx_hash);
                     } else {
                         // Transaction expired, remove it
@@ -294,12 +295,16 @@ mod tests {
         let tx_hash = [1u8; 32];
 
         // Add transaction
-        assert!(mempool.add_transaction(tx_hash, 1000, 200, 100, 1000000).is_ok());
+        assert!(mempool
+            .add_transaction(tx_hash, 1000, 200, 100, 1000000)
+            .is_ok());
         assert_eq!(mempool.size(), 1);
         assert_eq!(mempool.total_pending_fees(), 1000);
 
         // Try to add duplicate
-        assert!(mempool.add_transaction(tx_hash, 1000, 200, 100, 1000000).is_err());
+        assert!(mempool
+            .add_transaction(tx_hash, 1000, 200, 100, 1000000)
+            .is_err());
 
         // Remove transaction
         let removed = mempool.remove_transaction(&tx_hash);
@@ -333,12 +338,18 @@ mod tests {
         let mut mempool = Mempool::new(2, 1000);
 
         // Add 2 transactions
-        assert!(mempool.add_transaction([1u8; 32], 1000, 100, 100, 1000000).is_ok());
-        assert!(mempool.add_transaction([2u8; 32], 1000, 100, 100, 1000000).is_ok());
+        assert!(mempool
+            .add_transaction([1u8; 32], 1000, 100, 100, 1000000)
+            .is_ok());
+        assert!(mempool
+            .add_transaction([2u8; 32], 1000, 100, 100, 1000000)
+            .is_ok());
         assert_eq!(mempool.size(), 2);
 
         // Try to add 3rd (should fail - mempool full)
-        assert!(mempool.add_transaction([3u8; 32], 1000, 100, 100, 1000000).is_err());
+        assert!(mempool
+            .add_transaction([3u8; 32], 1000, 100, 100, 1000000)
+            .is_err());
     }
 
     #[test]
@@ -346,9 +357,15 @@ mod tests {
         let mut mempool = Mempool::new(100, 1000);
 
         // Add transactions with different fees
-        mempool.add_transaction([1u8; 32], 100, 100, 100, 1000000).ok();
-        mempool.add_transaction([2u8; 32], 1000, 100, 100, 1000000).ok(); // High fee
-        mempool.add_transaction([3u8; 32], 500, 100, 100, 1000000).ok();
+        mempool
+            .add_transaction([1u8; 32], 100, 100, 100, 1000000)
+            .ok();
+        mempool
+            .add_transaction([2u8; 32], 1000, 100, 100, 1000000)
+            .ok(); // High fee
+        mempool
+            .add_transaction([3u8; 32], 500, 100, 100, 1000000)
+            .ok();
 
         let selected = mempool.select_transactions(2, 100);
         assert_eq!(selected.len(), 2);

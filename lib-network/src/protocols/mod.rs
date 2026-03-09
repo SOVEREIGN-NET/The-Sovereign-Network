@@ -18,9 +18,9 @@
 //! - `types/` - Type definitions (network, capabilities, security, peer, session)
 //! - Protocol implementations for various transports (bluetooth, wifi_direct, quic_encryption, etc.)
 
-use async_trait::async_trait;
-use anyhow::Result;
 use crate::types::mesh_message::MeshMessageEnvelope;
+use anyhow::Result;
+use async_trait::async_trait;
 
 // ============================================================================
 // Type Definitions (organized in sub-modules)
@@ -30,12 +30,10 @@ pub mod types;
 
 // Re-export commonly used types for convenience
 pub use types::{
-    NetworkProtocol, ProtocolCapabilities, PowerProfile,
-    AuthScheme, UnsafeAuthScheme, CipherSuite, UnsafeCipherSuite, PqcMode,
-    BluetoothMac, ValidatedSocketAddr, ValidatedDeviceId, ValidatedSatelliteId,
-    PeerAddress, VerifiedPeerIdentity,
-    SessionId, SessionKeys, ReplayProtectionState, SessionLifecycle,
-    SessionRenewalReason, ProtocolSession,
+    AuthScheme, BluetoothMac, CipherSuite, NetworkProtocol, PeerAddress, PowerProfile, PqcMode,
+    ProtocolCapabilities, ProtocolSession, ReplayProtectionState, SessionId, SessionKeys,
+    SessionLifecycle, SessionRenewalReason, UnsafeAuthScheme, UnsafeCipherSuite, ValidatedDeviceId,
+    ValidatedSatelliteId, ValidatedSocketAddr, VerifiedPeerIdentity,
 };
 
 // ============================================================================
@@ -47,25 +45,25 @@ pub mod bluetooth;
 pub mod bluetooth_encryption; // Bluetooth encryption adapter with wire format & replay protection
 
 // Encryption adapters for various protocols
-pub mod zhtp_mesh_encryption;    // ZHTP mesh encryption adapter with domain separation
-pub mod wifi_direct_encryption;  // WiFi Direct encryption adapter with fallback support
-pub mod quic_encryption;         // QUIC application-level encryption adapter
-pub mod lorawan_encryption;      // LoRaWAN encryption adapter with frame counter domain separation
+pub mod lorawan_encryption;
+pub mod quic_encryption; // QUIC application-level encryption adapter
+pub mod wifi_direct_encryption; // WiFi Direct encryption adapter with fallback support
+pub mod zhtp_mesh_encryption; // ZHTP mesh encryption adapter with domain separation // LoRaWAN encryption adapter with frame counter domain separation
 
 // Other protocols
+pub mod lorawan;
+#[cfg(feature = "quic")]
+pub mod quic_api_dispatcher;
+#[cfg(feature = "quic")]
+pub mod quic_handshake; // UHP v2 transport adapter for QUIC (no QUIC crypto)
+#[cfg(feature = "quic")]
+pub mod quic_mesh; // QUIC transport with PQC encryption
+pub mod satellite;
 #[cfg(feature = "mdns")]
 pub mod wifi_direct;
 pub mod wifi_direct_handshake; // UHP handshake adapter for WiFi Direct
-pub mod lorawan;
-pub mod satellite;
 pub mod zhtp_auth;
-pub mod zhtp_encryption;
-#[cfg(feature = "quic")]
-pub mod quic_mesh;           // QUIC transport with PQC encryption
-#[cfg(feature = "quic")]
-pub mod quic_handshake;      // UHP v2 transport adapter for QUIC (no QUIC crypto)
-#[cfg(feature = "quic")]
-pub mod quic_api_dispatcher; // QUIC API request dispatcher for Web4 client
+pub mod zhtp_encryption; // QUIC API request dispatcher for Web4 client
 
 // Enhanced protocol implementations with platform-specific optimizations
 // NOTE: enhanced_bluetooth functionality is in bluetooth/enhanced.rs, not a separate top-level module
@@ -276,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_validated_socket_addr() {
-        use std::net::{Ipv4Addr, Ipv6Addr, IpAddr};
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
         let valid = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 8080);
         assert!(ValidatedSocketAddr::new(valid).is_ok());

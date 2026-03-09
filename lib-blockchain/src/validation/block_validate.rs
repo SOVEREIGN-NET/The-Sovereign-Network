@@ -11,7 +11,7 @@
 
 use crate::block::Block;
 use crate::fees::{classify_transaction, FeeParamsV2};
-use crate::storage::{BlockchainStore, BlockHash};
+use crate::storage::{BlockHash, BlockchainStore};
 use crate::types::Hash;
 
 use super::errors::{BlockValidateError, BlockValidateResult};
@@ -32,10 +32,10 @@ pub struct BlockValidateConfig {
 impl Default for BlockValidateConfig {
     fn default() -> Self {
         Self {
-            max_block_size: 1_048_576,      // 1MB
+            max_block_size: 1_048_576, // 1MB
             max_transactions: 4096,
             allow_empty_blocks: true,
-            max_future_timestamp: 7200,     // 2 hours
+            max_future_timestamp: 7200, // 2 hours
         }
     }
 }
@@ -141,13 +141,11 @@ fn get_expected_height(store: &dyn BlockchainStore) -> BlockValidateResult<u64> 
 }
 
 /// Validate previous block hash
-fn validate_previous_hash(
-    block: &Block,
-    store: &dyn BlockchainStore,
-) -> BlockValidateResult<()> {
+fn validate_previous_hash(block: &Block, store: &dyn BlockchainStore) -> BlockValidateResult<()> {
     let prev_height = block.header.height - 1;
 
-    let prev_block = store.get_block_by_height(prev_height)
+    let prev_block = store
+        .get_block_by_height(prev_height)
         .map_err(|e| BlockValidateError::StorageError(e.to_string()))?
         .ok_or(BlockValidateError::PreviousBlockNotFound(prev_height))?;
 
@@ -277,10 +275,7 @@ pub fn validate_block_resource_limits(
 }
 
 /// Compute aggregate resource usage for a block.
-fn compute_block_resource_usage(
-    block: &Block,
-    fee_params: &FeeParamsV2,
-) -> BlockResourceUsage {
+fn compute_block_resource_usage(block: &Block, fee_params: &FeeParamsV2) -> BlockResourceUsage {
     let mut usage = BlockResourceUsage::default();
 
     for tx in &block.transactions {
@@ -291,7 +286,8 @@ fn compute_block_resource_usage(
 
             // Compute verify units based on signature scheme
             let verify_units_per_sig = fee_params.get_verify_units_per_sig(fee_input.sig_scheme);
-            usage.total_verify_units += (fee_input.sig_count as u64) * (verify_units_per_sig as u64);
+            usage.total_verify_units +=
+                (fee_input.sig_count as u64) * (verify_units_per_sig as u64);
         }
     }
 
@@ -302,28 +298,24 @@ fn compute_block_resource_usage(
 mod tests {
     use super::*;
     use crate::block::{Block, BlockHeader};
-    use crate::transaction::{Transaction, TransactionInput, TransactionOutput};
-    use crate::types::{Hash, TransactionType, Difficulty};
     use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
     use crate::integration::zk_integration::ZkTransactionProof;
+    use crate::transaction::{Transaction, TransactionInput, TransactionOutput};
+    use crate::types::{Difficulty, Hash, TransactionType};
 
     fn create_test_transfer() -> Transaction {
         Transaction::new(
-            vec![
-                TransactionInput::new(
-                    Hash::new([1u8; 32]),
-                    0,
-                    Hash::new([2u8; 32]),
-                    ZkTransactionProof::default(),
-                ),
-            ],
-            vec![
-                TransactionOutput::new(
-                    Hash::new([3u8; 32]),
-                    Hash::new([4u8; 32]),
-                    PublicKey::new(vec![5u8; 32]),
-                ),
-            ],
+            vec![TransactionInput::new(
+                Hash::new([1u8; 32]),
+                0,
+                Hash::new([2u8; 32]),
+                ZkTransactionProof::default(),
+            )],
+            vec![TransactionOutput::new(
+                Hash::new([3u8; 32]),
+                Hash::new([4u8; 32]),
+                PublicKey::new(vec![5u8; 32]),
+            )],
             1000,
             Signature {
                 signature: vec![0u8; 64],
@@ -371,10 +363,7 @@ mod tests {
         params.block_max_txs = 1; // Very low limit
 
         // Create a block with 2 transactions
-        let block = create_test_block(vec![
-            create_test_transfer(),
-            create_test_transfer(),
-        ]);
+        let block = create_test_block(vec![create_test_transfer(), create_test_transfer()]);
 
         // This test checks tx count in BlockValidateConfig, not FeeParamsV2
         // so the resource limits check should still pass
@@ -391,7 +380,10 @@ mod tests {
 
         let result = validate_block_resource_limits(&block, &params);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BlockValidateError::PayloadBytesExceeded { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            BlockValidateError::PayloadBytesExceeded { .. }
+        ));
     }
 
     #[test]
@@ -403,6 +395,9 @@ mod tests {
 
         let result = validate_block_resource_limits(&block, &params);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BlockValidateError::VerifyUnitsExceeded { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            BlockValidateError::VerifyUnitsExceeded { .. }
+        ));
     }
 }

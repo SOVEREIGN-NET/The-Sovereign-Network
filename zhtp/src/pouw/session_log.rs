@@ -58,12 +58,7 @@ impl SessionLog {
     }
 
     /// Record a new authenticated session
-    pub fn record(
-        &mut self,
-        session_id: [u8; 8],
-        peer_did: String,
-        path_prefix: String,
-    ) {
+    pub fn record(&mut self, session_id: [u8; 8], peer_did: String, path_prefix: String) {
         let now = Self::now();
 
         // Evict expired entries from the front
@@ -147,7 +142,11 @@ mod tests {
 
     #[test]
     fn test_max_entries_eviction() {
-        let mut log = SessionLog { entries: VecDeque::new(), max_entries: 3, ttl_secs: 600 };
+        let mut log = SessionLog {
+            entries: VecDeque::new(),
+            max_entries: 3,
+            ttl_secs: 600,
+        };
 
         for i in 0..5u8 {
             log.record([i; 8], format!("did:zhtp:{}", i), "/".to_string());

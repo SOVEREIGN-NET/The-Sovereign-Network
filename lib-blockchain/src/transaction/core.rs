@@ -4,8 +4,11 @@
 
 use crate::integration::crypto_integration::{PublicKey, Signature};
 use crate::integration::zk_integration::ZkTransactionProof;
+use crate::transaction::oracle_governance::{
+    CancelOracleUpdateData, OracleAttestationData, OracleCommitteeUpdateData,
+    OracleConfigUpdateData,
+};
 use crate::types::{transaction_type::TransactionType, Hash};
-use crate::transaction::oracle_governance::{CancelOracleUpdateData, OracleAttestationData, OracleCommitteeUpdateData, OracleConfigUpdateData};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Zero-knowledge transaction with identity support
@@ -79,7 +82,8 @@ pub struct Transaction {
     pub oracle_attestation_data: Option<OracleAttestationData>,
     /// Oracle cancel update data (ORACLE-11)
     /// Required for TransactionType::CancelOracleUpdate
-    pub cancel_oracle_update_data: Option<crate::transaction::oracle_governance::CancelOracleUpdateData>,
+    pub cancel_oracle_update_data:
+        Option<crate::transaction::oracle_governance::CancelOracleUpdateData>,
 }
 
 /// Version constants for the `Transaction` wire format.
@@ -221,36 +225,47 @@ impl<'de> Deserialize<'de> for Transaction {
                     next!("governance_config_data");
 
                 // V3 added bonding curve data fields
-                let (bonding_curve_deploy_data, bonding_curve_buy_data,
-                     bonding_curve_sell_data, bonding_curve_graduate_data) = if version >= TX_VERSION_V3 {
-                    (next!("bonding_curve_deploy_data"),
-                     next!("bonding_curve_buy_data"),
-                     next!("bonding_curve_sell_data"),
-                     next!("bonding_curve_graduate_data"))
+                let (
+                    bonding_curve_deploy_data,
+                    bonding_curve_buy_data,
+                    bonding_curve_sell_data,
+                    bonding_curve_graduate_data,
+                ) = if version >= TX_VERSION_V3 {
+                    (
+                        next!("bonding_curve_deploy_data"),
+                        next!("bonding_curve_buy_data"),
+                        next!("bonding_curve_sell_data"),
+                        next!("bonding_curve_graduate_data"),
+                    )
                 } else {
                     (None, None, None, None)
                 };
 
                 // V4 added oracle governance data fields
-                let (oracle_committee_update_data, oracle_config_update_data) = if version >= TX_VERSION_V4 {
-                    (next!("oracle_committee_update_data"),
-                     next!("oracle_config_update_data"))
-                } else {
-                    (None, None)
-                };
+                let (oracle_committee_update_data, oracle_config_update_data) =
+                    if version >= TX_VERSION_V4 {
+                        (
+                            next!("oracle_committee_update_data"),
+                            next!("oracle_config_update_data"),
+                        )
+                    } else {
+                        (None, None)
+                    };
 
                 // V5 added oracle attestation data field
-                let oracle_attestation_data: Option<OracleAttestationData> = if version >= TX_VERSION_V5 {
-                    next!("oracle_attestation_data")
-                } else {
-                    None
-                };
+                let oracle_attestation_data: Option<OracleAttestationData> =
+                    if version >= TX_VERSION_V5 {
+                        next!("oracle_attestation_data")
+                    } else {
+                        None
+                    };
                 // V6 added cancel oracle update data field
-                let cancel_oracle_update_data: Option<CancelOracleUpdateData> = if version >= TX_VERSION_V6 {
-                    next!("cancel_oracle_update_data")
-                } else {
-                    None
-                };
+                let cancel_oracle_update_data: Option<CancelOracleUpdateData> =
+                    if version >= TX_VERSION_V6 {
+                        next!("cancel_oracle_update_data")
+                    } else {
+                        None
+                    };
 
                 Ok(Transaction {
                     version,
@@ -854,7 +869,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new identity registration transaction
@@ -893,7 +908,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new identity update transaction
@@ -934,7 +949,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new identity revocation transaction
@@ -991,7 +1006,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new wallet registration transaction
@@ -1030,7 +1045,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a wallet update transaction.
@@ -1086,7 +1101,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new token transfer transaction (balance model).
@@ -1134,7 +1149,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new token mint transaction (balance model).
@@ -1181,7 +1196,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new token creation transaction.
@@ -1223,7 +1238,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new validator registration transaction
@@ -1262,7 +1277,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new validator update transaction
@@ -1303,7 +1318,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new validator unregister transaction
@@ -1344,7 +1359,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new DAO proposal transaction
@@ -1385,7 +1400,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new DAO vote transaction
@@ -1426,7 +1441,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new DAO execution transaction
@@ -1467,7 +1482,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new UBI claim transaction
@@ -1520,7 +1535,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new profit declaration transaction
@@ -1580,7 +1595,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-}
+        }
     }
 
     /// Create a new governance config update transaction (Phase 3D)

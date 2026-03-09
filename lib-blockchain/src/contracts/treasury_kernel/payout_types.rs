@@ -189,7 +189,10 @@ impl CompensationConfig {
 
     /// Get rate for a role
     pub fn get_rate(&self, role_id: &RoleId) -> u64 {
-        self.base_rates.get(role_id).copied().unwrap_or(self.default_base_rate)
+        self.base_rates
+            .get(role_id)
+            .copied()
+            .unwrap_or(self.default_base_rate)
     }
 }
 
@@ -265,7 +268,11 @@ impl fmt::Display for CompensationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnfinalizedMetric { key } => {
-                write!(f, "Metric not finalized: epoch={}, type={}", key.epoch, key.metric_type)
+                write!(
+                    f,
+                    "Metric not finalized: epoch={}, type={}",
+                    key.epoch, key.metric_type
+                )
             }
             Self::EpochMismatch { expected, found } => {
                 write!(f, "Epoch mismatch: expected={}, found={}", expected, found)
@@ -273,22 +280,36 @@ impl fmt::Display for CompensationError {
             Self::EpochNotClosed { epoch } => {
                 write!(f, "Epoch {} is not closed", epoch)
             }
-            Self::AlreadyPaid { epoch, assignment_id, existing_tx } => {
+            Self::AlreadyPaid {
+                epoch,
+                assignment_id,
+                existing_tx,
+            } => {
                 write!(
                     f,
                     "Already paid for epoch={}, assignment={:?}, tx={:?}",
-                    epoch, &assignment_id[..4], &existing_tx[..4]
+                    epoch,
+                    &assignment_id[..4],
+                    &existing_tx[..4]
                 )
             }
-            Self::NoMetrics { epoch, assignment_id } => {
+            Self::NoMetrics {
+                epoch,
+                assignment_id,
+            } => {
                 write!(
                     f,
                     "No metrics for epoch={}, assignment={:?}",
-                    epoch, &assignment_id[..4]
+                    epoch,
+                    &assignment_id[..4]
                 )
             }
             Self::InsufficientAttestations { metric_key } => {
-                write!(f, "Insufficient attestations for metric: epoch={}", metric_key.epoch)
+                write!(
+                    f,
+                    "Insufficient attestations for metric: epoch={}",
+                    metric_key.epoch
+                )
             }
             Self::AssignmentNotFound(id) => {
                 write!(f, "Assignment not found: {:?}", &id[..4])
@@ -296,14 +317,26 @@ impl fmt::Display for CompensationError {
             Self::RoleNotFound(id) => {
                 write!(f, "Role not found: {:?}", &id[..4])
             }
-            Self::CapExceeded { cap_type, amount, cap } => {
-                write!(f, "{} cap exceeded: amount={}, cap={}", cap_type, amount, cap)
+            Self::CapExceeded {
+                cap_type,
+                amount,
+                cap,
+            } => {
+                write!(
+                    f,
+                    "{} cap exceeded: amount={}, cap={}",
+                    cap_type, amount, cap
+                )
             }
-            Self::ComputationMismatch { expected_hash, actual_hash } => {
+            Self::ComputationMismatch {
+                expected_hash,
+                actual_hash,
+            } => {
                 write!(
                     f,
                     "Computation mismatch: expected={:?}, actual={:?}",
-                    &expected_hash[..4], &actual_hash[..4]
+                    &expected_hash[..4],
+                    &actual_hash[..4]
                 )
             }
             Self::BelowMinimumThreshold { amount, threshold } => {
@@ -334,18 +367,28 @@ pub enum PaymentError {
 impl fmt::Display for PaymentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AlreadyPaid { epoch, assignment_id, existing_tx } => {
+            Self::AlreadyPaid {
+                epoch,
+                assignment_id,
+                existing_tx,
+            } => {
                 write!(
                     f,
                     "Already paid for epoch={}, assignment={:?}, tx={:?}",
-                    epoch, &assignment_id[..4], &existing_tx[..4]
+                    epoch,
+                    &assignment_id[..4],
+                    &existing_tx[..4]
                 )
             }
-            Self::PaymentNotFound { epoch, assignment_id } => {
+            Self::PaymentNotFound {
+                epoch,
+                assignment_id,
+            } => {
                 write!(
                     f,
                     "Payment not found for epoch={}, assignment={:?}",
-                    epoch, &assignment_id[..4]
+                    epoch,
+                    &assignment_id[..4]
                 )
             }
         }
@@ -362,7 +405,7 @@ mod tests {
     fn test_payout_breakdown() {
         let breakdown = PayoutBreakdown::new(100, 40)
             .with_multiplier("performance", 11000) // 110%
-            .with_multiplier("seniority", 10500);  // 105%
+            .with_multiplier("seniority", 10500); // 105%
 
         assert_eq!(breakdown.base_rate, 100);
         assert_eq!(breakdown.total_units, 40);
@@ -372,8 +415,7 @@ mod tests {
     #[test]
     fn test_compensation_config() {
         let role_id = [1u8; 32];
-        let config = CompensationConfig::new(1000)
-            .with_role_rate(role_id, 1500);
+        let config = CompensationConfig::new(1000).with_role_rate(role_id, 1500);
 
         assert_eq!(config.get_rate(&role_id), 1500);
         assert_eq!(config.get_rate(&[2u8; 32]), 1000); // Default
@@ -381,14 +423,7 @@ mod tests {
 
     #[test]
     fn test_payment_record() {
-        let record = PaymentRecord::new(
-            1,
-            [1u8; 32],
-            50_000,
-            [2u8; 32],
-            2,
-            [3u8; 32],
-        );
+        let record = PaymentRecord::new(1, [1u8; 32], 50_000, [2u8; 32], 2, [3u8; 32]);
 
         assert_eq!(record.epoch, 1);
         assert_eq!(record.amount, 50_000);

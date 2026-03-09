@@ -1,9 +1,9 @@
 //! Signature type definitions - preserving ZHTP signature structures
-//! 
+//!
 //! implementations from crypto.rs, lines 162-192
 
-use serde::{Serialize, Deserialize};
 use crate::types::PublicKey;
+use serde::{Deserialize, Serialize};
 
 /// Digital signature with quantum-resistant security
 #[derive(Debug, Clone, Serialize, Deserialize)]

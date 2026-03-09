@@ -1,27 +1,26 @@
-use std::ops::DerefMut;
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::messages::inter::message_base::MessageBase;
 use crate::rpc::events::inter::event::Event;
 use crate::rpc::events::inter::message_event::MessageEvent;
 use crate::utils::node::Node;
+use std::ops::DerefMut;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct RequestEvent<'a> {
     prevent_default: bool,
     message: &'a dyn MessageBase,
     node: Option<Node>,
     received_time: u128,
-    response: Option<Box<dyn MessageBase>>
+    response: Option<Box<dyn MessageBase>>,
 }
 
 impl<'a> RequestEvent<'a> {
-
     pub fn new(message: &'a dyn MessageBase) -> Self {
         Self {
             prevent_default: false,
             message,
             node: None,
             received_time: 0,
-            response: None
+            response: None,
         }
     }
 
@@ -39,7 +38,6 @@ impl<'a> RequestEvent<'a> {
 }
 
 impl<'a> Event for RequestEvent<'a> {
-
     fn is_prevent_default(&self) -> bool {
         self.prevent_default
     }
@@ -50,7 +48,6 @@ impl<'a> Event for RequestEvent<'a> {
 }
 
 impl<'a> MessageEvent for RequestEvent<'a> {
-
     fn get_message(&self) -> &dyn MessageBase {
         self.message
     }

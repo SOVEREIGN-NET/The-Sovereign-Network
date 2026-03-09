@@ -79,8 +79,10 @@ mod tests {
 
     #[test]
     fn test_gas_limit_constants_are_consistent() {
-        assert!(MAX_TX_GAS < MAX_BLOCK_GAS,
-            "Per-tx gas must be less than per-block gas");
+        assert!(
+            MAX_TX_GAS < MAX_BLOCK_GAS,
+            "Per-tx gas must be less than per-block gas"
+        );
         assert!(MAX_BLOCK_GAS > 0, "Block gas limit must be positive");
         assert!(MAX_TXS_PER_BLOCK > 0, "Max txs per block must be positive");
     }

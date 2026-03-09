@@ -21,9 +21,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::block::Block;
-use crate::storage::{
-    BlockchainStore, SledStore, StorageError,
-};
+use crate::storage::{BlockchainStore, SledStore, StorageError};
 use crate::types::hash::blake3_hash;
 
 use lib_types::BlockHeight;
@@ -225,9 +223,7 @@ impl Snapshot {
 
         // Hash all UTXOs (sort by tx_hash then index for determinism)
         let mut utxos_sorted = self.utxos.clone();
-        utxos_sorted.sort_by(|a, b| {
-            (&a.tx_hash, a.index).cmp(&(&b.tx_hash, b.index))
-        });
+        utxos_sorted.sort_by(|a, b| (&a.tx_hash, a.index).cmp(&(&b.tx_hash, b.index)));
         for utxo in &utxos_sorted {
             data.extend_from_slice(&utxo.tx_hash);
             data.extend_from_slice(&utxo.index.to_be_bytes());
@@ -236,9 +232,7 @@ impl Snapshot {
 
         // Hash all token balances (sort by token+address)
         let mut balances_sorted = self.token_balances.clone();
-        balances_sorted.sort_by(|a, b| {
-            (&a.token, &a.address).cmp(&(&b.token, &b.address))
-        });
+        balances_sorted.sort_by(|a, b| (&a.token, &a.address).cmp(&(&b.token, &b.address)));
         for bal in &balances_sorted {
             data.extend_from_slice(&bal.token);
             data.extend_from_slice(&bal.address);
@@ -464,10 +458,9 @@ fn collect_token_balances(store: &SledStore) -> SnapshotResult<Vec<TokenBalanceE
             // Value is u128 balance (16 bytes)
             if value.len() >= 16 {
                 let balance = u128::from_be_bytes([
-                    value[0], value[1], value[2], value[3],
-                    value[4], value[5], value[6], value[7],
-                    value[8], value[9], value[10], value[11],
-                    value[12], value[13], value[14], value[15],
+                    value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7],
+                    value[8], value[9], value[10], value[11], value[12], value[13], value[14],
+                    value[15],
                 ]);
 
                 balances.push(TokenBalanceEntry {
@@ -505,24 +498,37 @@ fn collect_accounts(store: &SledStore) -> SnapshotResult<Vec<AccountEntry>> {
 }
 
 fn clear_all_trees(store: &SledStore) -> SnapshotResult<()> {
-    store.blocks_by_height().clear()
+    store
+        .blocks_by_height()
+        .clear()
         .map_err(|e| SnapshotError::Database(e.to_string()))?;
-    store.blocks_by_hash().clear()
+    store
+        .blocks_by_hash()
+        .clear()
         .map_err(|e| SnapshotError::Database(e.to_string()))?;
-    store.utxos().clear()
+    store
+        .utxos()
+        .clear()
         .map_err(|e| SnapshotError::Database(e.to_string()))?;
-    store.accounts().clear()
+    store
+        .accounts()
+        .clear()
         .map_err(|e| SnapshotError::Database(e.to_string()))?;
-    store.token_balances().clear()
+    store
+        .token_balances()
+        .clear()
         .map_err(|e| SnapshotError::Database(e.to_string()))?;
-    store.meta().clear()
+    store
+        .meta()
+        .clear()
         .map_err(|e| SnapshotError::Database(e.to_string()))?;
 
     // Clear identities tree if it exists (V2+)
     // DID team will add identities() method to SledStore in Phase 0
     // For now, try to open the tree directly and clear if it exists
     if let Ok(identities_tree) = store.db().open_tree("identities") {
-        identities_tree.clear()
+        identities_tree
+            .clear()
             .map_err(|e| SnapshotError::Database(e.to_string()))?;
     }
 
@@ -541,11 +547,13 @@ fn restore_blocks(store: &SledStore, blocks: &[BlockEntry]) -> SnapshotResult<()
 
         // Store by height (height -> hash)
         let height_key = entry.height.to_be_bytes();
-        blocks_by_height.insert(&height_key, hash.as_ref())
+        blocks_by_height
+            .insert(&height_key, hash.as_ref())
             .map_err(|e| SnapshotError::Database(e.to_string()))?;
 
         // Store by hash (hash -> block data)
-        blocks_by_hash.insert(hash.as_ref(), entry.data.as_slice())
+        blocks_by_hash
+            .insert(hash.as_ref(), entry.data.as_slice())
             .map_err(|e| SnapshotError::Database(e.to_string()))?;
     }
 
@@ -561,7 +569,8 @@ fn restore_utxos(store: &SledStore, utxos: &[UtxoEntry]) -> SnapshotResult<()> {
         key.extend_from_slice(&entry.tx_hash);
         key.extend_from_slice(&entry.index.to_be_bytes());
 
-        utxo_tree.insert(key.as_slice(), entry.data.as_slice())
+        utxo_tree
+            .insert(key.as_slice(), entry.data.as_slice())
             .map_err(|e| SnapshotError::Database(e.to_string()))?;
     }
 
@@ -580,7 +589,8 @@ fn restore_token_balances(store: &SledStore, balances: &[TokenBalanceEntry]) -> 
         // Value is u128 balance (16 bytes)
         let value = entry.balance.to_be_bytes();
 
-        balance_tree.insert(key.as_slice(), &value)
+        balance_tree
+            .insert(key.as_slice(), &value)
             .map_err(|e| SnapshotError::Database(e.to_string()))?;
     }
 
@@ -591,7 +601,8 @@ fn restore_accounts(store: &SledStore, accounts: &[AccountEntry]) -> SnapshotRes
     let account_tree = store.accounts();
 
     for entry in accounts {
-        account_tree.insert(&entry.address, entry.data.as_slice())
+        account_tree
+            .insert(&entry.address, entry.data.as_slice())
             .map_err(|e| SnapshotError::Database(e.to_string()))?;
     }
 
@@ -637,11 +648,14 @@ fn collect_identities(store: &SledStore) -> SnapshotResult<Vec<IdentityEntry>> {
 /// Creates the identities tree if it doesn't exist.
 fn restore_identities(store: &SledStore, identities: &[IdentityEntry]) -> SnapshotResult<()> {
     // Open or create the identities tree
-    let identities_tree = store.db().open_tree("identities")
+    let identities_tree = store
+        .db()
+        .open_tree("identities")
         .map_err(|e| SnapshotError::Database(e.to_string()))?;
 
     for entry in identities {
-        identities_tree.insert(&entry.did_key, entry.data.as_slice())
+        identities_tree
+            .insert(&entry.did_key, entry.data.as_slice())
             .map_err(|e| SnapshotError::Database(e.to_string()))?;
     }
 
@@ -657,9 +671,9 @@ mod tests {
     use super::*;
     use crate::block::{Block, BlockHeader};
     use crate::storage::BlockchainStore;
-    use crate::types::{Hash, Difficulty};
-    use lib_types::{Address, TokenId, TxHash};
     use crate::storage::{OutPoint, Utxo};
+    use crate::types::{Difficulty, Hash};
+    use lib_types::{Address, TokenId, TxHash};
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -764,7 +778,10 @@ mod tests {
         assert_eq!(store.latest_height().unwrap(), 2);
 
         let restored_genesis = store.get_block_by_height(0).unwrap().unwrap();
-        assert_eq!(restored_genesis.header.block_hash, genesis.header.block_hash);
+        assert_eq!(
+            restored_genesis.header.block_hash,
+            genesis.header.block_hash
+        );
 
         let restored_block1 = store.get_block_by_height(1).unwrap().unwrap();
         assert_eq!(restored_block1.header.block_hash, block1.header.block_hash);
@@ -1016,7 +1033,10 @@ mod tests {
 
             let alice = Address::new([1u8; 32]);
             let token = TokenId::NATIVE;
-            assert_eq!(store.get_token_balance(&token, &alice).unwrap(), expected_balance);
+            assert_eq!(
+                store.get_token_balance(&token, &alice).unwrap(),
+                expected_balance
+            );
 
             // Verify can continue adding blocks
             let block1 = store.get_block_by_height(1).unwrap().unwrap();
@@ -1167,8 +1187,16 @@ mod tests {
     /// V2 adds identities support for DID storage migration
     #[test]
     fn golden_snapshot_version() {
-        assert_eq!(Snapshot::VERSION, 2, "Current snapshot version (V2 with identities)");
-        assert_eq!(Snapshot::MIN_VERSION, 1, "Minimum supported version for restore");
+        assert_eq!(
+            Snapshot::VERSION,
+            2,
+            "Current snapshot version (V2 with identities)"
+        );
+        assert_eq!(
+            Snapshot::MIN_VERSION,
+            1,
+            "Minimum supported version for restore"
+        );
     }
 
     /// Golden vector: State hash is deterministic for same input
@@ -1215,8 +1243,12 @@ mod tests {
         let identity_data_1 = vec![0x01, 0x02, 0x03, 0x04];
         let identity_data_2 = vec![0x05, 0x06, 0x07, 0x08];
 
-        identities_tree.insert(&did_key_1, identity_data_1.as_slice()).unwrap();
-        identities_tree.insert(&did_key_2, identity_data_2.as_slice()).unwrap();
+        identities_tree
+            .insert(&did_key_1, identity_data_1.as_slice())
+            .unwrap();
+        identities_tree
+            .insert(&did_key_2, identity_data_2.as_slice())
+            .unwrap();
 
         // Take snapshot
         let snap = snapshot(&store).unwrap();
@@ -1279,6 +1311,9 @@ mod tests {
         let hash2 = snap2.state_hash;
 
         // Hashes should be different
-        assert_ne!(hash1, hash2, "State hash should change when identities differ");
+        assert_ne!(
+            hash1, hash2,
+            "State hash should change when identities differ"
+        );
     }
 }

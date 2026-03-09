@@ -12,7 +12,10 @@
 //! - DID MUST NOT be a direct hash of raw seed/entropy material.
 
 use anyhow::{anyhow, Result};
-use crystals_dilithium::dilithium5::{Keypair as Dilithium5Keypair, PublicKey as Dilithium5PublicKey, SecretKey as Dilithium5SecretKey, SIGNBYTES};
+use crystals_dilithium::dilithium5::{
+    Keypair as Dilithium5Keypair, PublicKey as Dilithium5PublicKey,
+    SecretKey as Dilithium5SecretKey, SIGNBYTES,
+};
 use hkdf::Hkdf;
 use sha3::{Sha3_256, Sha3_512};
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -35,8 +38,8 @@ pub struct RootSecret64(pub [u8; 64]);
 /// Root signing keypair bytes (Dilithium5, crystals-dilithium encoding).
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct RootSigningKeypair {
-    pub public_key: Vec<u8>,  // 2592 bytes
-    pub secret_key: Vec<u8>,  // 4864 bytes (crystals-dilithium)
+    pub public_key: Vec<u8>, // 2592 bytes
+    pub secret_key: Vec<u8>, // 4864 bytes (crystals-dilithium)
 }
 
 impl RootSigningKeypair {
@@ -45,14 +48,19 @@ impl RootSigningKeypair {
         let kp = Dilithium5Keypair::generate(Some(&seed));
         let pk = kp.public.to_bytes().to_vec();
         let sk = kp.secret.to_bytes().to_vec();
-        Ok(Self { public_key: pk, secret_key: sk })
+        Ok(Self {
+            public_key: pk,
+            secret_key: sk,
+        })
     }
 }
 
 /// Derive a 64-byte Root Secret (RS) from 32 bytes of recovery entropy using HKDF.
 ///
 /// This allows keeping a 24-word mnemonic UX while having an RS that meets the ">=64 bytes" requirement.
-pub fn derive_root_secret64_from_recovery_entropy(entropy: &RecoveryEntropy32) -> Result<RootSecret64> {
+pub fn derive_root_secret64_from_recovery_entropy(
+    entropy: &RecoveryEntropy32,
+) -> Result<RootSecret64> {
     let hk = Hkdf::<Sha3_512>::new(None, &entropy.0);
     let mut out = [0u8; 64];
     hk.expand(INFO_ROOT_SECRET_V1, &mut out)
@@ -112,7 +120,11 @@ pub fn sign_op_key_binding(message: &[u8], root_dilithium_sk: &[u8]) -> Result<V
     Ok(sig.to_vec())
 }
 
-pub fn verify_op_key_binding(message: &[u8], signature: &[u8], root_dilithium_pk: &[u8]) -> Result<bool> {
+pub fn verify_op_key_binding(
+    message: &[u8],
+    signature: &[u8],
+    root_dilithium_pk: &[u8],
+) -> Result<bool> {
     if signature.len() != SIGNBYTES {
         return Ok(false);
     }
@@ -154,7 +166,10 @@ mod tests {
         let did = did_from_root_signing_public_key(&rsk.public_key);
         let legacy_did = legacy_did_from_recovery_entropy(&entropy);
 
-        assert_ne!(did, legacy_did, "Break mode: new DID must differ from legacy DID");
+        assert_ne!(
+            did, legacy_did,
+            "Break mode: new DID must differ from legacy DID"
+        );
         assert!(did.starts_with(DID_PREFIX));
     }
 
@@ -184,4 +199,3 @@ mod tests {
         assert!(verify_op_key_binding(&msg, &sig, &rsk.public_key).unwrap());
     }
 }
-

@@ -8,10 +8,10 @@
 //! - **Testability**: Pure functions for validation and path construction
 
 use crate::argument_parsing::ManAction;
-use crate::error::{CliResult, CliError};
+use crate::error::{CliError, CliResult};
 
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -77,7 +77,10 @@ pub fn validate_command_name(name: &str) -> CliResult<()> {
     }
 
     // Command names should be alphanumeric with hyphens
-    if !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(CliError::ConfigError(format!(
             "Invalid command name: {}. Use only alphanumeric characters, hyphens, and underscores",
             name
@@ -146,10 +149,7 @@ async fn generate_man_pages_impl(
 
     // Create output directory if it doesn't exist
     fs::create_dir_all(output_dir).map_err(|e| {
-        CliError::ConfigError(format!(
-            "Failed to create man page directory: {}",
-            e
-        ))
+        CliError::ConfigError(format!("Failed to create man page directory: {}", e))
     })?;
 
     // Generate main command man page
@@ -157,19 +157,11 @@ async fn generate_man_pages_impl(
     let man = Man::new(cmd.clone());
 
     let main_man_path = output_dir.join("zhtp-cli.1");
-    let mut file = fs::File::create(&main_man_path).map_err(|e| {
-        CliError::ConfigError(format!(
-            "Failed to create man page: {}",
-            e
-        ))
-    })?;
+    let mut file = fs::File::create(&main_man_path)
+        .map_err(|e| CliError::ConfigError(format!("Failed to create man page: {}", e)))?;
 
-    man.render(&mut file).map_err(|e| {
-        CliError::ConfigError(format!(
-            "Failed to render man page: {}",
-            e
-        ))
-    })?;
+    man.render(&mut file)
+        .map_err(|e| CliError::ConfigError(format!("Failed to render man page: {}", e)))?;
 
     println!("✓ Generated main man page: {}", main_man_path.display());
 
@@ -190,17 +182,11 @@ async fn generate_man_pages_impl(
         let subcommand_man_path = output_dir.join(&filename);
 
         let mut file = fs::File::create(&subcommand_man_path).map_err(|e| {
-            CliError::ConfigError(format!(
-                "Failed to create subcommand man page: {}",
-                e
-            ))
+            CliError::ConfigError(format!("Failed to create subcommand man page: {}", e))
         })?;
 
         man.render(&mut file).map_err(|e| {
-            CliError::ConfigError(format!(
-                "Failed to render subcommand man page: {}",
-                e
-            ))
+            CliError::ConfigError(format!("Failed to render subcommand man page: {}", e))
         })?;
 
         println!("✓ Generated man page: {}", subcommand_man_path.display());
@@ -210,7 +196,10 @@ async fn generate_man_pages_impl(
     println!("\n✅ Generated {} man page(s)", count);
     println!("Location: {}", output_dir.display());
     println!("\nTo install (on Linux/macOS):");
-    println!("  sudo cp {}/*.1 /usr/share/man/man1/", output_dir.display());
+    println!(
+        "  sudo cp {}/*.1 /usr/share/man/man1/",
+        output_dir.display()
+    );
     println!("  sudo mandb");
     println!("\nTo view:");
     println!("  man zhtp-cli");

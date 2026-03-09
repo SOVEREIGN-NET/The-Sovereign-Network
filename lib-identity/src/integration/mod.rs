@@ -1,29 +1,26 @@
 //! Integration and verification modules for ZHTP Identity
 
 pub mod cross_package_integration;
-pub mod requirements_verification;
 pub mod proof_generation;
+pub mod requirements_verification;
 pub mod trusted_issuers;
 pub mod verification_cache;
 
 // Explicit re-exports to avoid naming conflicts
-pub use cross_package_integration::{
-    CrossPackageIntegration, IntegrationResponse
-};
+pub use cross_package_integration::{CrossPackageIntegration, IntegrationResponse};
 pub use requirements_verification::{
-    RequirementsVerifier, RequirementVerificationResult, CachedVerificationResult,
-    TrustLevel as RequirementTrustLevel, PrivacyLevel as RequirementPrivacyLevel
+    CachedVerificationResult, PrivacyLevel as RequirementPrivacyLevel,
+    RequirementVerificationResult, RequirementsVerifier, TrustLevel as RequirementTrustLevel,
 };
 // Re-export PrivacyScore from privacy module to avoid confusion
 pub use crate::privacy::PrivacyScore;
 pub use proof_generation::{
-    ProofGenerator, ProofGenerationStats, ProofGenerationRequest, ProofGenerationResult,
-    PrivacyLevel as ProofPrivacyLevel
+    PrivacyLevel as ProofPrivacyLevel, ProofGenerationRequest, ProofGenerationResult,
+    ProofGenerationStats, ProofGenerator,
 };
 pub use trusted_issuers::{
-    TrustedIssuer, TrustedIssuersRegistry, IssuerVerificationResult,
-    TrustLevel as IssuerTrustLevel
+    IssuerVerificationResult, TrustLevel as IssuerTrustLevel, TrustedIssuer, TrustedIssuersRegistry,
 };
 pub use verification_cache::{
-    VerificationCache, CacheConfig, CachedVerificationResult as CachedResult
+    CacheConfig, CachedVerificationResult as CachedResult, VerificationCache,
 };

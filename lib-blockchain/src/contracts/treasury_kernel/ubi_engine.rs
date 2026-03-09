@@ -47,9 +47,9 @@
 //! These are exposed via `get_processing_stats()` for governance monitoring.
 
 use super::types::KernelState;
-use crate::contracts::UbiClaimRecorded;
 use crate::contracts::governance::CitizenRegistry;
 use crate::contracts::TokenContract;
+use crate::contracts::UbiClaimRecorded;
 use crate::integration::crypto_integration::PublicKey;
 
 /// UBI Distribution Engine
@@ -152,7 +152,11 @@ impl KernelState {
 
                                 // SAFETY: We verified token.is_some() and kernel_address.is_some() above
                                 let kernel_addr = kernel_address.unwrap();
-                                match token.as_mut().unwrap().mint_kernel_only(kernel_addr, &recipient, claim.amount) {
+                                match token.as_mut().unwrap().mint_kernel_only(
+                                    kernel_addr,
+                                    &recipient,
+                                    claim.amount,
+                                ) {
                                     Ok(()) => {
                                         tracing::debug!(
                                             "UBI minted: {} to citizen {:?}",
@@ -240,7 +244,12 @@ impl KernelState {
                 }
                 Err(reason) => {
                     // Claim failed validation
-                    let _ = self.emit_claim_rejected(claim.citizen_id, current_epoch, reason, current_epoch);
+                    let _ = self.emit_claim_rejected(
+                        claim.citizen_id,
+                        current_epoch,
+                        reason,
+                        current_epoch,
+                    );
                     self.record_rejection(reason);
                     rejections += 1;
                 }
@@ -278,11 +287,7 @@ mod tests {
     use crate::contracts::governance::CitizenRole;
     use crate::contracts::TokenContract;
 
-    fn create_test_claim(
-        citizen_id: [u8; 32],
-        epoch: u64,
-        amount: u64,
-    ) -> UbiClaimRecorded {
+    fn create_test_claim(citizen_id: [u8; 32], epoch: u64, amount: u64) -> UbiClaimRecorded {
         UbiClaimRecorded {
             citizen_id,
             amount,

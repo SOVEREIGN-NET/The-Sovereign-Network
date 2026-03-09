@@ -12,16 +12,15 @@
 //! - RESTRICTED_MIN_DURATION = 7,776,000 (90 days)
 //! - WIND_DOWN_MIN_DURATION = 15,552,000 (180 days)
 
-use lib_blockchain::contracts::dao::{
-    DaoTreasury, SpendingCategory, DaoTreasuryError,
-    DAO_ALLOCATION_PERCENTAGE, NUM_SECTOR_DAOS, PER_DAO_ALLOCATION_PERCENTAGE, DAO_TIMELOCK_SECONDS,
-    MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
-};
 use lib_blockchain::contracts::dao::ProposalStatus as DaoProposalStatus;
+use lib_blockchain::contracts::dao::{
+    DaoTreasury, DaoTreasuryError, SpendingCategory, DAO_ALLOCATION_PERCENTAGE,
+    DAO_TIMELOCK_SECONDS, MIN_DAO_VOTING_POWER_FOR_PROPOSAL, NUM_SECTOR_DAOS,
+    PER_DAO_ALLOCATION_PERCENTAGE,
+};
 use lib_blockchain::contracts::governance::{
-    Sunset, SunsetState, SpendingPolicy, SunsetError,
-    RESTRICTED_MIN_DURATION, WIND_DOWN_MIN_DURATION, FINAL_PAYOUT_TO_NONPROFIT_PERCENTAGE,
-    SUNSET_STATE_TRANSITION_TIMELOCK,
+    SpendingPolicy, Sunset, SunsetError, SunsetState, FINAL_PAYOUT_TO_NONPROFIT_PERCENTAGE,
+    RESTRICTED_MIN_DURATION, SUNSET_STATE_TRANSITION_TIMELOCK, WIND_DOWN_MIN_DURATION,
 };
 
 // ============================================================================
@@ -56,7 +55,9 @@ fn test_dao_treasury_initialization() {
 #[test]
 fn test_dao_treasury_cannot_init_twice() {
     let mut treasury = DaoTreasury::new();
-    treasury.init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE).unwrap();
+    treasury
+        .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
 
     let result = treasury.init("EducationDAO Treasury".to_string(), ADMIN, GOVERNANCE);
     assert_eq!(result, Err(DaoTreasuryError::AlreadyInitialized));
@@ -65,7 +66,9 @@ fn test_dao_treasury_cannot_init_twice() {
 #[test]
 fn test_dao_treasury_receive_allocation() {
     let mut treasury = DaoTreasury::new();
-    treasury.init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE).unwrap();
+    treasury
+        .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
 
     let result = treasury.receive_allocation(1_000_000, GOVERNANCE);
     assert!(result.is_ok());
@@ -76,7 +79,9 @@ fn test_dao_treasury_receive_allocation() {
 #[test]
 fn test_dao_treasury_multiple_allocations() {
     let mut treasury = DaoTreasury::new();
-    treasury.init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE).unwrap();
+    treasury
+        .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
 
     treasury.receive_allocation(500_000, GOVERNANCE).unwrap();
     treasury.receive_allocation(300_000, GOVERNANCE).unwrap();
@@ -89,7 +94,9 @@ fn test_dao_treasury_multiple_allocations() {
 #[test]
 fn test_dao_treasury_create_proposal() {
     let mut treasury = DaoTreasury::new();
-    treasury.init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE).unwrap();
+    treasury
+        .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
     treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
     treasury.set_current_timestamp(0);
@@ -114,7 +121,9 @@ fn test_dao_treasury_create_proposal() {
 #[test]
 fn test_dao_treasury_cannot_create_proposal_without_voting_power() {
     let mut treasury = DaoTreasury::new();
-    treasury.init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE).unwrap();
+    treasury
+        .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
     treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
 
     let result = treasury.create_proposal(
@@ -133,7 +142,9 @@ fn test_dao_treasury_cannot_create_proposal_without_voting_power() {
 #[test]
 fn test_dao_treasury_cannot_spend_more_than_balance() {
     let mut treasury = DaoTreasury::new();
-    treasury.init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE).unwrap();
+    treasury
+        .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
     treasury.receive_allocation(500_000, GOVERNANCE).unwrap();
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
 
@@ -153,26 +164,34 @@ fn test_dao_treasury_cannot_spend_more_than_balance() {
 #[test]
 fn test_dao_treasury_voting_workflow() {
     let mut treasury = DaoTreasury::new();
-    treasury.init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE).unwrap();
+    treasury
+        .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
     treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
     treasury.set_current_timestamp(0);
 
-    let proposal_id = treasury.create_proposal(
-        PROPOSER,
-        "Research Grant".to_string(),
-        "Fund healthcare research".to_string(),
-        SpendingCategory::Research,
-        100_000,
-        RECIPIENT,
-        MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = treasury
+        .create_proposal(
+            PROPOSER,
+            "Research Grant".to_string(),
+            "Fund healthcare research".to_string(),
+            SpendingCategory::Research,
+            100_000,
+            RECIPIENT,
+            MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
     // Vote for
-    treasury.vote(proposal_id, VOTER1, true, DAO_VOTING_POWER).unwrap();
+    treasury
+        .vote(proposal_id, VOTER1, true, DAO_VOTING_POWER)
+        .unwrap();
 
     // Vote against
-    treasury.vote(proposal_id, VOTER2, false, DAO_VOTING_POWER / 2).unwrap();
+    treasury
+        .vote(proposal_id, VOTER2, false, DAO_VOTING_POWER / 2)
+        .unwrap();
 
     let proposal = treasury.get_proposal(proposal_id).unwrap();
     assert_eq!(proposal.votes_for, DAO_VOTING_POWER);
@@ -182,20 +201,24 @@ fn test_dao_treasury_voting_workflow() {
 #[test]
 fn test_dao_treasury_finalize_voting_passes() {
     let mut treasury = DaoTreasury::new();
-    treasury.init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE).unwrap();
+    treasury
+        .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
     treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
     treasury.set_current_timestamp(0);
 
-    let proposal_id = treasury.create_proposal(
-        PROPOSER,
-        "Research Grant".to_string(),
-        "Fund healthcare research".to_string(),
-        SpendingCategory::Research,
-        100_000,
-        RECIPIENT,
-        MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = treasury
+        .create_proposal(
+            PROPOSER,
+            "Research Grant".to_string(),
+            "Fund healthcare research".to_string(),
+            SpendingCategory::Research,
+            100_000,
+            RECIPIENT,
+            MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
     // Vote: 60% for, 40% against (should pass)
     treasury.vote(proposal_id, VOTER1, true, 600_000).unwrap();
@@ -212,7 +235,9 @@ fn test_dao_treasury_finalize_voting_passes() {
 #[test]
 fn test_dao_treasury_spending_categories() {
     let mut treasury = DaoTreasury::new();
-    treasury.init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE).unwrap();
+    treasury
+        .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
     treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
 
@@ -244,23 +269,29 @@ fn test_dao_treasury_spending_categories() {
 #[test]
 fn test_dao_treasury_execute_proposal() {
     let mut treasury = DaoTreasury::new();
-    treasury.init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE).unwrap();
+    treasury
+        .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
     treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
     treasury.set_current_timestamp(0);
 
-    let proposal_id = treasury.create_proposal(
-        PROPOSER,
-        "Research Grant".to_string(),
-        "Fund healthcare research".to_string(),
-        SpendingCategory::Research,
-        100_000,
-        RECIPIENT,
-        MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = treasury
+        .create_proposal(
+            PROPOSER,
+            "Research Grant".to_string(),
+            "Fund healthcare research".to_string(),
+            SpendingCategory::Research,
+            100_000,
+            RECIPIENT,
+            MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
     // Vote and finalize
-    treasury.vote(proposal_id, VOTER1, true, DAO_VOTING_POWER).unwrap();
+    treasury
+        .vote(proposal_id, VOTER1, true, DAO_VOTING_POWER)
+        .unwrap();
     treasury.set_current_timestamp(7 * 24 * 60 * 60 + 1);
     treasury.finalize_voting(proposal_id).unwrap();
 
@@ -276,22 +307,28 @@ fn test_dao_treasury_execute_proposal() {
 #[test]
 fn test_dao_treasury_timelock_enforcement() {
     let mut treasury = DaoTreasury::new();
-    treasury.init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE).unwrap();
+    treasury
+        .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
     treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
     treasury.set_current_timestamp(0);
 
-    let proposal_id = treasury.create_proposal(
-        PROPOSER,
-        "Research Grant".to_string(),
-        "Fund healthcare research".to_string(),
-        SpendingCategory::Research,
-        100_000,
-        RECIPIENT,
-        MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
-    ).unwrap();
+    let proposal_id = treasury
+        .create_proposal(
+            PROPOSER,
+            "Research Grant".to_string(),
+            "Fund healthcare research".to_string(),
+            SpendingCategory::Research,
+            100_000,
+            RECIPIENT,
+            MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
+        )
+        .unwrap();
 
-    treasury.vote(proposal_id, VOTER1, true, DAO_VOTING_POWER).unwrap();
+    treasury
+        .vote(proposal_id, VOTER1, true, DAO_VOTING_POWER)
+        .unwrap();
     treasury.set_current_timestamp(7 * 24 * 60 * 60 + 1);
     treasury.finalize_voting(proposal_id).unwrap();
 
@@ -335,7 +372,10 @@ fn test_sunset_spending_policies() {
     sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
 
     assert_eq!(sunset.get_spending_policy(), SpendingPolicy::Unrestricted);
-    assert_eq!(sunset.get_current_spending_policy(), SpendingPolicy::Unrestricted);
+    assert_eq!(
+        sunset.get_current_spending_policy(),
+        SpendingPolicy::Unrestricted
+    );
 }
 
 #[test]
@@ -345,29 +385,20 @@ fn test_sunset_propose_valid_transitions() {
     sunset.set_current_timestamp(0);
 
     // Valid: NORMAL → RESTRICTED
-    let result = sunset.propose_state_transition(
-        SunsetState::Normal,
-        SunsetState::Restricted,
-        ADMIN,
-    );
+    let result =
+        sunset.propose_state_transition(SunsetState::Normal, SunsetState::Restricted, ADMIN);
     assert!(result.is_ok());
 
     sunset.set_current_timestamp(0);
     // Valid: RESTRICTED → WIND_DOWN
-    let result = sunset.propose_state_transition(
-        SunsetState::Restricted,
-        SunsetState::WindDown,
-        ADMIN,
-    );
+    let result =
+        sunset.propose_state_transition(SunsetState::Restricted, SunsetState::WindDown, ADMIN);
     assert!(result.is_ok());
 
     sunset.set_current_timestamp(0);
     // Valid: WIND_DOWN → DISSOLVED
-    let result = sunset.propose_state_transition(
-        SunsetState::WindDown,
-        SunsetState::Dissolved,
-        ADMIN,
-    );
+    let result =
+        sunset.propose_state_transition(SunsetState::WindDown, SunsetState::Dissolved, ADMIN);
     assert!(result.is_ok());
 }
 
@@ -377,19 +408,13 @@ fn test_sunset_reject_invalid_transitions() {
     sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
 
     // Invalid: NORMAL → DISSOLVED
-    let result = sunset.propose_state_transition(
-        SunsetState::Normal,
-        SunsetState::Dissolved,
-        ADMIN,
-    );
+    let result =
+        sunset.propose_state_transition(SunsetState::Normal, SunsetState::Dissolved, ADMIN);
     assert_eq!(result, Err(SunsetError::InvalidStateTransition));
 
     // Invalid: RESTRICTED → NORMAL
-    let result = sunset.propose_state_transition(
-        SunsetState::Restricted,
-        SunsetState::Normal,
-        ADMIN,
-    );
+    let result =
+        sunset.propose_state_transition(SunsetState::Restricted, SunsetState::Normal, ADMIN);
     assert_eq!(result, Err(SunsetError::InvalidStateTransition));
 }
 
@@ -399,15 +424,17 @@ fn test_sunset_state_transition_with_timelock() {
     sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
     sunset.set_current_timestamp(0);
 
-    let proposal_id = sunset.propose_state_transition(
-        SunsetState::Normal,
-        SunsetState::Restricted,
-        ADMIN,
-    ).unwrap();
+    let proposal_id = sunset
+        .propose_state_transition(SunsetState::Normal, SunsetState::Restricted, ADMIN)
+        .unwrap();
 
     // Vote on proposal
-    sunset.vote_on_transition(proposal_id, VOTER1, true, 100_000).unwrap();
-    sunset.vote_on_transition(proposal_id, VOTER2, true, 100_000).unwrap();
+    sunset
+        .vote_on_transition(proposal_id, VOTER1, true, 100_000)
+        .unwrap();
+    sunset
+        .vote_on_transition(proposal_id, VOTER2, true, 100_000)
+        .unwrap();
 
     // Try to execute before timelock (14 days)
     let result = sunset.execute_state_transition(proposal_id);
@@ -428,22 +455,18 @@ fn test_sunset_minimum_duration_restricted() {
     sunset.set_current_timestamp(0);
 
     // Transition to RESTRICTED
-    let proposal1 = sunset.propose_state_transition(
-        SunsetState::Normal,
-        SunsetState::Restricted,
-        ADMIN,
-    ).unwrap();
+    let proposal1 = sunset
+        .propose_state_transition(SunsetState::Normal, SunsetState::Restricted, ADMIN)
+        .unwrap();
 
     sunset.set_current_timestamp(SUNSET_STATE_TRANSITION_TIMELOCK + 1);
     sunset.execute_state_transition(proposal1).unwrap();
     assert_eq!(sunset.get_state(), SunsetState::Restricted);
 
     // Try to transition to WIND_DOWN before 90 days
-    let proposal2 = sunset.propose_state_transition(
-        SunsetState::Restricted,
-        SunsetState::WindDown,
-        ADMIN,
-    ).unwrap();
+    let proposal2 = sunset
+        .propose_state_transition(SunsetState::Restricted, SunsetState::WindDown, ADMIN)
+        .unwrap();
 
     sunset.set_current_timestamp(SUNSET_STATE_TRANSITION_TIMELOCK + RESTRICTED_MIN_DURATION - 1);
     let result = sunset.execute_state_transition(proposal2);
@@ -462,11 +485,9 @@ fn test_sunset_state_transition_audit_trail() {
     sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
     sunset.set_current_timestamp(0);
 
-    let proposal_id = sunset.propose_state_transition(
-        SunsetState::Normal,
-        SunsetState::Restricted,
-        ADMIN,
-    ).unwrap();
+    let proposal_id = sunset
+        .propose_state_transition(SunsetState::Normal, SunsetState::Restricted, ADMIN)
+        .unwrap();
 
     sunset.set_current_timestamp(SUNSET_STATE_TRANSITION_TIMELOCK + 1);
     sunset.execute_state_transition(proposal_id).unwrap();
@@ -484,20 +505,28 @@ fn test_sunset_complete_lifecycle() {
     sunset.set_current_timestamp(0);
 
     // NORMAL → RESTRICTED
-    let p1 = sunset.propose_state_transition(SunsetState::Normal, SunsetState::Restricted, ADMIN).unwrap();
+    let p1 = sunset
+        .propose_state_transition(SunsetState::Normal, SunsetState::Restricted, ADMIN)
+        .unwrap();
     sunset.set_current_timestamp(SUNSET_STATE_TRANSITION_TIMELOCK + 1);
     sunset.execute_state_transition(p1).unwrap();
     assert_eq!(sunset.get_state(), SunsetState::Restricted);
 
     // RESTRICTED → WIND_DOWN
-    let p2 = sunset.propose_state_transition(SunsetState::Restricted, SunsetState::WindDown, ADMIN).unwrap();
+    let p2 = sunset
+        .propose_state_transition(SunsetState::Restricted, SunsetState::WindDown, ADMIN)
+        .unwrap();
     sunset.set_current_timestamp(SUNSET_STATE_TRANSITION_TIMELOCK + RESTRICTED_MIN_DURATION + 1);
     sunset.execute_state_transition(p2).unwrap();
     assert_eq!(sunset.get_state(), SunsetState::WindDown);
 
     // WIND_DOWN → DISSOLVED
-    let p3 = sunset.propose_state_transition(SunsetState::WindDown, SunsetState::Dissolved, ADMIN).unwrap();
-    sunset.set_current_timestamp(SUNSET_STATE_TRANSITION_TIMELOCK + RESTRICTED_MIN_DURATION + WIND_DOWN_MIN_DURATION + 1);
+    let p3 = sunset
+        .propose_state_transition(SunsetState::WindDown, SunsetState::Dissolved, ADMIN)
+        .unwrap();
+    sunset.set_current_timestamp(
+        SUNSET_STATE_TRANSITION_TIMELOCK + RESTRICTED_MIN_DURATION + WIND_DOWN_MIN_DURATION + 1,
+    );
     sunset.execute_state_transition(p3).unwrap();
     assert_eq!(sunset.get_state(), SunsetState::Dissolved);
 }
@@ -525,7 +554,9 @@ fn test_week3_all_contracts_initialized() {
     assert!(!dao_treasury.is_initialized());
     assert!(!sunset.is_initialized());
 
-    dao_treasury.init("TestDAO".to_string(), ADMIN, GOVERNANCE).unwrap();
+    dao_treasury
+        .init("TestDAO".to_string(), ADMIN, GOVERNANCE)
+        .unwrap();
     sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
 
     assert!(dao_treasury.is_initialized());

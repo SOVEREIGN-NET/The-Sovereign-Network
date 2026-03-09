@@ -10,9 +10,9 @@
 //! NOTE: This module is a placeholder. The interactive shell requires server-side
 //! QUIC control surfaces that are not yet implemented.
 
-use anyhow::Result;
 use crate::argument_parsing::{InteractiveArgs, ZhtpCli};
-use crate::error::{CliResult, CliError};
+use crate::error::{CliError, CliResult};
+use anyhow::Result;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -238,7 +238,10 @@ mod tests {
 
     #[test]
     fn test_command_description() {
-        assert_eq!(InteractiveCommand::Status.description(), "Show orchestrator status");
+        assert_eq!(
+            InteractiveCommand::Status.description(),
+            "Show orchestrator status"
+        );
         assert_eq!(InteractiveCommand::Exit.description(), "Exit shell");
     }
 

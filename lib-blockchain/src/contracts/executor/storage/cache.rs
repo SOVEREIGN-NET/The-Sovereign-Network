@@ -157,7 +157,7 @@ impl StateCache {
         //   - size: usize = 8 bytes
         //   Total = 64 bytes
         let entry_size = key.len() + value.len() + 64;
-        
+
         // Don't cache entries that exceed the max size by themselves
         if entry_size > self.config.max_size_bytes {
             return Ok(());
@@ -168,7 +168,7 @@ impl StateCache {
             .cache
             .lock()
             .map_err(|e| anyhow::anyhow!("Cache lock poisoned: {}", e))?;
-        
+
         let mut current_size = self
             .current_size_bytes
             .lock()
@@ -218,7 +218,7 @@ impl StateCache {
 
         cache.put(key, entry);
         *current_size += entry_size;
-        
+
         Ok(())
     }
 
@@ -228,7 +228,7 @@ impl StateCache {
             .cache
             .lock()
             .map_err(|e| anyhow::anyhow!("Cache lock poisoned: {}", e))?;
-        
+
         if let Some(entry) = cache.pop(key) {
             let mut current_size = self
                 .current_size_bytes
@@ -236,7 +236,7 @@ impl StateCache {
                 .map_err(|e| anyhow::anyhow!("Size tracking lock poisoned: {}", e))?;
             *current_size = current_size.saturating_sub(entry.size);
         }
-        
+
         Ok(())
     }
 
@@ -247,13 +247,13 @@ impl StateCache {
             .lock()
             .map_err(|e| anyhow::anyhow!("Cache lock poisoned: {}", e))?;
         cache.clear();
-        
+
         let mut current_size = self
             .current_size_bytes
             .lock()
             .map_err(|e| anyhow::anyhow!("Size tracking lock poisoned: {}", e))?;
         *current_size = 0;
-        
+
         Ok(())
     }
 
@@ -307,10 +307,7 @@ mod tests {
 
         // Put and hit
         cache.put(b"key1".to_vec(), b"value1".to_vec()).unwrap();
-        assert_eq!(
-            cache.get(b"key1").unwrap(),
-            Some(b"value1".to_vec())
-        );
+        assert_eq!(cache.get(b"key1").unwrap(), Some(b"value1".to_vec()));
     }
 
     #[test]
@@ -318,10 +315,7 @@ mod tests {
         let cache = StateCache::new().unwrap();
 
         cache.put(b"key1".to_vec(), b"value1".to_vec()).unwrap();
-        assert_eq!(
-            cache.get(b"key1").unwrap(),
-            Some(b"value1".to_vec())
-        );
+        assert_eq!(cache.get(b"key1").unwrap(), Some(b"value1".to_vec()));
 
         cache.invalidate(b"key1").unwrap();
         assert_eq!(cache.get(b"key1").unwrap(), None);
@@ -353,7 +347,7 @@ mod tests {
 
         assert_eq!(cache.get(b"key1").unwrap(), None);
         assert_eq!(cache.get(b"key2").unwrap(), None);
-        
+
         // Verify size tracking is reset
         let stats = cache.stats().unwrap();
         assert_eq!(stats.current_size_bytes, 0);
@@ -377,17 +371,23 @@ mod tests {
         }
 
         let stats = cache.stats().unwrap();
-        
+
         // Verify the cache stayed within byte limits
-        assert!(stats.current_size_bytes <= 1024, 
-            "Cache size {} exceeds limit 1024", stats.current_size_bytes);
-        
+        assert!(
+            stats.current_size_bytes <= 1024,
+            "Cache size {} exceeds limit 1024",
+            stats.current_size_bytes
+        );
+
         // Verify some evictions occurred (we tried to add ~1440 bytes)
         assert!(stats.evictions > 0, "Expected evictions but got 0");
-        
+
         // Verify we don't have all 10 entries
-        assert!(stats.entry_count < 10, 
-            "Expected fewer than 10 entries due to eviction, got {}", stats.entry_count);
+        assert!(
+            stats.entry_count < 10,
+            "Expected fewer than 10 entries due to eviction, got {}",
+            stats.entry_count
+        );
     }
 
     #[test]
@@ -402,12 +402,12 @@ mod tests {
         // Try to add an entry larger than the limit
         let key = b"key1".to_vec();
         let value = vec![1u8; 200]; // 200 bytes, exceeds 100 byte limit
-        
+
         cache.put(key.clone(), value).unwrap();
-        
+
         // Verify the entry was not cached
         assert_eq!(cache.get(&key).unwrap(), None);
-        
+
         let stats = cache.stats().unwrap();
         assert_eq!(stats.entry_count, 0);
         assert_eq!(stats.current_size_bytes, 0);

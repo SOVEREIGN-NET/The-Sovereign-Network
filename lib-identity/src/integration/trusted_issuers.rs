@@ -1,7 +1,7 @@
 //! Trusted issuers management for identity verification
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Trusted issuers registry for identity verification
 #[derive(Debug, Clone)]
@@ -124,16 +124,20 @@ impl TrustedIssuersRegistry {
     pub fn add_issuer(&mut self, issuer: TrustedIssuer) -> Result<(), Box<dyn std::error::Error>> {
         // Validate issuer
         self.validate_issuer(&issuer)?;
-        
+
         // Check for conflicts
         if self.issuers.contains_key(&issuer.issuer_id) {
             return Err(format!("Issuer {} already exists", issuer.issuer_id).into());
         }
 
         // Add to registry
-        self.issuers.insert(issuer.issuer_id.clone(), issuer.clone());
-        
-        println!("✓ Added trusted issuer: {} ({})", issuer.name, issuer.issuer_id);
+        self.issuers
+            .insert(issuer.issuer_id.clone(), issuer.clone());
+
+        println!(
+            "✓ Added trusted issuer: {} ({})",
+            issuer.name, issuer.issuer_id
+        );
         Ok(())
     }
 
@@ -141,7 +145,8 @@ impl TrustedIssuersRegistry {
     pub fn remove_issuer(&mut self, issuer_id: &str) -> Result<(), Box<dyn std::error::Error>> {
         if self.issuers.remove(issuer_id).is_some() {
             // Also remove from cache
-            self.verification_cache.retain(|k, _| !k.starts_with(issuer_id));
+            self.verification_cache
+                .retain(|k, _| !k.starts_with(issuer_id));
             println!("✓ Removed trusted issuer: {}", issuer_id);
             Ok(())
         } else {
@@ -150,33 +155,42 @@ impl TrustedIssuersRegistry {
     }
 
     /// Verify issuer authenticity and capabilities
-    pub async fn verify_issuer(&mut self, issuer_id: &str) -> Result<IssuerVerificationResult, Box<dyn std::error::Error>> {
+    pub async fn verify_issuer(
+        &mut self,
+        issuer_id: &str,
+    ) -> Result<IssuerVerificationResult, Box<dyn std::error::Error>> {
         // Check cache first
         if let Some(cached_result) = self.verification_cache.get(issuer_id) {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs();
-            
+
             if cached_result.expires_at > current_time {
                 return Ok(cached_result.clone());
             }
         }
 
         // Get issuer
-        let issuer = self.issuers.get(issuer_id)
+        let issuer = self
+            .issuers
+            .get(issuer_id)
             .ok_or_else(|| format!("Unknown issuer: {}", issuer_id))?;
 
         // Perform verification
         let verification_result = self.perform_issuer_verification(issuer).await?;
-        
+
         // Cache result
-        self.verification_cache.insert(issuer_id.to_string(), verification_result.clone());
-        
+        self.verification_cache
+            .insert(issuer_id.to_string(), verification_result.clone());
+
         Ok(verification_result)
     }
 
     /// Perform actual issuer verification
-    async fn perform_issuer_verification(&self, issuer: &TrustedIssuer) -> Result<IssuerVerificationResult, Box<dyn std::error::Error>> {
+    async fn perform_issuer_verification(
+        &self,
+        issuer: &TrustedIssuer,
+    ) -> Result<IssuerVerificationResult, Box<dyn std::error::Error>> {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
@@ -193,7 +207,9 @@ impl TrustedIssuersRegistry {
 
         // Check validity period
         if current_time < issuer.valid_from || current_time > issuer.valid_until {
-            details.errors.push("Issuer certificate expired or not yet valid".to_string());
+            details
+                .errors
+                .push("Issuer certificate expired or not yet valid".to_string());
             return Ok(IssuerVerificationResult {
                 issuer_id: issuer.issuer_id.clone(),
                 verified: false,
@@ -227,18 +243,22 @@ impl TrustedIssuersRegistry {
         // Verify trust chain
         details.trust_chain_valid = self.verify_trust_chain(issuer).await?;
         if !details.trust_chain_valid {
-            details.warnings.push("Trust chain verification incomplete".to_string());
+            details
+                .warnings
+                .push("Trust chain verification incomplete".to_string());
         }
 
         // Verify capabilities
         details.capabilities_verified = self.verify_capabilities(issuer).await?;
         if !details.capabilities_verified {
-            details.warnings.push("Some capabilities could not be verified".to_string());
+            details
+                .warnings
+                .push("Some capabilities could not be verified".to_string());
         }
 
         // Determine overall verification result
-        let verified = details.certificate_valid 
-            && details.signature_valid 
+        let verified = details.certificate_valid
+            && details.signature_valid
             && details.not_revoked
             && issuer.trust_level >= self.settings.minimum_trust_level;
 
@@ -253,7 +273,10 @@ impl TrustedIssuersRegistry {
     }
 
     /// Verify issuer certificate
-    async fn verify_certificate(&self, issuer: &TrustedIssuer) -> Result<bool, Box<dyn std::error::Error>> {
+    async fn verify_certificate(
+        &self,
+        issuer: &TrustedIssuer,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
         // In implementation, would verify X.509 certificate chain
         // For now, simulate based on issuer type and trust level
         match issuer.issuer_type {
@@ -266,14 +289,20 @@ impl TrustedIssuersRegistry {
     }
 
     /// Verify issuer signature
-    async fn verify_signature(&self, issuer: &TrustedIssuer) -> Result<bool, Box<dyn std::error::Error>> {
+    async fn verify_signature(
+        &self,
+        issuer: &TrustedIssuer,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
         // In implementation, would verify digital signature
         // For now, check if public key is valid
         Ok(!issuer.public_key.is_empty() && issuer.public_key.len() >= 32)
     }
 
     /// Check revocation status
-    async fn check_revocation_status(&self, issuer: &TrustedIssuer) -> Result<bool, Box<dyn std::error::Error>> {
+    async fn check_revocation_status(
+        &self,
+        issuer: &TrustedIssuer,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
         // In implementation, would check revocation endpoint
         if let Some(_revocation_endpoint) = &issuer.revocation_endpoint {
             // Simulate revocation check
@@ -285,31 +314,52 @@ impl TrustedIssuersRegistry {
     }
 
     /// Verify trust chain
-    async fn verify_trust_chain(&self, issuer: &TrustedIssuer) -> Result<bool, Box<dyn std::error::Error>> {
+    async fn verify_trust_chain(
+        &self,
+        issuer: &TrustedIssuer,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
         // In implementation, would verify certificate chain to root CA
         match issuer.issuer_type {
             IssuerType::ZhtpFoundation => Ok(true), // Self-signed root
-            IssuerType::Government => Ok(true), // Government CAs are trusted
+            IssuerType::Government => Ok(true),     // Government CAs are trusted
             _ => Ok(issuer.trust_level >= TrustLevel::Standard),
         }
     }
 
     /// Verify issuer capabilities
-    async fn verify_capabilities(&self, issuer: &TrustedIssuer) -> Result<bool, Box<dyn std::error::Error>> {
+    async fn verify_capabilities(
+        &self,
+        issuer: &TrustedIssuer,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
         // Check if issuer's claimed capabilities match their type
         let expected_capabilities = match issuer.issuer_type {
-            IssuerType::Government => vec!["citizenship_verification", "identity_verification", "residence_verification"],
+            IssuerType::Government => vec![
+                "citizenship_verification",
+                "identity_verification",
+                "residence_verification",
+            ],
             IssuerType::Educational => vec!["qualification_verification", "education_verification"],
-            IssuerType::Financial => vec!["income_verification", "credit_verification", "financial_verification"],
+            IssuerType::Financial => vec![
+                "income_verification",
+                "credit_verification",
+                "financial_verification",
+            ],
             IssuerType::Healthcare => vec!["health_verification", "medical_verification"],
-            IssuerType::Professional => vec!["professional_verification", "certification_verification"],
+            IssuerType::Professional => {
+                vec!["professional_verification", "certification_verification"]
+            }
             IssuerType::Technology => vec!["technical_verification", "platform_verification"],
-            IssuerType::ZhtpFoundation => vec!["identity_verification", "citizenship_verification", "all_verifications"],
+            IssuerType::ZhtpFoundation => vec![
+                "identity_verification",
+                "citizenship_verification",
+                "all_verifications",
+            ],
             IssuerType::ThirdParty => vec!["general_verification"],
         };
 
         // Check if issuer has at least some expected capabilities
-        let has_expected = expected_capabilities.iter()
+        let has_expected = expected_capabilities
+            .iter()
             .any(|cap| issuer.capabilities.contains(&cap.to_string()));
 
         Ok(has_expected)
@@ -321,11 +371,11 @@ impl TrustedIssuersRegistry {
         if issuer.issuer_id.is_empty() {
             return Err("Issuer ID cannot be empty".into());
         }
-        
+
         if issuer.name.is_empty() {
             return Err("Issuer name cannot be empty".into());
         }
-        
+
         if issuer.public_key.is_empty() {
             return Err("Public key cannot be empty".into());
         }
@@ -360,21 +410,24 @@ impl TrustedIssuersRegistry {
 
     /// Find issuers by type
     pub fn find_issuers_by_type(&self, issuer_type: &IssuerType) -> Vec<&TrustedIssuer> {
-        self.issuers.values()
+        self.issuers
+            .values()
             .filter(|issuer| &issuer.issuer_type == issuer_type)
             .collect()
     }
 
     /// Find issuers by capability
     pub fn find_issuers_by_capability(&self, capability: &str) -> Vec<&TrustedIssuer> {
-        self.issuers.values()
+        self.issuers
+            .values()
             .filter(|issuer| issuer.capabilities.contains(&capability.to_string()))
             .collect()
     }
 
     /// Find issuers by minimum trust level
     pub fn find_issuers_by_trust_level(&self, min_trust_level: &TrustLevel) -> Vec<&TrustedIssuer> {
-        self.issuers.values()
+        self.issuers
+            .values()
             .filter(|issuer| &issuer.trust_level >= min_trust_level)
             .collect()
     }
@@ -391,11 +444,13 @@ impl TrustedIssuersRegistry {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
-        let expired_entries = self.verification_cache.values()
+
+        let expired_entries = self
+            .verification_cache
+            .values()
             .filter(|result| result.expires_at <= current_time)
             .count();
-        
+
         (total_entries, expired_entries)
     }
 
@@ -404,91 +459,102 @@ impl TrustedIssuersRegistry {
         let mut issuers = HashMap::new();
 
         // ZHTP Foundation
-        issuers.insert("lib_foundation".to_string(), TrustedIssuer {
-            issuer_id: "lib_foundation".to_string(),
-            name: "ZHTP Foundation".to_string(),
-            description: "The foundational authority for ZHTP identity verification".to_string(),
-            public_key: vec![1; 32], // Placeholder key
-            issuer_type: IssuerType::ZhtpFoundation,
-            trust_level: TrustLevel::Maximum,
-            capabilities: vec![
-                "identity_verification".to_string(),
-                "citizenship_verification".to_string(),
-                "ubi_verification".to_string(),
-                "dao_verification".to_string(),
-                "web4_verification".to_string(),
-            ],
-            verification_methods: vec![
-                VerificationMethod {
+        issuers.insert(
+            "lib_foundation".to_string(),
+            TrustedIssuer {
+                issuer_id: "lib_foundation".to_string(),
+                name: "ZHTP Foundation".to_string(),
+                description: "The foundational authority for ZHTP identity verification"
+                    .to_string(),
+                public_key: vec![1; 32], // Placeholder key
+                issuer_type: IssuerType::ZhtpFoundation,
+                trust_level: TrustLevel::Maximum,
+                capabilities: vec![
+                    "identity_verification".to_string(),
+                    "citizenship_verification".to_string(),
+                    "ubi_verification".to_string(),
+                    "dao_verification".to_string(),
+                    "web4_verification".to_string(),
+                ],
+                verification_methods: vec![VerificationMethod {
                     method_id: "lib_proofs_proof".to_string(),
                     method_type: "zero_knowledge_proof".to_string(),
                     verification_endpoint: "https://verify.zhtp.foundation/zk".to_string(),
-                    supported_proofs: vec!["citizenship_proof".to_string(), "identity_proof".to_string()],
+                    supported_proofs: vec![
+                        "citizenship_proof".to_string(),
+                        "identity_proof".to_string(),
+                    ],
                     requires_registration: false,
-                }
-            ],
-            valid_from: 0,
-            valid_until: u64::MAX,
-            revocation_endpoint: Some("https://revoke.zhtp.foundation".to_string()),
-            metadata: HashMap::new(),
-        });
+                }],
+                valid_from: 0,
+                valid_until: u64::MAX,
+                revocation_endpoint: Some("https://revoke.zhtp.foundation".to_string()),
+                metadata: HashMap::new(),
+            },
+        );
 
         // Government Registry
-        issuers.insert("government_registry".to_string(), TrustedIssuer {
-            issuer_id: "government_registry".to_string(),
-            name: "Government Identity Registry".to_string(),
-            description: "Official government identity verification authority".to_string(),
-            public_key: vec![2; 32], // Placeholder key
-            issuer_type: IssuerType::Government,
-            trust_level: TrustLevel::Maximum,
-            capabilities: vec![
-                "citizenship_verification".to_string(),
-                "identity_verification".to_string(),
-                "residence_verification".to_string(),
-                "age_verification".to_string(),
-            ],
-            verification_methods: vec![
-                VerificationMethod {
+        issuers.insert(
+            "government_registry".to_string(),
+            TrustedIssuer {
+                issuer_id: "government_registry".to_string(),
+                name: "Government Identity Registry".to_string(),
+                description: "Official government identity verification authority".to_string(),
+                public_key: vec![2; 32], // Placeholder key
+                issuer_type: IssuerType::Government,
+                trust_level: TrustLevel::Maximum,
+                capabilities: vec![
+                    "citizenship_verification".to_string(),
+                    "identity_verification".to_string(),
+                    "residence_verification".to_string(),
+                    "age_verification".to_string(),
+                ],
+                verification_methods: vec![VerificationMethod {
                     method_id: "gov_digital_id".to_string(),
                     method_type: "digital_identity".to_string(),
                     verification_endpoint: "https://verify.gov.example/identity".to_string(),
-                    supported_proofs: vec!["citizenship_proof".to_string(), "residence_proof".to_string()],
+                    supported_proofs: vec![
+                        "citizenship_proof".to_string(),
+                        "residence_proof".to_string(),
+                    ],
                     requires_registration: true,
-                }
-            ],
-            valid_from: 0,
-            valid_until: 2524608000, // Year 2050
-            revocation_endpoint: Some("https://revoke.gov.example".to_string()),
-            metadata: HashMap::new(),
-        });
+                }],
+                valid_from: 0,
+                valid_until: 2524608000, // Year 2050
+                revocation_endpoint: Some("https://revoke.gov.example".to_string()),
+                metadata: HashMap::new(),
+            },
+        );
 
         // Educational Authority
-        issuers.insert("education_authority".to_string(), TrustedIssuer {
-            issuer_id: "education_authority".to_string(),
-            name: "Educational Credentials Authority".to_string(),
-            description: "Verification authority for educational qualifications".to_string(),
-            public_key: vec![3; 32], // Placeholder key
-            issuer_type: IssuerType::Educational,
-            trust_level: TrustLevel::High,
-            capabilities: vec![
-                "qualification_verification".to_string(),
-                "education_verification".to_string(),
-                "degree_verification".to_string(),
-            ],
-            verification_methods: vec![
-                VerificationMethod {
+        issuers.insert(
+            "education_authority".to_string(),
+            TrustedIssuer {
+                issuer_id: "education_authority".to_string(),
+                name: "Educational Credentials Authority".to_string(),
+                description: "Verification authority for educational qualifications".to_string(),
+                public_key: vec![3; 32], // Placeholder key
+                issuer_type: IssuerType::Educational,
+                trust_level: TrustLevel::High,
+                capabilities: vec![
+                    "qualification_verification".to_string(),
+                    "education_verification".to_string(),
+                    "degree_verification".to_string(),
+                ],
+                verification_methods: vec![VerificationMethod {
                     method_id: "edu_credential".to_string(),
                     method_type: "educational_credential".to_string(),
-                    verification_endpoint: "https://verify.education.example/credentials".to_string(),
+                    verification_endpoint: "https://verify.education.example/credentials"
+                        .to_string(),
                     supported_proofs: vec!["qualification_proof".to_string()],
                     requires_registration: true,
-                }
-            ],
-            valid_from: 0,
-            valid_until: 2524608000,
-            revocation_endpoint: None,
-            metadata: HashMap::new(),
-        });
+                }],
+                valid_from: 0,
+                valid_until: 2524608000,
+                revocation_endpoint: None,
+                metadata: HashMap::new(),
+            },
+        );
 
         issuers
     }

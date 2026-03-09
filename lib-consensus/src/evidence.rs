@@ -17,8 +17,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use lib_types::{BlockHeight, TxHash, Amount};
 use lib_identity::IdentityId;
+use lib_types::{Amount, BlockHeight, TxHash};
 
 // =============================================================================
 // EVIDENCE TYPES
@@ -90,12 +90,18 @@ impl Evidence {
         let mut data = b"ZHTP_EVIDENCE_ID_V1".to_vec();
 
         match self {
-            Evidence::DoubleSign { validator, height, .. } => {
+            Evidence::DoubleSign {
+                validator, height, ..
+            } => {
                 data.extend_from_slice(b"DoubleSign");
                 data.extend_from_slice(validator.as_bytes());
                 data.extend_from_slice(&height.to_le_bytes());
             }
-            Evidence::Replay { tx, original_height, .. } => {
+            Evidence::Replay {
+                tx,
+                original_height,
+                ..
+            } => {
                 data.extend_from_slice(b"Replay");
                 data.extend_from_slice(tx.as_bytes());
                 data.extend_from_slice(&original_height.to_le_bytes());
@@ -126,10 +132,10 @@ pub struct SlashingParams {
 impl Default for SlashingParams {
     fn default() -> Self {
         Self {
-            double_sign_slash_bps: 500,      // 5% slash for double-sign
-            default_slash_bps: 100,          // 1% for other evidence
-            min_slash_amount: 1_000_000,     // Minimum 1M units
-            jail_duration_blocks: 10_000,    // ~16 hours at 6s blocks
+            double_sign_slash_bps: 500,   // 5% slash for double-sign
+            default_slash_bps: 100,       // 1% for other evidence
+            min_slash_amount: 1_000_000,  // Minimum 1M units
+            jail_duration_blocks: 10_000, // ~16 hours at 6s blocks
         }
     }
 }
@@ -146,9 +152,7 @@ impl SlashingParams {
             Evidence::Replay { .. } => self.default_slash_bps,
         };
 
-        let slash = validator_stake
-            .saturating_mul(slash_bps as Amount)
-            / 10_000;
+        let slash = validator_stake.saturating_mul(slash_bps as Amount) / 10_000;
 
         slash.max(self.min_slash_amount)
     }
@@ -193,11 +197,7 @@ impl EvidenceStore {
     /// Submit new evidence
     ///
     /// Returns evidence_id if accepted, None if duplicate
-    pub fn submit(
-        &mut self,
-        evidence: Evidence,
-        current_height: BlockHeight,
-    ) -> Option<[u8; 32]> {
+    pub fn submit(&mut self, evidence: Evidence, current_height: BlockHeight) -> Option<[u8; 32]> {
         let evidence_id = evidence.evidence_id();
 
         // Reject duplicates
@@ -237,11 +237,7 @@ impl EvidenceStore {
     pub fn get_by_validator(&self, validator: &IdentityId) -> Vec<&EvidenceRecord> {
         self.by_validator
             .get(validator)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| self.evidence.get(id))
-                    .collect()
-            })
+            .map(|ids| ids.iter().filter_map(|id| self.evidence.get(id)).collect())
             .unwrap_or_default()
     }
 
@@ -298,7 +294,10 @@ impl EvidenceStore {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IsolationAction {
     /// Disconnect and ban the peer
-    BanPeer { peer_id: IdentityId, duration_secs: u64 },
+    BanPeer {
+        peer_id: IdentityId,
+        duration_secs: u64,
+    },
     /// Reduce peer score (soft isolation)
     ReduceScore { peer_id: IdentityId, penalty: i32 },
     /// No network action needed
@@ -434,9 +433,6 @@ mod tests {
             IsolationAction::BanPeer { .. }
         ));
 
-        assert!(matches!(
-            isolation_action(&replay),
-            IsolationAction::None
-        ));
+        assert!(matches!(isolation_action(&replay), IsolationAction::None));
     }
 }

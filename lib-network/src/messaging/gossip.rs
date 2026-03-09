@@ -186,10 +186,7 @@ pub const GOSSIP_SEEN_SET_MAX_ITEMS: usize = 10_000;
 /// // Over the limit: should be Err
 /// assert!(assert_gossip_rate_limit(101, b"deadbeef").is_err());
 /// ```
-pub fn assert_gossip_rate_limit(
-    count: u32,
-    peer_id_prefix: &[u8],
-) -> Result<(), String> {
+pub fn assert_gossip_rate_limit(count: u32, peer_id_prefix: &[u8]) -> Result<(), String> {
     if count > MAX_MESSAGES_PER_PEER_PER_SEC {
         let display_len = peer_id_prefix.len().min(8);
         let display_prefix = &peer_id_prefix[..display_len];
@@ -235,10 +232,7 @@ pub fn assert_block_size(block_bytes: &[u8]) -> Result<(), String> {
 /// # Errors
 ///
 /// Returns `Err` when the count exceeds `MAX_TX_GOSSIP_PER_ROUND`.
-pub fn assert_tx_gossip_rate(
-    count: u32,
-    peer_id_prefix: &[u8],
-) -> Result<(), String> {
+pub fn assert_tx_gossip_rate(count: u32, peer_id_prefix: &[u8]) -> Result<(), String> {
     if count > MAX_TX_GOSSIP_PER_ROUND {
         return Err(format!(
             "TX GOSSIP RATE LIMIT EXCEEDED: peer {} sent {} txs/round (max {})",
@@ -273,7 +267,10 @@ mod tests {
 
     #[test]
     fn gossip_fanout_is_at_least_1() {
-        assert!(GOSSIP_FANOUT >= 1, "Fanout must be at least 1 for gossip to propagate");
+        assert!(
+            GOSSIP_FANOUT >= 1,
+            "Fanout must be at least 1 for gossip to propagate"
+        );
     }
 
     #[test]
@@ -301,7 +298,11 @@ mod tests {
     fn rate_limit_error_includes_peer_id() {
         let result = assert_gossip_rate_limit(200, b"\xca\xfe");
         let msg = result.unwrap_err();
-        assert!(msg.contains("cafe"), "Error should contain hex peer id: {}", msg);
+        assert!(
+            msg.contains("cafe"),
+            "Error should contain hex peer id: {}",
+            msg
+        );
     }
 
     // ---- assert_block_size ----
@@ -320,7 +321,9 @@ mod tests {
         let large_block = vec![0u8; MAX_BLOCK_SIZE_BYTES + 1];
         let result = assert_block_size(&large_block);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("BLOCK SIZE INVARIANT VIOLATED"));
+        assert!(result
+            .unwrap_err()
+            .contains("BLOCK SIZE INVARIANT VIOLATED"));
     }
 
     // ---- assert_tx_gossip_rate ----
@@ -335,6 +338,8 @@ mod tests {
     fn tx_gossip_rate_rejects_over_bound() {
         let result = assert_tx_gossip_rate(501, b"baadf00d");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("TX GOSSIP RATE LIMIT EXCEEDED"));
+        assert!(result
+            .unwrap_err()
+            .contains("TX GOSSIP RATE LIMIT EXCEEDED"));
     }
 }

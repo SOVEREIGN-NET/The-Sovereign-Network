@@ -3,16 +3,15 @@
 //! Handles path expansion (~/), validation, and normalization
 //! All functions are pure - they only depend on their inputs
 
-use std::path::PathBuf;
 use crate::error::{CliError, CliResult};
+use std::path::PathBuf;
 
 /// Expand a path that may contain ~/ prefix
 ///
 /// Pure function - depends only on input and home directory lookup
 pub fn expand_home_directory(path: &str) -> CliResult<PathBuf> {
     if path.starts_with("~/") {
-        let home = dirs::home_dir()
-            .ok_or(CliError::HomeDirectoryNotFound)?;
+        let home = dirs::home_dir().ok_or(CliError::HomeDirectoryNotFound)?;
         Ok(home.join(&path[2..]))
     } else if path == "~" {
         dirs::home_dir().ok_or(CliError::HomeDirectoryNotFound)
@@ -54,15 +53,15 @@ pub fn get_filename(path: &PathBuf) -> CliResult<String> {
 pub fn get_parent_dir(path: &PathBuf) -> CliResult<PathBuf> {
     path.parent()
         .map(|p| p.to_path_buf())
-        .ok_or_else(|| {
-            CliError::PathError(format!("Cannot get parent of path: {:?}", path))
-        })
+        .ok_or_else(|| CliError::PathError(format!("Cannot get parent of path: {:?}", path)))
 }
 
 /// Validate that a path is a valid directory name (no path separators)
 pub fn validate_directory_name(name: &str) -> CliResult<()> {
     if name.is_empty() {
-        return Err(CliError::PathError("Directory name cannot be empty".to_string()));
+        return Err(CliError::PathError(
+            "Directory name cannot be empty".to_string(),
+        ));
     }
 
     if name.contains('/') || name.contains('\\') {

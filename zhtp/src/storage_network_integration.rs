@@ -2,11 +2,11 @@
 
 use async_trait::async_trait;
 use lib_crypto::PublicKey;
-use lib_network::{NetworkOutput, global_output_queue};
+use lib_network::{global_output_queue, NetworkOutput};
 use lib_storage::PersistentStorageSystem;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio::sync::mpsc;
+use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 use tracing::warn;
 
@@ -52,9 +52,7 @@ impl NetworkOutputHandler for NoopNetworkOutputHandler {
     ) {
         warn!(
             "NetworkOutput BlockchainRequest {:?} req_id={} from {:?} (noop handler)",
-            request,
-            request_id,
-            requester.key_id
+            request, request_id, requester.key_id
         );
     }
 
@@ -79,8 +77,7 @@ impl NetworkOutputHandler for NoopNetworkOutputHandler {
     ) {
         warn!(
             "NetworkOutput EdgeSyncRequest from {} message {:?} (noop handler)",
-            peer,
-            message
+            peer, message
         );
     }
 }
@@ -90,12 +87,20 @@ pub async fn process_network_outputs_with(handler: &impl NetworkOutputHandler) {
     let outputs = drain_network_outputs().await;
     for output in outputs {
         match output {
-            NetworkOutput::BlockchainRequest { requester, request_id, request } => {
+            NetworkOutput::BlockchainRequest {
+                requester,
+                request_id,
+                request,
+            } => {
                 handler
                     .handle_blockchain_request(requester, request_id, request)
                     .await;
             }
-            NetworkOutput::BootstrapProofRequest { requester, request_id, current_height } => {
+            NetworkOutput::BootstrapProofRequest {
+                requester,
+                request_id,
+                current_height,
+            } => {
                 handler
                     .handle_bootstrap_proof_request(requester, request_id, current_height)
                     .await;
@@ -132,9 +137,11 @@ impl NetworkOutputHandler for ChannelNetworkOutputHandler {
         request_id: u64,
         request: lib_network::types::mesh_message::BlockchainRequestType,
     ) {
-        let _ = self
-            .sender
-            .send(NetworkOutput::BlockchainRequest { requester, request_id, request });
+        let _ = self.sender.send(NetworkOutput::BlockchainRequest {
+            requester,
+            request_id,
+            request,
+        });
     }
 
     async fn handle_bootstrap_proof_request(
@@ -155,12 +162,17 @@ impl NetworkOutputHandler for ChannelNetworkOutputHandler {
         peer: String,
         message: lib_network::protocols::bluetooth::gatt::EdgeSyncMessage,
     ) {
-        let _ = self.sender.send(NetworkOutput::EdgeSyncRequest { peer, message });
+        let _ = self
+            .sender
+            .send(NetworkOutput::EdgeSyncRequest { peer, message });
     }
 }
 
 /// Convenience helper to create a channel-backed handler.
-pub fn channel_handler() -> (ChannelNetworkOutputHandler, mpsc::UnboundedReceiver<NetworkOutput>) {
+pub fn channel_handler() -> (
+    ChannelNetworkOutputHandler,
+    mpsc::UnboundedReceiver<NetworkOutput>,
+) {
     let (tx, rx) = mpsc::unbounded_channel();
     (ChannelNetworkOutputHandler::new(tx), rx)
 }

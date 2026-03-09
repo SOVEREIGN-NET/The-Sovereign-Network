@@ -1,24 +1,30 @@
 //! Main blockchain data structure and implementation
-//! 
+//!
 //! Contains the core Blockchain struct and its methods, extracted from the original
 //! blockchain.rs implementation with proper modularization.
 
-use std::collections::{HashMap, HashSet};
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use tracing::{info, warn, error, debug};
-use crate::types::{Hash, Difficulty, DifficultyConfig};
-use crate::transaction::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData};
-use crate::types::transaction_type::TransactionType;
 use crate::block::Block;
-use crate::integration::crypto_integration::{Signature, PublicKey, SignatureAlgorithm};
-use crate::integration::zk_integration::ZkTransactionProof;
-use crate::integration::economic_integration::{EconomicTransactionProcessor, TreasuryStats};
-use crate::integration::consensus_integration::{BlockchainConsensusCoordinator, ConsensusStatus};
-use crate::integration::storage_integration::{BlockchainStorageManager, BlockchainStorageConfig, StorageOperationResult};
-use crate::storage::{BlockchainStore, IdentityConsensus, IdentityMetadata, IdentityType, IdentityStatus, did_to_hash};
 use crate::contracts::treasury_kernel::TreasuryKernel;
+use crate::integration::consensus_integration::{BlockchainConsensusCoordinator, ConsensusStatus};
+use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+use crate::integration::economic_integration::{EconomicTransactionProcessor, TreasuryStats};
+use crate::integration::storage_integration::{
+    BlockchainStorageConfig, BlockchainStorageManager, StorageOperationResult,
+};
+use crate::integration::zk_integration::ZkTransactionProof;
+use crate::storage::{
+    did_to_hash, BlockchainStore, IdentityConsensus, IdentityMetadata, IdentityStatus, IdentityType,
+};
+use crate::transaction::{
+    IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
+};
+use crate::types::transaction_type::TransactionType;
+use crate::types::{Difficulty, DifficultyConfig, Hash};
+use anyhow::Result;
 use lib_storage::dht::storage::DhtStorage;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use tracing::{debug, error, info, warn};
 
 /// Validator was bootstrapped from off-chain genesis configuration at height 0.
 pub const ADMISSION_SOURCE_OFFCHAIN_GENESIS: &str = "offchain_genesis";
@@ -46,7 +52,7 @@ pub struct ConsensusCheckpoint {
 
 // Import lib-proofs for recursive proof aggregation
 // Import lib-proofs for recursive proof aggregation
-use lib_proofs::verifiers::transaction_verifier::{BatchedPrivateTransaction, BatchMetadata};
+use lib_proofs::verifiers::transaction_verifier::{BatchMetadata, BatchedPrivateTransaction};
 
 /// Default finality depth (6 blocks like Bitcoin)
 fn default_finality_depth() -> u64 {
@@ -164,7 +170,8 @@ pub struct Blockchain {
     pub economic_processor: Option<EconomicTransactionProcessor>,
     /// Consensus coordinator for lib-consensus integration
     #[serde(skip)]
-    pub consensus_coordinator: Option<std::sync::Arc<tokio::sync::RwLock<BlockchainConsensusCoordinator>>>,
+    pub consensus_coordinator:
+        Option<std::sync::Arc<tokio::sync::RwLock<BlockchainConsensusCoordinator>>>,
     /// Storage manager for persistent data
     #[serde(skip)]
     pub storage_manager: Option<std::sync::Arc<tokio::sync::RwLock<BlockchainStorageManager>>>,
@@ -174,7 +181,8 @@ pub struct Blockchain {
     pub store: Option<std::sync::Arc<dyn BlockchainStore>>,
     /// Recursive proof aggregator for O(1) state verification
     #[serde(skip)]
-    pub proof_aggregator: Option<std::sync::Arc<tokio::sync::RwLock<lib_proofs::RecursiveProofAggregator>>>,
+    pub proof_aggregator:
+        Option<std::sync::Arc<tokio::sync::RwLock<lib_proofs::RecursiveProofAggregator>>>,
     /// Auto-persistence configuration
     #[serde(default)]
     pub auto_persist_enabled: bool,
@@ -255,7 +263,6 @@ pub struct Blockchain {
     // =========================================================================
     // DAO Bootstrap Council (dao-1)
     // =========================================================================
-
     /// Current governance phase (Bootstrap → Hybrid → FullDao)
     #[serde(default)]
     pub governance_phase: crate::dao::GovernancePhase,
@@ -269,7 +276,6 @@ pub struct Blockchain {
     // =========================================================================
     // DAO Treasury Execution (dao-2)
     // =========================================================================
-
     /// SOV spent per epoch: epoch_number → cumulative_amount
     #[serde(default)]
     pub treasury_epoch_spend: HashMap<u64, u64>,
@@ -312,7 +318,6 @@ pub struct Blockchain {
     // =========================================================================
     // DAO Voting Power (dao-5)
     // =========================================================================
-
     /// How token balances translate to voting weight
     #[serde(default)]
     pub voting_power_mode: crate::dao::VotingPowerMode,
@@ -356,7 +361,7 @@ pub struct Blockchain {
     pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
     /// Last oracle timestamp for which apply_pending_updates() was called.
     /// Prevents double-application within the same epoch.
-    /// 
+    ///
     /// ORACLE-R4: This field always stores a Unix timestamp (seconds), not an epoch ID.
     /// Legacy data may have epoch IDs - migration happens on load.
     #[serde(default)]
@@ -550,7 +555,7 @@ impl TransactionV1 {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-                        governance_config_data: None,
+            governance_config_data: None,
             bonding_curve_deploy_data: None,
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
@@ -560,7 +565,6 @@ impl TransactionV1 {
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
         }
-
     }
 }
 
@@ -575,7 +579,11 @@ impl BlockV1 {
     fn migrate_to_current(self) -> Block {
         Block {
             header: self.header,
-            transactions: self.transactions.into_iter().map(|tx| tx.migrate_to_current()).collect(),
+            transactions: self
+                .transactions
+                .into_iter()
+                .map(|tx| tx.migrate_to_current())
+                .collect(),
         }
     }
 }
@@ -615,15 +623,30 @@ impl BlockchainV1 {
     /// Migrate V1 blockchain to current format
     fn migrate_to_current(self) -> Blockchain {
         info!("🔄 Migrating blockchain from V1 format to current format");
-        info!("   V1 data: height={}, identities={}, wallets={}, utxos={}",
-              self.height, self.identity_registry.len(),
-              self.wallet_registry.len(), self.utxo_set.len());
+        info!(
+            "   V1 data: height={}, identities={}, wallets={}, utxos={}",
+            self.height,
+            self.identity_registry.len(),
+            self.wallet_registry.len(),
+            self.utxo_set.len()
+        );
 
-        let blocks: Vec<Block> = self.blocks.into_iter().map(|b| b.migrate_to_current()).collect();
-        let pending_transactions: Vec<Transaction> = self.pending_transactions.into_iter()
-            .map(|tx| tx.migrate_to_current()).collect();
+        let blocks: Vec<Block> = self
+            .blocks
+            .into_iter()
+            .map(|b| b.migrate_to_current())
+            .collect();
+        let pending_transactions: Vec<Transaction> = self
+            .pending_transactions
+            .into_iter()
+            .map(|tx| tx.migrate_to_current())
+            .collect();
 
-        info!("   Migrated {} blocks, {} pending transactions", blocks.len(), pending_transactions.len());
+        info!(
+            "   Migrated {} blocks, {} pending transactions",
+            blocks.len(),
+            pending_transactions.len()
+        );
 
         Blockchain {
             blocks,
@@ -845,11 +868,10 @@ struct BlockchainStorageV3 {
     // =========================================================================
     // ADD NEW FIELDS BELOW HERE ONLY - with #[serde(default)]
     // =========================================================================
-
     /// Per-token, per-address nonce for token transfer replay protection
     #[serde(default)]
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
-    
+
     /// AMM liquidity pools for graduated bonding curve tokens
     #[serde(default)]
     pub amm_pools: HashMap<[u8; 32], crate::contracts::sov_swap::SovSwapPool>,
@@ -1233,7 +1255,7 @@ pub struct BlockchainImport {
     pub blocks: Vec<Block>,
     pub utxo_set: HashMap<Hash, TransactionOutput>,
     pub identity_registry: HashMap<String, IdentityTransactionData>,
-    pub wallet_references: HashMap<String, crate::transaction::WalletReference>,  // Only minimal references
+    pub wallet_references: HashMap<String, crate::transaction::WalletReference>, // Only minimal references
     pub validator_registry: HashMap<String, ValidatorInfo>,
     pub token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
     pub web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
@@ -1253,7 +1275,7 @@ impl Blockchain {
     /// Create a new blockchain with genesis block
     pub fn new() -> Result<Self> {
         let genesis_block = crate::block::create_genesis_block();
-        
+
         let mut blockchain = Blockchain {
             blocks: vec![genesis_block.clone()],
             height: 0,
@@ -1355,7 +1377,9 @@ impl Blockchain {
     /// Create a new blockchain with storage manager
     pub async fn new_with_storage(storage_config: BlockchainStorageConfig) -> Result<Self> {
         let mut blockchain = Self::new()?;
-        blockchain.initialize_storage_manager(storage_config).await?;
+        blockchain
+            .initialize_storage_manager(storage_config)
+            .await?;
         Ok(blockchain)
     }
 
@@ -1382,9 +1406,9 @@ impl Blockchain {
         // initialize the store height. Supplying a non-genesis block first will fail with
         // an InvalidBlockHeight error from the SledStore.
         let mut blockchain = Self::new()?;
-        let executor = std::sync::Arc::new(
-            crate::execution::executor::BlockExecutor::with_store(store.clone())
-        );
+        let executor = std::sync::Arc::new(crate::execution::executor::BlockExecutor::with_store(
+            store.clone(),
+        ));
         blockchain.executor = Some(executor);
         blockchain.store = Some(store);
         // Disable legacy auto-persistence when using the new store
@@ -1397,20 +1421,18 @@ impl Blockchain {
     ///
     /// This is the recommended constructor for production use.
     /// All state mutations go through the executor, ensuring consistency.
-    pub fn new_with_executor(
-        store: std::sync::Arc<dyn BlockchainStore>,
-    ) -> Result<Self> {
+    pub fn new_with_executor(store: std::sync::Arc<dyn BlockchainStore>) -> Result<Self> {
         let mut blockchain = Self::new()?;
-        
+
         // Create BlockExecutor with the store
-        let executor = std::sync::Arc::new(
-            crate::execution::executor::BlockExecutor::with_store(store.clone())
-        );
-        
+        let executor = std::sync::Arc::new(crate::execution::executor::BlockExecutor::with_store(
+            store.clone(),
+        ));
+
         blockchain.executor = Some(executor);
         blockchain.store = Some(store);
         blockchain.auto_persist_enabled = false;
-        
+
         info!("Blockchain initialized with BlockExecutor as single source of truth");
         Ok(blockchain)
     }
@@ -1457,13 +1479,16 @@ impl Blockchain {
             }
         }
 
-        info!("📂 Found blockchain data up to height {} in SledStore", latest_height);
+        info!(
+            "📂 Found blockchain data up to height {} in SledStore",
+            latest_height
+        );
 
         // Create a fresh blockchain (with genesis)
         let mut blockchain = Self::new()?;
-        let executor = std::sync::Arc::new(
-            crate::execution::executor::BlockExecutor::with_store(store.clone())
-        );
+        let executor = std::sync::Arc::new(crate::execution::executor::BlockExecutor::with_store(
+            store.clone(),
+        ));
         blockchain.executor = Some(executor);
         blockchain.store = Some(store.clone());
         blockchain.auto_persist_enabled = false;
@@ -1492,17 +1517,20 @@ impl Blockchain {
 
                         // Process identity registrations
                         if let Some(identity_data) = &tx.identity_data {
-                            blockchain.identity_registry.insert(
-                                identity_data.did.clone(),
-                                identity_data.clone(),
-                            );
-                            blockchain.identity_blocks.insert(identity_data.did.clone(), height);
+                            blockchain
+                                .identity_registry
+                                .insert(identity_data.did.clone(), identity_data.clone());
+                            blockchain
+                                .identity_blocks
+                                .insert(identity_data.did.clone(), height);
                         }
 
                         // Process wallet registrations
                         if let Some(wallet_data) = &tx.wallet_data {
                             let wallet_id = hex::encode(wallet_data.wallet_id.as_bytes());
-                            blockchain.wallet_registry.insert(wallet_id.clone(), wallet_data.clone());
+                            blockchain
+                                .wallet_registry
+                                .insert(wallet_id.clone(), wallet_data.clone());
                             blockchain.wallet_blocks.insert(wallet_id, height);
                         }
 
@@ -1510,9 +1538,16 @@ impl Blockchain {
                         // This keeps restart reconstruction behavior aligned with normal
                         // block processing logic instead of a separate ad-hoc extractor.
                         if tx.transaction_type == TransactionType::ContractExecution {
-                            debug!("📦 Replaying ContractExecution tx at height {}, memo_len={}", height, tx.memo.len());
+                            debug!(
+                                "📦 Replaying ContractExecution tx at height {}, memo_len={}",
+                                height,
+                                tx.memo.len()
+                            );
                             if let Err(e) = blockchain.process_contract_execution(tx, height) {
-                                warn!("⚠️ Failed to replay ContractExecution at height {}: {}", height, e);
+                                warn!(
+                                    "⚠️ Failed to replay ContractExecution at height {}: {}",
+                                    height, e
+                                );
                             }
                         }
 
@@ -1541,11 +1576,12 @@ impl Blockchain {
                                 governance_proposal_id: None,
                                 oracle_key_id: None,
                             };
-                            blockchain.validator_registry.insert(
-                                validator_data.identity_id.clone(),
-                                validator_info,
-                            );
-                            blockchain.validator_blocks.insert(validator_data.identity_id.clone(), height);
+                            blockchain
+                                .validator_registry
+                                .insert(validator_data.identity_id.clone(), validator_info);
+                            blockchain
+                                .validator_blocks
+                                .insert(validator_data.identity_id.clone(), height);
                         }
                     }
 
@@ -1628,7 +1664,10 @@ impl Blockchain {
             }
         }
         if backfilled_blocks > 0 {
-            info!("📦 Backfilled {} contract deployment heights to genesis (block 0)", backfilled_blocks);
+            info!(
+                "📦 Backfilled {} contract deployment heights to genesis (block 0)",
+                backfilled_blocks
+            );
         }
         blockchain.rebuild_dao_registry_index();
 
@@ -1692,7 +1731,10 @@ impl Blockchain {
                 }
             }
             if synced > 0 {
-                info!("💰 Synced {} SOV balances from token_balances tree into in-memory contracts", synced);
+                info!(
+                    "💰 Synced {} SOV balances from token_balances tree into in-memory contracts",
+                    synced
+                );
             }
         }
 
@@ -1705,7 +1747,10 @@ impl Blockchain {
         }
 
         if let Err(e) = blockchain.process_approved_governance_proposals() {
-            warn!("Failed to apply governance parameter updates during load_from_store: {}", e);
+            warn!(
+                "Failed to apply governance parameter updates during load_from_store: {}",
+                e
+            );
         }
 
         // Restore oracle_state from SledStore (persisted by bootstrap / governance).
@@ -1714,7 +1759,10 @@ impl Blockchain {
             Ok(Some(oracle_state)) => {
                 let member_count = oracle_state.committee.members().len();
                 blockchain.oracle_state = oracle_state;
-                info!("🔮 Restored oracle_state from SledStore: {} committee members", member_count);
+                info!(
+                    "🔮 Restored oracle_state from SledStore: {} committee members",
+                    member_count
+                );
             }
             Ok(None) => {
                 info!("🔮 No persisted oracle_state in SledStore (oracle committee not yet bootstrapped)");
@@ -1754,9 +1802,37 @@ impl Blockchain {
     /// When an executor is set, all block applications should go through
     /// BlockExecutor.apply_block() instead of direct state updates.
     /// This ensures consistent state between memory and storage.
-    pub fn set_executor(&mut self, executor: std::sync::Arc<crate::execution::executor::BlockExecutor>) {
+    pub fn set_executor(
+        &mut self,
+        executor: std::sync::Arc<crate::execution::executor::BlockExecutor>,
+    ) {
         self.executor = Some(executor);
+        self.refresh_executor_token_creation_fee_if_needed();
         info!("BlockExecutor set as single source of truth for state mutations");
+    }
+
+    fn refresh_executor_token_creation_fee_if_needed(&mut self) {
+        let Some(executor) = self.executor.as_ref() else {
+            return;
+        };
+
+        if executor.token_creation_fee() == self.tx_fee_config.token_creation_fee {
+            return;
+        }
+
+        let rebuilt = std::sync::Arc::new(
+            crate::execution::executor::BlockExecutor::new_with_token_creation_fee(
+                std::sync::Arc::clone(executor.store()),
+                executor.fee_model().clone(),
+                executor.limits().clone(),
+                self.tx_fee_config.token_creation_fee,
+            ),
+        );
+        self.executor = Some(rebuilt);
+        info!(
+            "Refreshed BlockExecutor token_creation_fee to {}",
+            self.tx_fee_config.token_creation_fee
+        );
     }
 
     /// Check if BlockExecutor is configured as the single source of truth
@@ -1765,13 +1841,18 @@ impl Blockchain {
     }
 
     /// Initialize the storage manager
-    pub async fn initialize_storage_manager(&mut self, config: BlockchainStorageConfig) -> Result<()> {
+    pub async fn initialize_storage_manager(
+        &mut self,
+        config: BlockchainStorageConfig,
+    ) -> Result<()> {
         info!("🗃️ Initializing blockchain storage manager");
-        
+
         let storage_manager = BlockchainStorageManager::new(config).await?;
-        self.storage_manager = Some(std::sync::Arc::new(tokio::sync::RwLock::new(storage_manager)));
+        self.storage_manager = Some(std::sync::Arc::new(tokio::sync::RwLock::new(
+            storage_manager,
+        )));
         self.auto_persist_enabled = true;
-        
+
         info!("Storage manager initialized successfully");
         Ok(())
     }
@@ -1779,27 +1860,30 @@ impl Blockchain {
     /// Initialize the recursive proof aggregator for O(1) state verification
     pub fn initialize_proof_aggregator(&mut self) -> Result<()> {
         info!("Initializing recursive proof aggregator");
-        
+
         let aggregator = lib_proofs::RecursiveProofAggregator::new()?;
         self.proof_aggregator = Some(std::sync::Arc::new(tokio::sync::RwLock::new(aggregator)));
-        
+
         info!("Recursive proof aggregator initialized successfully");
         Ok(())
     }
 
     /// Set broadcast channel for real-time block/transaction propagation
-    pub fn set_broadcast_channel(&mut self, sender: tokio::sync::mpsc::UnboundedSender<BlockchainBroadcastMessage>) {
+    pub fn set_broadcast_channel(
+        &mut self,
+        sender: tokio::sync::mpsc::UnboundedSender<BlockchainBroadcastMessage>,
+    ) {
         debug!("Blockchain broadcast channel configured");
         self.broadcast_sender = Some(sender);
     }
 
     /// Fund genesis block with initial UTXOs and register identities
-    /// 
+    ///
     /// This method handles the blockchain-specific operations for genesis funding:
     /// - Creates UTXOs for validators, funding pools, and user wallets
     /// - Registers identities and wallets in blockchain registries
     /// - Updates genesis block with funding transaction
-    /// 
+    ///
     /// # Arguments
     /// * `genesis_outputs` - Transaction outputs to add to genesis block
     /// * `genesis_signature` - Signature for the genesis funding transaction
@@ -1816,15 +1900,18 @@ impl Blockchain {
         identity_registrations: Vec<crate::transaction::core::IdentityTransactionData>,
         validator_registrations: Vec<ValidatorInfo>,
     ) -> Result<()> {
-        info!("Funding genesis block with {} outputs", genesis_outputs.len());
-        
+        info!(
+            "Funding genesis block with {} outputs",
+            genesis_outputs.len()
+        );
+
         // Validate genesis block exists
         if self.blocks.is_empty() {
             return Err(anyhow::anyhow!("No genesis block found in blockchain"));
         }
-        
+
         let genesis_block = &mut self.blocks[0];
-        
+
         // Create genesis funding transaction
         let genesis_tx = crate::Transaction {
             version: 1,
@@ -1845,7 +1932,7 @@ impl Blockchain {
             profit_declaration_data: None,
             token_transfer_data: None,
             token_mint_data: None,
-                        governance_config_data: None,
+            governance_config_data: None,
             bonding_curve_deploy_data: None,
             bonding_curve_buy_data: None,
             bonding_curve_sell_data: None,
@@ -1856,31 +1943,33 @@ impl Blockchain {
             cancel_oracle_update_data: None,
         };
 
-
         // Add genesis transaction to genesis block
         genesis_block.transactions.push(genesis_tx.clone());
-        
+
         // Recalculate merkle root and sync transaction_count header field
-        let updated_merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(&genesis_block.transactions);
+        let updated_merkle_root = crate::transaction::hashing::calculate_transaction_merkle_root(
+            &genesis_block.transactions,
+        );
         genesis_block.header.merkle_root = updated_merkle_root;
         genesis_block.header.transaction_count = genesis_block.transactions.len() as u32;
-        
+
         // Create UTXOs from genesis outputs
         let genesis_tx_id = crate::types::hash::blake3_hash(b"genesis_funding_transaction");
         for (index, output) in genesis_outputs.iter().enumerate() {
             let utxo_hash = crate::types::hash::blake3_hash(
-                &format!("genesis_funding:{}:{}", hex::encode(genesis_tx_id), index).as_bytes()
+                &format!("genesis_funding:{}:{}", hex::encode(genesis_tx_id), index).as_bytes(),
             );
             self.utxo_set.insert(utxo_hash, output.clone());
         }
-        
+
         // Register wallets
         for wallet_data in wallet_registrations {
             let wallet_id_hex = hex::encode(wallet_data.wallet_id.as_bytes());
-            self.wallet_registry.insert(wallet_id_hex.clone(), wallet_data);
+            self.wallet_registry
+                .insert(wallet_id_hex.clone(), wallet_data);
             info!("Registered genesis wallet: {}", &wallet_id_hex[..16]);
         }
-        
+
         // Register identities
         for identity_data in identity_registrations {
             match self.register_identity(identity_data.clone()) {
@@ -1888,60 +1977,84 @@ impl Blockchain {
                     info!("Registered genesis identity: {}", identity_data.did);
                 }
                 Err(e) => {
-                    warn!("Failed to register genesis identity {}: {}", identity_data.did, e);
+                    warn!(
+                        "Failed to register genesis identity {}: {}",
+                        identity_data.did, e
+                    );
                 }
             }
         }
-        
+
         // Register validators
         for validator_data in validator_registrations {
             match self.register_validator(validator_data.clone()) {
                 Ok(_) => {
-                    info!("Registered genesis validator: {}", validator_data.identity_id);
+                    info!(
+                        "Registered genesis validator: {}",
+                        validator_data.identity_id
+                    );
                 }
                 Err(e) => {
-                    warn!("Failed to register genesis validator {}: {}", validator_data.identity_id, e);
+                    warn!(
+                        "Failed to register genesis validator {}: {}",
+                        validator_data.identity_id, e
+                    );
                 }
             }
         }
-        
-        info!("Genesis funding complete: {} UTXOs, {} wallets, {} identities, {} validators",
-              genesis_outputs.len(),
-              self.wallet_registry.len(),
-              self.identity_registry.len(),
-              self.validator_registry.len());
-        
+
+        info!(
+            "Genesis funding complete: {} UTXOs, {} wallets, {} identities, {} validators",
+            genesis_outputs.len(),
+            self.wallet_registry.len(),
+            self.identity_registry.len(),
+            self.validator_registry.len()
+        );
+
         Ok(())
     }
 
     /// Load blockchain from persistent storage
-    pub async fn load_from_storage(storage_config: BlockchainStorageConfig, content_hash: lib_storage::types::ContentHash) -> Result<Self> {
+    pub async fn load_from_storage(
+        storage_config: BlockchainStorageConfig,
+        content_hash: lib_storage::types::ContentHash,
+    ) -> Result<Self> {
         info!("Loading blockchain from storage");
-        
+
         let mut storage_manager = BlockchainStorageManager::new(storage_config).await?;
-        let mut blockchain = storage_manager.retrieve_blockchain_state(content_hash).await?;
-        
+        let mut blockchain = storage_manager
+            .retrieve_blockchain_state(content_hash)
+            .await?;
+
         // Re-initialize non-serialized components
         blockchain.economic_processor = Some(EconomicTransactionProcessor::new());
-        blockchain.storage_manager = Some(std::sync::Arc::new(tokio::sync::RwLock::new(storage_manager)));
+        blockchain.storage_manager = Some(std::sync::Arc::new(tokio::sync::RwLock::new(
+            storage_manager,
+        )));
         blockchain.proof_aggregator = None; // Will be initialized on first use
         blockchain.auto_persist_enabled = true;
         blockchain.blocks_since_last_persist = 0;
-        
-        info!("Blockchain loaded from storage (height: {})", blockchain.height);
+
+        info!(
+            "Blockchain loaded from storage (height: {})",
+            blockchain.height
+        );
         Ok(blockchain)
     }
 
     /// Persist blockchain state to storage
     pub async fn persist_to_storage(&mut self) -> Result<StorageOperationResult> {
         if let Some(ref storage_manager_arc) = self.storage_manager {
-            info!(" Persisting blockchain state to storage (height: {})", self.height);
-            
+            info!(
+                " Persisting blockchain state to storage (height: {})",
+                self.height
+            );
+
             let mut storage_manager = storage_manager_arc.write().await;
             let result = storage_manager.store_blockchain_state(self).await?;
-            
+
             self.blocks_since_last_persist = 0;
-            
+
             info!("Blockchain state persisted successfully");
             Ok(result)
         } else {
@@ -1953,14 +2066,17 @@ impl Blockchain {
     pub async fn backup_to_storage(&mut self) -> Result<Vec<StorageOperationResult>> {
         if let Some(ref storage_manager_arc) = self.storage_manager {
             info!(" Starting blockchain backup to distributed storage");
-            
+
             let mut storage_manager = storage_manager_arc.write().await;
             let results = storage_manager.backup_blockchain(self).await?;
-            
+
             let successful_backups = results.iter().filter(|r| r.success).count();
-            info!("Blockchain backup completed: {}/{} operations successful", 
-                  successful_backups, results.len());
-            
+            info!(
+                "Blockchain backup completed: {}/{} operations successful",
+                successful_backups,
+                results.len()
+            );
+
             Ok(results)
         } else {
             Err(anyhow::anyhow!("Storage manager not initialized"))
@@ -1972,19 +2088,21 @@ impl Blockchain {
         if !self.auto_persist_enabled {
             return Ok(());
         }
-        
+
         if let Some(ref storage_manager_arc) = self.storage_manager {
             let storage_manager = storage_manager_arc.read().await;
             let persist_frequency = storage_manager.get_config().persist_frequency;
             drop(storage_manager);
-            
+
             if self.blocks_since_last_persist >= persist_frequency {
-                info!(" Auto-persisting blockchain state (blocks since last persist: {})", 
-                      self.blocks_since_last_persist);
+                info!(
+                    " Auto-persisting blockchain state (blocks since last persist: {})",
+                    self.blocks_since_last_persist
+                );
                 self.persist_to_storage().await?;
             }
         }
-        
+
         Ok(())
     }
 
@@ -2000,7 +2118,10 @@ impl Blockchain {
     }
 
     /// Store a transaction in persistent storage
-    pub async fn persist_transaction(&mut self, transaction: &Transaction) -> Result<Option<StorageOperationResult>> {
+    pub async fn persist_transaction(
+        &mut self,
+        transaction: &Transaction,
+    ) -> Result<Option<StorageOperationResult>> {
         if let Some(ref storage_manager_arc) = self.storage_manager {
             let mut storage_manager = storage_manager_arc.write().await;
             let result = storage_manager.store_transaction(transaction).await?;
@@ -2011,10 +2132,16 @@ impl Blockchain {
     }
 
     /// Store identity data in persistent storage
-    pub async fn persist_identity_data(&mut self, did: &str, identity_data: &IdentityTransactionData) -> Result<Option<StorageOperationResult>> {
+    pub async fn persist_identity_data(
+        &mut self,
+        did: &str,
+        identity_data: &IdentityTransactionData,
+    ) -> Result<Option<StorageOperationResult>> {
         if let Some(ref storage_manager_arc) = self.storage_manager {
             let mut storage_manager = storage_manager_arc.write().await;
-            let result = storage_manager.store_identity_data(did, identity_data).await?;
+            let result = storage_manager
+                .store_identity_data(did, identity_data)
+                .await?;
             Ok(Some(result))
         } else {
             Ok(None)
@@ -2027,7 +2154,9 @@ impl Blockchain {
             let mut storage_manager = storage_manager_arc.write().await;
             let result = storage_manager.store_utxo_set(&self.utxo_set).await?;
             // Also store using the latest key for recovery
-            storage_manager.store_latest_utxo_set(&self.utxo_set).await?;
+            storage_manager
+                .store_latest_utxo_set(&self.utxo_set)
+                .await?;
             Ok(Some(result))
         } else {
             Ok(None)
@@ -2037,7 +2166,7 @@ impl Blockchain {
     pub async fn persist_blockchain_state(&mut self) -> Result<Option<()>> {
         if let Some(ref storage_manager_arc) = self.storage_manager {
             let storage_manager = storage_manager_arc.read().await;
-            
+
             let state = crate::integration::storage_integration::BlockchainState {
                 height: self.height,
                 difficulty: self.difficulty.clone(),
@@ -2046,9 +2175,11 @@ impl Blockchain {
                 finality_depth: self.finality_depth,
                 finalized_blocks: self.finalized_blocks.clone(),
             };
-            
-            storage_manager.store_latest_blockchain_state(&state).await?;
-            
+
+            storage_manager
+                .store_latest_blockchain_state(&state)
+                .await?;
+
             info!("Blockchain state persisted to storage");
             return Ok(Some(()));
         }
@@ -2069,10 +2200,10 @@ impl Blockchain {
     pub async fn perform_storage_maintenance(&mut self) -> Result<()> {
         if let Some(ref storage_manager_arc) = self.storage_manager {
             info!(" Performing blockchain storage maintenance");
-            
+
             let mut storage_manager = storage_manager_arc.write().await;
             storage_manager.perform_maintenance().await?;
-            
+
             info!("Storage maintenance completed");
         }
         Ok(())
@@ -2138,6 +2269,8 @@ impl Blockchain {
     /// Core block processing: verify, commit to chain, update state, emit events.
     /// Does NOT broadcast — callers decide whether to broadcast.
     async fn process_and_commit_block(&mut self, block: Block) -> Result<()> {
+        self.refresh_executor_token_creation_fee_if_needed();
+
         // ORACLE-R6: Apply pending protocol activation before execution so activation at
         // height H governs block H. If block admission fails before execution/commit,
         // restore the prior config.
@@ -2165,7 +2298,6 @@ impl Blockchain {
 
         // If BlockExecutor is configured, use it as single source of truth
         if let Some(ref executor) = self.executor {
-
             // Use BlockExecutor for state mutations
             // Note: executor.apply_block() handles begin_block/commit_block internally
             match executor.apply_block(&block) {
@@ -2218,7 +2350,9 @@ impl Blockchain {
                                 let status = match vd.operation {
                                     crate::transaction::ValidatorOperation::Register => "active",
                                     crate::transaction::ValidatorOperation::Update => "active",
-                                    crate::transaction::ValidatorOperation::Unregister => "inactive",
+                                    crate::transaction::ValidatorOperation::Unregister => {
+                                        "inactive"
+                                    }
                                 };
                                 let vi = ValidatorInfo {
                                     identity_id: vd.identity_id.clone(),
@@ -2234,19 +2368,27 @@ impl Blockchain {
                                     last_activity: block.header.height,
                                     blocks_validated: 0,
                                     slash_count: 0,
-                                    admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE.to_string(),
+                                    admission_source: ADMISSION_SOURCE_ONCHAIN_GOVERNANCE
+                                        .to_string(),
                                     governance_proposal_id: None,
                                     oracle_key_id: None,
                                 };
                                 self.validator_registry.insert(vd.identity_id.clone(), vi);
-                                self.validator_blocks.insert(vd.identity_id.clone(), block.header.height);
-                                info!("Validator {} {:?} at height {}", vd.identity_id, vd.operation, block.header.height);
+                                self.validator_blocks
+                                    .insert(vd.identity_id.clone(), block.header.height);
+                                info!(
+                                    "Validator {} {:?} at height {}",
+                                    vd.identity_id, vd.operation, block.header.height
+                                );
                             }
                         }
                     }
                     self.adjust_difficulty()?;
 
-                    debug!("Block {} applied via BlockExecutor (single source of truth)", block.height());
+                    debug!(
+                        "Block {} applied via BlockExecutor (single source of truth)",
+                        block.height()
+                    );
 
                     // Continue with post-processing (events, persistence)
                     self.finish_block_processing(block).await?;
@@ -2256,7 +2398,10 @@ impl Blockchain {
                     if activated_version.is_some() {
                         self.oracle_state.protocol_config = previous_protocol_config.clone();
                     }
-                    return Err(anyhow::anyhow!("BlockExecutor failed to apply block: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "BlockExecutor failed to apply block: {}",
+                        e
+                    ));
                 }
             }
         }
@@ -2298,7 +2443,11 @@ impl Blockchain {
             }
         };
         if block_fees > 0 {
-            debug!("Collected {} in fees from block {}", block_fees, block.height());
+            debug!(
+                "Collected {} in fees from block {}",
+                block_fees,
+                block.height()
+            );
         }
 
         // Update blockchain state
@@ -2313,7 +2462,8 @@ impl Blockchain {
 
         // Begin sled transaction for remaining processing
         if let Some(ref store) = self.store {
-            store.begin_block(block.header.height)
+            store
+                .begin_block(block.header.height)
                 .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
         }
 
@@ -2329,7 +2479,10 @@ impl Blockchain {
 
         // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
-            warn!("Error processing governance proposals at height {}: {}", self.height, e);
+            warn!(
+                "Error processing governance proposals at height {}: {}",
+                self.height, e
+            );
         }
 
         // ORACLE-R4: Apply pending oracle updates at epoch boundaries
@@ -2343,30 +2496,49 @@ impl Blockchain {
             let current_epoch = self.oracle_state.epoch_id(block.header.timestamp);
             self.oracle_state.apply_pending_updates(current_epoch);
             self.last_oracle_epoch_processed = block.header.timestamp;
-            debug!("Oracle epoch processed: {} at block {}", current_epoch, self.height);
+            debug!(
+                "Oracle epoch processed: {} at block {}",
+                current_epoch, self.height
+            );
         }
 
         // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
-            warn!("Error processing UBI claims at height {}: {}", self.height, e);
+            warn!(
+                "Error processing UBI claims at height {}: {}",
+                self.height, e
+            );
         }
 
         if let Err(e) = self.process_profit_declarations(&block) {
-            warn!("Error processing profit declarations at height {}: {}", self.height, e);
+            warn!(
+                "Error processing profit declarations at height {}: {}",
+                self.height, e
+            );
         }
 
         // Create transaction receipts
         let block_hash = block.hash();
         for (tx_index, tx) in block.transactions.iter().enumerate() {
-            if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
-                warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
+            if let Err(e) =
+                self.create_receipt(tx, block_hash, block.header.height, tx_index as u32)
+            {
+                warn!(
+                    "Failed to create receipt for tx {}: {}",
+                    hex::encode(tx.hash().as_bytes()),
+                    e
+                );
             }
         }
 
         // Persist block to SledStore
         if let Some(ref store) = self.store {
             if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
-                error!("Failed to persist block {} to SledStore: {}", block.height(), e);
+                error!(
+                    "Failed to persist block {} to SledStore: {}",
+                    block.height(),
+                    e
+                );
             } else {
                 debug!("Block {} persisted to SledStore", block.height());
             }
@@ -2414,7 +2586,8 @@ impl Blockchain {
         let using_executor = self.executor.is_some();
         if !using_executor {
             if let Some(ref store) = self.store {
-                store.begin_block(block.header.height)
+                store
+                    .begin_block(block.header.height)
                     .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
             }
         }
@@ -2433,7 +2606,10 @@ impl Blockchain {
 
         // Process approved governance proposals
         if let Err(e) = self.process_approved_governance_proposals() {
-            warn!("Error processing governance proposals at height {}: {}", self.height, e);
+            warn!(
+                "Error processing governance proposals at height {}: {}",
+                self.height, e
+            );
         }
 
         // ORACLE-R4: Process oracle epoch advancement
@@ -2446,7 +2622,10 @@ impl Blockchain {
             let block_epoch = self.oracle_state.epoch_id(block.header.timestamp);
             self.oracle_state.apply_pending_updates(block_epoch);
             self.last_oracle_epoch_processed = block.header.timestamp;
-            info!("🔮 Oracle advanced to epoch {} (block height {})", block_epoch, self.height);
+            info!(
+                "🔮 Oracle advanced to epoch {} (block height {})",
+                block_epoch, self.height
+            );
         }
 
         // ORACLE-R3: Process oracle attestation transactions through canonical path
@@ -2456,18 +2635,30 @@ impl Blockchain {
 
         // Process economic features
         if let Err(e) = self.process_ubi_claim_transactions(&block) {
-            warn!("Error processing UBI claims at height {}: {}", self.height, e);
+            warn!(
+                "Error processing UBI claims at height {}: {}",
+                self.height, e
+            );
         }
 
         if let Err(e) = self.process_profit_declarations(&block) {
-            warn!("Error processing profit declarations at height {}: {}", self.height, e);
+            warn!(
+                "Error processing profit declarations at height {}: {}",
+                self.height, e
+            );
         }
 
         // Create transaction receipts
         let block_hash = block.hash();
         for (tx_index, tx) in block.transactions.iter().enumerate() {
-            if let Err(e) = self.create_receipt(tx, block_hash, block.header.height, tx_index as u32) {
-                warn!("Failed to create receipt for tx {}: {}", hex::encode(tx.hash().as_bytes()), e);
+            if let Err(e) =
+                self.create_receipt(tx, block_hash, block.header.height, tx_index as u32)
+            {
+                warn!(
+                    "Failed to create receipt for tx {}: {}",
+                    hex::encode(tx.hash().as_bytes()),
+                    e
+                );
             }
         }
 
@@ -2478,13 +2669,20 @@ impl Blockchain {
         if !using_executor {
             if let Some(ref store) = self.store {
                 if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
-                    error!("Failed to persist block {} to SledStore: {}", block.height(), e);
+                    error!(
+                        "Failed to persist block {} to SledStore: {}",
+                        block.height(),
+                        e
+                    );
                 } else {
                     debug!("Block {} persisted to SledStore", block.height());
                 }
             }
         } else {
-            debug!("Block {} already persisted by BlockExecutor", block.height());
+            debug!(
+                "Block {} already persisted by BlockExecutor",
+                block.height()
+            );
         }
 
         self.blocks_since_last_persist += 1;
@@ -2523,7 +2721,11 @@ impl Blockchain {
 
         // Generate recursive proof for this block (for edge node sync)
         if let Err(e) = self.generate_proof_for_block(&block).await {
-            warn!("  Failed to generate recursive proof for block {}: {}", block.height(), e);
+            warn!(
+                "  Failed to generate recursive proof for block {}: {}",
+                block.height(),
+                e
+            );
             warn!("   Edge node sync will fall back to headers-only");
         } else {
             debug!(" Recursive proof generated for block {}", block.height());
@@ -2558,8 +2760,10 @@ impl Blockchain {
         let mut aggregator = aggregator_arc.write().await;
 
         // Convert block transactions to batched format
-        let batched_transactions: Vec<BatchedPrivateTransaction> = 
-            block.transactions.iter().map(|tx| {
+        let batched_transactions: Vec<BatchedPrivateTransaction> = block
+            .transactions
+            .iter()
+            .map(|tx| {
                 let batch_metadata = BatchMetadata {
                     transaction_count: 1,
                     fee_tier: 0,
@@ -2574,7 +2778,8 @@ impl Blockchain {
                     merkle_root: tx.hash().as_array(),
                     batch_metadata,
                 }
-            }).collect();
+            })
+            .collect();
 
         // Get previous state root
         let previous_state_root = if block.height() > 0 {
@@ -2619,7 +2824,9 @@ impl Blockchain {
                 info!(" Block {} persisted to storage", block.height());
             }
 
-            if self.auto_persist_enabled && (self.height % 10 == 0 || self.blocks_since_last_persist >= 10) {
+            if self.auto_persist_enabled
+                && (self.height % 10 == 0 || self.blocks_since_last_persist >= 10)
+            {
                 if let Some(_) = self.persist_utxo_set().await? {
                     info!(" UTXO set persisted to storage at height {}", self.height);
                 }
@@ -2650,7 +2857,9 @@ impl Blockchain {
                 info!(" Block {} persisted to storage", block.height());
             }
 
-            if self.auto_persist_enabled && (self.height % 10 == 0 || self.blocks_since_last_persist >= 10) {
+            if self.auto_persist_enabled
+                && (self.height % 10 == 0 || self.blocks_since_last_persist >= 10)
+            {
                 if let Some(_) = self.persist_utxo_set().await? {
                     info!(" UTXO set persisted to storage at height {}", self.height);
                 }
@@ -2684,11 +2893,13 @@ impl Blockchain {
         // to ensure identity/wallet sled writes have an active transaction
 
         // Append the block
-        store.append_block(block)
+        store
+            .append_block(block)
             .map_err(|e| anyhow::anyhow!("Failed to append block to Sled: {}", e))?;
 
         // Commit the transaction
-        store.commit_block()
+        store
+            .commit_block()
             .map_err(|e| anyhow::anyhow!("Failed to commit Sled transaction: {}", e))?;
 
         info!("💾 Block {} persisted to SledStore", block.header.height);
@@ -2698,15 +2909,23 @@ impl Blockchain {
     /// Verify a block against the current chain state
     pub fn verify_block(&self, block: &Block, previous_block: Option<&Block>) -> Result<bool> {
         info!("Starting block verification for height {}", block.height());
-        
+
         // Verify block header
         if let Some(prev) = previous_block {
             if block.previous_hash() != prev.hash() {
-                warn!("Previous hash mismatch: block={:?}, prev={:?}", block.previous_hash(), prev.hash());
+                warn!(
+                    "Previous hash mismatch: block={:?}, prev={:?}",
+                    block.previous_hash(),
+                    prev.hash()
+                );
                 return Ok(false);
             }
             if block.height() != prev.height() + 1 {
-                warn!("Height mismatch: block={}, expected={}", block.height(), prev.height() + 1);
+                warn!(
+                    "Height mismatch: block={}, expected={}",
+                    block.height(),
+                    prev.height() + 1
+                );
                 return Ok(false);
             }
         }
@@ -2727,8 +2946,11 @@ impl Blockchain {
         } else {
             // Development/testnet difficulty - verify it matches the expected profile difficulty
             if block.difficulty().bits() != expected_difficulty {
-                warn!("Difficulty mismatch: block has 0x{:x}, expected 0x{:x} from mining profile",
-                      block.difficulty().bits(), expected_difficulty);
+                warn!(
+                    "Difficulty mismatch: block has 0x{:x}, expected 0x{:x} from mining profile",
+                    block.difficulty().bits(),
+                    expected_difficulty
+                );
                 return Ok(false);
             }
         }
@@ -2747,7 +2969,10 @@ impl Blockchain {
             return Ok(false);
         }
 
-        info!("Block verification successful for height {}", block.height());
+        info!(
+            "Block verification successful for height {}",
+            block.height()
+        );
         Ok(true)
     }
 
@@ -2755,13 +2980,13 @@ impl Blockchain {
     pub fn verify_transaction(&self, transaction: &Transaction) -> Result<bool> {
         // Use the stateful transaction validator with blockchain context for identity verification
         let validator = crate::transaction::validation::StatefulTransactionValidator::new(self);
-        
+
         // Check if this is a system transaction (empty inputs indicates system transaction)
         // BUT token contract executions are NOT system transactions (they must pay fees)
         // Use the full validation logic to ensure consistency with fee validation
         let is_token_contract = crate::transaction::is_token_contract_execution(transaction);
         let is_system_transaction = transaction.inputs.is_empty() && !is_token_contract;
-        
+
         tracing::info!("Verifying transaction with identity verification enabled");
         tracing::info!("System transaction: {}", is_system_transaction);
         tracing::info!("Transaction type: {:?}", transaction.transaction_type);
@@ -2775,7 +3000,7 @@ impl Blockchain {
 
         let result = validator.validate_transaction_with_state(transaction);
         tracing::debug!("[FLOW] verify_transaction: validate_transaction_with_state done");
-        
+
         if let Err(ref error) = result {
             tracing::warn!("Transaction validation failed: {:?}", error);
             tracing::warn!("Transaction details: inputs={}, outputs={}, fee={}, type={:?}, system={}, memo_len={}, version={}",
@@ -2789,7 +3014,7 @@ impl Blockchain {
         } else {
             tracing::info!("Transaction validation passed with identity verification");
         }
-        
+
         Ok(result.is_ok())
     }
 
@@ -2844,17 +3069,23 @@ impl Blockchain {
         // Pre-compute fee payers before taking mutable borrow on token contract.
         // This avoids borrow conflict between self.token_contracts.get_mut() and
         // self.primary_wallet_for_signer().
-        let fee_payers: Vec<(usize, PublicKey)> = block.transactions.iter().enumerate()
+        let fee_payers: Vec<(usize, PublicKey)> = block
+            .transactions
+            .iter()
+            .enumerate()
             .filter_map(|(i, tx)| {
                 let is_token_contract = crate::transaction::is_token_contract_execution(tx);
                 let is_system = tx.inputs.is_empty() && !is_token_contract;
-                if is_system || tx.fee == 0 { return None; }
+                if is_system || tx.fee == 0 {
+                    return None;
+                }
                 let sender = &tx.signature.public_key;
-                let fee_payer = if let Some(wallet_id) = self.primary_wallet_for_signer(&sender.key_id) {
-                    Self::wallet_key_for_sov(&wallet_id)
-                } else {
-                    sender.clone()
-                };
+                let fee_payer =
+                    if let Some(wallet_id) = self.primary_wallet_for_signer(&sender.key_id) {
+                        Self::wallet_key_for_sov(&wallet_id)
+                    } else {
+                        sender.clone()
+                    };
                 Some((i, fee_payer))
             })
             .collect();
@@ -2864,7 +3095,10 @@ impl Blockchain {
             Some(token) => token,
             None => {
                 // SOV token not deployed yet - this is expected during bootstrap
-                debug!("SOV token contract not found, skipping fee deduction for block {}", block.height());
+                debug!(
+                    "SOV token contract not found, skipping fee deduction for block {}",
+                    block.height()
+                );
                 return Ok(0);
             }
         };
@@ -2917,16 +3151,20 @@ impl Blockchain {
                         treasury_id.copy_from_slice(&bytes);
                         let treasury_key = Self::wallet_key_for_sov(&treasury_id);
                         let treasury_balance = sov_token.balance_of(&treasury_key);
-                        sov_token.balances.insert(treasury_key, treasury_balance.saturating_add(total_fees));
+                        sov_token
+                            .balances
+                            .insert(treasury_key, treasury_balance.saturating_add(total_fees));
                         debug!(
                             "Block {} fees credited to DAO treasury: {} SOV",
-                            block.height(), total_fees
+                            block.height(),
+                            total_fees
                         );
                     }
                     _ => {
                         warn!(
                             "Block {} fee crediting skipped: malformed dao_treasury_wallet_id '{}'",
-                            block.height(), treasury_wallet_id
+                            block.height(),
+                            treasury_wallet_id
                         );
                     }
                 }
@@ -2936,11 +3174,15 @@ impl Blockchain {
                 "Block {} fee collection: {} total from {} transactions",
                 block.height(),
                 total_fees,
-                block.transactions.iter().filter(|tx| {
-                    let is_token_contract = crate::transaction::is_token_contract_execution(tx);
-                    let is_system = tx.inputs.is_empty() && !is_token_contract;
-                    !is_system && tx.fee > 0
-                }).count()
+                block
+                    .transactions
+                    .iter()
+                    .filter(|tx| {
+                        let is_token_contract = crate::transaction::is_token_contract_execution(tx);
+                        let is_system = tx.inputs.is_empty() && !is_token_contract;
+                        !is_system && tx.fee > 0
+                    })
+                    .count()
             );
         }
 
@@ -2978,7 +3220,7 @@ impl Blockchain {
                     let coord = coordinator.read().await;
                     let adjustment_interval = coord.get_difficulty_adjustment_interval().await;
                     let config = coord.get_difficulty_config().await;
-                    
+
                     // Check if we should adjust at this height
                     if self.height % adjustment_interval != 0 {
                         return Ok::<Option<(u32, lib_consensus::difficulty::DifficultyConfig)>, anyhow::Error>(None);
@@ -2986,12 +3228,12 @@ impl Blockchain {
                     if self.height < adjustment_interval {
                         return Ok(None);
                     }
-                    
+
                     let current_block = &self.blocks[self.height as usize];
                     let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
                     let interval_start_time = interval_start.timestamp();
                     let interval_end_time = current_block.timestamp();
-                    
+
                     // Calculate new difficulty
                     match coord.calculate_difficulty_adjustment(
                         self.height,
@@ -3016,7 +3258,7 @@ impl Blockchain {
                     }
                 })
             });
-            
+
             match result {
                 Ok(Some((new_bits, config))) => {
                     let old_difficulty = self.difficulty.bits();
@@ -3036,7 +3278,8 @@ impl Blockchain {
                 Err(e) => {
                     tracing::error!(
                         "Difficulty adjustment via coordinator failed: {}. \
-                         This indicates a consensus layer problem requiring attention.", e
+                         This indicates a consensus layer problem requiring attention.",
+                        e
                     );
                     return Err(e);
                 }
@@ -3047,7 +3290,7 @@ impl Blockchain {
             let target_timespan = self.difficulty_config.target_timespan;
             let max_increase = self.difficulty_config.max_difficulty_increase_factor;
             let max_decrease = self.difficulty_config.max_difficulty_decrease_factor;
-            
+
             // Check if we should adjust at this height
             if self.height % adjustment_interval != 0 {
                 return Ok(());
@@ -3055,12 +3298,12 @@ impl Blockchain {
             if self.height < adjustment_interval {
                 return Ok(());
             }
-            
+
             let current_block = &self.blocks[self.height as usize];
             let interval_start = &self.blocks[(self.height - adjustment_interval) as usize];
             let interval_start_time = interval_start.timestamp();
             let interval_end_time = current_block.timestamp();
-            
+
             let new_difficulty_bits = self.calculate_difficulty_with_config(
                 interval_start_time,
                 interval_end_time,
@@ -3070,7 +3313,7 @@ impl Blockchain {
             );
             let old_difficulty = self.difficulty.bits();
             self.difficulty = Difficulty::from_bits(new_difficulty_bits);
-            
+
             tracing::info!(
                 "Difficulty adjusted from {} to {} at height {} \
                  (config: target_timespan={}, adjustment_interval={}, max_increase={}x, max_decrease={}x)",
@@ -3083,10 +3326,10 @@ impl Blockchain {
                 max_decrease,
             );
         }
-        
+
         Ok(())
     }
-    
+
     /// Difficulty calculation using DifficultyConfig parameters.
     /// Uses configurable clamping factors instead of hardcoded 4x.
     fn calculate_difficulty_with_config(
@@ -3106,16 +3349,16 @@ impl Blockchain {
             );
             return self.difficulty.bits();
         }
-        
+
         let actual_timespan = interval_end_time.saturating_sub(interval_start_time);
-        
+
         // Clamp using configurable factors instead of hardcoded 4x
         // min_timespan prevents difficulty from increasing more than max_increase_factor
         // max_timespan prevents difficulty from decreasing more than max_decrease_factor
         let min_timespan = target_timespan / max_increase_factor.max(1);
         let max_timespan = target_timespan.saturating_mul(max_decrease_factor);
         let clamped_timespan = actual_timespan.clamp(min_timespan, max_timespan);
-        
+
         // Additional defensive check in case clamping still results in zero
         // (can happen if target_timespan / max_increase_factor == 0 due to integer division)
         if clamped_timespan == 0 {
@@ -3125,9 +3368,10 @@ impl Blockchain {
             );
             return self.difficulty.bits();
         }
-        
+
         // Calculate new difficulty and ensure it doesn't go to zero
-        let new_difficulty = (self.difficulty.bits() as u64 * target_timespan / clamped_timespan) as u32;
+        let new_difficulty =
+            (self.difficulty.bits() as u64 * target_timespan / clamped_timespan) as u32;
         new_difficulty.max(1)
     }
 
@@ -3141,13 +3385,11 @@ impl Blockchain {
     /// Returns the timestamp from the latest block header, or the genesis timestamp
     /// if only the genesis block exists. This is the canonical time reference for
     /// oracle epoch derivation per Oracle Spec v1 §4.1.
-    /// 
+    ///
     /// Note: Blockchain::new() creates a genesis block with timestamp 1730419200
     /// (November 1, 2025 00:00:00 UTC), so this never returns 0 in practice.
     pub fn last_committed_timestamp(&self) -> u64 {
-        self.latest_block()
-            .map(|b| b.header.timestamp)
-            .unwrap_or(0)
+        self.latest_block().map(|b| b.header.timestamp).unwrap_or(0)
     }
 
     /// Get block by height
@@ -3173,7 +3415,7 @@ impl Blockchain {
     /// ```ignore
     /// let blockchain = Blockchain::new(genesis_block, coordinator)?;
     /// let config = blockchain.get_difficulty_config();
-    /// 
+    ///
     /// println!("Target timespan: {} seconds", config.target_timespan);
     /// println!("Adjustment interval: {} blocks", config.adjustment_interval);
     /// println!("Max decrease factor: {}", config.max_difficulty_decrease_factor);
@@ -3191,6 +3433,7 @@ impl Blockchain {
     /// Update the transaction fee configuration (governance-controlled)
     pub fn set_tx_fee_config(&mut self, config: crate::transaction::TxFeeConfig) {
         self.tx_fee_config = config;
+        self.refresh_executor_token_creation_fee_if_needed();
     }
 
     /// Update the difficulty configuration (for governance updates).
@@ -3238,7 +3481,9 @@ impl Blockchain {
     /// - `max_difficulty_decrease_factor` must be in range (0.0, 1.0]
     /// - `max_difficulty_increase_factor` must be >= 1.0
     pub fn set_difficulty_config(&mut self, mut config: DifficultyConfig) -> Result<()> {
-        config.validate().map_err(|e| anyhow::anyhow!("Invalid difficulty config: {}", e))?;
+        config
+            .validate()
+            .map_err(|e| anyhow::anyhow!("Invalid difficulty config: {}", e))?;
         config.last_updated_at_height = self.height;
         info!(
             "Updating difficulty config at height {}: target_timespan={}, adjustment_interval={}, max_decrease={}, max_increase={}",
@@ -3274,10 +3519,15 @@ impl Blockchain {
 
         // Broadcast new transaction to mesh network (locally-originated only)
         if let Some(ref sender) = self.broadcast_sender {
-            if let Err(e) = sender.send(BlockchainBroadcastMessage::NewTransaction(transaction.clone())) {
+            if let Err(e) = sender.send(BlockchainBroadcastMessage::NewTransaction(
+                transaction.clone(),
+            )) {
                 warn!("Failed to broadcast new transaction to network: {}", e);
             } else {
-                debug!("Transaction {} broadcast to mesh network", transaction.hash());
+                debug!(
+                    "Transaction {} broadcast to mesh network",
+                    transaction.hash()
+                );
             }
         }
 
@@ -3310,7 +3560,10 @@ impl Blockchain {
     }
 
     /// Add a transaction to the pending pool with persistent storage
-    pub async fn add_pending_transaction_with_persistence(&mut self, transaction: Transaction) -> Result<()> {
+    pub async fn add_pending_transaction_with_persistence(
+        &mut self,
+        transaction: Transaction,
+    ) -> Result<()> {
         // Add transaction to pending pool normally
         self.add_pending_transaction(transaction.clone())?;
 
@@ -3334,12 +3587,10 @@ impl Blockchain {
 
     /// Remove transactions from pending pool
     pub fn remove_pending_transactions(&mut self, transactions: &[Transaction]) {
-        let tx_hashes: HashSet<Hash> = transactions
-            .iter()
-            .map(|tx| tx.hash())
-            .collect();
-        
-        self.pending_transactions.retain(|tx| !tx_hashes.contains(&tx.hash()));
+        let tx_hashes: HashSet<Hash> = transactions.iter().map(|tx| tx.hash()).collect();
+
+        self.pending_transactions
+            .retain(|tx| !tx_hashes.contains(&tx.hash()));
     }
 
     // ===== IDENTITY MANAGEMENT METHODS =====
@@ -3348,7 +3599,10 @@ impl Blockchain {
     pub fn register_identity(&mut self, identity_data: IdentityTransactionData) -> Result<Hash> {
         // Check if identity already exists
         if self.identity_registry.contains_key(&identity_data.did) {
-            return Err(anyhow::anyhow!("Identity {} already exists on blockchain", identity_data.did));
+            return Err(anyhow::anyhow!(
+                "Identity {} already exists on blockchain",
+                identity_data.did
+            ));
         }
 
         // Create identity registration transaction
@@ -3368,21 +3622,29 @@ impl Blockchain {
         self.add_pending_transaction(registration_tx.clone())?;
 
         // Store in identity registry immediately for queries
-        self.identity_registry.insert(identity_data.did.clone(), identity_data.clone());
-        self.identity_blocks.insert(identity_data.did.clone(), self.height + 1);
+        self.identity_registry
+            .insert(identity_data.did.clone(), identity_data.clone());
+        self.identity_blocks
+            .insert(identity_data.did.clone(), self.height + 1);
 
         Ok(registration_tx.hash())
     }
 
     /// Register a new identity on the blockchain with persistent storage
-    pub async fn register_identity_with_persistence(&mut self, identity_data: IdentityTransactionData) -> Result<Hash> {
+    pub async fn register_identity_with_persistence(
+        &mut self,
+        identity_data: IdentityTransactionData,
+    ) -> Result<Hash> {
         // Register identity normally
         let tx_hash = self.register_identity(identity_data.clone())?;
 
         // Store identity data in persistent storage if available
         if let Some(storage_manager_arc) = &self.storage_manager {
             let mut storage_manager = storage_manager_arc.write().await;
-            if let Err(e) = storage_manager.store_identity_data(&identity_data.did, &identity_data).await {
+            if let Err(e) = storage_manager
+                .store_identity_data(&identity_data.did, &identity_data)
+                .await
+            {
                 eprintln!("Warning: Failed to persist identity data to storage: {}", e);
             }
         }
@@ -3401,27 +3663,41 @@ impl Blockchain {
     }
 
     /// Update an existing identity on the blockchain
-    pub fn update_identity(&mut self, did: &str, updated_data: IdentityTransactionData) -> Result<Hash> {
+    pub fn update_identity(
+        &mut self,
+        did: &str,
+        updated_data: IdentityTransactionData,
+    ) -> Result<Hash> {
         // Check if identity exists
-        let existing = self.identity_registry.get(did)
+        let existing = self
+            .identity_registry
+            .get(did)
             .ok_or_else(|| anyhow::anyhow!("Identity {} not found on blockchain", did))?;
 
         // Enforce immutable ownership/identity invariants
         if existing.did != updated_data.did {
-            return Err(anyhow::anyhow!("Immutable DID mismatch for identity update"));
+            return Err(anyhow::anyhow!(
+                "Immutable DID mismatch for identity update"
+            ));
         }
         if existing.public_key != updated_data.public_key {
-            return Err(anyhow::anyhow!("Immutable public key mismatch for identity update"));
+            return Err(anyhow::anyhow!(
+                "Immutable public key mismatch for identity update"
+            ));
         }
         if existing.identity_type != updated_data.identity_type {
-            return Err(anyhow::anyhow!("Immutable identity type mismatch for identity update"));
+            return Err(anyhow::anyhow!(
+                "Immutable identity type mismatch for identity update"
+            ));
         }
 
         // Create update transaction with authorization
         let auth_input = TransactionInput {
             previous_output: Hash::default(),
             output_index: 0,
-            nullifier: crate::types::hash::blake3_hash(&format!("identity_update_{}", did).as_bytes()),
+            nullifier: crate::types::hash::blake3_hash(
+                &format!("identity_update_{}", did).as_bytes(),
+            ),
             zk_proof: ZkTransactionProof::default(),
         };
 
@@ -3449,15 +3725,25 @@ impl Blockchain {
     }
 
     /// Update an existing identity on the blockchain with persistent storage
-    pub async fn update_identity_with_persistence(&mut self, did: &str, updated_data: IdentityTransactionData) -> Result<Hash> {
+    pub async fn update_identity_with_persistence(
+        &mut self,
+        did: &str,
+        updated_data: IdentityTransactionData,
+    ) -> Result<Hash> {
         // Update identity normally
         let tx_hash = self.update_identity(did, updated_data.clone())?;
 
         // Store updated identity data in persistent storage if available
         if let Some(storage_manager_arc) = &self.storage_manager {
             let mut storage_manager = storage_manager_arc.write().await;
-            if let Err(e) = storage_manager.store_identity_data(did, &updated_data).await {
-                eprintln!("Warning: Failed to persist updated identity data to storage: {}", e);
+            if let Err(e) = storage_manager
+                .store_identity_data(did, &updated_data)
+                .await
+            {
+                eprintln!(
+                    "Warning: Failed to persist updated identity data to storage: {}",
+                    e
+                );
             }
         }
 
@@ -3475,7 +3761,9 @@ impl Blockchain {
         let auth_input = TransactionInput {
             previous_output: Hash::default(),
             output_index: 0,
-            nullifier: crate::types::hash::blake3_hash(&format!("identity_revoke_{}", did).as_bytes()),
+            nullifier: crate::types::hash::blake3_hash(
+                &format!("identity_revoke_{}", did).as_bytes(),
+            ),
             zk_proof: ZkTransactionProof::default(),
         };
 
@@ -3498,7 +3786,8 @@ impl Blockchain {
         // Remove from registry (mark as revoked)
         if let Some(mut identity_data) = self.identity_registry.remove(did) {
             identity_data.identity_type = "revoked".to_string();
-            self.identity_registry.insert(format!("{}_revoked", did), identity_data);
+            self.identity_registry
+                .insert(format!("{}_revoked", did), identity_data);
         }
 
         Ok(revocation_tx.hash())
@@ -3538,20 +3827,19 @@ impl Blockchain {
                         TransactionType::IdentityRegistration => {
                             // CRITICAL: Preserve controlled_nodes if identity already exists
                             let mut new_identity_data = identity_data.clone();
-                            if let Some(existing_identity) = self.identity_registry.get(&identity_data.did) {
+                            if let Some(existing_identity) =
+                                self.identity_registry.get(&identity_data.did)
+                            {
                                 // Preserve controlled_nodes from existing identity
-                                new_identity_data.controlled_nodes = existing_identity.controlled_nodes.clone();
+                                new_identity_data.controlled_nodes =
+                                    existing_identity.controlled_nodes.clone();
                             }
 
                             // Store in memory (backward compatibility + fast queries)
-                            self.identity_registry.insert(
-                                identity_data.did.clone(),
-                                new_identity_data.clone()
-                            );
-                            self.identity_blocks.insert(
-                                identity_data.did.clone(),
-                                block.height()
-                            );
+                            self.identity_registry
+                                .insert(identity_data.did.clone(), new_identity_data.clone());
+                            self.identity_blocks
+                                .insert(identity_data.did.clone(), block.height());
 
                             // PHASE 0: Persist to sled storage (consensus state)
                             if let Some(ref store) = self.store {
@@ -3565,11 +3853,15 @@ impl Blockchain {
                             // Register for UBI if this is a citizen identity
                             if identity_data.identity_type == "verified_citizen"
                                 || identity_data.identity_type == "citizen"
-                                || identity_data.identity_type == "external_citizen" {
+                                || identity_data.identity_type == "external_citizen"
+                            {
                                 // Find the UBI wallet from owned_wallets
-                                let ubi_wallet_id = new_identity_data.owned_wallets.iter()
+                                let ubi_wallet_id = new_identity_data
+                                    .owned_wallets
+                                    .iter()
                                     .find(|wallet_id| {
-                                        self.wallet_registry.get(*wallet_id)
+                                        self.wallet_registry
+                                            .get(*wallet_id)
                                             .map(|w| w.wallet_type == "UBI")
                                             .unwrap_or(false)
                                     })
@@ -3579,9 +3871,12 @@ impl Blockchain {
                                     if let Err(e) = self.register_for_ubi(
                                         identity_data.did.clone(),
                                         ubi_wallet,
-                                        block.height()
+                                        block.height(),
                                     ) {
-                                        warn!("Failed to register {} for UBI: {}", identity_data.did, e);
+                                        warn!(
+                                            "Failed to register {} for UBI: {}",
+                                            identity_data.did, e
+                                        );
                                     }
                                 } else {
                                     warn!("No UBI wallet found for citizen {}", identity_data.did);
@@ -3591,20 +3886,28 @@ impl Blockchain {
                         TransactionType::IdentityUpdate => {
                             // CRITICAL: Preserve controlled_nodes on update
                             let mut updated_identity_data = identity_data.clone();
-                            if let Some(existing_identity) = self.identity_registry.get(&identity_data.did) {
+                            if let Some(existing_identity) =
+                                self.identity_registry.get(&identity_data.did)
+                            {
                                 // Preserve controlled_nodes from existing identity
-                                updated_identity_data.controlled_nodes = existing_identity.controlled_nodes.clone();
+                                updated_identity_data.controlled_nodes =
+                                    existing_identity.controlled_nodes.clone();
                             }
 
                             // Enforce immutable ownership and identity invariants
-                            if let Some(existing_identity) = self.identity_registry.get(&identity_data.did) {
-                                if existing_identity.public_key != updated_identity_data.public_key {
+                            if let Some(existing_identity) =
+                                self.identity_registry.get(&identity_data.did)
+                            {
+                                if existing_identity.public_key != updated_identity_data.public_key
+                                {
                                     return Err(anyhow::anyhow!(
                                         "Immutable public key mismatch for identity update: {}",
                                         identity_data.did
                                     ));
                                 }
-                                if existing_identity.identity_type != updated_identity_data.identity_type {
+                                if existing_identity.identity_type
+                                    != updated_identity_data.identity_type
+                                {
                                     return Err(anyhow::anyhow!(
                                         "Immutable identity type mismatch for identity update: {}",
                                         identity_data.did
@@ -3618,10 +3921,8 @@ impl Blockchain {
                             }
 
                             // Store in memory (post-validation)
-                            self.identity_registry.insert(
-                                identity_data.did.clone(),
-                                updated_identity_data.clone()
-                            );
+                            self.identity_registry
+                                .insert(identity_data.did.clone(), updated_identity_data.clone());
 
                             // PHASE 0: Persist update to sled storage
                             if let Some(ref store) = self.store {
@@ -3637,23 +3938,38 @@ impl Blockchain {
                             // Store revoked state in memory
                             let mut revoked_data = identity_data.clone();
                             revoked_data.identity_type = "revoked".to_string();
-                            self.identity_registry.insert(
-                                format!("{}_revoked", identity_data.did),
-                                revoked_data
-                            );
+                            self.identity_registry
+                                .insert(format!("{}_revoked", identity_data.did), revoked_data);
                             self.identity_registry.remove(&identity_data.did);
 
                             // PHASE 0: Delete from sled storage (identity + indexes)
                             if let Some(ref store) = self.store {
-                                if let Some(existing_identity) = store.get_identity(&did_hash)
-                                    .map_err(|e| anyhow::anyhow!("Failed to load identity for revocation: {}", e))? {
-                                    store.delete_identity_owner_index(&existing_identity.owner)
-                                        .map_err(|e| anyhow::anyhow!("Failed to delete identity owner index: {}", e))?;
+                                if let Some(existing_identity) =
+                                    store.get_identity(&did_hash).map_err(|e| {
+                                        anyhow::anyhow!(
+                                            "Failed to load identity for revocation: {}",
+                                            e
+                                        )
+                                    })?
+                                {
+                                    store
+                                        .delete_identity_owner_index(&existing_identity.owner)
+                                        .map_err(|e| {
+                                            anyhow::anyhow!(
+                                                "Failed to delete identity owner index: {}",
+                                                e
+                                            )
+                                        })?;
                                 }
-                                store.delete_identity(&did_hash)
-                                    .map_err(|e| anyhow::anyhow!("Failed to delete identity from sled: {}", e))?;
-                                store.delete_identity_metadata(&did_hash)
-                                    .map_err(|e| anyhow::anyhow!("Failed to delete identity metadata from sled: {}", e))?;
+                                store.delete_identity(&did_hash).map_err(|e| {
+                                    anyhow::anyhow!("Failed to delete identity from sled: {}", e)
+                                })?;
+                                store.delete_identity_metadata(&did_hash).map_err(|e| {
+                                    anyhow::anyhow!(
+                                        "Failed to delete identity metadata from sled: {}",
+                                        e
+                                    )
+                                })?;
                             }
                         }
                         _ => {} // Other transaction types
@@ -3710,14 +4026,20 @@ impl Blockchain {
         };
 
         // Persist to sled
-        store.put_identity(&did_hash, &consensus)
+        store
+            .put_identity(&did_hash, &consensus)
             .map_err(|e| anyhow::anyhow!("Failed to store identity in sled: {}", e))?;
-        store.put_identity_metadata(&did_hash, &metadata)
+        store
+            .put_identity_metadata(&did_hash, &metadata)
             .map_err(|e| anyhow::anyhow!("Failed to store identity metadata in sled: {}", e))?;
-        store.put_identity_owner_index(&consensus.owner, &did_hash)
+        store
+            .put_identity_owner_index(&consensus.owner, &did_hash)
             .map_err(|e| anyhow::anyhow!("Failed to store identity owner index in sled: {}", e))?;
 
-        debug!("Persisted identity {} to sled storage (registration)", identity_data.did);
+        debug!(
+            "Persisted identity {} to sled storage (registration)",
+            identity_data.did
+        );
         Ok(())
     }
 
@@ -3732,13 +4054,22 @@ impl Blockchain {
 
         let did_hash = did_to_hash(&identity_data.did);
 
-        let existing = store.get_identity(&did_hash)
+        let existing = store
+            .get_identity(&did_hash)
             .map_err(|e| anyhow::anyhow!("Failed to load identity for update: {}", e))?
-            .ok_or_else(|| anyhow::anyhow!("Cannot update non-existent identity: {}", identity_data.did))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("Cannot update non-existent identity: {}", identity_data.did)
+            })?;
 
-        let existing_metadata = store.get_identity_metadata(&did_hash)
+        let existing_metadata = store
+            .get_identity_metadata(&did_hash)
             .map_err(|e| anyhow::anyhow!("Failed to load identity metadata for update: {}", e))?
-            .ok_or_else(|| anyhow::anyhow!("Missing identity metadata for update: {}", identity_data.did))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing identity metadata for update: {}",
+                    identity_data.did
+                )
+            })?;
 
         // Enforce immutable ownership and identity invariants
         let incoming_owner = derive_address_from_public_key(&identity_data.public_key);
@@ -3746,22 +4077,34 @@ impl Blockchain {
         let incoming_identity_type = IdentityType::from_str(&identity_data.identity_type);
 
         if existing.did_hash != did_hash {
-            return Err(anyhow::anyhow!("Immutable DID hash mismatch for identity update"));
+            return Err(anyhow::anyhow!(
+                "Immutable DID hash mismatch for identity update"
+            ));
         }
         if existing.owner != incoming_owner {
-            return Err(anyhow::anyhow!("Immutable owner mismatch for identity update"));
+            return Err(anyhow::anyhow!(
+                "Immutable owner mismatch for identity update"
+            ));
         }
         if existing.public_key_hash != incoming_public_key_hash {
-            return Err(anyhow::anyhow!("Immutable public key mismatch for identity update"));
+            return Err(anyhow::anyhow!(
+                "Immutable public key mismatch for identity update"
+            ));
         }
         if existing.identity_type != incoming_identity_type {
-            return Err(anyhow::anyhow!("Immutable identity type mismatch for identity update"));
+            return Err(anyhow::anyhow!(
+                "Immutable identity type mismatch for identity update"
+            ));
         }
         if existing_metadata.did != identity_data.did {
-            return Err(anyhow::anyhow!("Immutable DID mismatch for identity update"));
+            return Err(anyhow::anyhow!(
+                "Immutable DID mismatch for identity update"
+            ));
         }
         if existing_metadata.public_key != identity_data.public_key {
-            return Err(anyhow::anyhow!("Immutable public key mismatch for identity update"));
+            return Err(anyhow::anyhow!(
+                "Immutable public key mismatch for identity update"
+            ));
         }
 
         // Apply validated diff: consensus keeps immutable fields, update mutable fields only
@@ -3776,12 +4119,17 @@ impl Blockchain {
         updated_metadata.controlled_nodes = identity_data.controlled_nodes.clone();
         updated_metadata.owned_wallets = identity_data.owned_wallets.clone();
 
-        store.put_identity(&did_hash, &updated_consensus)
+        store
+            .put_identity(&did_hash, &updated_consensus)
             .map_err(|e| anyhow::anyhow!("Failed to update identity in sled: {}", e))?;
-        store.put_identity_metadata(&did_hash, &updated_metadata)
+        store
+            .put_identity_metadata(&did_hash, &updated_metadata)
             .map_err(|e| anyhow::anyhow!("Failed to update identity metadata in sled: {}", e))?;
 
-        debug!("Persisted identity {} to sled storage (update)", identity_data.did);
+        debug!(
+            "Persisted identity {} to sled storage (update)",
+            identity_data.did
+        );
         Ok(())
     }
 
@@ -3796,7 +4144,10 @@ impl Blockchain {
     }
 
     /// Get identity by public key
-    pub fn get_identity_by_public_key(&self, public_key: &[u8]) -> Option<&IdentityTransactionData> {
+    pub fn get_identity_by_public_key(
+        &self,
+        public_key: &[u8],
+    ) -> Option<&IdentityTransactionData> {
         for identity_data in self.identity_registry.values() {
             if identity_data.public_key == public_key && identity_data.identity_type != "revoked" {
                 return Some(identity_data);
@@ -3820,9 +4171,8 @@ impl Blockchain {
         }
 
         // Generate DID from wallet ID if not provided
-        let identity_did = did.unwrap_or_else(|| {
-            format!("did:zhtp:wallet-{}", hex::encode(&public_key[..16]))
-        });
+        let identity_did =
+            did.unwrap_or_else(|| format!("did:zhtp:wallet-{}", hex::encode(&public_key[..16])));
 
         tracing::info!(" Auto-registering wallet identity: {}", identity_did);
 
@@ -3858,7 +4208,8 @@ impl Blockchain {
         self.add_system_transaction(registration_tx.clone())?;
 
         // Register in identity registry immediately
-        self.identity_registry.insert(identity_did.clone(), identity_data.clone());
+        self.identity_registry
+            .insert(identity_did.clone(), identity_data.clone());
         self.identity_blocks.insert(identity_did, self.height + 1);
 
         tracing::info!(" Wallet identity auto-registered on blockchain");
@@ -3920,7 +4271,8 @@ impl Blockchain {
                 capabilities: 0,
                 initial_balance: 0,
             };
-            self.wallet_registry.insert(wallet_id_hex.clone(), wallet_data);
+            self.wallet_registry
+                .insert(wallet_id_hex.clone(), wallet_data);
         }
 
         // Link as the active treasury wallet if not already set.
@@ -3946,7 +4298,11 @@ impl Blockchain {
             return; // No council configured
         }
 
-        self.council_threshold = if config.threshold == 0 { 4 } else { config.threshold };
+        self.council_threshold = if config.threshold == 0 {
+            4
+        } else {
+            config.threshold
+        };
 
         for entry in &config.members {
             self.council_members.push(crate::dao::CouncilMember {
@@ -3988,13 +4344,15 @@ impl Blockchain {
         activated_by: String,
     ) -> Result<()> {
         let threshold = self.council_threshold as usize;
-        let valid = council_signatures.iter()
+        let valid = council_signatures
+            .iter()
             .filter(|did| self.is_council_member(did.as_str()))
             .count();
         if valid < threshold {
             return Err(anyhow::anyhow!(
                 "Emergency activation requires {} council signatures, got {}",
-                threshold, valid
+                threshold,
+                valid
             ));
         }
         let expiry = self.height + self.treasury_epoch_length_blocks.max(1);
@@ -4064,7 +4422,8 @@ impl Blockchain {
         // Condition B: whale concentration low enough
         let cond_b = snap.max_wallet_pct_bps <= cfg.max_wallet_pct_bps_for_phase1;
         // Condition C: time window elapsed
-        let cond_c = cfg.phase0_max_duration_blocks
+        let cond_c = cfg
+            .phase0_max_duration_blocks
             .map(|n| self.height >= n)
             .unwrap_or(false);
 
@@ -4079,7 +4438,8 @@ impl Blockchain {
 
         let enough_citizens = snap.verified_citizen_count >= cfg.min_citizens_for_phase2;
         let low_concentration = snap.max_wallet_pct_bps <= cfg.max_wallet_pct_bps_for_phase2;
-        let quorum_cycles = self.governance_cycles_with_quorum >= cfg.phase2_quorum_consecutive_cycles;
+        let quorum_cycles =
+            self.governance_cycles_with_quorum >= cfg.phase2_quorum_consecutive_cycles;
 
         enough_citizens && low_concentration && quorum_cycles
     }
@@ -4134,17 +4494,19 @@ impl Blockchain {
         if sender_bal < amount {
             return Err(anyhow::anyhow!(
                 "TokenTransfer insufficient balance: have {}, need {}",
-                sender_bal, amount
+                sender_bal,
+                amount
             ));
         }
         let sender_bal_post = token.balance_of(sender);
-        token.balances.insert(
-            sender.clone(),
-            sender_bal_post.saturating_sub(fee_amount),
-        );
+        token
+            .balances
+            .insert(sender.clone(), sender_bal_post.saturating_sub(fee_amount));
         if let Some(ref tpk) = treasury_key {
             let tbal = token.balance_of(tpk);
-            token.balances.insert(tpk.clone(), tbal.saturating_add(fee_amount));
+            token
+                .balances
+                .insert(tpk.clone(), tbal.saturating_add(fee_amount));
             debug!(
                 "TokenTransfer: {} SOV fee → DAO treasury (height {})",
                 fee_amount, height
@@ -4174,7 +4536,10 @@ impl Blockchain {
         });
         let evicted = before - self.pending_transactions.len();
         if evicted > 0 {
-            warn!("{}: evicted {} invalid pending transaction(s)", context, evicted);
+            warn!(
+                "{}: evicted {} invalid pending transaction(s)",
+                context, evicted
+            );
         }
         evicted
     }
@@ -4228,7 +4593,7 @@ impl Blockchain {
     /// Must be called after SOV token is created with kernel authority.
     pub fn initialize_treasury_kernel(&mut self, kernel_authority: PublicKey) {
         use crate::contracts::treasury_kernel::TreasuryKernel;
-        
+
         let governance_authority = kernel_authority.clone();
         self.treasury_kernel = Some(TreasuryKernel::new(
             kernel_authority,
@@ -4262,7 +4627,9 @@ impl Blockchain {
             let kernel = self.treasury_kernel.as_mut()
                 .ok_or_else(|| "Treasury Kernel not initialized - kernel-controlled token operations require kernel".to_string())?;
             let caller = kernel.governance_authority().clone();
-            kernel.credit(token, &caller, to, amount, reason).map_err(|e| e.to_string())
+            kernel
+                .credit(token, &caller, to, amount, reason)
+                .map_err(|e| e.to_string())
         } else {
             // Custom token - use direct method (no kernel control)
             token.credit_balance(to, amount)
@@ -4287,7 +4654,9 @@ impl Blockchain {
             let kernel = self.treasury_kernel.as_mut()
                 .ok_or_else(|| "Treasury Kernel not initialized - kernel-controlled token operations require kernel".to_string())?;
             let caller = kernel.governance_authority().clone();
-            kernel.debit(token, &caller, from, amount, reason).map_err(|e| e.to_string())
+            kernel
+                .debit(token, &caller, from, amount, reason)
+                .map_err(|e| e.to_string())
         } else {
             // Custom token - use direct method (no kernel control)
             token.debit_balance(from, amount)
@@ -4338,7 +4707,8 @@ impl Blockchain {
         };
 
         // Map signer key_id -> primary wallet_id
-        let mut key_to_wallet: std::collections::HashMap<[u8; 32], [u8; 32]> = std::collections::HashMap::new();
+        let mut key_to_wallet: std::collections::HashMap<[u8; 32], [u8; 32]> =
+            std::collections::HashMap::new();
         for (wallet_id, wallet) in &self.wallet_registry {
             if wallet.wallet_type != "Primary" {
                 continue;
@@ -4350,7 +4720,11 @@ impl Blockchain {
         }
 
         let mut migrated_total: u64 = 0;
-        let balances: Vec<(PublicKey, u64)> = token.balances.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let balances: Vec<(PublicKey, u64)> = token
+            .balances
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
         for (pk, bal) in balances {
             if bal == 0 {
                 continue;
@@ -4364,13 +4738,18 @@ impl Blockchain {
                 token.balances.remove(&pk);
                 let wallet_key = Self::wallet_key_for_sov(wallet_id_bytes);
                 let existing = token.balance_of(&wallet_key);
-                token.balances.insert(wallet_key, existing.saturating_add(bal));
+                token
+                    .balances
+                    .insert(wallet_key, existing.saturating_add(bal));
                 migrated_total = migrated_total.saturating_add(bal);
             }
         }
 
         if migrated_total > 0 {
-            info!("🪙 Migrated {} SOV from key-based balances to Primary wallets", migrated_total);
+            info!(
+                "🪙 Migrated {} SOV from key-based balances to Primary wallets",
+                migrated_total
+            );
         }
     }
 
@@ -4436,7 +4815,9 @@ impl Blockchain {
         for (wallet_id, wallet) in &self.wallet_registry {
             // Only backfill wallets that are already registered on-chain.
             // This prevents minting to wallets that only exist in local state.
-            let is_on_chain = self.wallet_blocks.get(wallet_id)
+            let is_on_chain = self
+                .wallet_blocks
+                .get(wallet_id)
                 .map(|h| *h <= self.height)
                 .unwrap_or(false);
             if !is_on_chain {
@@ -4464,7 +4845,8 @@ impl Blockchain {
             let current_balance: u64 = if let Some(store) = self.get_store() {
                 let sov_storage_token_id = crate::storage::TokenId(sov_token_id);
                 let addr = crate::storage::Address::new(wallet_key);
-                store.get_token_balance(&sov_storage_token_id, &addr)
+                store
+                    .get_token_balance(&sov_storage_token_id, &addr)
                     .unwrap_or(0) as u64
             } else {
                 token_opt
@@ -4509,7 +4891,8 @@ impl Blockchain {
                 _ => continue,
             };
             for tx in &block.transactions {
-                if tx.transaction_type != crate::types::transaction_type::TransactionType::TokenMint {
+                if tx.transaction_type != crate::types::transaction_type::TransactionType::TokenMint
+                {
                     continue;
                 }
                 let is_backfill = std::str::from_utf8(&tx.memo)
@@ -4609,11 +4992,17 @@ impl Blockchain {
     }
 
     /// Register a new wallet on the blockchain
-    pub fn register_wallet(&mut self, wallet_data: crate::transaction::WalletTransactionData) -> Result<Hash> {
+    pub fn register_wallet(
+        &mut self,
+        wallet_data: crate::transaction::WalletTransactionData,
+    ) -> Result<Hash> {
         // Check if wallet already exists
         let wallet_id_str = hex::encode(wallet_data.wallet_id.as_bytes());
         if self.wallet_registry.contains_key(&wallet_id_str) {
-            return Err(anyhow::anyhow!("Wallet {} already exists on blockchain", wallet_id_str));
+            return Err(anyhow::anyhow!(
+                "Wallet {} already exists on blockchain",
+                wallet_id_str
+            ));
         }
 
         // Create wallet registration transaction
@@ -4635,8 +5024,10 @@ impl Blockchain {
         self.add_system_transaction(registration_tx.clone())?;
 
         // Store in wallet registry immediately for queries
-        self.wallet_registry.insert(wallet_id_str.clone(), wallet_data.clone());
-        self.wallet_blocks.insert(wallet_id_str.clone(), self.height + 1);
+        self.wallet_registry
+            .insert(wallet_id_str.clone(), wallet_data.clone());
+        self.wallet_blocks
+            .insert(wallet_id_str.clone(), self.height + 1);
 
         // Mint SOV immediately in-memory so the balance is available regardless of whether
         // the WalletRegistration tx ever lands in a block (e.g. when consensus is stalled).
@@ -4651,11 +5042,18 @@ impl Blockchain {
             if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
                 if token.balance_of(&recipient_pk) == 0 {
                     if let Err(e) = token.mint(&recipient_pk, wallet_data.initial_balance) {
-                        warn!("register_wallet: failed to mint {} SOV for {}: {}",
-                            wallet_data.initial_balance, &wallet_id_str[..16.min(wallet_id_str.len())], e);
+                        warn!(
+                            "register_wallet: failed to mint {} SOV for {}: {}",
+                            wallet_data.initial_balance,
+                            &wallet_id_str[..16.min(wallet_id_str.len())],
+                            e
+                        );
                     } else {
-                        info!("💰 register_wallet: minted {} SOV for wallet {} (in-memory)",
-                            wallet_data.initial_balance, &wallet_id_str[..16.min(wallet_id_str.len())]);
+                        info!(
+                            "💰 register_wallet: minted {} SOV for wallet {} (in-memory)",
+                            wallet_data.initial_balance,
+                            &wallet_id_str[..16.min(wallet_id_str.len())]
+                        );
                     }
                 }
             }
@@ -4668,26 +5066,36 @@ impl Blockchain {
     ///
     /// This creates an actual spendable output in the UTXO set, not just registry metadata.
     /// The recipient is identified by their identity hash (32 bytes).
-    pub fn create_funding_utxo(&mut self, wallet_id: &str, recipient_identity: &[u8], amount: u64) -> Hash {
+    pub fn create_funding_utxo(
+        &mut self,
+        wallet_id: &str,
+        recipient_identity: &[u8],
+        amount: u64,
+    ) -> Hash {
         let utxo_output = crate::transaction::TransactionOutput {
             commitment: crate::types::hash::blake3_hash(
-                format!("funding_commitment_{}_{}", wallet_id, amount).as_bytes()
+                format!("funding_commitment_{}_{}", wallet_id, amount).as_bytes(),
             ),
-            note: crate::types::hash::blake3_hash(
-                format!("funding_note_{}", wallet_id).as_bytes()
-            ),
+            note: crate::types::hash::blake3_hash(format!("funding_note_{}", wallet_id).as_bytes()),
             recipient: PublicKey::new(recipient_identity.to_vec()),
         };
         let utxo_hash = crate::types::hash::blake3_hash(
-            format!("funding_utxo:{}:{}", wallet_id, amount).as_bytes()
+            format!("funding_utxo:{}:{}", wallet_id, amount).as_bytes(),
         );
         self.utxo_set.insert(utxo_hash, utxo_output);
-        info!("💰 Created funding UTXO: {} SOV for wallet {}", amount, &wallet_id[..16.min(wallet_id.len())]);
+        info!(
+            "💰 Created funding UTXO: {} SOV for wallet {}",
+            amount,
+            &wallet_id[..16.min(wallet_id.len())]
+        );
         utxo_hash
     }
 
     /// Get wallet by ID
-    pub fn get_wallet(&self, wallet_id: &str) -> Option<&crate::transaction::WalletTransactionData> {
+    pub fn get_wallet(
+        &self,
+        wallet_id: &str,
+    ) -> Option<&crate::transaction::WalletTransactionData> {
         self.wallet_registry.get(wallet_id)
     }
 
@@ -4718,11 +5126,13 @@ impl Blockchain {
     }
 
     /// Get wallets for a specific owner identity
-    pub fn get_wallets_for_owner(&self, owner_identity_id: &Hash) -> Vec<&crate::transaction::WalletTransactionData> {
-        self.wallet_registry.values()
-            .filter(|wallet| {
-                wallet.owner_identity_id.as_ref() == Some(owner_identity_id)
-            })
+    pub fn get_wallets_for_owner(
+        &self,
+        owner_identity_id: &Hash,
+    ) -> Vec<&crate::transaction::WalletTransactionData> {
+        self.wallet_registry
+            .values()
+            .filter(|wallet| wallet.owner_identity_id.as_ref() == Some(owner_identity_id))
             .collect()
     }
 
@@ -4735,8 +5145,10 @@ impl Blockchain {
             ) {
                 if let Some(ref wallet_data) = transaction.wallet_data {
                     let wallet_id_str = hex::encode(wallet_data.wallet_id.as_bytes());
-                    self.wallet_registry.insert(wallet_id_str.clone(), wallet_data.clone());
-                    self.wallet_blocks.insert(wallet_id_str.clone(), block.height());
+                    self.wallet_registry
+                        .insert(wallet_id_str.clone(), wallet_data.clone());
+                    self.wallet_blocks
+                        .insert(wallet_id_str.clone(), block.height());
 
                     // Mint initial SOV balance for new wallets (block-authoritative).
                     // This ensures the token contract is the source of truth and persists in the store.
@@ -4750,13 +5162,17 @@ impl Blockchain {
                         wallet_id_bytes.copy_from_slice(wallet_data.wallet_id.as_bytes());
                         let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes);
 
-                        let already_has_balance = self.token_contracts.get(&sov_token_id)
+                        let already_has_balance = self
+                            .token_contracts
+                            .get(&sov_token_id)
                             .map(|token| token.balance_of(&recipient_pk) > 0)
                             .unwrap_or(false);
 
                         if !already_has_balance {
                             if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
-                                if let Err(e) = token.mint(&recipient_pk, wallet_data.initial_balance) {
+                                if let Err(e) =
+                                    token.mint(&recipient_pk, wallet_data.initial_balance)
+                                {
                                     warn!(
                                         "Failed to mint {} SOV for wallet {}: {}",
                                         wallet_data.initial_balance,
@@ -4764,7 +5180,8 @@ impl Blockchain {
                                         e
                                     );
                                 } else if let Some(store) = &self.store {
-                                    let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                                    let store_ref: &dyn crate::storage::BlockchainStore =
+                                        store.as_ref();
                                     if let Err(e) = store_ref.put_token_contract(token) {
                                         warn!("Failed to persist SOV token after wallet registration mint: {}", e);
                                     }
@@ -4798,13 +5215,25 @@ impl Blockchain {
     /// full description of each key's role and the security rationale for separation.
     pub fn register_validator(&mut self, validator_info: ValidatorInfo) -> Result<Hash> {
         // Check if validator already exists
-        if self.validator_registry.contains_key(&validator_info.identity_id) {
-            return Err(anyhow::anyhow!("Validator {} already exists on blockchain", validator_info.identity_id));
+        if self
+            .validator_registry
+            .contains_key(&validator_info.identity_id)
+        {
+            return Err(anyhow::anyhow!(
+                "Validator {} already exists on blockchain",
+                validator_info.identity_id
+            ));
         }
 
         // Verify the identity exists
-        if !self.identity_registry.contains_key(&validator_info.identity_id) {
-            return Err(anyhow::anyhow!("Identity {} must be registered before becoming a validator", validator_info.identity_id));
+        if !self
+            .identity_registry
+            .contains_key(&validator_info.identity_id)
+        {
+            return Err(anyhow::anyhow!(
+                "Identity {} must be registered before becoming a validator",
+                validator_info.identity_id
+            ));
         }
 
         // KEY SEPARATION ASSERTIONS
@@ -4813,7 +5242,9 @@ impl Blockchain {
             return Err(anyhow::anyhow!("Validator consensus_key must not be empty"));
         }
         if validator_info.networking_key.is_empty() {
-            return Err(anyhow::anyhow!("Validator networking_key must not be empty"));
+            return Err(anyhow::anyhow!(
+                "Validator networking_key must not be empty"
+            ));
         }
         if validator_info.rewards_key.is_empty() {
             return Err(anyhow::anyhow!("Validator rewards_key must not be empty"));
@@ -4845,13 +5276,15 @@ impl Blockchain {
         if validator_info.stake < min_stake {
             return Err(anyhow::anyhow!(
                 "Insufficient stake for validator: {} SOV (minimum: {} SOV required)",
-                validator_info.stake, min_stake
+                validator_info.stake,
+                min_stake
             ));
         }
-        
+
         // Storage requirement: Only enforce for production validators after genesis
         // Genesis validators (height 0) can register with any storage amount for testing
-        if self.height > 0 && validator_info.storage_provided < 10_737_418_240 {  // 10 GB in bytes
+        if self.height > 0 && validator_info.storage_provided < 10_737_418_240 {
+            // 10 GB in bytes
             return Err(anyhow::anyhow!(
                 "Insufficient storage for validator: {} bytes (minimum: 10 GB required for blockchain storage)",
                 validator_info.storage_provided
@@ -4866,7 +5299,11 @@ impl Blockchain {
             ownership_proof: vec![], // Empty for system validator registration
             identity_type: "validator".to_string(),
             did_document_hash: crate::types::hash::blake3_hash(
-                format!("validator:{}:{}", validator_info.identity_id, validator_info.registered_at).as_bytes()
+                format!(
+                    "validator:{}:{}",
+                    validator_info.identity_id, validator_info.registered_at
+                )
+                .as_bytes(),
             ),
             created_at: validator_info.registered_at,
             registration_fee: 0, // No fee for validator registration (paid via stake)
@@ -4884,18 +5321,26 @@ impl Blockchain {
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: validator_info.registered_at,
             },
-            format!("Validator registration for {} with stake {}", validator_info.identity_id, validator_info.stake).into_bytes(),
+            format!(
+                "Validator registration for {} with stake {}",
+                validator_info.identity_id, validator_info.stake
+            )
+            .into_bytes(),
         );
 
         // Add to pending transactions for inclusion in next block
         self.add_pending_transaction(registration_tx.clone())?;
 
         // Store in validator registry immediately for queries
-        self.validator_registry.insert(validator_info.identity_id.clone(), validator_info.clone());
-        self.validator_blocks.insert(validator_info.identity_id.clone(), self.height + 1);
+        self.validator_registry
+            .insert(validator_info.identity_id.clone(), validator_info.clone());
+        self.validator_blocks
+            .insert(validator_info.identity_id.clone(), self.height + 1);
 
-        info!(" Validator {} registered with {} SOV stake and {} bytes storage", 
-              validator_info.identity_id, validator_info.stake, validator_info.storage_provided);
+        info!(
+            " Validator {} registered with {} SOV stake and {} bytes storage",
+            validator_info.identity_id, validator_info.stake, validator_info.storage_provided
+        );
 
         Ok(registration_tx.hash())
     }
@@ -4917,7 +5362,8 @@ impl Blockchain {
 
     /// Get all active validators
     pub fn get_active_validators(&self) -> Vec<&ValidatorInfo> {
-        self.validator_registry.values()
+        self.validator_registry
+            .values()
             .filter(|v| v.status == "active")
             .collect()
     }
@@ -4928,10 +5374,17 @@ impl Blockchain {
     }
 
     /// Update validator information
-    pub fn update_validator(&mut self, identity_id: &str, updated_info: ValidatorInfo) -> Result<Hash> {
+    pub fn update_validator(
+        &mut self,
+        identity_id: &str,
+        updated_info: ValidatorInfo,
+    ) -> Result<Hash> {
         // Check if validator exists
         if !self.validator_registry.contains_key(identity_id) {
-            return Err(anyhow::anyhow!("Validator {} not found on blockchain", identity_id));
+            return Err(anyhow::anyhow!(
+                "Validator {} not found on blockchain",
+                identity_id
+            ));
         }
 
         // Create update transaction
@@ -4942,7 +5395,11 @@ impl Blockchain {
             ownership_proof: vec![],
             identity_type: "validator".to_string(),
             did_document_hash: crate::types::hash::blake3_hash(
-                format!("validator_update:{}:{}", updated_info.identity_id, updated_info.last_activity).as_bytes()
+                format!(
+                    "validator_update:{}:{}",
+                    updated_info.identity_id, updated_info.last_activity
+                )
+                .as_bytes(),
             ),
             created_at: updated_info.last_activity,
             registration_fee: 0,
@@ -4969,7 +5426,8 @@ impl Blockchain {
         self.add_pending_transaction(update_tx.clone())?;
 
         // Update registry
-        self.validator_registry.insert(identity_id.to_string(), updated_info);
+        self.validator_registry
+            .insert(identity_id.to_string(), updated_info);
 
         Ok(update_tx.hash())
     }
@@ -4978,7 +5436,10 @@ impl Blockchain {
     pub fn unregister_validator(&mut self, identity_id: &str) -> Result<Hash> {
         // Check if validator exists
         if !self.validator_registry.contains_key(identity_id) {
-            return Err(anyhow::anyhow!("Validator {} not found on blockchain", identity_id));
+            return Err(anyhow::anyhow!(
+                "Validator {} not found on blockchain",
+                identity_id
+            ));
         }
 
         // Get validator info
@@ -5003,7 +5464,8 @@ impl Blockchain {
         self.add_pending_transaction(unregister_tx.clone())?;
 
         // Update status in registry
-        self.validator_registry.insert(identity_id.to_string(), validator_info);
+        self.validator_registry
+            .insert(identity_id.to_string(), validator_info);
 
         info!("Validator {} unregistered", identity_id);
 
@@ -5105,11 +5567,15 @@ impl Blockchain {
                     governance_proposal_id: None,
                     oracle_key_id: None,
                 };
-                self.validator_registry.insert(validator_data.identity_id.clone(), validator_info);
-                self.validator_blocks.insert(validator_data.identity_id.clone(), height);
-                info!("Registered new validator {} with {} SOV stake",
+                self.validator_registry
+                    .insert(validator_data.identity_id.clone(), validator_info);
+                self.validator_blocks
+                    .insert(validator_data.identity_id.clone(), height);
+                info!(
+                    "Registered new validator {} with {} SOV stake",
                     &validator_data.identity_id[..validator_data.identity_id.len().min(40)],
-                    validator_data.stake);
+                    validator_data.stake
+                );
             }
         }
     }
@@ -5125,11 +5591,9 @@ impl Blockchain {
                         let mut updated_info = validator_info.clone();
                         updated_info.last_activity = identity_data.created_at;
                         updated_info.blocks_validated += 1;
-                        
-                        self.validator_registry.insert(
-                            identity_data.did.clone(),
-                            updated_info
-                        );
+
+                        self.validator_registry
+                            .insert(identity_data.did.clone(), updated_info);
                     }
                 }
             }
@@ -5144,19 +5608,35 @@ impl Blockchain {
                 // Contract data is serialized in the first output's commitment
                 if let Some(output) = transaction.outputs.first() {
                     // Try to deserialize as Web4Contract first (JSON format)
-                    if let Ok(web4_contract) = serde_json::from_slice::<crate::contracts::web4::Web4Contract>(output.commitment.as_bytes()) {
+                    if let Ok(web4_contract) = serde_json::from_slice::<
+                        crate::contracts::web4::Web4Contract,
+                    >(output.commitment.as_bytes())
+                    {
                         // Generate contract ID from the note field or domain
                         let contract_id = lib_crypto::hash_blake3(web4_contract.domain.as_bytes());
                         self.register_web4_contract(contract_id, web4_contract, block.height());
-                        info!(" Processed Web4Contract deployment in block {}", block.height());
+                        info!(
+                            " Processed Web4Contract deployment in block {}",
+                            block.height()
+                        );
                     }
                     // Try to deserialize as TokenContract (bincode format)
-                    else if let Ok(token_contract) = bincode::deserialize::<crate::contracts::TokenContract>(output.commitment.as_bytes()) {
+                    else if let Ok(token_contract) =
+                        bincode::deserialize::<crate::contracts::TokenContract>(
+                            output.commitment.as_bytes(),
+                        )
+                    {
                         let contract_id = token_contract.token_id;
                         self.register_token_contract(contract_id, token_contract, block.height());
-                        info!(" Processed TokenContract deployment in block {}", block.height());
+                        info!(
+                            " Processed TokenContract deployment in block {}",
+                            block.height()
+                        );
                     } else {
-                        debug!(" Could not deserialize contract in transaction {}", transaction.hash());
+                        debug!(
+                            " Could not deserialize contract in transaction {}",
+                            transaction.hash()
+                        );
                     }
                 }
             }
@@ -5168,7 +5648,11 @@ impl Blockchain {
                             "ContractExecution/transfer is prohibited — use TokenTransfer transactions instead"
                         ));
                     }
-                    warn!("ContractExecution rejected (tx {}): {}", transaction.hash(), e);
+                    warn!(
+                        "ContractExecution rejected (tx {}): {}",
+                        transaction.hash(),
+                        e
+                    );
                 }
             }
         }
@@ -5184,7 +5668,8 @@ impl Blockchain {
             .memo
             .starts_with(crate::transaction::CONTRACT_EXECUTION_MEMO_PREFIX_V2)
         {
-            match crate::transaction::DecodedContractExecutionMemo::decode_compat(&transaction.memo) {
+            match crate::transaction::DecodedContractExecutionMemo::decode_compat(&transaction.memo)
+            {
                 Ok(decoded) => decoded.call,
                 Err(_) => return false,
             }
@@ -5194,8 +5679,11 @@ impl Blockchain {
             }
             let call_data = &transaction.memo[4..];
             let deserialized: Result<
-                (crate::types::ContractCall, crate::integration::crypto_integration::Signature),
-                _
+                (
+                    crate::types::ContractCall,
+                    crate::integration::crypto_integration::Signature,
+                ),
+                _,
             > = bincode::deserialize(call_data);
             match deserialized {
                 Ok((call, _sig)) => call,
@@ -5213,7 +5701,9 @@ impl Blockchain {
         for transaction in &block.transactions {
             match transaction.transaction_type {
                 TransactionType::TokenTransfer => {
-                    let transfer = transaction.token_transfer_data.as_ref()
+                    let transfer = transaction
+                        .token_transfer_data
+                        .as_ref()
                         .ok_or_else(|| anyhow::anyhow!("TokenTransfer missing data"))?;
 
                     if transfer.amount == 0 {
@@ -5233,7 +5723,8 @@ impl Blockchain {
                     if transfer.nonce != expected_nonce {
                         return Err(anyhow::anyhow!(
                             "TokenTransfer nonce mismatch: expected {}, got {}",
-                            expected_nonce, transfer.nonce
+                            expected_nonce,
+                            transfer.nonce
                         ));
                     }
 
@@ -5244,16 +5735,20 @@ impl Blockchain {
                         self.ensure_sov_token_contract();
                     }
 
-                    let amount_u64: u64 = transfer.amount.try_into()
+                    let amount_u64: u64 = transfer
+                        .amount
+                        .try_into()
                         .map_err(|_| anyhow::anyhow!("TokenTransfer amount exceeds u64"))?;
 
                     // Compute 1% protocol fee and resolve DAO treasury key before
                     // any mutable borrows are taken on token_contracts.
                     let fee_rate_bps = crate::contracts::tokens::constants::SOV_FEE_RATE_BPS;
-                    let fee_amount: u64 = (amount_u64 as u128 * fee_rate_bps as u128 / 10_000) as u64;
+                    let fee_amount: u64 =
+                        (amount_u64 as u128 * fee_rate_bps as u128 / 10_000) as u64;
                     let net_amount: u64 = amount_u64.saturating_sub(fee_amount);
 
-                    let treasury_pk_opt: Option<PublicKey> = self.dao_treasury_wallet_id
+                    let treasury_pk_opt: Option<PublicKey> = self
+                        .dao_treasury_wallet_id
                         .as_ref()
                         .and_then(|hex_id| hex::decode(hex_id).ok())
                         .and_then(|bytes| {
@@ -5275,15 +5770,21 @@ impl Blockchain {
                         let from_wallet_id = hex::encode(transfer.from);
                         let to_wallet_id = hex::encode(transfer.to);
 
-                        let from_wallet = self.wallet_registry.get(&from_wallet_id)
-                            .ok_or_else(|| anyhow::anyhow!("TokenTransfer SOV sender wallet not found"))?;
+                        let from_wallet =
+                            self.wallet_registry.get(&from_wallet_id).ok_or_else(|| {
+                                anyhow::anyhow!("TokenTransfer SOV sender wallet not found")
+                            })?;
                         if !self.wallet_registry.contains_key(&to_wallet_id) {
-                            return Err(anyhow::anyhow!("TokenTransfer SOV recipient wallet not found"));
+                            return Err(anyhow::anyhow!(
+                                "TokenTransfer SOV recipient wallet not found"
+                            ));
                         }
 
                         let from_wallet_pk = PublicKey::new(from_wallet.public_key.clone());
                         if from_wallet_pk.key_id != sender_pk.key_id {
-                            return Err(anyhow::anyhow!("TokenTransfer SOV sender does not own wallet"));
+                            return Err(anyhow::anyhow!(
+                                "TokenTransfer SOV sender does not own wallet"
+                            ));
                         }
 
                         let from_wallet_addr = Self::wallet_key_for_sov(&transfer.from);
@@ -5297,17 +5798,21 @@ impl Blockchain {
                             tx_hash,
                         );
 
-                        let token = self.token_contracts.get_mut(&token_id)
+                        let token = self
+                            .token_contracts
+                            .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         // Pre-check: sender must hold the full amount (net + fee).
                         let from_bal = token.balance_of(&from_wallet_addr);
                         if from_bal < amount_u64 {
                             return Err(anyhow::anyhow!(
                                 "TokenTransfer insufficient balance: have {}, need {}",
-                                from_bal, amount_u64
+                                from_bal,
+                                amount_u64
                             ));
                         }
-                        token.transfer(&ctx, &to_wallet_addr, net_amount)
+                        token
+                            .transfer(&ctx, &to_wallet_addr, net_amount)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
                         Self::apply_token_transfer_with_fee(
                             token,
@@ -5323,7 +5828,8 @@ impl Blockchain {
                         }
 
                         // Resolve recipient before mutable borrow on token
-                        let recipient_pk_bytes = self.resolve_public_key_by_key_id(&transfer.to)
+                        let recipient_pk_bytes = self
+                            .resolve_public_key_by_key_id(&transfer.to)
                             .ok_or_else(|| anyhow::anyhow!("TokenTransfer recipient not found"))?;
                         let recipient_pk = PublicKey::new(recipient_pk_bytes);
 
@@ -5335,17 +5841,21 @@ impl Blockchain {
                             tx_hash,
                         );
 
-                        let token = self.token_contracts.get_mut(&token_id)
+                        let token = self
+                            .token_contracts
+                            .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         // Pre-check: sender must hold the full amount (net + fee).
                         let sender_bal = token.balance_of(&sender_pk);
                         if sender_bal < amount_u64 {
                             return Err(anyhow::anyhow!(
                                 "TokenTransfer insufficient balance: have {}, need {}",
-                                sender_bal, amount_u64
+                                sender_bal,
+                                amount_u64
                             ));
                         }
-                        token.transfer(&ctx, &recipient_pk, net_amount)
+                        token
+                            .transfer(&ctx, &recipient_pk, net_amount)
                             .map_err(|e| anyhow::anyhow!("TokenTransfer failed: {}", e))?;
                         Self::apply_token_transfer_with_fee(
                             token,
@@ -5371,10 +5881,14 @@ impl Blockchain {
                 }
                 TransactionType::TokenMint => {
                     if transaction.version < 2 {
-                        return Err(anyhow::anyhow!("TokenMint not supported in this serialization version"));
+                        return Err(anyhow::anyhow!(
+                            "TokenMint not supported in this serialization version"
+                        ));
                     }
 
-                    let mint = transaction.token_mint_data.as_ref()
+                    let mint = transaction
+                        .token_mint_data
+                        .as_ref()
                         .ok_or_else(|| anyhow::anyhow!("TokenMint missing data"))?;
 
                     if mint.amount == 0 {
@@ -5385,7 +5899,8 @@ impl Blockchain {
                     let recipient_pk = if is_sov {
                         Self::wallet_key_for_sov(&mint.to)
                     } else {
-                        let recipient_pk_bytes = self.resolve_public_key_by_key_id(&mint.to)
+                        let recipient_pk_bytes = self
+                            .resolve_public_key_by_key_id(&mint.to)
                             .ok_or_else(|| anyhow::anyhow!("TokenMint recipient not found"))?;
                         PublicKey::new(recipient_pk_bytes)
                     };
@@ -5397,7 +5912,9 @@ impl Blockchain {
                             let identity_id = parts.next().unwrap_or("").to_string();
                             let wallet_id = parts.next().unwrap_or("").to_string();
 
-                            let entry = self.ubi_registry.get_mut(&identity_id)
+                            let entry = self
+                                .ubi_registry
+                                .get_mut(&identity_id)
                                 .ok_or_else(|| anyhow::anyhow!("UBI mint for unknown identity"))?;
                             if entry.ubi_wallet_id != wallet_id {
                                 return Err(anyhow::anyhow!("UBI mint wallet mismatch"));
@@ -5405,12 +5922,17 @@ impl Blockchain {
                             if Self::is_sov_token_id(&mint.token_id) {
                                 let mint_wallet_id = hex::encode(mint.to);
                                 if mint_wallet_id != wallet_id {
-                                    return Err(anyhow::anyhow!("UBI mint recipient wallet mismatch"));
+                                    return Err(anyhow::anyhow!(
+                                        "UBI mint recipient wallet mismatch"
+                                    ));
                                 }
                             }
 
                             let is_due = match entry.last_payout_block {
-                                Some(last_block) => block.height().saturating_sub(last_block) >= Self::BLOCKS_PER_DAY,
+                                Some(last_block) => {
+                                    block.height().saturating_sub(last_block)
+                                        >= Self::BLOCKS_PER_DAY
+                                }
                                 None => true,
                             };
                             if !is_due {
@@ -5418,24 +5940,29 @@ impl Blockchain {
                             }
 
                             let mut expected_payout = entry.daily_amount;
-                            let mut new_remainder = entry.remainder_balance + (entry.monthly_amount % 30);
+                            let mut new_remainder =
+                                entry.remainder_balance + (entry.monthly_amount % 30);
                             if new_remainder >= 30 {
                                 expected_payout += new_remainder / 30;
                                 new_remainder %= 30;
                             }
 
-                            let amount_u64: u64 = mint.amount.try_into()
+                            let amount_u64: u64 = mint
+                                .amount
+                                .try_into()
                                 .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
                             if amount_u64 != expected_payout {
                                 return Err(anyhow::anyhow!("UBI mint amount mismatch"));
                             }
 
                             entry.last_payout_block = Some(block.height());
-                            entry.total_received = entry.total_received.saturating_add(expected_payout);
+                            entry.total_received =
+                                entry.total_received.saturating_add(expected_payout);
                             entry.remainder_balance = new_remainder;
 
                             if let Some(wallet) = self.wallet_registry.get_mut(&wallet_id) {
-                                wallet.initial_balance = wallet.initial_balance.saturating_add(expected_payout);
+                                wallet.initial_balance =
+                                    wallet.initial_balance.saturating_add(expected_payout);
                             }
                         } else if let Some(rest) = memo_str.strip_prefix("TOKEN_MIGRATE_V1:") {
                             let old_pk_bytes = hex::decode(rest)
@@ -5450,23 +5977,31 @@ impl Blockchain {
                         self.ensure_sov_token_contract();
                     }
 
-                    let is_ubi_mint = std::str::from_utf8(&transaction.memo).ok()
+                    let is_ubi_mint = std::str::from_utf8(&transaction.memo)
+                        .ok()
                         .map_or(false, |s| s.starts_with("UBI_DISTRIBUTION_V1:"));
                     let is_migration = migration_from.is_some();
 
-                    let amount_u64: u64 = mint.amount.try_into()
+                    let amount_u64: u64 = mint
+                        .amount
+                        .try_into()
                         .map_err(|_| anyhow::anyhow!("TokenMint amount exceeds u64"))?;
 
-                    let is_kernel_controlled = self.token_contracts.get(&token_id)
+                    let is_kernel_controlled = self
+                        .token_contracts
+                        .get(&token_id)
                         .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?
                         .kernel_mint_authority
                         .is_some();
 
                     // Creator authorization: non-kernel custom token mints require signer == creator.
                     if !is_sov && !is_ubi_mint && !is_migration && !is_kernel_controlled {
-                        let token = self.token_contracts.get(&token_id)
+                        let token = self
+                            .token_contracts
+                            .get(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                        token.check_mint_authorization(&transaction.signature.public_key)
+                        token
+                            .check_mint_authorization(&transaction.signature.public_key)
                             .map_err(|e| anyhow::anyhow!("{}", e))?;
                     }
 
@@ -5477,7 +6012,9 @@ impl Blockchain {
                                     "Treasury Kernel not initialized - kernel-controlled token operations require kernel"
                                 ))?;
                             let burn_result = {
-                                let token = self.token_contracts.get_mut(&token_id)
+                                let token = self
+                                    .token_contracts
+                                    .get_mut(&token_id)
                                     .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                                 kernel.debit(
                                     token,
@@ -5488,12 +6025,17 @@ impl Blockchain {
                                 )
                             };
                             self.treasury_kernel = Some(kernel);
-                            burn_result.map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                            burn_result.map_err(|e| {
+                                anyhow::anyhow!("Token migration burn failed: {}", e)
+                            })?;
                         } else {
-                            let token = self.token_contracts.get_mut(&token_id)
+                            let token = self
+                                .token_contracts
+                                .get_mut(&token_id)
                                 .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                            token.burn(&from_pk, amount_u64)
-                                .map_err(|e| anyhow::anyhow!("Token migration burn failed: {}", e))?;
+                            token.burn(&from_pk, amount_u64).map_err(|e| {
+                                anyhow::anyhow!("Token migration burn failed: {}", e)
+                            })?;
                         }
                     }
 
@@ -5503,7 +6045,9 @@ impl Blockchain {
                                 "Treasury Kernel not initialized - kernel-controlled token operations require kernel"
                             ))?;
                         let mint_result = {
-                            let token = self.token_contracts.get_mut(&token_id)
+                            let token = self
+                                .token_contracts
+                                .get_mut(&token_id)
                                 .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                             kernel.credit(
                                 token,
@@ -5516,14 +6060,19 @@ impl Blockchain {
                         self.treasury_kernel = Some(kernel);
                         mint_result.map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
                     } else {
-                        let token = self.token_contracts.get_mut(&token_id)
+                        let token = self
+                            .token_contracts
+                            .get_mut(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
-                        token.mint(&recipient_pk, amount_u64)
+                        token
+                            .mint(&recipient_pk, amount_u64)
                             .map_err(|e| anyhow::anyhow!("TokenMint failed: {}", e))?;
                     }
 
                     if let Some(store) = &self.store {
-                        let token = self.token_contracts.get(&token_id)
+                        let token = self
+                            .token_contracts
+                            .get(&token_id)
                             .ok_or_else(|| anyhow::anyhow!("Token contract not found"))?;
                         let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                         if let Err(e) = store_ref.put_token_contract(token) {
@@ -5532,8 +6081,9 @@ impl Blockchain {
                     }
                 }
                 TransactionType::TokenCreation => {
-                    let payload = crate::transaction::TokenCreationPayloadV1::decode_memo(&transaction.memo)
-                        .map_err(|e| anyhow::anyhow!("Invalid TokenCreation memo: {}", e))?;
+                    let payload =
+                        crate::transaction::TokenCreationPayloadV1::decode_memo(&transaction.memo)
+                            .map_err(|e| anyhow::anyhow!("Invalid TokenCreation memo: {}", e))?;
                     let (creator_allocation, treasury_allocation) = payload.split_initial_supply();
 
                     let creator = transaction.signature.public_key.clone();
@@ -5560,7 +6110,11 @@ impl Blockchain {
                         0,
                         creator.clone(),
                     );
-                    token.decimals = if payload.decimals == 0 { 8 } else { payload.decimals };
+                    token.decimals = if payload.decimals == 0 {
+                        8
+                    } else {
+                        payload.decimals
+                    };
                     token.max_supply = payload.initial_supply;
                     token
                         .mint(&creator, creator_allocation)
@@ -5570,9 +6124,9 @@ impl Blockchain {
                         kyber_pk: vec![],
                         key_id: payload.treasury_recipient,
                     };
-                    token
-                        .mint(&treasury_pk, treasury_allocation)
-                        .map_err(|e| anyhow::anyhow!("TokenCreation treasury mint failed: {}", e))?;
+                    token.mint(&treasury_pk, treasury_allocation).map_err(|e| {
+                        anyhow::anyhow!("TokenCreation treasury mint failed: {}", e)
+                    })?;
 
                     let token_id = token.token_id;
                     if self.token_contracts.contains_key(&token_id) {
@@ -5599,14 +6153,20 @@ impl Blockchain {
     }
 
     /// Process a ContractExecution transaction
-    fn process_contract_execution(&mut self, transaction: &Transaction, block_height: u64) -> Result<()> {
+    fn process_contract_execution(
+        &mut self,
+        transaction: &Transaction,
+        block_height: u64,
+    ) -> Result<()> {
         let call = if transaction
             .memo
             .starts_with(crate::transaction::CONTRACT_EXECUTION_MEMO_PREFIX_V2)
         {
             let decoded =
                 crate::transaction::DecodedContractExecutionMemo::decode_compat(&transaction.memo)
-                    .map_err(|e| anyhow::anyhow!("Invalid contract execution memo format: {}", e))?;
+                    .map_err(|e| {
+                        anyhow::anyhow!("Invalid contract execution memo format: {}", e)
+                    })?;
             decoded.call
         } else {
             // Legacy replay path: "ZHTP" + bincode((ContractCall, Signature)).
@@ -5614,9 +6174,11 @@ impl Blockchain {
                 return Err(anyhow::anyhow!("Invalid contract execution memo format"));
             }
             let call_data = &transaction.memo[4..];
-            let (call, _sig): (crate::types::ContractCall, crate::integration::crypto_integration::Signature) =
-                bincode::deserialize(call_data)
-                    .map_err(|e| anyhow::anyhow!("Failed to deserialize contract call: {}", e))?;
+            let (call, _sig): (
+                crate::types::ContractCall,
+                crate::integration::crypto_integration::Signature,
+            ) = bincode::deserialize(call_data)
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize contract call: {}", e))?;
             call
         };
 
@@ -5628,7 +6190,10 @@ impl Blockchain {
                 self.execute_token_contract_call(&call, &caller, block_height)?;
             }
             _ => {
-                debug!("Skipping non-token contract execution: {:?}", call.contract_type);
+                debug!(
+                    "Skipping non-token contract execution: {:?}",
+                    call.contract_type
+                );
             }
         }
 
@@ -5643,8 +6208,11 @@ impl Blockchain {
             return Ok(());
         }
 
-        info!("🔄 Reprocessing contract executions from {} blocks (current tokens: {})...",
-              block_count, self.token_contracts.len());
+        info!(
+            "🔄 Reprocessing contract executions from {} blocks (current tokens: {})...",
+            block_count,
+            self.token_contracts.len()
+        );
         let mut tokens_found = 0;
         let mut contract_txs_found = 0;
 
@@ -5658,19 +6226,30 @@ impl Blockchain {
                             tokens_found += 1;
                         }
                         Err(e) => {
-                            warn!("⚠️ Failed to reprocess contract execution at block {}: {}", block.height(), e);
+                            warn!(
+                                "⚠️ Failed to reprocess contract execution at block {}: {}",
+                                block.height(),
+                                e
+                            );
                         }
                     }
                 }
             }
         }
 
-        info!("🔄 Found {} ContractExecution transactions, processed {} successfully, tokens: {}",
-              contract_txs_found, tokens_found, self.token_contracts.len());
+        info!(
+            "🔄 Found {} ContractExecution transactions, processed {} successfully, tokens: {}",
+            contract_txs_found,
+            tokens_found,
+            self.token_contracts.len()
+        );
 
         if tokens_found > 0 {
-            info!("🔄 Reprocessed {} contract executions, total tokens: {}",
-                tokens_found, self.token_contracts.len());
+            info!(
+                "🔄 Reprocessed {} contract executions, total tokens: {}",
+                tokens_found,
+                self.token_contracts.len()
+            );
         }
 
         Ok(())
@@ -5726,27 +6305,39 @@ impl Blockchain {
 
                 let token_id = token.token_id;
                 if self.token_contracts.contains_key(&token_id) {
-                    return Err(anyhow::anyhow!("Token with same name and symbol already exists"));
+                    return Err(anyhow::anyhow!(
+                        "Token with same name and symbol already exists"
+                    ));
                 }
 
-                info!("Creating token contract: {} ({}) with supply {} at block {}",
-                    name, symbol, initial_supply, block_height);
+                info!(
+                    "Creating token contract: {} ({}) with supply {} at block {}",
+                    name, symbol, initial_supply, block_height
+                );
                 self.token_contracts.insert(token_id, token);
                 self.contract_blocks.insert(token_id, block_height);
-                info!("Token contract created: {} ({}), token_id: {}",
-                    name, symbol, hex::encode(token_id));
+                info!(
+                    "Token contract created: {} ({}), token_id: {}",
+                    name,
+                    symbol,
+                    hex::encode(token_id)
+                );
             }
             "mint" => {
                 // MintParams struct: { token_id: [u8; 32], to: Vec<u8>, amount: u64 }
                 #[derive(serde::Deserialize)]
                 struct MintParams {
                     token_id: [u8; 32],
-                    to: Vec<u8>,  // PublicKey bytes (bincode serialized)
+                    to: Vec<u8>, // PublicKey bytes (bincode serialized)
                     amount: u64,
                 }
                 let params: MintParams = bincode::deserialize(&call.params)
                     .map_err(|e| anyhow::anyhow!("Invalid mint params: {}", e))?;
-                let MintParams { token_id, to: to_bytes, amount } = params;
+                let MintParams {
+                    token_id,
+                    to: to_bytes,
+                    amount,
+                } = params;
                 if Self::is_sov_token_id(&token_id) {
                     return Err(anyhow::anyhow!("SOV mints must use TokenMint transactions"));
                 }
@@ -5770,7 +6361,9 @@ impl Blockchain {
                     })
                 };
 
-                let token = self.token_contracts.get_mut(&token_id)
+                let token = self
+                    .token_contracts
+                    .get_mut(&token_id)
                     .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
                 if token.kernel_mint_authority.is_some() {
@@ -5806,32 +6399,37 @@ impl Blockchain {
     }
 
     /// Get access to the recursive proof aggregator for O(1) verification
-    pub async fn get_proof_aggregator(&mut self) -> Result<std::sync::Arc<tokio::sync::RwLock<lib_proofs::RecursiveProofAggregator>>> {
+    pub async fn get_proof_aggregator(
+        &mut self,
+    ) -> Result<std::sync::Arc<tokio::sync::RwLock<lib_proofs::RecursiveProofAggregator>>> {
         if self.proof_aggregator.is_none() {
             self.initialize_proof_aggregator()?;
         }
-        
-        self.proof_aggregator.clone()
+
+        self.proof_aggregator
+            .clone()
             .ok_or_else(|| anyhow::anyhow!("Failed to initialize proof aggregator"))
     }
 
     /// Enable O(1) verification for the blockchain by processing all blocks through recursive aggregation
     pub async fn enable_instant_verification(&mut self) -> Result<()> {
         info!(" Enabling O(1) instant verification for blockchain");
-        
+
         // Initialize aggregator if not already done
         let aggregator_arc = self.get_proof_aggregator().await?;
-        
+
         // Process each block through the aggregator to build recursive proof chain
         let mut aggregator = aggregator_arc.write().await;
         let mut previous_chain_proof: Option<lib_proofs::ChainRecursiveProof> = None;
-        
+
         for (i, block) in self.blocks.iter().enumerate() {
             info!("Processing block {} for recursive proof aggregation", i);
-            
+
             // Convert block transactions to the format expected by the aggregator
-            let batched_transactions: Vec<BatchedPrivateTransaction> = 
-                block.transactions.iter().map(|tx| {
+            let batched_transactions: Vec<BatchedPrivateTransaction> = block
+                .transactions
+                .iter()
+                .map(|tx| {
                     // Create batched transaction metadata
                     let batch_metadata = BatchMetadata {
                         transaction_count: 1,
@@ -5848,7 +6446,8 @@ impl Blockchain {
                         merkle_root: tx.hash().as_array(),
                         batch_metadata,
                     }
-                }).collect();
+                })
+                .collect();
 
             // Get previous state root (using merkle root as state representation)
             let previous_state_root = if i > 0 {
@@ -5871,14 +6470,22 @@ impl Blockchain {
                     info!("Block {} proof aggregated successfully", i);
 
                     // Create recursive chain proof
-                    match aggregator.create_recursive_chain_proof(&block_proof, previous_chain_proof.as_ref()) {
+                    match aggregator
+                        .create_recursive_chain_proof(&block_proof, previous_chain_proof.as_ref())
+                    {
                         Ok(chain_proof) => {
                             info!(" Recursive chain proof created for block {}", i);
                             previous_chain_proof = Some(chain_proof);
                         }
                         Err(e) => {
-                            error!("Failed to create recursive chain proof for block {}: {}", i, e);
-                            return Err(anyhow::anyhow!("Failed to create recursive chain proof: {}", e));
+                            error!(
+                                "Failed to create recursive chain proof for block {}: {}",
+                                i, e
+                            );
+                            return Err(anyhow::anyhow!(
+                                "Failed to create recursive chain proof: {}",
+                                e
+                            ));
                         }
                     }
                 }
@@ -5902,12 +6509,18 @@ impl Blockchain {
                 }
                 Err(e) => {
                     error!("Error verifying final recursive chain proof: {}", e);
-                    return Err(anyhow::anyhow!("Error verifying recursive chain proof: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "Error verifying recursive chain proof: {}",
+                        e
+                    ));
                 }
             }
         }
-        
-        info!("O(1) instant verification enabled for entire blockchain with {} blocks", self.blocks.len());
+
+        info!(
+            "O(1) instant verification enabled for entire blockchain with {} blocks",
+            self.blocks.len()
+        );
         Ok(())
     }
 
@@ -5962,16 +6575,21 @@ impl Blockchain {
         system_keypair: &lib_crypto::KeyPair,
     ) -> Result<Vec<Hash>> {
         if let Some(ref mut processor) = self.economic_processor {
-            let blockchain_txs = processor.create_ubi_distributions_for_blockchain(citizens, system_keypair).await?;
+            let blockchain_txs = processor
+                .create_ubi_distributions_for_blockchain(citizens, system_keypair)
+                .await?;
             let mut tx_hashes = Vec::new();
-            
+
             for tx in blockchain_txs {
                 let tx_hash = tx.hash();
                 self.add_pending_transaction(tx)?;
                 tx_hashes.push(tx_hash);
             }
-            
-            info!("🏦 Created {} UBI distribution transactions", tx_hashes.len());
+
+            info!(
+                "🏦 Created {} UBI distribution transactions",
+                tx_hashes.len()
+            );
             Ok(tx_hashes)
         } else {
             Err(anyhow::anyhow!("Economic processor not initialized"))
@@ -5985,15 +6603,17 @@ impl Blockchain {
         system_keypair: &lib_crypto::KeyPair,
     ) -> Result<Vec<Hash>> {
         if let Some(ref mut processor) = self.economic_processor {
-            let blockchain_txs = processor.create_network_reward_transactions(rewards, system_keypair).await?;
+            let blockchain_txs = processor
+                .create_network_reward_transactions(rewards, system_keypair)
+                .await?;
             let mut tx_hashes = Vec::new();
-            
+
             for tx in blockchain_txs {
                 let tx_hash = tx.hash();
                 self.add_pending_transaction(tx)?;
                 tx_hashes.push(tx_hash);
             }
-            
+
             info!("🏦 Created {} network reward transactions", tx_hashes.len());
             Ok(tx_hashes)
         } else {
@@ -6011,14 +6631,23 @@ impl Blockchain {
         sender_keypair: &lib_crypto::KeyPair,
     ) -> Result<Hash> {
         if let Some(ref mut processor) = self.economic_processor {
-            let blockchain_tx = processor.create_payment_transaction_for_blockchain(
-                from, to, amount, priority, sender_keypair
-            ).await?;
-            
+            let blockchain_tx = processor
+                .create_payment_transaction_for_blockchain(
+                    from,
+                    to,
+                    amount,
+                    priority,
+                    sender_keypair,
+                )
+                .await?;
+
             let tx_hash = blockchain_tx.hash();
             self.add_pending_transaction(blockchain_tx)?;
-            
-            info!("🏦 Created payment transaction: {} SOV from {:?} to {:?}", amount, from, to);
+
+            info!(
+                "🏦 Created payment transaction: {} SOV from {:?} to {:?}",
+                amount, from, to
+            );
             Ok(tx_hash)
         } else {
             Err(anyhow::anyhow!("Economic processor not initialized"))
@@ -6032,18 +6661,24 @@ impl Blockchain {
         system_keypair: &lib_crypto::KeyPair,
     ) -> Result<Vec<Hash>> {
         if let Some(ref mut _processor) = self.economic_processor {
-            let blockchain_txs = crate::integration::economic_integration::create_welfare_funding_transactions(
-                services, system_keypair
-            ).await?;
-            
+            let blockchain_txs =
+                crate::integration::economic_integration::create_welfare_funding_transactions(
+                    services,
+                    system_keypair,
+                )
+                .await?;
+
             let mut tx_hashes = Vec::new();
             for tx in blockchain_txs {
                 let tx_hash = tx.hash();
                 self.add_pending_transaction(tx)?;
                 tx_hashes.push(tx_hash);
             }
-            
-            info!("🏦 Created {} welfare funding transactions", tx_hashes.len());
+
+            info!(
+                "🏦 Created {} welfare funding transactions",
+                tx_hashes.len()
+            );
             Ok(tx_hashes)
         } else {
             Err(anyhow::anyhow!("Economic processor not initialized"))
@@ -6068,7 +6703,12 @@ impl Blockchain {
         is_system_transaction: bool,
     ) -> (u64, u64, u64) {
         if let Some(ref processor) = self.economic_processor {
-            processor.calculate_transaction_fees_with_exemptions(tx_size, amount, priority, is_system_transaction)
+            processor.calculate_transaction_fees_with_exemptions(
+                tx_size,
+                amount,
+                priority,
+                is_system_transaction,
+            )
         } else {
             // Fallback basic fee calculation if processor not available
             if is_system_transaction {
@@ -6084,7 +6724,9 @@ impl Blockchain {
     /// Get wallet balance for an address using economic processor
     pub fn get_wallet_balance(&self, address: &[u8; 32]) -> Option<u64> {
         if let Some(ref processor) = self.economic_processor {
-            processor.get_wallet_balance(address).map(|balance| balance.total_balance())
+            processor
+                .get_wallet_balance(address)
+                .map(|balance| balance.total_balance())
         } else {
             None
         }
@@ -6106,20 +6748,25 @@ impl Blockchain {
     ) -> Result<()> {
         if self.consensus_coordinator.is_none() {
             let blockchain_arc = std::sync::Arc::new(tokio::sync::RwLock::new(self.clone()));
-            let coordinator = crate::integration::consensus_integration::initialize_consensus_integration(
-                blockchain_arc,
-                mempool,
-                consensus_type,
-            ).await?;
-            
-            self.consensus_coordinator = Some(std::sync::Arc::new(tokio::sync::RwLock::new(coordinator)));
+            let coordinator =
+                crate::integration::consensus_integration::initialize_consensus_integration(
+                    blockchain_arc,
+                    mempool,
+                    consensus_type,
+                )
+                .await?;
+
+            self.consensus_coordinator =
+                Some(std::sync::Arc::new(tokio::sync::RwLock::new(coordinator)));
             info!(" Consensus coordinator initialized for blockchain");
         }
         Ok(())
     }
 
     /// Get consensus coordinator reference
-    pub fn get_consensus_coordinator(&self) -> Option<&std::sync::Arc<tokio::sync::RwLock<BlockchainConsensusCoordinator>>> {
+    pub fn get_consensus_coordinator(
+        &self,
+    ) -> Option<&std::sync::Arc<tokio::sync::RwLock<BlockchainConsensusCoordinator>>> {
         self.consensus_coordinator.as_ref()
     }
 
@@ -6146,15 +6793,17 @@ impl Blockchain {
     ) -> Result<()> {
         if let Some(ref coordinator_arc) = self.consensus_coordinator {
             let mut coordinator = coordinator_arc.write().await;
-            coordinator.register_as_validator(
-                identity,
-                stake_amount,
-                storage_capacity,
-                consensus_keypair,
-                consensus_keypair,
-                consensus_keypair,
-                commission_rate,
-            ).await?;
+            coordinator
+                .register_as_validator(
+                    identity,
+                    stake_amount,
+                    storage_capacity,
+                    consensus_keypair,
+                    consensus_keypair,
+                    consensus_keypair,
+                    commission_rate,
+                )
+                .await?;
             info!("Registered as validator with consensus coordinator");
         } else {
             return Err(anyhow::anyhow!("Consensus coordinator not initialized"));
@@ -6181,12 +6830,13 @@ impl Blockchain {
         description: String,
         proposal_type: lib_consensus::DaoProposalType,
     ) -> Result<crate::types::Hash> {
-        let proposal_tx = crate::integration::consensus_integration::create_dao_proposal_transaction(
-            proposer_keypair,
-            title,
-            description,
-            proposal_type,
-        )?;
+        let proposal_tx =
+            crate::integration::consensus_integration::create_dao_proposal_transaction(
+                proposer_keypair,
+                title,
+                description,
+                proposal_type,
+            )?;
 
         // Add to pending transactions
         let tx_hash = proposal_tx.hash();
@@ -6217,7 +6867,8 @@ impl Blockchain {
 
     /// Get all DAO proposals from blockchain
     pub fn get_dao_proposals(&self) -> Vec<crate::transaction::DaoProposalData> {
-        self.blocks.iter()
+        self.blocks
+            .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoProposal)
             .filter_map(|tx| tx.dao_proposal_data.as_ref())
@@ -6226,8 +6877,12 @@ impl Blockchain {
     }
 
     /// Get a specific DAO proposal by ID
-    pub fn get_dao_proposal(&self, proposal_id: &Hash) -> Option<crate::transaction::DaoProposalData> {
-        self.blocks.iter()
+    pub fn get_dao_proposal(
+        &self,
+        proposal_id: &Hash,
+    ) -> Option<crate::transaction::DaoProposalData> {
+        self.blocks
+            .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoProposal)
             .filter_map(|tx| tx.dao_proposal_data.as_ref())
@@ -6236,8 +6891,12 @@ impl Blockchain {
     }
 
     /// Get all votes for a specific proposal
-    pub fn get_dao_votes_for_proposal(&self, proposal_id: &Hash) -> Vec<crate::transaction::DaoVoteData> {
-        self.blocks.iter()
+    pub fn get_dao_votes_for_proposal(
+        &self,
+        proposal_id: &Hash,
+    ) -> Vec<crate::transaction::DaoVoteData> {
+        self.blocks
+            .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoVote)
             .filter_map(|tx| tx.dao_vote_data.as_ref())
@@ -6248,7 +6907,8 @@ impl Blockchain {
 
     /// Get all DAO votes (for accounting)
     pub fn get_all_dao_votes(&self) -> Vec<crate::transaction::DaoVoteData> {
-        self.blocks.iter()
+        self.blocks
+            .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoVote)
             .filter_map(|tx| tx.dao_vote_data.as_ref())
@@ -6258,7 +6918,8 @@ impl Blockchain {
 
     /// Get all DAO execution transactions
     pub fn get_dao_executions(&self) -> Vec<crate::transaction::DaoExecutionData> {
-        self.blocks.iter()
+        self.blocks
+            .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoExecution)
             .filter_map(|tx| tx.dao_execution_data.as_ref())
@@ -6338,11 +6999,7 @@ impl Blockchain {
         })
     }
 
-    fn index_dao_registry_entry_from_tx(
-        &mut self,
-        tx: &Transaction,
-        block_height: u64,
-    ) {
+    fn index_dao_registry_entry_from_tx(&mut self, tx: &Transaction, block_height: u64) {
         if let Some(entry) = Self::dao_registry_entry_from_tx(tx, block_height) {
             self.dao_registry_index.entry(entry.dao_id).or_insert(entry);
         }
@@ -6379,12 +7036,12 @@ impl Blockchain {
     /// Tally votes for a proposal
     pub fn tally_dao_votes(&self, proposal_id: &Hash) -> (u64, u64, u64, u64) {
         let votes = self.get_dao_votes_for_proposal(proposal_id);
-        
+
         let mut yes_votes = 0u64;
         let mut no_votes = 0u64;
         let mut abstain_votes = 0u64;
         let mut total_voting_power = 0u64;
-        
+
         for vote in votes {
             total_voting_power += vote.voting_power;
             match vote.vote_choice.as_str() {
@@ -6394,18 +7051,23 @@ impl Blockchain {
                 _ => {} // Delegate votes would need special handling
             }
         }
-        
+
         (yes_votes, no_votes, abstain_votes, total_voting_power)
     }
 
     /// Check if a proposal has passed based on votes
-    pub fn has_proposal_passed(&self, proposal_id: &Hash, required_approval_percent: u32) -> Result<bool> {
-        let (yes_votes, _no_votes, _abstain_votes, total_voting_power) = self.tally_dao_votes(proposal_id);
-        
+    pub fn has_proposal_passed(
+        &self,
+        proposal_id: &Hash,
+        required_approval_percent: u32,
+    ) -> Result<bool> {
+        let (yes_votes, _no_votes, _abstain_votes, total_voting_power) =
+            self.tally_dao_votes(proposal_id);
+
         if total_voting_power == 0 {
             return Ok(false);
         }
-        
+
         let approval_percent = (yes_votes * 100) / total_voting_power;
         Ok(approval_percent >= required_approval_percent as u64)
     }
@@ -6453,9 +7115,12 @@ impl Blockchain {
     pub fn set_dao_treasury_wallet(&mut self, wallet_id: String) -> Result<()> {
         // Verify wallet exists in registry
         if !self.wallet_registry.contains_key(&wallet_id) {
-            return Err(anyhow::anyhow!("Treasury wallet {} not found in registry", wallet_id));
+            return Err(anyhow::anyhow!(
+                "Treasury wallet {} not found in registry",
+                wallet_id
+            ));
         }
-        
+
         info!("🏦 Setting DAO treasury wallet: {}", wallet_id);
         self.dao_treasury_wallet_id = Some(wallet_id);
         Ok(())
@@ -6468,10 +7133,13 @@ impl Blockchain {
 
     /// Get treasury wallet data
     pub fn get_dao_treasury_wallet(&self) -> Result<&crate::transaction::WalletTransactionData> {
-        let wallet_id = self.dao_treasury_wallet_id.as_ref()
+        let wallet_id = self
+            .dao_treasury_wallet_id
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("DAO treasury wallet not set"))?;
-        
-        self.wallet_registry.get(wallet_id)
+
+        self.wallet_registry
+            .get(wallet_id)
             .ok_or_else(|| anyhow::anyhow!("Treasury wallet not found in registry"))
     }
 
@@ -6485,7 +7153,9 @@ impl Blockchain {
     /// - Efficient O(1) lookup
     /// - Consistency with other balance queries in the system
     pub fn get_dao_treasury_balance(&self) -> Result<u64> {
-        let treasury_wallet_id = self.dao_treasury_wallet_id.as_ref()
+        let treasury_wallet_id = self
+            .dao_treasury_wallet_id
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("DAO treasury wallet not set"))?;
 
         // Build the lookup key consistent with how fee crediting inserts balances
@@ -6501,7 +7171,7 @@ impl Blockchain {
             _ => {
                 let treasury_wallet = self.get_dao_treasury_wallet()?;
                 crate::integration::crypto_integration::PublicKey::new(
-                    treasury_wallet.public_key.clone()
+                    treasury_wallet.public_key.clone(),
                 )
             }
         };
@@ -6522,16 +7192,16 @@ impl Blockchain {
     pub fn get_dao_treasury_utxos(&self) -> Result<Vec<(Hash, TransactionOutput)>> {
         let treasury_wallet = self.get_dao_treasury_wallet()?;
         let treasury_pubkey = crate::integration::crypto_integration::PublicKey::new(
-            treasury_wallet.public_key.clone()
+            treasury_wallet.public_key.clone(),
         );
-        
+
         let mut utxos = Vec::new();
         for (utxo_id, output) in &self.utxo_set {
             if output.recipient.as_bytes() == treasury_pubkey.as_bytes() {
                 utxos.push((*utxo_id, output.clone()));
             }
         }
-        
+
         Ok(utxos)
     }
 
@@ -6543,16 +7213,16 @@ impl Blockchain {
         total_fees: u64,
     ) -> Result<Transaction> {
         let treasury_wallet = self.get_dao_treasury_wallet()?;
-        
+
         // Create output to treasury
         let treasury_output = TransactionOutput {
             commitment: crate::types::hash::blake3_hash(&total_fees.to_le_bytes()),
             note: Hash::default(),
             recipient: crate::integration::crypto_integration::PublicKey::new(
-                treasury_wallet.public_key.clone()
+                treasury_wallet.public_key.clone(),
             ),
         };
-        
+
         // Create fee collection transaction (no inputs, system-generated)
         let fee_tx = Transaction::new(
             vec![], // No inputs (system transaction)
@@ -6564,10 +7234,13 @@ impl Blockchain {
                 algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
                 timestamp: crate::utils::time::current_timestamp(),
             },
-            format!("Block {} fee collection: {} SOV to DAO treasury", 
-                    block_height, total_fees).into_bytes(),
+            format!(
+                "Block {} fee collection: {} SOV to DAO treasury",
+                block_height, total_fees
+            )
+            .into_bytes(),
         );
-        
+
         Ok(fee_tx)
     }
 
@@ -6585,11 +7258,14 @@ impl Blockchain {
         amount: u64,
     ) -> Result<Hash> {
         if amount == 0 {
-            return Err(anyhow::anyhow!("Execution amount must be greater than zero"));
+            return Err(anyhow::anyhow!(
+                "Execution amount must be greater than zero"
+            ));
         }
 
         // 1. Get the proposal
-        let proposal = self.get_dao_proposal(&proposal_id)
+        let proposal = self
+            .get_dao_proposal(&proposal_id)
             .ok_or_else(|| anyhow::anyhow!("Proposal not found"))?;
 
         // 2. Verify proposal has passed using its own quorum_required (not hardcoded 60)
@@ -6602,7 +7278,10 @@ impl Blockchain {
             return Err(anyhow::anyhow!("Proposal already executed"));
         }
         let executions = self.get_dao_executions();
-        if executions.iter().any(|exec| exec.proposal_id == proposal_id) {
+        if executions
+            .iter()
+            .any(|exec| exec.proposal_id == proposal_id)
+        {
             return Err(anyhow::anyhow!("Proposal already executed"));
         }
         if self.pending_transactions.iter().any(|tx| {
@@ -6617,19 +7296,23 @@ impl Blockchain {
         // 4. Phase 0: require council_threshold council yes-votes
         if self.governance_phase == crate::dao::GovernancePhase::Bootstrap {
             let votes = self.get_dao_votes_for_proposal(&proposal_id);
-            let council_yes = votes.iter()
+            let council_yes = votes
+                .iter()
                 .filter(|v| v.vote_choice == "Yes" && self.is_council_member(&v.voter))
                 .count() as u8;
             if council_yes < self.council_threshold {
                 return Err(anyhow::anyhow!(
                     "Phase 0 requires {} council yes-votes, got {}",
-                    self.council_threshold, council_yes
+                    self.council_threshold,
+                    council_yes
                 ));
             }
         }
 
         // 5. Resolve treasury and recipient keys (balance model)
-        let treasury_wallet_id_hex = self.dao_treasury_wallet_id.clone()
+        let treasury_wallet_id_hex = self
+            .dao_treasury_wallet_id
+            .clone()
             .ok_or_else(|| anyhow::anyhow!("DAO treasury wallet not set"))?;
         let treasury_id_bytes: [u8; 32] = hex::decode(&treasury_wallet_id_hex)
             .map_err(|e| anyhow::anyhow!("Invalid treasury wallet hex: {}", e))?
@@ -6650,51 +7333,65 @@ impl Blockchain {
         if treasury_balance < amount {
             return Err(anyhow::anyhow!(
                 "Insufficient treasury balance: need {}, available {}",
-                amount, treasury_balance
+                amount,
+                treasury_balance
             ));
         }
         let epoch = self.height / self.treasury_epoch_length_blocks.max(1);
         let spent_this_epoch = self.treasury_epoch_spend.get(&epoch).copied().unwrap_or(0);
         // Record epoch-start balance on first spend of this epoch (balance + already spent = start)
-        let epoch_start_balance = if let Some(&stored) = self.treasury_epoch_start_balance.get(&epoch) {
-            stored
-        } else {
-            let start = treasury_balance.saturating_add(spent_this_epoch);
-            self.treasury_epoch_start_balance.insert(epoch, start);
-            start
-        };
+        let epoch_start_balance =
+            if let Some(&stored) = self.treasury_epoch_start_balance.get(&epoch) {
+                stored
+            } else {
+                let start = treasury_balance.saturating_add(spent_this_epoch);
+                self.treasury_epoch_start_balance.insert(epoch, start);
+                start
+            };
         let epoch_cap = epoch_start_balance.saturating_mul(5) / 100;
         if spent_this_epoch.saturating_add(amount) > epoch_cap {
             return Err(anyhow::anyhow!(
                 "Treasury epoch spend cap: {} + {} > cap {} (epoch-start balance: {})",
-                spent_this_epoch, amount, epoch_cap, epoch_start_balance
+                spent_this_epoch,
+                amount,
+                epoch_cap,
+                epoch_start_balance
             ));
         }
 
         // 6b. Validate spending category from execution_params (required per issue #1466)
         // spending_category is mandatory — proposals without it are rejected.
         let treasury_exec_params = {
-            let bytes = proposal.execution_params.as_ref()
+            let bytes = proposal
+                .execution_params
+                .as_ref()
                 .filter(|b| !b.is_empty())
-                .ok_or_else(|| anyhow::anyhow!(
-                    "spending_category required in execution_params; \
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "spending_category required in execution_params; \
                      proposal is missing a valid TreasuryExecutionParams"
-                ))?;
-            serde_json::from_slice::<crate::dao::TreasuryExecutionParams>(bytes)
-                .map_err(|e| anyhow::anyhow!(
+                    )
+                })?;
+            serde_json::from_slice::<crate::dao::TreasuryExecutionParams>(bytes).map_err(|e| {
+                anyhow::anyhow!(
                     "execution_params could not be deserialized as TreasuryExecutionParams: {}",
                     e
-                ))?
+                )
+            })?
         };
         self.validate_treasury_spending_category(&treasury_exec_params)?;
 
         // 7. Execute balance transfer (debit treasury, credit recipient)
         let sov_id = crate::contracts::utils::generate_lib_token_id();
-        let sov_token = self.token_contracts.get_mut(&sov_id)
+        let sov_token = self
+            .token_contracts
+            .get_mut(&sov_id)
             .ok_or_else(|| anyhow::anyhow!("SOV token contract not found"))?;
-        sov_token.debit_balance(&treasury_pk, amount)
+        sov_token
+            .debit_balance(&treasury_pk, amount)
             .map_err(|e| anyhow::anyhow!("Treasury debit failed: {}", e))?;
-        sov_token.credit_balance(&recipient_pk, amount)
+        sov_token
+            .credit_balance(&recipient_pk, amount)
             .map_err(|e| anyhow::anyhow!("Recipient credit failed: {}", e))?;
 
         // 8. Record epoch spend
@@ -6702,7 +7399,8 @@ impl Blockchain {
 
         // 9. Build execution transaction for audit trail (inputs/outputs empty — balance model)
         let votes = self.get_dao_votes_for_proposal(&proposal_id);
-        let multisig_signatures: Vec<Vec<u8>> = votes.iter()
+        let multisig_signatures: Vec<Vec<u8>> = votes
+            .iter()
             .filter(|v| v.vote_choice == "Yes")
             .map(|v| v.voter.as_bytes().to_vec())
             .collect();
@@ -6720,14 +7418,25 @@ impl Blockchain {
         };
 
         let proposal_id_bytes = proposal_id.as_bytes();
-        let memo_text = format!("DAO Proposal {} Execution", hex::encode(&proposal_id_bytes[..8]));
-        let executor_pubkey = self.identity_registry
+        let memo_text = format!(
+            "DAO Proposal {} Execution",
+            hex::encode(&proposal_id_bytes[..8])
+        );
+        let executor_pubkey = self
+            .identity_registry
             .get(&executor_identity)
             .map(|id| crate::integration::crypto_integration::PublicKey::new(id.public_key.clone()))
             .unwrap_or_else(|| crate::integration::crypto_integration::PublicKey::new(vec![]));
         let sig_bytes = crate::types::hash::blake3_hash(
-            &[proposal_id.as_bytes(), executor_identity.as_bytes(), &now.to_le_bytes()].concat(),
-        ).as_bytes().to_vec();
+            &[
+                proposal_id.as_bytes(),
+                executor_identity.as_bytes(),
+                &now.to_le_bytes(),
+            ]
+            .concat(),
+        )
+        .as_bytes()
+        .to_vec();
         let execution_tx = Transaction::new_dao_execution(
             execution_data,
             Vec::new(), // no UTXO inputs — balance model
@@ -6746,7 +7455,10 @@ impl Blockchain {
         self.add_pending_transaction(execution_tx)?;
         self.executed_dao_proposals.insert(proposal_id);
 
-        info!("✅ DAO proposal {:?} executed (balance model), tx: {:?}", proposal_id, tx_hash);
+        info!(
+            "✅ DAO proposal {:?} executed (balance model), tx: {:?}",
+            proposal_id, tx_hash
+        );
         Ok(tx_hash)
     }
 
@@ -6827,11 +7539,12 @@ impl Blockchain {
         }
 
         // 1. Verify proposal exists and get its quorum requirement
-        let proposal = self.get_dao_proposal(&proposal_id)
-            .ok_or_else(|| anyhow::anyhow!(
+        let proposal = self.get_dao_proposal(&proposal_id).ok_or_else(|| {
+            anyhow::anyhow!(
                 "InvalidProposal: Difficulty parameter update proposal {:?} not found",
                 proposal_id
-            ))?;
+            )
+        })?;
 
         // 2. Verify proposal has passed using its configured quorum requirement
         if !self.has_proposal_passed(&proposal_id, proposal.quorum_required as u32)? {
@@ -6842,29 +7555,33 @@ impl Blockchain {
         }
 
         // 3. Get the execution parameters from the proposal (already fetched above)
-        let execution_params_bytes = proposal.execution_params.clone()
-            .ok_or_else(|| anyhow::anyhow!(
+        let execution_params_bytes = proposal.execution_params.clone().ok_or_else(|| {
+            anyhow::anyhow!(
                 "InvalidProposal: Proposal {:?} has no execution parameters",
                 proposal_id
-            ))?;
+            )
+        })?;
 
         // 4. Decode execution parameters
-        let execution_params: lib_consensus::dao::dao_types::DaoExecutionParams = 
-            bincode::deserialize(&execution_params_bytes)
-                .map_err(|e| anyhow::anyhow!(
+        let execution_params: lib_consensus::dao::dao_types::DaoExecutionParams =
+            bincode::deserialize(&execution_params_bytes).map_err(|e| {
+                anyhow::anyhow!(
                     "ParameterValidationError: Failed to decode execution params: {}",
                     e
-                ))?;
+                )
+            })?;
 
         // 5. Extract the governance parameter update
         let update = match execution_params.action {
-            lib_consensus::dao::dao_types::DaoExecutionAction::GovernanceParameterUpdate(update) => {
-                update
+            lib_consensus::dao::dao_types::DaoExecutionAction::GovernanceParameterUpdate(
+                update,
+            ) => update,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "InvalidProposal: Proposal {:?} is not a governance parameter update",
+                    proposal_id
+                ))
             }
-            _ => return Err(anyhow::anyhow!(
-                "InvalidProposal: Proposal {:?} is not a governance parameter update",
-                proposal_id
-            )),
         };
 
         // 6. Extract governance parameters from the update vector
@@ -6873,6 +7590,7 @@ impl Blockchain {
         let mut new_base_fee: Option<u64> = None;
         let mut new_bytes_per_sov: Option<u64> = None;
         let mut new_witness_cap: Option<u32> = None;
+        let mut new_token_creation_fee: Option<u64> = None;
 
         for param in &update.updates {
             match param {
@@ -6891,6 +7609,9 @@ impl Blockchain {
                 lib_consensus::dao::dao_types::GovernanceParameterValue::TxFeeWitnessCap(v) => {
                     new_witness_cap = Some(*v);
                 }
+                lib_consensus::dao::dao_types::GovernanceParameterValue::TokenCreationFee(v) => {
+                    new_token_creation_fee = Some(*v);
+                }
                 _ => {
                     // Other parameters are handled elsewhere
                 }
@@ -6903,6 +7624,7 @@ impl Blockchain {
             && new_base_fee.is_none()
             && new_bytes_per_sov.is_none()
             && new_witness_cap.is_none()
+            && new_token_creation_fee.is_none()
         {
             return Err(anyhow::anyhow!(
                 "ParameterValidationError: No applicable parameters found in governance update"
@@ -6945,6 +7667,13 @@ impl Blockchain {
                 ));
             }
         }
+        if let Some(token_creation_fee) = new_token_creation_fee {
+            if token_creation_fee == 0 {
+                return Err(anyhow::anyhow!(
+                    "ParameterValidationError: token_creation_fee cannot be zero"
+                ));
+            }
+        }
 
         // 9. Log the update
         info!(
@@ -6981,6 +7710,12 @@ impl Blockchain {
                 self.tx_fee_config.witness_cap, witness_cap
             );
         }
+        if let Some(token_creation_fee) = new_token_creation_fee {
+            info!(
+                "   token_creation_fee: {} → {}",
+                self.tx_fee_config.token_creation_fee, token_creation_fee
+            );
+        }
 
         // 10. Apply the update
         if let Some(ts) = new_target_timespan {
@@ -7001,6 +7736,11 @@ impl Blockchain {
             self.tx_fee_config.witness_cap = witness_cap;
             self.tx_fee_config_updated_at_height = self.height;
         }
+        if let Some(token_creation_fee) = new_token_creation_fee {
+            self.tx_fee_config.token_creation_fee = token_creation_fee;
+            self.tx_fee_config_updated_at_height = self.height;
+        }
+        self.refresh_executor_token_creation_fee_if_needed();
         self.difficulty_config.last_updated_at_height = self.height;
 
         // Sync with consensus coordinator if available
@@ -7008,11 +7748,13 @@ impl Blockchain {
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
                     let coord = coordinator.write().await;
-                    coord.apply_difficulty_governance_update(
-                        None, // initial_difficulty not in DifficultyConfig
-                        new_adjustment_interval,
-                        new_target_timespan,
-                    ).await
+                    coord
+                        .apply_difficulty_governance_update(
+                            None, // initial_difficulty not in DifficultyConfig
+                            new_adjustment_interval,
+                            new_target_timespan,
+                        )
+                        .await
                 })
             })?;
         }
@@ -7024,10 +7766,7 @@ impl Blockchain {
     }
 
     fn current_oracle_epoch(&self) -> u64 {
-        let reference_timestamp = self
-            .latest_block()
-            .map(|b| b.header.timestamp)
-            .unwrap_or(0);
+        let reference_timestamp = self.latest_block().map(|b| b.header.timestamp).unwrap_or(0);
         self.oracle_state.epoch_id(reference_timestamp)
     }
 
@@ -7061,9 +7800,12 @@ impl Blockchain {
             return Ok(());
         }
 
-        let proposal = self
-            .get_dao_proposal(&proposal_id)
-            .ok_or_else(|| anyhow::anyhow!("InvalidProposal: Oracle protocol upgrade proposal {:?} not found", proposal_id))?;
+        let proposal = self.get_dao_proposal(&proposal_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "InvalidProposal: Oracle protocol upgrade proposal {:?} not found",
+                proposal_id
+            )
+        })?;
 
         if !self.has_proposal_passed(&proposal_id, proposal.quorum_required as u32)? {
             return Err(anyhow::anyhow!(
@@ -7088,14 +7830,20 @@ impl Blockchain {
             })?;
 
         upgrade_data.validate(self.height).map_err(|e| {
-            anyhow::anyhow!("ParameterValidationError: Invalid oracle protocol upgrade: {}", e)
+            anyhow::anyhow!(
+                "ParameterValidationError: Invalid oracle protocol upgrade: {}",
+                e
+            )
         })?;
 
-        let target_version = crate::oracle::OracleProtocolVersion::from_u16(upgrade_data.target_version)
-            .ok_or_else(|| anyhow::anyhow!(
-                "ParameterValidationError: Invalid target protocol version {}",
-                upgrade_data.target_version
-            ))?;
+        let target_version =
+            crate::oracle::OracleProtocolVersion::from_u16(upgrade_data.target_version)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ParameterValidationError: Invalid target protocol version {}",
+                        upgrade_data.target_version
+                    )
+                })?;
 
         self.oracle_state
             .schedule_protocol_upgrade(
@@ -7104,14 +7852,14 @@ impl Blockchain {
                 self.height,
                 Some(proposal_id.as_array()),
             )
-            .map_err(|e| anyhow::anyhow!("ScheduleError: Failed to schedule protocol upgrade: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!("ScheduleError: Failed to schedule protocol upgrade: {}", e)
+            })?;
 
         self.executed_dao_proposals.insert(proposal_id);
         info!(
             "🔮 Oracle protocol upgrade scheduled: v{} at height {} (proposal {:?})",
-            upgrade_data.target_version,
-            upgrade_data.activate_at_height,
-            proposal_id
+            upgrade_data.target_version, upgrade_data.activate_at_height, proposal_id
         );
         Ok(())
     }
@@ -7125,9 +7873,12 @@ impl Blockchain {
             return Ok(());
         }
 
-        let proposal = self
-            .get_dao_proposal(&proposal_id)
-            .ok_or_else(|| anyhow::anyhow!("InvalidProposal: Oracle committee proposal {:?} not found", proposal_id))?;
+        let proposal = self.get_dao_proposal(&proposal_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "InvalidProposal: Oracle committee proposal {:?} not found",
+                proposal_id
+            )
+        })?;
 
         if !self.has_proposal_passed(&proposal_id, proposal.quorum_required as u32)? {
             return Err(anyhow::anyhow!(
@@ -7153,7 +7904,10 @@ impl Blockchain {
 
         let current_epoch = self.current_oracle_epoch();
         update_data.validate(current_epoch).map_err(|e| {
-            anyhow::anyhow!("ParameterValidationError: Invalid oracle committee update: {}", e)
+            anyhow::anyhow!(
+                "ParameterValidationError: Invalid oracle committee update: {}",
+                e
+            )
         })?;
 
         let active_validator_key_ids: HashSet<[u8; 32]> = self
@@ -7182,7 +7936,12 @@ impl Blockchain {
                 current_epoch,
                 Some(proposal_id.as_array()),
             )
-            .map_err(|e| anyhow::anyhow!("ParameterValidationError: Failed to schedule committee update: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "ParameterValidationError: Failed to schedule committee update: {}",
+                    e
+                )
+            })?;
 
         self.executed_dao_proposals.insert(proposal_id);
         Ok(())
@@ -7211,16 +7970,25 @@ impl Blockchain {
         let member_ids: Vec<[u8; 32]> = members_with_pubkeys.iter().map(|(id, _)| *id).collect();
         let unique: std::collections::BTreeSet<[u8; 32]> = member_ids.iter().copied().collect();
         if unique.len() != member_ids.len() {
-            return Err(anyhow::anyhow!("Oracle committee members must not contain duplicates"));
+            return Err(anyhow::anyhow!(
+                "Oracle committee members must not contain duplicates"
+            ));
         }
         // Store signing public keys for attestation verification.
         for (key_id, pk) in &members_with_pubkeys {
             if !pk.is_empty() {
-                self.oracle_state.oracle_signing_pubkeys.insert(*key_id, pk.clone());
+                self.oracle_state
+                    .oracle_signing_pubkeys
+                    .insert(*key_id, pk.clone());
             }
         }
-        self.oracle_state.committee.set_members_genesis_only(member_ids);
-        info!("🔮 Oracle committee bootstrapped with {} members", self.oracle_state.committee.members().len());
+        self.oracle_state
+            .committee
+            .set_members_genesis_only(member_ids);
+        info!(
+            "🔮 Oracle committee bootstrapped with {} members",
+            self.oracle_state.committee.members().len()
+        );
 
         // Persist oracle_state to SledStore so it survives node restarts.
         // This is a direct write (no block transaction required) since bootstrap
@@ -7245,9 +8013,12 @@ impl Blockchain {
             return Ok(());
         }
 
-        let proposal = self
-            .get_dao_proposal(&proposal_id)
-            .ok_or_else(|| anyhow::anyhow!("InvalidProposal: Oracle config proposal {:?} not found", proposal_id))?;
+        let proposal = self.get_dao_proposal(&proposal_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "InvalidProposal: Oracle config proposal {:?} not found",
+                proposal_id
+            )
+        })?;
 
         if !self.has_proposal_passed(&proposal_id, proposal.quorum_required as u32)? {
             return Err(anyhow::anyhow!(
@@ -7273,7 +8044,10 @@ impl Blockchain {
 
         let current_epoch = self.current_oracle_epoch();
         update_data.validate(current_epoch).map_err(|e| {
-            anyhow::anyhow!("ParameterValidationError: Invalid oracle config update: {}", e)
+            anyhow::anyhow!(
+                "ParameterValidationError: Invalid oracle config update: {}",
+                e
+            )
         })?;
 
         let mut next_config = crate::oracle::OracleConfig::default();
@@ -7289,7 +8063,12 @@ impl Blockchain {
                 current_epoch,
                 Some(proposal_id.as_array()),
             )
-            .map_err(|e| anyhow::anyhow!("ParameterValidationError: Failed to schedule config update: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "ParameterValidationError: Failed to schedule config update: {}",
+                    e
+                )
+            })?;
 
         self.executed_dao_proposals.insert(proposal_id);
         Ok(())
@@ -7334,7 +8113,9 @@ impl Blockchain {
             let proposal_ref = (proposal.proposal_id.clone(), proposal.quorum_required);
             if proposal.proposal_type == "difficulty_parameter_update" {
                 difficulty_proposals.push(proposal_ref);
-            } else if proposal.proposal_type == "fee_structure" || proposal.proposal_type == "FeeStructure" {
+            } else if proposal.proposal_type == "fee_structure"
+                || proposal.proposal_type == "FeeStructure"
+            {
                 fee_proposals.push(proposal_ref);
             } else if Self::is_oracle_committee_proposal_type(&proposal.proposal_type) {
                 oracle_committee_proposals.push(proposal_ref);
@@ -7382,10 +8163,7 @@ impl Blockchain {
                 }
                 Err(e) => {
                     // Error checking proposal status, skip
-                    debug!(
-                        "Error checking status of proposal {:?}: {}",
-                        proposal_id, e
-                    );
+                    debug!("Error checking status of proposal {:?}: {}", proposal_id, e);
                 }
             }
         }
@@ -7396,27 +8174,22 @@ impl Blockchain {
             }
 
             match self.has_proposal_passed(&proposal_id, quorum_required as u32) {
-                Ok(true) => {
-                    match self.apply_difficulty_parameter_update(proposal_id.clone()) {
-                        Ok(()) => {
-                            info!(
-                                "✅ Successfully executed fee parameter update proposal {:?}",
-                                proposal_id
-                            );
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to execute fee parameter update proposal {:?}: {}",
-                                proposal_id, e
-                            );
-                        }
+                Ok(true) => match self.apply_difficulty_parameter_update(proposal_id.clone()) {
+                    Ok(()) => {
+                        info!(
+                            "✅ Successfully executed fee parameter update proposal {:?}",
+                            proposal_id
+                        );
                     }
-                }
+                    Err(e) => {
+                        warn!(
+                            "Failed to execute fee parameter update proposal {:?}: {}",
+                            proposal_id, e
+                        );
+                    }
+                },
                 Ok(false) => {
-                    debug!(
-                        "Fee proposal {:?} has not passed voting yet",
-                        proposal_id
-                    );
+                    debug!("Fee proposal {:?} has not passed voting yet", proposal_id);
                 }
                 Err(e) => {
                     warn!("Failed to check fee proposal {:?}: {}", proposal_id, e);
@@ -7572,37 +8345,41 @@ impl Blockchain {
     /// Apply a cancel oracle update proposal (ORACLE-11).
     fn apply_cancel_oracle_update(&mut self, proposal_id: Hash) -> Result<()> {
         // Get the proposal data
-        let proposal = self.get_dao_proposals()
+        let proposal = self
+            .get_dao_proposals()
             .iter()
             .find(|p| p.proposal_id == proposal_id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Proposal not found"))?;
 
         // Parse the cancel data from proposal execution_params
-        let cancel_data: crate::transaction::CancelOracleUpdateData = 
+        let cancel_data: crate::transaction::CancelOracleUpdateData =
             match &proposal.execution_params {
                 Some(params) => bincode::deserialize(params)
                     .map_err(|e| anyhow::anyhow!("Failed to deserialize cancel data: {}", e))?,
-                None => return Err(anyhow::anyhow!("Missing execution_params in cancel proposal")),
+                None => {
+                    return Err(anyhow::anyhow!(
+                        "Missing execution_params in cancel proposal"
+                    ))
+                }
             };
 
         // Validate the cancel data
-        cancel_data.validate()
+        cancel_data
+            .validate()
             .map_err(|e| anyhow::anyhow!("Invalid cancel data: {}", e))?;
 
         // Apply the cancellation
         let cancelled = self.oracle_state.cancel_pending_updates(
             cancel_data.cancel_committee_update,
-            cancel_data.cancel_config_update
+            cancel_data.cancel_config_update,
         );
 
         if cancelled {
             self.executed_dao_proposals.insert(proposal_id);
             info!(
                 "🔮 Cancelled oracle updates by proposal {:?}: committee={}, config={}",
-                proposal_id,
-                cancel_data.cancel_committee_update,
-                cancel_data.cancel_config_update
+                proposal_id, cancel_data.cancel_committee_update, cancel_data.cancel_config_update
             );
         } else {
             info!(
@@ -7626,22 +8403,24 @@ impl Blockchain {
         service: lib_consensus::WelfareService,
     ) -> Result<()> {
         let service_id = service.service_id.clone();
-        
+
         // Check if service already exists
         if self.welfare_services.contains_key(&service_id) {
             return Err(anyhow::anyhow!("Service {} already registered", service_id));
         }
-        
+
         // Verify provider credentials for service type
         self.verify_service_provider_credentials(&service)?;
-        
+
         // Validate service type requirements
         self.validate_service_type_requirements(&service)?;
-        
+
         // Store service
-        self.welfare_services.insert(service_id.clone(), service.clone());
-        self.welfare_service_blocks.insert(service_id.clone(), self.height);
-        
+        self.welfare_services
+            .insert(service_id.clone(), service.clone());
+        self.welfare_service_blocks
+            .insert(service_id.clone(), self.height);
+
         // Initialize performance metrics
         let performance = lib_consensus::ServicePerformanceMetrics {
             service_id: service_id.clone(),
@@ -7657,9 +8436,13 @@ impl Blockchain {
             last_audit_timestamp: 0,
             reputation_trend: lib_consensus::ReputationTrend::Stable,
         };
-        self.service_performance.insert(service_id.clone(), performance);
-        
-        info!("🏥 Registered welfare service: {} ({})", service.service_name, service_id);
+        self.service_performance
+            .insert(service_id.clone(), performance);
+
+        info!(
+            "🏥 Registered welfare service: {} ({})",
+            service.service_name, service_id
+        );
         Ok(())
     }
 
@@ -7693,30 +8476,32 @@ impl Blockchain {
         service_id: &str,
         is_active: bool,
     ) -> Result<()> {
-        let service = self.welfare_services
+        let service = self
+            .welfare_services
             .get_mut(service_id)
             .ok_or_else(|| anyhow::anyhow!("Service {} not found", service_id))?;
-        
+
         service.is_active = is_active;
-        
-        let status_str = if is_active { "activated" } else { "deactivated" };
+
+        let status_str = if is_active {
+            "activated"
+        } else {
+            "deactivated"
+        };
         info!("🏥 Welfare service {} {}", service_id, status_str);
         Ok(())
     }
 
     /// Update welfare service reputation
-    pub fn update_service_reputation(
-        &mut self,
-        service_id: &str,
-        new_score: u8,
-    ) -> Result<()> {
-        let service = self.welfare_services
+    pub fn update_service_reputation(&mut self, service_id: &str, new_score: u8) -> Result<()> {
+        let service = self
+            .welfare_services
             .get_mut(service_id)
             .ok_or_else(|| anyhow::anyhow!("Service {} not found", service_id))?;
-        
+
         let old_score = service.reputation_score;
         service.reputation_score = new_score;
-        
+
         // Update reputation trend in performance metrics
         if let Some(performance) = self.service_performance.get_mut(service_id) {
             performance.reputation_trend = if new_score > old_score {
@@ -7727,8 +8512,11 @@ impl Blockchain {
                 lib_consensus::ReputationTrend::Stable
             };
         }
-        
-        info!("🏥 Service {} reputation updated: {} → {}", service_id, old_score, new_score);
+
+        info!(
+            "🏥 Service {} reputation updated: {} → {}",
+            service_id, old_score, new_score
+        );
         Ok(())
     }
 
@@ -7737,40 +8525,55 @@ impl Blockchain {
     // ============================================================================
 
     /// Verify that a service provider has required credentials for their service type
-    fn verify_service_provider_credentials(&self, service: &lib_consensus::WelfareService) -> Result<()> {
+    fn verify_service_provider_credentials(
+        &self,
+        service: &lib_consensus::WelfareService,
+    ) -> Result<()> {
         // Get provider identity by DID
-        let provider_identity = self.get_identity(&service.provider_identity)
-            .ok_or_else(|| anyhow::anyhow!("Provider identity {} not found", service.provider_identity))?;
-        
+        let provider_identity = self
+            .get_identity(&service.provider_identity)
+            .ok_or_else(|| {
+                anyhow::anyhow!("Provider identity {} not found", service.provider_identity)
+            })?;
+
         // Check minimum reputation threshold (providers need at least 30/100 reputation)
         let min_reputation = 30u32;
-        let provider_id_hash = lib_crypto::Hash(lib_crypto::hash_blake3(service.provider_identity.as_bytes()));
+        let provider_id_hash = lib_crypto::Hash(lib_crypto::hash_blake3(
+            service.provider_identity.as_bytes(),
+        ));
         let provider_reputation = self.calculate_reputation_score(&provider_id_hash);
-        
+
         if provider_reputation < min_reputation {
             return Err(anyhow::anyhow!(
                 "Provider reputation {} below minimum threshold {}",
-                provider_reputation, min_reputation
+                provider_reputation,
+                min_reputation
             ));
         }
-        
+
         // Verify zero-knowledge credential proof if provided
         if let Some(credential_proof_bytes) = &service.credential_proof {
             self.verify_service_credential_proof(
                 credential_proof_bytes,
                 &service.service_type,
-                &provider_identity.public_key
+                &provider_identity.public_key,
             )?;
-            info!("✅ ZK credential proof verified for service type {:?}", service.service_type);
+            info!(
+                "✅ ZK credential proof verified for service type {:?}",
+                service.service_type
+            );
         } else {
             // No credential proof provided - fallback to basic verification
-            warn!("⚠️  No credential proof provided for service {} - using basic verification", service.service_id);
-            
+            warn!(
+                "⚠️  No credential proof provided for service {} - using basic verification",
+                service.service_id
+            );
+
             // Verify service-type-specific requirements without ZK proofs
             match service.service_type {
-                lib_consensus::WelfareServiceType::Healthcare |
-                lib_consensus::WelfareServiceType::Education |
-                lib_consensus::WelfareServiceType::EmergencyResponse => {
+                lib_consensus::WelfareServiceType::Healthcare
+                | lib_consensus::WelfareServiceType::Education
+                | lib_consensus::WelfareServiceType::EmergencyResponse => {
                     // Critical services require credential proofs
                     return Err(anyhow::anyhow!(
                         "Service type {:?} requires credential proof for registration",
@@ -7779,11 +8582,14 @@ impl Blockchain {
                 }
                 _ => {
                     // Generic services just need verified identity and good reputation
-                    info!("✅ Basic verification passed for generic service type {:?}", service.service_type);
+                    info!(
+                        "✅ Basic verification passed for generic service type {:?}",
+                        service.service_type
+                    );
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -7795,28 +8601,34 @@ impl Blockchain {
         provider_public_key: &[u8],
     ) -> Result<()> {
         // Deserialize the ZK credential proof
-        let credential_proof: lib_proofs::identity::ZkCredentialProof = bincode::deserialize(proof_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize credential proof: {}", e))?;
-        
+        let credential_proof: lib_proofs::identity::ZkCredentialProof =
+            bincode::deserialize(proof_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize credential proof: {}", e))?;
+
         // Check proof hasn't expired
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
-        
+
         if credential_proof.expires_at <= now {
             return Err(anyhow::anyhow!("Credential proof has expired"));
         }
-        
+
         // Create credential schema for the service type
-        let schema = self.get_credential_schema_for_service_type(service_type, provider_public_key)?;
-        
+        let schema =
+            self.get_credential_schema_for_service_type(service_type, provider_public_key)?;
+
         // Verify the credential proof using lib-proofs
-        let verification_result = lib_proofs::identity::verify_credential_proof(&credential_proof, &schema)
-            .map_err(|e| anyhow::anyhow!("Credential verification failed: {}", e))?;
-        
+        let verification_result =
+            lib_proofs::identity::verify_credential_proof(&credential_proof, &schema)
+                .map_err(|e| anyhow::anyhow!("Credential verification failed: {}", e))?;
+
         match verification_result {
             lib_proofs::types::VerificationResult::Valid { .. } => {
-                info!("✅ Credential proof valid for service type {:?}", service_type);
+                info!(
+                    "✅ Credential proof valid for service type {:?}",
+                    service_type
+                );
                 Ok(())
             }
             lib_proofs::types::VerificationResult::Invalid(reason) => {
@@ -7835,10 +8647,11 @@ impl Blockchain {
         issuer_public_key: &[u8],
     ) -> Result<lib_proofs::identity::CredentialSchema> {
         // Convert issuer public key to fixed size array
-        let issuer_key: [u8; 32] = issuer_public_key.get(..32)
+        let issuer_key: [u8; 32] = issuer_public_key
+            .get(..32)
             .and_then(|slice| slice.try_into().ok())
             .ok_or_else(|| anyhow::anyhow!("Invalid issuer public key length"))?;
-        
+
         // Create schema based on service type
         let schema = match service_type {
             lib_consensus::WelfareServiceType::Healthcare => {
@@ -7904,60 +8717,85 @@ impl Blockchain {
                 .with_required_field("service_type".to_string(), "string".to_string())
             }
         };
-        
+
         Ok(schema)
     }
 
     /// Validate service-type-specific requirements
-    fn validate_service_type_requirements(&self, service: &lib_consensus::WelfareService) -> Result<()> {
+    fn validate_service_type_requirements(
+        &self,
+        service: &lib_consensus::WelfareService,
+    ) -> Result<()> {
         // Validate service name
         if service.service_name.trim().is_empty() || service.service_name.len() < 3 {
-            return Err(anyhow::anyhow!("Service name must be at least 3 characters"));
+            return Err(anyhow::anyhow!(
+                "Service name must be at least 3 characters"
+            ));
         }
-        
+
         if service.service_name.len() > 200 {
-            return Err(anyhow::anyhow!("Service name too long (max 200 characters)"));
+            return Err(anyhow::anyhow!(
+                "Service name too long (max 200 characters)"
+            ));
         }
-        
+
         // Validate description
         if service.description.trim().is_empty() || service.description.len() < 20 {
-            return Err(anyhow::anyhow!("Service description must be at least 20 characters"));
+            return Err(anyhow::anyhow!(
+                "Service description must be at least 20 characters"
+            ));
         }
-        
+
         if service.description.len() > 2000 {
-            return Err(anyhow::anyhow!("Service description too long (max 2000 characters)"));
+            return Err(anyhow::anyhow!(
+                "Service description too long (max 2000 characters)"
+            ));
         }
-        
+
         // Validate metadata contains required fields
-        let metadata_obj = service.metadata.as_object()
+        let metadata_obj = service
+            .metadata
+            .as_object()
             .ok_or_else(|| anyhow::anyhow!("Service metadata must be a JSON object"))?;
-        
+
         // All service types must provide contact information
-        if !metadata_obj.contains_key("contact_email") && !metadata_obj.contains_key("contact_phone") {
-            return Err(anyhow::anyhow!("Service must provide contact_email or contact_phone in metadata"));
+        if !metadata_obj.contains_key("contact_email")
+            && !metadata_obj.contains_key("contact_phone")
+        {
+            return Err(anyhow::anyhow!(
+                "Service must provide contact_email or contact_phone in metadata"
+            ));
         }
-        
+
         // Service-type-specific validation
         match service.service_type {
             lib_consensus::WelfareServiceType::Healthcare => {
                 // Healthcare services must specify facility type and capacity
                 if !metadata_obj.contains_key("facility_type") {
-                    return Err(anyhow::anyhow!("Healthcare services must specify facility_type in metadata"));
+                    return Err(anyhow::anyhow!(
+                        "Healthcare services must specify facility_type in metadata"
+                    ));
                 }
                 if !metadata_obj.contains_key("service_capacity") {
-                    return Err(anyhow::anyhow!("Healthcare services must specify service_capacity in metadata"));
+                    return Err(anyhow::anyhow!(
+                        "Healthcare services must specify service_capacity in metadata"
+                    ));
                 }
             }
             lib_consensus::WelfareServiceType::Education => {
                 // Education services must specify education level and subjects
                 if !metadata_obj.contains_key("education_level") {
-                    return Err(anyhow::anyhow!("Education services must specify education_level in metadata"));
+                    return Err(anyhow::anyhow!(
+                        "Education services must specify education_level in metadata"
+                    ));
                 }
             }
             lib_consensus::WelfareServiceType::Housing => {
                 // Housing services must specify housing units and location
                 if !metadata_obj.contains_key("total_units") {
-                    return Err(anyhow::anyhow!("Housing services must specify total_units in metadata"));
+                    return Err(anyhow::anyhow!(
+                        "Housing services must specify total_units in metadata"
+                    ));
                 }
                 if service.region.is_none() {
                     return Err(anyhow::anyhow!("Housing services must specify region"));
@@ -7966,15 +8804,20 @@ impl Blockchain {
             lib_consensus::WelfareServiceType::FoodSecurity => {
                 // Food security services must specify daily serving capacity
                 if !metadata_obj.contains_key("daily_capacity") {
-                    return Err(anyhow::anyhow!("Food security services must specify daily_capacity in metadata"));
+                    return Err(anyhow::anyhow!(
+                        "Food security services must specify daily_capacity in metadata"
+                    ));
                 }
             }
             _ => {
                 // Other service types have no additional validation
             }
         }
-        
-        info!("✅ Service type requirements validated for {:?}", service.service_type);
+
+        info!(
+            "✅ Service type requirements validated for {:?}",
+            service.service_type
+        );
         Ok(())
     }
 
@@ -7984,33 +8827,37 @@ impl Blockchain {
             Some(s) => s,
             None => return 0,
         };
-        
+
         let performance = match self.service_performance.get(service_id) {
             Some(p) => p,
             None => return service.reputation_score, // Return existing score if no performance data
         };
-        
+
         // Factor 1: Beneficiary satisfaction (0-100 scale, weight 30%)
         let satisfaction_score = (performance.beneficiary_satisfaction * 0.3).min(30.0);
-        
+
         // Factor 2: Service utilization (0-100 scale, weight 20%)
         let utilization_score = (performance.service_utilization_rate * 0.2).min(20.0);
-        
+
         // Factor 3: Cost efficiency (0-100 scale, weight 15%)
         let cost_score = (performance.cost_efficiency * 0.15).min(15.0);
-        
+
         // Factor 4: Success rate (0-100 scale, weight 20%)
         let success_score = (performance.success_rate * 0.2).min(20.0);
-        
+
         // Factor 5: Longevity bonus (up to 15 points for established services)
         let blocks_active = self.height.saturating_sub(
-            *self.welfare_service_blocks.get(service_id).unwrap_or(&self.height)
+            *self
+                .welfare_service_blocks
+                .get(service_id)
+                .unwrap_or(&self.height),
         );
         let longevity_score = ((blocks_active as f64 / 100_000.0) * 15.0).min(15.0);
-        
+
         // Calculate final score
-        let score = satisfaction_score + utilization_score + cost_score + success_score + longevity_score;
-        
+        let score =
+            satisfaction_score + utilization_score + cost_score + success_score + longevity_score;
+
         // Clamp to 0-100 range
         score.max(0.0).min(100.0) as u8
     }
@@ -8021,29 +8868,35 @@ impl Blockchain {
         audit_entry: &lib_consensus::WelfareAuditEntry,
     ) -> Result<()> {
         let service_id = &audit_entry.service_id;
-        
-        let performance = self.service_performance
+
+        let performance = self
+            .service_performance
             .get_mut(service_id)
-            .ok_or_else(|| anyhow::anyhow!("Performance metrics not found for service {}", service_id))?;
-        
+            .ok_or_else(|| {
+                anyhow::anyhow!("Performance metrics not found for service {}", service_id)
+            })?;
+
         // Update beneficiary count
-        performance.total_beneficiaries = performance.total_beneficiaries
+        performance.total_beneficiaries = performance
+            .total_beneficiaries
             .saturating_add(audit_entry.beneficiary_count);
-        
+
         // Update last audit timestamp
         performance.last_audit_timestamp = audit_entry.distribution_timestamp;
-        
+
         // Increment outcome reports count if verification is complete
-        if matches!(audit_entry.verification_status, 
-            lib_consensus::VerificationStatus::AutoVerified | 
-            lib_consensus::VerificationStatus::CommunityVerified) {
+        if matches!(
+            audit_entry.verification_status,
+            lib_consensus::VerificationStatus::AutoVerified
+                | lib_consensus::VerificationStatus::CommunityVerified
+        ) {
             performance.outcome_reports_count = performance.outcome_reports_count.saturating_add(1);
         }
-        
+
         // Calculate and update reputation score based on performance
         let new_reputation = self.calculate_service_reputation_score(service_id);
         self.update_service_reputation(service_id, new_reputation)?;
-        
+
         info!("📊 Updated performance metrics for service {}", service_id);
         Ok(())
     }
@@ -8060,38 +8913,39 @@ impl Blockchain {
         let service_id = audit_entry.service_id.clone();
         let amount = audit_entry.amount_distributed;
         let audit_id = audit_entry.audit_id.clone();
-        
+
         // Update service total received
         if let Some(service) = self.welfare_services.get_mut(&service_id) {
             service.total_received = service.total_received.saturating_add(amount);
             service.proposal_count = service.proposal_count.saturating_add(1);
         }
-        
+
         // Store audit entry
         self.welfare_audit_trail.insert(audit_id, audit_entry);
-        
-        info!("📝 Recorded welfare distribution of {} SOV to service {}", amount, service_id);
+
+        info!(
+            "📝 Recorded welfare distribution of {} SOV to service {}",
+            amount, service_id
+        );
         Ok(())
     }
 
     /// Add outcome report for a service
-    pub fn add_outcome_report(
-        &mut self,
-        report: lib_consensus::OutcomeReport,
-    ) -> Result<()> {
+    pub fn add_outcome_report(&mut self, report: lib_consensus::OutcomeReport) -> Result<()> {
         let service_id = report.service_id.clone();
         let report_id = report.report_id.clone();
         let report_timestamp = report.report_timestamp;
         let beneficiaries_served = report.beneficiaries_served;
         let metrics_achieved = report.metrics_achieved.clone();
-        
+
         // Update service performance metrics
         if let Some(performance) = self.service_performance.get_mut(&service_id) {
             performance.outcome_reports_count = performance.outcome_reports_count.saturating_add(1);
             performance.last_audit_timestamp = report_timestamp;
-            performance.total_beneficiaries = performance.total_beneficiaries
+            performance.total_beneficiaries = performance
+                .total_beneficiaries
                 .saturating_add(beneficiaries_served);
-            
+
             // Calculate success rate from metrics achieved
             if !metrics_achieved.is_empty() {
                 let total_achievement: f64 = metrics_achieved
@@ -8102,10 +8956,10 @@ impl Blockchain {
                 performance.success_rate = avg_achievement;
             }
         }
-        
+
         // Store report
         self.outcome_reports.insert(report_id, report);
-        
+
         info!("📊 Added outcome report for service {}", service_id);
         Ok(())
     }
@@ -8143,44 +8997,50 @@ impl Blockchain {
     /// Get comprehensive welfare statistics
     pub fn get_welfare_statistics(&self) -> lib_consensus::WelfareStatistics {
         let total_services_registered = self.welfare_services.len() as u64;
-        let active_services_count = self.welfare_services
+        let active_services_count = self
+            .welfare_services
             .values()
             .filter(|s| s.is_active)
             .count() as u64;
-        
-        let total_distributed = self.welfare_audit_trail
+
+        let total_distributed = self
+            .welfare_audit_trail
             .values()
             .map(|entry| entry.amount_distributed)
             .sum::<u64>();
-        
-        let total_beneficiaries_served = self.service_performance
+
+        let total_beneficiaries_served = self
+            .service_performance
             .values()
             .map(|perf| perf.total_beneficiaries)
             .sum::<u64>();
-        
+
         let mut distribution_by_type = std::collections::HashMap::new();
         for entry in self.welfare_audit_trail.values() {
-            *distribution_by_type.entry(entry.service_type.clone()).or_insert(0u64) 
-                += entry.amount_distributed;
+            *distribution_by_type
+                .entry(entry.service_type.clone())
+                .or_insert(0u64) += entry.amount_distributed;
         }
-        
+
         let average_distribution = if total_services_registered > 0 {
             total_distributed / total_services_registered
         } else {
             0
         };
-        
-        let pending_audits = self.welfare_audit_trail
+
+        let pending_audits = self
+            .welfare_audit_trail
             .values()
             .filter(|entry| entry.verification_status == lib_consensus::VerificationStatus::Pending)
             .count() as u64;
-        
-        let last_distribution_timestamp = self.welfare_audit_trail
+
+        let last_distribution_timestamp = self
+            .welfare_audit_trail
             .values()
             .map(|entry| entry.distribution_timestamp)
             .max()
             .unwrap_or(0);
-        
+
         lib_consensus::WelfareStatistics {
             total_allocated: 0, // Would need to query from economic processor
             total_distributed,
@@ -8220,12 +9080,22 @@ impl Blockchain {
                 amount: entry.amount_distributed,
                 transaction_hash: entry.transaction_hash.clone(),
                 status: match entry.verification_status {
-                    lib_consensus::VerificationStatus::Pending => lib_consensus::FundingStatus::Approved,
-                    lib_consensus::VerificationStatus::AutoVerified | 
-                    lib_consensus::VerificationStatus::CommunityVerified => lib_consensus::FundingStatus::Verified,
-                    lib_consensus::VerificationStatus::Flagged => lib_consensus::FundingStatus::UnderReview,
-                    lib_consensus::VerificationStatus::Disputed => lib_consensus::FundingStatus::Disputed,
-                    lib_consensus::VerificationStatus::Fraudulent => lib_consensus::FundingStatus::Disputed,
+                    lib_consensus::VerificationStatus::Pending => {
+                        lib_consensus::FundingStatus::Approved
+                    }
+                    lib_consensus::VerificationStatus::AutoVerified
+                    | lib_consensus::VerificationStatus::CommunityVerified => {
+                        lib_consensus::FundingStatus::Verified
+                    }
+                    lib_consensus::VerificationStatus::Flagged => {
+                        lib_consensus::FundingStatus::UnderReview
+                    }
+                    lib_consensus::VerificationStatus::Disputed => {
+                        lib_consensus::FundingStatus::Disputed
+                    }
+                    lib_consensus::VerificationStatus::Fraudulent => {
+                        lib_consensus::FundingStatus::Disputed
+                    }
                 },
             })
             .collect()
@@ -8242,21 +9112,21 @@ impl Blockchain {
         amount: u64,
         service_type: Option<&lib_consensus::WelfareServiceType>,
     ) -> lib_consensus::ImpactMetrics {
-        use lib_consensus::{ImpactLevel, ImpactMetrics, DaoProposalType, WelfareServiceType};
+        use lib_consensus::{DaoProposalType, ImpactLevel, ImpactMetrics, WelfareServiceType};
 
         let (ubi_impact, economic_impact, social_impact) = match proposal_type {
             DaoProposalType::WelfareAllocation => {
                 let impact_level = match service_type {
-                    Some(WelfareServiceType::Healthcare) | 
-                    Some(WelfareServiceType::EmergencyResponse) => ImpactLevel::Critical,
-                    Some(WelfareServiceType::Education) | 
-                    Some(WelfareServiceType::FoodSecurity) => ImpactLevel::High,
-                    Some(WelfareServiceType::Housing) | 
-                    Some(WelfareServiceType::Infrastructure) => ImpactLevel::Medium,
+                    Some(WelfareServiceType::Healthcare)
+                    | Some(WelfareServiceType::EmergencyResponse) => ImpactLevel::Critical,
+                    Some(WelfareServiceType::Education)
+                    | Some(WelfareServiceType::FoodSecurity) => ImpactLevel::High,
+                    Some(WelfareServiceType::Housing)
+                    | Some(WelfareServiceType::Infrastructure) => ImpactLevel::Medium,
                     _ => ImpactLevel::Low,
                 };
                 (ImpactLevel::Medium, impact_level.clone(), impact_level)
-            },
+            }
             DaoProposalType::UbiDistribution => {
                 let level = if amount > 1_000_000 {
                     ImpactLevel::Critical
@@ -8266,13 +9136,13 @@ impl Blockchain {
                     ImpactLevel::Medium
                 };
                 (level, ImpactLevel::High, ImpactLevel::High)
-            },
+            }
             DaoProposalType::TreasuryAllocation => {
                 (ImpactLevel::Low, ImpactLevel::High, ImpactLevel::Medium)
-            },
+            }
             DaoProposalType::CommunityFunding => {
                 (ImpactLevel::Low, ImpactLevel::Medium, ImpactLevel::High)
-            },
+            }
             _ => (ImpactLevel::Low, ImpactLevel::Low, ImpactLevel::Low),
         };
 
@@ -8302,15 +9172,15 @@ impl Blockchain {
             DaoProposalType::UbiDistribution => {
                 // Estimate based on average UBI amount (e.g., 1000 SOV per beneficiary)
                 Some(amount / 1000)
-            },
+            }
             DaoProposalType::WelfareAllocation => {
                 // Welfare services: estimate 1 beneficiary per 5000 SOV
                 Some(amount / 5000)
-            },
+            }
             DaoProposalType::CommunityFunding => {
                 // Community projects: broader reach
                 Some(amount / 2000)
-            },
+            }
             _ => None, // Other proposal types don't directly impact beneficiaries
         }
     }
@@ -8343,7 +9213,9 @@ impl Blockchain {
         let user_local_id = crate::types::hash::Hash::new(user_id.0);
 
         // Sum SOV balances across all wallets owned by this identity.
-        let sov_balance: u64 = self.get_wallets_for_owner(&user_local_id).iter()
+        let sov_balance: u64 = self
+            .get_wallets_for_owner(&user_local_id)
+            .iter()
             .filter_map(|w| {
                 // wallet_id: crate::types::hash::Hash — as_array() gives [u8; 32] directly.
                 let pk = Self::wallet_key_for_sov(&w.wallet_id.as_array());
@@ -8357,14 +9229,17 @@ impl Blockchain {
         // Add power from identities that delegated directly to this user (non-transitive).
         // Keys and values in vote_delegations are 64-char hex-encoded identity IDs.
         let user_hex = hex::encode(user_id.0);
-        let delegated_extra: u64 = self.vote_delegations.iter()
+        let delegated_extra: u64 = self
+            .vote_delegations
+            .iter()
             .filter(|(_, delegate_hex)| delegate_hex.as_str() == user_hex.as_str())
             .filter_map(|(delegator_hex, _)| {
                 let bytes = hex::decode(delegator_hex).ok()?;
                 let delegator_bytes: [u8; 32] = bytes.try_into().ok()?;
                 let delegator_local_id = crate::types::hash::Hash::new(delegator_bytes);
                 let delegator_wallets = self.get_wallets_for_owner(&delegator_local_id);
-                let bal: u64 = delegator_wallets.iter()
+                let bal: u64 = delegator_wallets
+                    .iter()
                     .filter_map(|w| {
                         let pk = Self::wallet_key_for_sov(&w.wallet_id.as_array());
                         self.token_contracts.get(&sov_id).map(|t| t.balance_of(&pk))
@@ -8378,8 +9253,8 @@ impl Blockchain {
 
         // Apply voting power mode.
         match self.voting_power_mode {
-            crate::dao::VotingPowerMode::Identity  => 1,
-            crate::dao::VotingPowerMode::Linear    => raw,
+            crate::dao::VotingPowerMode::Identity => 1,
+            crate::dao::VotingPowerMode::Linear => raw,
             crate::dao::VotingPowerMode::Quadratic => (raw as f64).sqrt() as u64,
         }
     }
@@ -8387,11 +9262,15 @@ impl Blockchain {
     /// Calculate network contribution score (0-100) based on storage and compute provided
     fn calculate_network_contribution_score(&self, user_id: &lib_identity::IdentityId) -> u32 {
         // Check if user is a validator providing resources
-        if let Some(validator) = self.validator_registry.values()
-            .find(|v| v.identity_id == user_id.to_string()) {
+        if let Some(validator) = self
+            .validator_registry
+            .values()
+            .find(|v| v.identity_id == user_id.to_string())
+        {
             // Score based on storage provided
             // 1 TB = 10 points, capped at 100
-            let storage_score = ((validator.storage_provided / (1024 * 1024 * 1024 * 1024)) * 10).min(100) as u32;
+            let storage_score =
+                ((validator.storage_provided / (1024 * 1024 * 1024 * 1024)) * 10).min(100) as u32;
             storage_score
         } else {
             0
@@ -8401,10 +9280,13 @@ impl Blockchain {
     /// Calculate reputation score (0-100) based on on-chain behavior
     fn calculate_reputation_score(&self, user_id: &lib_identity::IdentityId) -> u32 {
         let mut score = 50u32; // Start at neutral 50
-        
+
         // For validators, calculate based on uptime and slash history
-        if let Some(validator) = self.validator_registry.values()
-            .find(|v| v.identity_id == user_id.to_string()) {
+        if let Some(validator) = self
+            .validator_registry
+            .values()
+            .find(|v| v.identity_id == user_id.to_string())
+        {
             // Active validators start at 70
             if validator.status == "active" {
                 score = 70;
@@ -8414,15 +9296,15 @@ impl Blockchain {
                 score = 20;
             }
         }
-        
+
         // For non-validators or additional score, check participation in governance
         let proposal_participation = self.count_user_dao_votes(user_id);
         let proposal_submissions = self.count_user_dao_proposals(user_id);
-        
+
         // Bonus for active participation (up to +30)
         score = score.saturating_add((proposal_participation / 5).min(20) as u32);
         score = score.saturating_add((proposal_submissions * 2).min(10) as u32);
-        
+
         // Cap at 100
         score.min(100)
     }
@@ -8437,7 +9319,8 @@ impl Blockchain {
     /// Count number of DAO votes cast by user
     fn count_user_dao_votes(&self, user_id: &lib_identity::IdentityId) -> u64 {
         let user_id_str = user_id.to_string();
-        self.blocks.iter()
+        self.blocks
+            .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoVote)
             .filter(|tx| {
@@ -8454,7 +9337,8 @@ impl Blockchain {
     /// Count number of DAO proposals submitted by user
     fn count_user_dao_proposals(&self, user_id: &lib_identity::IdentityId) -> u64 {
         let user_id_str = user_id.to_string();
-        self.blocks.iter()
+        self.blocks
+            .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoProposal)
             .filter(|tx| {
@@ -8469,7 +9353,11 @@ impl Blockchain {
     }
 
     /// Verify block with consensus rules
-    pub async fn verify_block_with_consensus(&self, block: &Block, previous_block: Option<&Block>) -> Result<bool> {
+    pub async fn verify_block_with_consensus(
+        &self,
+        block: &Block,
+        previous_block: Option<&Block>,
+    ) -> Result<bool> {
         // First run standard blockchain verification
         if !self.verify_block(block, previous_block)? {
             return Ok(false);
@@ -8479,16 +9367,22 @@ impl Blockchain {
         if let Some(ref coordinator_arc) = self.consensus_coordinator {
             let coordinator = coordinator_arc.read().await;
             let status = coordinator.get_consensus_status().await?;
-            
+
             // Verify block height matches consensus expectations
             if block.height() != status.current_height {
-                warn!("Block height mismatch: block={}, consensus={}", 
-                      block.height(), status.current_height);
+                warn!(
+                    "Block height mismatch: block={}, consensus={}",
+                    block.height(),
+                    status.current_height
+                );
                 return Ok(false);
             }
 
             // Additional consensus-specific validations would go here
-            info!("Block passed consensus verification at height {}", block.height());
+            info!(
+                "Block passed consensus verification at height {}",
+                block.height()
+            );
         }
 
         Ok(true)
@@ -8496,33 +9390,42 @@ impl Blockchain {
 
     /// Check if a transaction is an economic system transaction (UBI/welfare/rewards)
     pub fn is_economic_system_transaction(&self, transaction: &Transaction) -> bool {
-        crate::integration::economic_integration::utils::is_ubi_distribution(transaction) ||
-        crate::integration::economic_integration::utils::is_welfare_distribution(transaction) ||
-        crate::integration::economic_integration::utils::is_network_reward(transaction)
+        crate::integration::economic_integration::utils::is_ubi_distribution(transaction)
+            || crate::integration::economic_integration::utils::is_welfare_distribution(transaction)
+            || crate::integration::economic_integration::utils::is_network_reward(transaction)
     }
 
     // ===== WALLET REFERENCE CONVERSION =====
-    
+
     /// Convert minimal wallet references to full wallet data
     /// Note: Sensitive data (names, aliases, seed commitments) will need DHT retrieval
-    fn convert_wallet_references_to_full_data(&self, wallet_refs: &HashMap<String, crate::transaction::WalletReference>) -> HashMap<String, crate::transaction::WalletTransactionData> {
-        wallet_refs.iter().map(|(id, wallet_ref)| {
-            // Create full wallet data from reference (missing sensitive fields will be empty/default)
-            let wallet_data = crate::transaction::WalletTransactionData {
-                wallet_id: wallet_ref.wallet_id,
-                wallet_type: wallet_ref.wallet_type.clone(),
-                wallet_name: format!("Wallet-{}", hex::encode(&wallet_ref.wallet_id.as_bytes()[..8])), // Default name
-                alias: None, // Will need DHT retrieval for real alias
-                public_key: wallet_ref.public_key.clone(),
-                owner_identity_id: wallet_ref.owner_identity_id,
-                seed_commitment: crate::types::Hash::from([0u8; 32]), // Default - will need DHT for real commitment
-                created_at: wallet_ref.created_at,
-                registration_fee: wallet_ref.registration_fee,
-                capabilities: 0, // Default - will need DHT for real capabilities
-                initial_balance: wallet_ref.initial_balance,
-            };
-            (id.clone(), wallet_data)
-        }).collect()
+    fn convert_wallet_references_to_full_data(
+        &self,
+        wallet_refs: &HashMap<String, crate::transaction::WalletReference>,
+    ) -> HashMap<String, crate::transaction::WalletTransactionData> {
+        wallet_refs
+            .iter()
+            .map(|(id, wallet_ref)| {
+                // Create full wallet data from reference (missing sensitive fields will be empty/default)
+                let wallet_data = crate::transaction::WalletTransactionData {
+                    wallet_id: wallet_ref.wallet_id,
+                    wallet_type: wallet_ref.wallet_type.clone(),
+                    wallet_name: format!(
+                        "Wallet-{}",
+                        hex::encode(&wallet_ref.wallet_id.as_bytes()[..8])
+                    ), // Default name
+                    alias: None, // Will need DHT retrieval for real alias
+                    public_key: wallet_ref.public_key.clone(),
+                    owner_identity_id: wallet_ref.owner_identity_id,
+                    seed_commitment: crate::types::Hash::from([0u8; 32]), // Default - will need DHT for real commitment
+                    created_at: wallet_ref.created_at,
+                    registration_fee: wallet_ref.registration_fee,
+                    capabilities: 0, // Default - will need DHT for real capabilities
+                    initial_balance: wallet_ref.initial_balance,
+                };
+                (id.clone(), wallet_data)
+            })
+            .collect()
     }
 
     // ===== BLOCKCHAIN RECOVERY METHODS =====
@@ -8582,14 +9485,20 @@ impl Blockchain {
         }
 
         if rebuilt_utxo_set.len() != self.utxo_set.len() {
-            error!("UTXO set size mismatch: expected={}, actual={}", 
-                   rebuilt_utxo_set.len(), self.utxo_set.len());
+            error!(
+                "UTXO set size mismatch: expected={}, actual={}",
+                rebuilt_utxo_set.len(),
+                self.utxo_set.len()
+            );
             return Ok(false);
         }
 
         if rebuilt_nullifier_set.len() != self.nullifier_set.len() {
-            error!("Nullifier set size mismatch: expected={}, actual={}", 
-                   rebuilt_nullifier_set.len(), self.nullifier_set.len());
+            error!(
+                "Nullifier set size mismatch: expected={}, actual={}",
+                rebuilt_nullifier_set.len(),
+                self.nullifier_set.len()
+            );
             return Ok(false);
         }
 
@@ -8606,8 +9515,12 @@ impl Blockchain {
             // Backup using the storage manager's backup functionality
             let backup_result = storage_manager.backup_blockchain(self).await?;
             let successful_backups = backup_result.iter().filter(|r| r.success).count();
-            
-            info!("Full blockchain backup completed: {}/{} operations successful", successful_backups, backup_result.len());
+
+            info!(
+                "Full blockchain backup completed: {}/{} operations successful",
+                successful_backups,
+                backup_result.len()
+            );
             return Ok(true);
         }
 
@@ -8623,7 +9536,7 @@ impl Blockchain {
             // Implementation would depend on storage manager's backup format
             // This is a placeholder for the restore functionality
             info!("Backup restore functionality needs implementation in storage manager");
-            
+
             return Ok(false);
         }
 
@@ -8648,7 +9561,9 @@ impl Blockchain {
 
             // Persist all identity data
             for (did, identity_data) in &self.identity_registry {
-                let _ = storage_manager.store_identity_data(did, identity_data).await;
+                let _ = storage_manager
+                    .store_identity_data(did, identity_data)
+                    .await;
             }
 
             info!("Blockchain synchronization with storage completed");
@@ -8712,8 +9627,11 @@ impl Blockchain {
     /// Cleanup old storage data (for maintenance)
     pub async fn cleanup_storage(&self, retain_blocks: u32) -> Result<()> {
         if let Some(_storage_manager) = &self.storage_manager {
-            info!(" Starting storage cleanup, retaining last {} blocks", retain_blocks);
-            
+            info!(
+                " Starting storage cleanup, retaining last {} blocks",
+                retain_blocks
+            );
+
             // This would implement cleanup logic in the storage manager
             // For now, just log the operation
             info!("Storage cleanup implementation needed in storage manager");
@@ -8729,7 +9647,7 @@ impl Blockchain {
             blocks: Vec<Block>,
             utxo_set: HashMap<Hash, TransactionOutput>,
             identity_registry: HashMap<String, IdentityTransactionData>,
-            wallet_references: HashMap<String, crate::transaction::WalletReference>,  // Only public references
+            wallet_references: HashMap<String, crate::transaction::WalletReference>, // Only public references
             validator_registry: HashMap<String, ValidatorInfo>,
             token_contracts: HashMap<[u8; 32], crate::contracts::TokenContract>,
             web4_contracts: HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
@@ -8741,7 +9659,9 @@ impl Blockchain {
         }
 
         // Convert full wallet data to minimal references for sync
-        let wallet_references: HashMap<String, crate::transaction::WalletReference> = self.wallet_registry.iter()
+        let wallet_references: HashMap<String, crate::transaction::WalletReference> = self
+            .wallet_registry
+            .iter()
             .map(|(id, wallet_data)| {
                 let wallet_ref = crate::transaction::WalletReference {
                     wallet_id: wallet_data.wallet_id,
@@ -8760,7 +9680,7 @@ impl Blockchain {
             blocks: self.blocks.clone(),
             utxo_set: self.utxo_set.clone(),
             identity_registry: self.identity_registry.clone(),
-            wallet_references,  // Only minimal wallet references (no sensitive data)
+            wallet_references, // Only minimal wallet references (no sensitive data)
             validator_registry: self.validator_registry.clone(),
             token_contracts: self.token_contracts.clone(),
             web4_contracts: self.web4_contracts.clone(),
@@ -8774,11 +9694,16 @@ impl Blockchain {
         info!(" Exporting blockchain: {} blocks, {} validators, {} token contracts, {} web4 contracts, {} oracle finalized prices", 
             self.blocks.len(), self.validator_registry.len(), self.token_contracts.len(), self.web4_contracts.len(),
             self.oracle_state.finalized_prices_len());
-        
+
         // Debug: Log transaction counts for each block
         for (i, block) in self.blocks.iter().enumerate() {
-            info!("   Block {}: height={}, transactions={}, merkle_root={}", 
-                  i, block.height(), block.transactions.len(), hex::encode(block.header.merkle_root.as_bytes()));
+            info!(
+                "   Block {}: height={}, transactions={}, merkle_root={}",
+                i,
+                block.height(),
+                block.transactions.len(),
+                hex::encode(block.header.merkle_root.as_bytes())
+            );
         }
 
         bincode::serialize(&export)
@@ -8786,7 +9711,7 @@ impl Blockchain {
     }
 
     /// Validate imported oracle state for consistency (ORACLE-10).
-    /// 
+    ///
     /// Performs the following validations:
     /// - Committee members must exist in validator_registry (no ghost members)
     /// - Finalized prices must be in ascending epoch order
@@ -8799,7 +9724,9 @@ impl Blockchain {
     ) -> Result<()> {
         // 1. Verify committee members are all in validator_registry (no ghost members)
         // Precompute HashSet of validator key_ids for O(1) lookup (O(n) total instead of O(n*m))
-        let validator_key_ids: HashSet<[u8; 32]> = self.validator_registry.values()
+        let validator_key_ids: HashSet<[u8; 32]> = self
+            .validator_registry
+            .values()
             .map(|v| lib_crypto::hash_blake3(&v.consensus_key))
             .collect();
         for member_key_id in oracle_state.committee.members() {
@@ -8818,7 +9745,8 @@ impl Blockchain {
                 if *epoch_id <= prev {
                     return Err(anyhow::anyhow!(
                         "Finalized prices not in ascending epoch order: {} followed by {}",
-                        prev, epoch_id
+                        prev,
+                        epoch_id
                     ));
                 }
             }
@@ -8857,7 +9785,10 @@ impl Blockchain {
 
     /// Evaluate and potentially merge a blockchain from another node
     /// Uses consensus rules to decide whether to adopt the imported chain
-    pub async fn evaluate_and_merge_chain(&mut self, data: Vec<u8>) -> Result<lib_consensus::ChainMergeResult> {
+    pub async fn evaluate_and_merge_chain(
+        &mut self,
+        data: Vec<u8>,
+    ) -> Result<lib_consensus::ChainMergeResult> {
         let import: BlockchainImport = bincode::deserialize(&data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize blockchain: {}", e))?;
 
@@ -8879,24 +9810,31 @@ impl Blockchain {
             self.height = imported_height;
             self.utxo_set = import.utxo_set;
             self.identity_registry = import.identity_registry;
-            self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
+            self.wallet_registry =
+                self.convert_wallet_references_to_full_data(&import.wallet_references);
             self.validator_registry = import.validator_registry;
             self.token_contracts = import.token_contracts;
             self.web4_contracts = import.web4_contracts;
             self.contract_blocks = import.contract_blocks;
             self.dao_registry_index = import.dao_registry_index;
             self.rebuild_dao_registry_index();
-            
+
             // ORACLE-10: Import oracle state if present
             if let Some(oracle_state) = import.oracle_state {
                 // Validate imported oracle state before accepting
-                match self.validate_imported_oracle_state(&oracle_state, import.last_oracle_epoch_processed, imported_height) {
+                match self.validate_imported_oracle_state(
+                    &oracle_state,
+                    import.last_oracle_epoch_processed,
+                    imported_height,
+                ) {
                     Ok(()) => {
                         self.oracle_state = oracle_state;
                         self.last_oracle_epoch_processed = import.last_oracle_epoch_processed;
-                        info!("🔮 Oracle state imported: {} finalized prices, epoch {}",
-                              self.oracle_state.finalized_prices_len(),
-                              self.last_oracle_epoch_processed);
+                        info!(
+                            "🔮 Oracle state imported: {} finalized prices, epoch {}",
+                            self.oracle_state.finalized_prices_len(),
+                            self.last_oracle_epoch_processed
+                        );
                     }
                     Err(e) => {
                         warn!("⚠️ Oracle state validation failed during import: {}. Starting with empty oracle state.", e);
@@ -8906,7 +9844,7 @@ impl Blockchain {
             } else {
                 warn!("⚠️ Oracle state not present in import — new node will start without oracle prices (backfill from blocks)");
             }
-            
+
             info!("Successfully adopted imported chain during bootstrap");
             return Ok(lib_consensus::ChainMergeResult::ImportedAdopted);
         }
@@ -8921,7 +9859,10 @@ impl Blockchain {
             } else {
                 let prev_block = &import.blocks[i - 1];
                 if block.header.previous_block_hash != prev_block.header.block_hash {
-                    return Err(anyhow::anyhow!("Block chain integrity broken at block {}", i));
+                    return Err(anyhow::anyhow!(
+                        "Block chain integrity broken at block {}",
+                        i
+                    ));
                 }
                 if !self.verify_block(block, Some(prev_block))? {
                     return Err(anyhow::anyhow!("Invalid block {} in imported chain", i));
@@ -8936,67 +9877,102 @@ impl Blockchain {
             &import.identity_registry,
             &import.utxo_set,
             &import.token_contracts,
-            &import.web4_contracts
+            &import.web4_contracts,
         );
 
         // DEBUG: Log genesis hashes being compared
         info!(" Comparing blockchains for merge:");
         info!("   Local genesis hash:    {}", local_summary.genesis_hash);
-        info!("   Imported genesis hash: {}", imported_summary.genesis_hash);
-        info!("   Hashes equal: {}", local_summary.genesis_hash == imported_summary.genesis_hash);
+        info!(
+            "   Imported genesis hash: {}",
+            imported_summary.genesis_hash
+        );
+        info!(
+            "   Hashes equal: {}",
+            local_summary.genesis_hash == imported_summary.genesis_hash
+        );
 
         // Use consensus rules to decide which chain to adopt
-        let decision = lib_consensus::ChainEvaluator::evaluate_chains(&local_summary, &imported_summary);
+        let decision =
+            lib_consensus::ChainEvaluator::evaluate_chains(&local_summary, &imported_summary);
 
         match decision {
             lib_consensus::ChainDecision::KeepLocal => {
                 info!(" Local chain is better - keeping current state");
-                info!("   Local: height={}, work={}, identities={}", 
-                      local_summary.height, local_summary.total_work, local_summary.total_identities);
-                info!("   Imported: height={}, work={}, identities={}", 
-                      imported_summary.height, imported_summary.total_work, imported_summary.total_identities);
+                info!(
+                    "   Local: height={}, work={}, identities={}",
+                    local_summary.height, local_summary.total_work, local_summary.total_identities
+                );
+                info!(
+                    "   Imported: height={}, work={}, identities={}",
+                    imported_summary.height,
+                    imported_summary.total_work,
+                    imported_summary.total_identities
+                );
                 Ok(lib_consensus::ChainMergeResult::LocalKept)
-            },
+            }
             lib_consensus::ChainDecision::MergeContentOnly => {
                 info!(" Local chain is longer - merging unique content from shorter chain");
-                info!("   Local: height={}, work={}, identities={}", 
-                      local_summary.height, local_summary.total_work, local_summary.total_identities);
-                info!("   Imported: height={}, work={}, identities={}", 
-                      imported_summary.height, imported_summary.total_work, imported_summary.total_identities);
-                
+                info!(
+                    "   Local: height={}, work={}, identities={}",
+                    local_summary.height, local_summary.total_work, local_summary.total_identities
+                );
+                info!(
+                    "   Imported: height={}, work={}, identities={}",
+                    imported_summary.height,
+                    imported_summary.total_work,
+                    imported_summary.total_identities
+                );
+
                 // Extract unique content from imported chain (shorter) into local (longer)
                 match self.merge_unique_content(&import) {
                     Ok(merged_items) => {
                         info!(" Successfully merged unique content: {}", merged_items);
                         Ok(lib_consensus::ChainMergeResult::ContentMerged)
-                    },
+                    }
                     Err(e) => {
                         warn!("Failed to merge content: {} - keeping local only", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!("Content merge error: {}", e)))
+                        Ok(lib_consensus::ChainMergeResult::Failed(format!(
+                            "Content merge error: {}",
+                            e
+                        )))
                     }
                 }
-            },
+            }
             lib_consensus::ChainDecision::AdoptImported => {
                 info!(" Imported chain is better - performing intelligent merge");
-                info!("   Local: height={}, work={}, identities={}", 
-                      local_summary.height, local_summary.total_work, local_summary.total_identities);
-                info!("   Imported: height={}, work={}, identities={}", 
-                      imported_summary.height, imported_summary.total_work, imported_summary.total_identities);
-                
+                info!(
+                    "   Local: height={}, work={}, identities={}",
+                    local_summary.height, local_summary.total_work, local_summary.total_identities
+                );
+                info!(
+                    "   Imported: height={}, work={}, identities={}",
+                    imported_summary.height,
+                    imported_summary.total_work,
+                    imported_summary.total_identities
+                );
+
                 // Check if this is a genesis replacement (different genesis blocks)
                 // IMPORTANT: Use merkle_root comparison to match ChainEvaluator logic
                 // Different validators in genesis = different merkle roots = different networks
-                let is_genesis_replacement = if !self.blocks.is_empty() && !import.blocks.is_empty() {
+                let is_genesis_replacement = if !self.blocks.is_empty() && !import.blocks.is_empty()
+                {
                     self.blocks[0].header.merkle_root != import.blocks[0].header.merkle_root
                 } else {
                     false
                 };
-                
+
                 if is_genesis_replacement {
                     info!("🔀 Genesis mismatch detected - performing full consolidation merge");
-                    info!("   Old genesis merkle: {}", hex::encode(self.blocks[0].header.merkle_root.as_bytes()));
-                    info!("   New genesis merkle: {}", hex::encode(import.blocks[0].header.merkle_root.as_bytes()));
-                    
+                    info!(
+                        "   Old genesis merkle: {}",
+                        hex::encode(self.blocks[0].header.merkle_root.as_bytes())
+                    );
+                    info!(
+                        "   New genesis merkle: {}",
+                        hex::encode(import.blocks[0].header.merkle_root.as_bytes())
+                    );
+
                     // Perform intelligent merge: adopt imported chain but preserve unique local data
                     match self.merge_with_genesis_mismatch(&import) {
                         Ok(merge_report) => {
@@ -9005,14 +9981,18 @@ impl Blockchain {
                             Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
                         }
                         Err(e) => {
-                            warn!(" Genesis merge failed: {} - adopting imported chain only", e);
+                            warn!(
+                                " Genesis merge failed: {} - adopting imported chain only",
+                                e
+                            );
                             // Fallback: just adopt imported chain
                             self.blocks = import.blocks;
                             self.height = self.blocks.len() as u64 - 1;
                             self.utxo_set = import.utxo_set;
                             self.identity_registry = import.identity_registry;
                             // Convert wallet references to full data (sensitive data will need DHT retrieval)
-                            self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
+                            self.wallet_registry = self
+                                .convert_wallet_references_to_full_data(&import.wallet_references);
                             self.validator_registry = import.validator_registry;
                             self.token_contracts = import.token_contracts;
                             self.web4_contracts = import.web4_contracts;
@@ -9034,7 +10014,8 @@ impl Blockchain {
                     self.utxo_set = import.utxo_set;
                     self.identity_registry = import.identity_registry;
                     // Convert wallet references to full data (sensitive data will need DHT retrieval)
-                    self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
+                    self.wallet_registry =
+                        self.convert_wallet_references_to_full_data(&import.wallet_references);
                     self.validator_registry = import.validator_registry;
                     self.token_contracts = import.token_contracts;
                     self.web4_contracts = import.web4_contracts;
@@ -9045,7 +10026,7 @@ impl Blockchain {
                         self.oracle_state = oracle_state;
                     }
                     self.rebuild_dao_registry_index();
-                    
+
                     // Clear nullifier set and rebuild from new chain
                     self.nullifier_set.clear();
                     for block in &self.blocks {
@@ -9055,43 +10036,62 @@ impl Blockchain {
                             }
                         }
                     }
-                    
+
                     info!(" Adopted imported chain");
                     info!("   New height: {}", self.height);
                     info!("   Identities: {}", self.identity_registry.len());
                     info!("   Validators: {}", self.validator_registry.len());
                     info!("   UTXOs: {}", self.utxo_set.len());
-                    
+
                     Ok(lib_consensus::ChainMergeResult::ImportedAdopted)
                 }
-            },
+            }
             lib_consensus::ChainDecision::Merge => {
                 info!(" Merging compatible chains");
-                info!("   Local: height={}, work={}, identities={}, contracts={}", 
-                      local_summary.height, local_summary.total_work, 
-                      local_summary.total_identities, local_summary.total_contracts);
-                info!("   Imported: height={}, work={}, identities={}, contracts={}", 
-                      imported_summary.height, imported_summary.total_work, 
-                      imported_summary.total_identities, imported_summary.total_contracts);
-                
+                info!(
+                    "   Local: height={}, work={}, identities={}, contracts={}",
+                    local_summary.height,
+                    local_summary.total_work,
+                    local_summary.total_identities,
+                    local_summary.total_contracts
+                );
+                info!(
+                    "   Imported: height={}, work={}, identities={}, contracts={}",
+                    imported_summary.height,
+                    imported_summary.total_work,
+                    imported_summary.total_identities,
+                    imported_summary.total_contracts
+                );
+
                 match self.merge_chain_content(&import) {
                     Ok(merged_items) => {
                         info!(" Successfully merged chains: {}", merged_items);
                         Ok(lib_consensus::ChainMergeResult::Merged)
-                    },
+                    }
                     Err(e) => {
                         warn!("Failed to merge chains: {} - keeping local", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!("Merge error: {}", e)))
+                        Ok(lib_consensus::ChainMergeResult::Failed(format!(
+                            "Merge error: {}",
+                            e
+                        )))
                     }
                 }
-            },
+            }
             lib_consensus::ChainDecision::AdoptLocal => {
                 info!("🏆 Local chain is stronger - using as merge base");
-                info!("   Local: height={}, validators={}, identities={}", 
-                      local_summary.height, local_summary.validator_count, local_summary.total_identities);
-                info!("   Imported: height={}, validators={}, identities={}", 
-                      imported_summary.height, imported_summary.validator_count, imported_summary.total_identities);
-                
+                info!(
+                    "   Local: height={}, validators={}, identities={}",
+                    local_summary.height,
+                    local_summary.validator_count,
+                    local_summary.total_identities
+                );
+                info!(
+                    "   Imported: height={}, validators={}, identities={}",
+                    imported_summary.height,
+                    imported_summary.validator_count,
+                    imported_summary.total_identities
+                );
+
                 // Local chain is the stronger network - use it as base
                 // Import unique content from remote chain into local
                 match self.merge_imported_into_local(&import) {
@@ -9101,43 +10101,61 @@ impl Blockchain {
                         Ok(lib_consensus::ChainMergeResult::LocalKept)
                     }
                     Err(e) => {
-                        warn!(" Failed to merge imported content: {} - keeping local only", e);
-                        Ok(lib_consensus::ChainMergeResult::Failed(format!("Import merge error: {}", e)))
+                        warn!(
+                            " Failed to merge imported content: {} - keeping local only",
+                            e
+                        );
+                        Ok(lib_consensus::ChainMergeResult::Failed(format!(
+                            "Import merge error: {}",
+                            e
+                        )))
                     }
                 }
-            },
+            }
             lib_consensus::ChainDecision::Reject => {
                 warn!("🚫 Networks are incompatible - merge rejected for safety");
-                warn!("   Local: height={}, validators={}, age={}d", 
-                      local_summary.height, local_summary.validator_count,
-                      (local_summary.latest_timestamp - local_summary.genesis_timestamp) / (24 * 3600));
-                warn!("   Imported: height={}, validators={}, age={}d", 
-                      imported_summary.height, imported_summary.validator_count,
-                      (imported_summary.latest_timestamp - imported_summary.genesis_timestamp) / (24 * 3600));
+                warn!(
+                    "   Local: height={}, validators={}, age={}d",
+                    local_summary.height,
+                    local_summary.validator_count,
+                    (local_summary.latest_timestamp - local_summary.genesis_timestamp)
+                        / (24 * 3600)
+                );
+                warn!(
+                    "   Imported: height={}, validators={}, age={}d",
+                    imported_summary.height,
+                    imported_summary.validator_count,
+                    (imported_summary.latest_timestamp - imported_summary.genesis_timestamp)
+                        / (24 * 3600)
+                );
                 warn!("   Networks differ too much in size or age to merge safely");
-                
+
                 Ok(lib_consensus::ChainMergeResult::Failed(
-                    "Networks incompatible - safety threshold exceeded".to_string()
+                    "Networks incompatible - safety threshold exceeded".to_string(),
                 ))
-            },
+            }
             lib_consensus::ChainDecision::Conflict => {
                 warn!(" Chain conflict detected - different genesis blocks");
-                warn!("   Local genesis: {}", 
-                      if !self.blocks.is_empty() { 
-                          hex::encode(self.blocks[0].header.block_hash.as_bytes()) 
-                      } else { 
-                          "none".to_string() 
-                      });
-                warn!("   Imported genesis: {}", 
-                      if !import.blocks.is_empty() { 
-                          hex::encode(import.blocks[0].header.block_hash.as_bytes()) 
-                      } else { 
-                          "none".to_string() 
-                      });
+                warn!(
+                    "   Local genesis: {}",
+                    if !self.blocks.is_empty() {
+                        hex::encode(self.blocks[0].header.block_hash.as_bytes())
+                    } else {
+                        "none".to_string()
+                    }
+                );
+                warn!(
+                    "   Imported genesis: {}",
+                    if !import.blocks.is_empty() {
+                        hex::encode(import.blocks[0].header.block_hash.as_bytes())
+                    } else {
+                        "none".to_string()
+                    }
+                );
                 warn!("   These chains are from different networks and cannot be merged");
-                
+
                 Ok(lib_consensus::ChainMergeResult::Failed(
-                    "Genesis hash mismatch - chains from different networks".to_string()
+                    "Genesis hash mismatch - chains from different networks".to_string(),
                 ))
             }
         }
@@ -9147,45 +10165,46 @@ impl Blockchain {
     async fn create_local_chain_summary_async(&self) -> lib_consensus::ChainSummary {
         // Use merkle root as genesis hash - this reflects the actual transaction content
         // Different validators in genesis will have different merkle roots
-        let genesis_hash = self.blocks.first()
+        let genesis_hash = self
+            .blocks
+            .first()
             .map(|b| b.header.merkle_root.to_string())
             .unwrap_or_else(|| "none".to_string());
-            
-        let genesis_timestamp = self.blocks.first()
-            .map(|b| b.header.timestamp)
-            .unwrap_or(0);
-            
-        let latest_timestamp = self.blocks.last()
-            .map(|b| b.header.timestamp)
-            .unwrap_or(0);
+
+        let genesis_timestamp = self.blocks.first().map(|b| b.header.timestamp).unwrap_or(0);
+
+        let latest_timestamp = self.blocks.last().map(|b| b.header.timestamp).unwrap_or(0);
 
         // Get consensus data if coordinator is available
-        let (validator_count, total_validator_stake, validator_set_hash) = 
+        let (validator_count, total_validator_stake, validator_set_hash) =
             if let Some(ref coordinator_arc) = self.consensus_coordinator {
                 let coordinator = coordinator_arc.read().await;
                 match coordinator.get_consensus_status().await {
                     Ok(status) => {
                         // Get validator stats for stake information
-                        let validator_infos = coordinator.list_all_validators().await.unwrap_or_default();
-                        let total_stake: u128 = validator_infos.iter().map(|v| v.stake_amount as u128).fold(0u128, |acc, x| acc.saturating_add(x));
-                        
+                        let validator_infos =
+                            coordinator.list_all_validators().await.unwrap_or_default();
+                        let total_stake: u128 = validator_infos
+                            .iter()
+                            .map(|v| v.stake_amount as u128)
+                            .fold(0u128, |acc, x| acc.saturating_add(x));
+
                         // Calculate validator set hash
-                        let validator_ids: Vec<String> = validator_infos.iter()
+                        let validator_ids: Vec<String> = validator_infos
+                            .iter()
                             .map(|v| v.identity.to_string())
                             .collect();
                         let validator_hash = if !validator_ids.is_empty() {
-                            hex::encode(lib_crypto::hash_blake3(format!("{:?}", validator_ids).as_bytes()))
+                            hex::encode(lib_crypto::hash_blake3(
+                                format!("{:?}", validator_ids).as_bytes(),
+                            ))
                         } else {
                             String::new()
                         };
-                        
-                        (
-                            status.active_validators as u64,
-                            total_stake,
-                            validator_hash
-                        )
-                    },
-                    Err(_) => (0, 0, String::new())
+
+                        (status.active_validators as u64, total_stake, validator_hash)
+                    }
+                    Err(_) => (0, 0, String::new()),
                 }
             } else {
                 (0, 0, String::new())
@@ -9194,10 +10213,18 @@ impl Blockchain {
         // Estimate TPS based on recent blocks
         let expected_tps = if self.blocks.len() >= 10 {
             let recent_blocks = &self.blocks[self.blocks.len().saturating_sub(10)..];
-            let total_txs: u64 = recent_blocks.iter().map(|b| b.transactions.len() as u64).fold(0u64, |acc, x| acc.saturating_add(x));
-            let time_span = recent_blocks.last().map(|b| b.header.timestamp)
-                .unwrap_or(0) - recent_blocks.first().map(|b| b.header.timestamp)
-                .unwrap_or(0);
+            let total_txs: u64 = recent_blocks
+                .iter()
+                .map(|b| b.transactions.len() as u64)
+                .fold(0u64, |acc, x| acc.saturating_add(x));
+            let time_span = recent_blocks
+                .last()
+                .map(|b| b.header.timestamp)
+                .unwrap_or(0)
+                - recent_blocks
+                    .first()
+                    .map(|b| b.header.timestamp)
+                    .unwrap_or(0);
             if time_span > 0 {
                 total_txs / time_span.max(1)
             } else {
@@ -9211,14 +10238,20 @@ impl Blockchain {
         let network_size = self.identity_registry.len().max(1) as u64;
 
         // Bridge node count (for now, based on special identity types in registry)
-        let bridge_node_count = self.identity_registry.values()
+        let bridge_node_count = self
+            .identity_registry
+            .values()
             .filter(|id| id.identity_type.contains("bridge") || id.identity_type.contains("Bridge"))
             .count() as u64;
 
         lib_consensus::ChainSummary {
             height: self.get_height(),
             total_work: self.calculate_total_work(),
-            total_transactions: self.blocks.iter().map(|b| b.transactions.len() as u64).fold(0u64, |acc, x| acc.saturating_add(x)),
+            total_transactions: self
+                .blocks
+                .iter()
+                .map(|b| b.transactions.len() as u64)
+                .fold(0u64, |acc, x| acc.saturating_add(x)),
             total_identities: self.identity_registry.len() as u64,
             total_utxos: self.utxo_set.len() as u64,
             total_contracts: (self.token_contracts.len() + self.web4_contracts.len()) as u64,
@@ -9237,20 +10270,21 @@ impl Blockchain {
     /// Merge content from compatible blockchain without replacing existing data
     fn merge_chain_content(&mut self, import: &BlockchainImport) -> Result<String> {
         let mut merged_items = Vec::new();
-        
+
         // Merge identities (add new ones, preserve existing)
         let mut new_identities = 0;
         for (did, identity_data) in &import.identity_registry {
             if !self.identity_registry.contains_key(did) {
-                self.identity_registry.insert(did.clone(), identity_data.clone());
+                self.identity_registry
+                    .insert(did.clone(), identity_data.clone());
                 new_identities += 1;
             }
         }
         if new_identities > 0 {
             merged_items.push(format!("{} identities", new_identities));
         }
-        
-        // Merge wallets (add new ones, preserve existing) 
+
+        // Merge wallets (add new ones, preserve existing)
         let mut new_wallets = 0;
         for (wallet_id, wallet_ref) in &import.wallet_references {
             if !self.wallet_registry.contains_key(wallet_id) {
@@ -9258,7 +10292,10 @@ impl Blockchain {
                 let wallet_data = crate::transaction::WalletTransactionData {
                     wallet_id: wallet_ref.wallet_id,
                     wallet_type: wallet_ref.wallet_type.clone(),
-                    wallet_name: format!("Wallet-{}", hex::encode(&wallet_ref.wallet_id.as_bytes()[..8])),
+                    wallet_name: format!(
+                        "Wallet-{}",
+                        hex::encode(&wallet_ref.wallet_id.as_bytes()[..8])
+                    ),
                     alias: None,
                     public_key: wallet_ref.public_key.clone(),
                     owner_identity_id: wallet_ref.owner_identity_id,
@@ -9275,7 +10312,7 @@ impl Blockchain {
         if new_wallets > 0 {
             merged_items.push(format!("{} wallets", new_wallets));
         }
-        
+
         // Merge contracts (add new ones, preserve existing)
         let mut new_token_contracts = 0;
         for (contract_id, contract) in &import.token_contracts {
@@ -9287,7 +10324,7 @@ impl Blockchain {
         if new_token_contracts > 0 {
             merged_items.push(format!("{} token contracts", new_token_contracts));
         }
-        
+
         let mut new_web4_contracts = 0;
         for (contract_id, contract) in &import.web4_contracts {
             if !self.web4_contracts.contains_key(contract_id as &[u8; 32]) {
@@ -9298,7 +10335,7 @@ impl Blockchain {
         if new_web4_contracts > 0 {
             merged_items.push(format!("{} web4 contracts", new_web4_contracts));
         }
-        
+
         // Merge UTXOs (add new ones, preserve existing)
         let mut new_utxos = 0;
         for (utxo_hash, utxo) in &import.utxo_set {
@@ -9310,7 +10347,7 @@ impl Blockchain {
         if new_utxos > 0 {
             merged_items.push(format!("{} UTXOs", new_utxos));
         }
-        
+
         // Merge contract deployment heights (for tracking)
         let mut _new_contract_blocks = 0;
         for (contract_id, block_height) in &import.contract_blocks {
@@ -9319,14 +10356,14 @@ impl Blockchain {
                 _new_contract_blocks += 1;
             }
         }
-        
+
         // If chains have different heights, merge missing blocks
         if import.blocks.len() != self.blocks.len() {
             if import.blocks.len() > self.blocks.len() {
                 // Imported chain is longer - add missing blocks
                 let missing_blocks = &import.blocks[self.blocks.len()..];
                 let mut added_blocks = 0;
-                
+
                 for block in missing_blocks {
                     // Verify block before adding
                     let prev_block = self.blocks.last();
@@ -9336,21 +10373,27 @@ impl Blockchain {
                         added_blocks += 1;
                         info!("  Added missing block at height {}", block.height());
                     } else {
-                        warn!("  Failed to verify imported block at height {}, stopping block merge", block.height());
+                        warn!(
+                            "  Failed to verify imported block at height {}, stopping block merge",
+                            block.height()
+                        );
                         break;
                     }
                 }
-                
+
                 if added_blocks > 0 {
                     merged_items.push(format!("{} blocks", added_blocks));
                 }
             } else {
                 // Local chain is longer - just report the difference
                 let block_diff = self.blocks.len() - import.blocks.len();
-                info!("  Local chain is {} blocks ahead, not adopting shorter chain", block_diff);
+                info!(
+                    "  Local chain is {} blocks ahead, not adopting shorter chain",
+                    block_diff
+                );
             }
         }
-        
+
         if merged_items.is_empty() {
             Ok("no new content to merge".to_string())
         } else {
@@ -9363,22 +10406,33 @@ impl Blockchain {
     /// Includes economic reconciliation to prevent money supply inflation
     fn merge_with_genesis_mismatch(&mut self, import: &BlockchainImport) -> Result<String> {
         info!("🔀 Starting network merge with economic reconciliation");
-        info!("   Local network: {} blocks, {} identities, {} validators", 
-              self.blocks.len(), self.identity_registry.len(), self.validator_registry.len());
-        info!("   Imported network: {} blocks, {} identities, {} validators", 
-              import.blocks.len(), import.identity_registry.len(), import.validator_registry.len());
-        
+        info!(
+            "   Local network: {} blocks, {} identities, {} validators",
+            self.blocks.len(),
+            self.identity_registry.len(),
+            self.validator_registry.len()
+        );
+        info!(
+            "   Imported network: {} blocks, {} identities, {} validators",
+            import.blocks.len(),
+            import.identity_registry.len(),
+            import.validator_registry.len()
+        );
+
         let mut merge_report = Vec::new();
-        
+
         // STEP 0: Calculate economic state BEFORE merge for reconciliation
         let local_utxo_count = self.utxo_set.len();
         let import_utxo_count = import.utxo_set.len();
-        
+
         info!(" Pre-merge economic state:");
         info!("   Local UTXOs: {}", local_utxo_count);
         info!("   Imported UTXOs: {}", import_utxo_count);
-        info!("   Combined would be: {} UTXOs", local_utxo_count + import_utxo_count);
-        
+        info!(
+            "   Combined would be: {} UTXOs",
+            local_utxo_count + import_utxo_count
+        );
+
         // Step 1: Extract unique identities from local chain
         let mut unique_identities = 0;
         let mut local_identities_to_preserve = Vec::new();
@@ -9388,7 +10442,7 @@ impl Blockchain {
                 unique_identities += 1;
             }
         }
-        
+
         // Step 2: Extract unique validators from local chain
         let mut unique_validators = 0;
         let mut local_validators_to_preserve = Vec::new();
@@ -9398,7 +10452,7 @@ impl Blockchain {
                 unique_validators += 1;
             }
         }
-        
+
         // Step 3: Extract unique wallets from local chain
         let mut unique_wallets = 0;
         let mut local_wallets_to_preserve = Vec::new();
@@ -9408,7 +10462,7 @@ impl Blockchain {
                 unique_wallets += 1;
             }
         }
-        
+
         // Step 4: Extract unique UTXOs from local chain
         let mut unique_utxos = 0;
         let mut local_utxos_to_preserve = Vec::new();
@@ -9418,17 +10472,20 @@ impl Blockchain {
                 unique_utxos += 1;
             }
         }
-        
+
         // Step 5: Extract unique contracts from local chain
         let mut unique_token_contracts = 0;
         let mut local_token_contracts = Vec::new();
         for (contract_id, contract) in &self.token_contracts {
-            if !import.token_contracts.contains_key(contract_id as &[u8; 32]) {
+            if !import
+                .token_contracts
+                .contains_key(contract_id as &[u8; 32])
+            {
                 local_token_contracts.push((*contract_id, contract.clone()));
                 unique_token_contracts += 1;
             }
         }
-        
+
         let mut unique_web4_contracts = 0;
         let mut local_web4_contracts = Vec::new();
         for (contract_id, contract) in &self.web4_contracts {
@@ -9437,7 +10494,7 @@ impl Blockchain {
                 unique_web4_contracts += 1;
             }
         }
-        
+
         info!(" Found unique local data:");
         info!("   {} identities", unique_identities);
         info!("   {} validators", unique_validators);
@@ -9445,19 +10502,20 @@ impl Blockchain {
         info!("   {} UTXOs", unique_utxos);
         info!("   {} token contracts", unique_token_contracts);
         info!("   {} web4 contracts", unique_web4_contracts);
-        
+
         // Step 6: Adopt imported chain as base
         self.blocks = import.blocks.clone();
         self.height = self.blocks.len() as u64 - 1;
         self.identity_registry = import.identity_registry.clone();
-        self.wallet_registry = self.convert_wallet_references_to_full_data(&import.wallet_references);
+        self.wallet_registry =
+            self.convert_wallet_references_to_full_data(&import.wallet_references);
         self.validator_registry = import.validator_registry.clone();
         self.utxo_set = import.utxo_set.clone();
         self.token_contracts = import.token_contracts.clone();
         self.web4_contracts = import.web4_contracts.clone();
         self.contract_blocks = import.contract_blocks.clone();
         self.dao_registry_index = import.dao_registry_index.clone();
-        
+
         // Step 7: Merge unique local data into adopted chain
         for (did, identity_data) in local_identities_to_preserve {
             self.identity_registry.insert(did, identity_data);
@@ -9465,49 +10523,55 @@ impl Blockchain {
         if unique_identities > 0 {
             merge_report.push(format!("merged {} unique identities", unique_identities));
         }
-        
+
         for (validator_id, validator_info) in local_validators_to_preserve {
             self.validator_registry.insert(validator_id, validator_info);
         }
         if unique_validators > 0 {
             merge_report.push(format!("merged {} unique validators", unique_validators));
         }
-        
+
         for (wallet_id, wallet_data) in local_wallets_to_preserve {
             self.wallet_registry.insert(wallet_id, wallet_data);
         }
         if unique_wallets > 0 {
             merge_report.push(format!("merged {} unique wallets", unique_wallets));
         }
-        
+
         for (utxo_hash, utxo) in local_utxos_to_preserve {
             self.utxo_set.insert(utxo_hash, utxo);
         }
         if unique_utxos > 0 {
             merge_report.push(format!("merged {} unique UTXOs", unique_utxos));
         }
-        
+
         for (contract_id, contract) in local_token_contracts {
             self.token_contracts.insert(contract_id, contract);
         }
         if unique_token_contracts > 0 {
-            merge_report.push(format!("merged {} unique token contracts", unique_token_contracts));
+            merge_report.push(format!(
+                "merged {} unique token contracts",
+                unique_token_contracts
+            ));
         }
-        
+
         for (contract_id, contract) in local_web4_contracts {
             self.web4_contracts.insert(contract_id, contract);
         }
         if unique_web4_contracts > 0 {
-            merge_report.push(format!("merged {} unique web4 contracts", unique_web4_contracts));
+            merge_report.push(format!(
+                "merged {} unique web4 contracts",
+                unique_web4_contracts
+            ));
         }
-        
+
         // Step 8: Economic Reconciliation - Handle Money Supply
         let post_merge_utxo_count = self.utxo_set.len();
-        
+
         info!(" Post-merge economic state:");
         info!("   Total UTXOs after merge: {}", post_merge_utxo_count);
         info!("   Economics consolidation: All networks' assets preserved");
-        
+
         // Note: We deliberately allow the combined UTXO set because:
         // 1. Both networks had legitimate economic activity
         // 2. Validators from both networks are now securing the merged chain
@@ -9518,10 +10582,12 @@ impl Blockchain {
         // - Implement decay/taxation on merged UTXOs over time
         // - Require proof-of-burn for cross-network transfers
         // - Use exchange rate conversion between networks
-        
-        merge_report.push(format!("consolidated {} UTXOs from {} networks", 
-                                  post_merge_utxo_count, 2));
-        
+
+        merge_report.push(format!(
+            "consolidated {} UTXOs from {} networks",
+            post_merge_utxo_count, 2
+        ));
+
         // Step 9: Rebuild nullifier set from merged state
         self.nullifier_set.clear();
         for block in &self.blocks {
@@ -9531,19 +10597,26 @@ impl Blockchain {
                 }
             }
         }
-        
+
         info!(" Network merge complete with economic reconciliation!");
-        info!("   Final network: {} blocks, {} identities, {} validators, {} UTXOs", 
-              self.blocks.len(), self.identity_registry.len(), 
-              self.validator_registry.len(), self.utxo_set.len());
+        info!(
+            "   Final network: {} blocks, {} identities, {} validators, {} UTXOs",
+            self.blocks.len(),
+            self.identity_registry.len(),
+            self.validator_registry.len(),
+            self.utxo_set.len()
+        );
         info!("   Security improvement: Combined validator set and hash rate");
         info!("   Economic state: All citizens' holdings preserved");
         self.rebuild_dao_registry_index();
-        
+
         if merge_report.is_empty() {
             Ok("adopted imported chain (no unique local data to merge)".to_string())
         } else {
-            Ok(format!("adopted imported chain and {}", merge_report.join(", ")))
+            Ok(format!(
+                "adopted imported chain and {}",
+                merge_report.join(", ")
+            ))
         }
     }
 
@@ -9552,48 +10625,58 @@ impl Blockchain {
     /// All unique content from imported chain is preserved and added to local
     fn merge_imported_into_local(&mut self, import: &BlockchainImport) -> Result<String> {
         info!("🔀 Merging imported network into stronger local network");
-        info!("   Local network (BASE): {} blocks, {} identities, {} validators", 
-              self.blocks.len(), self.identity_registry.len(), self.validator_registry.len());
-        info!("   Imported network: {} blocks, {} identities, {} validators", 
-              import.blocks.len(), import.identity_registry.len(), import.validator_registry.len());
-        
+        info!(
+            "   Local network (BASE): {} blocks, {} identities, {} validators",
+            self.blocks.len(),
+            self.identity_registry.len(),
+            self.validator_registry.len()
+        );
+        info!(
+            "   Imported network: {} blocks, {} identities, {} validators",
+            import.blocks.len(),
+            import.identity_registry.len(),
+            import.validator_registry.len()
+        );
+
         let mut merge_report = Vec::new();
-        
+
         // STEP 0: Calculate economic state BEFORE merge
         let local_utxo_count = self.utxo_set.len();
         let import_utxo_count = import.utxo_set.len();
-        
+
         info!(" Pre-merge economic state:");
         info!("   Local UTXOs: {}", local_utxo_count);
         info!("   Imported UTXOs: {}", import_utxo_count);
-        
+
         // CRITICAL: Extract ALL unique identities from imported chain
         // This ensures users from the smaller network don't lose their identities
         let mut unique_identities = 0;
         for (did, identity_data) in &import.identity_registry {
             if !self.identity_registry.contains_key(did) {
                 info!("  Preserving imported identity: {}", did);
-                self.identity_registry.insert(did.clone(), identity_data.clone());
+                self.identity_registry
+                    .insert(did.clone(), identity_data.clone());
                 unique_identities += 1;
             }
         }
         if unique_identities > 0 {
             merge_report.push(format!("imported {} unique identities", unique_identities));
         }
-        
+
         // Extract unique validators from imported chain
         let mut unique_validators = 0;
         for (validator_id, validator_info) in &import.validator_registry {
             if !self.validator_registry.contains_key(validator_id as &str) {
                 info!("  Preserving imported validator: {}", validator_id);
-                self.validator_registry.insert(validator_id.clone(), validator_info.clone());
+                self.validator_registry
+                    .insert(validator_id.clone(), validator_info.clone());
                 unique_validators += 1;
             }
         }
         if unique_validators > 0 {
             merge_report.push(format!("imported {} unique validators", unique_validators));
         }
-        
+
         // Extract unique wallets from imported chain
         let mut unique_wallets = 0;
         for (wallet_id, wallet_ref) in &import.wallet_references {
@@ -9603,7 +10686,10 @@ impl Blockchain {
                 let wallet_data = crate::transaction::WalletTransactionData {
                     wallet_id: wallet_ref.wallet_id,
                     wallet_type: wallet_ref.wallet_type.clone(),
-                    wallet_name: format!("Wallet-{}", hex::encode(&wallet_ref.wallet_id.as_bytes()[..8])),
+                    wallet_name: format!(
+                        "Wallet-{}",
+                        hex::encode(&wallet_ref.wallet_id.as_bytes()[..8])
+                    ),
                     alias: None,
                     public_key: wallet_ref.public_key.clone(),
                     owner_identity_id: wallet_ref.owner_identity_id,
@@ -9620,8 +10706,8 @@ impl Blockchain {
         if unique_wallets > 0 {
             merge_report.push(format!("imported {} unique wallets", unique_wallets));
         }
-        
-        // Extract unique UTXOs from imported chain  
+
+        // Extract unique UTXOs from imported chain
         let mut unique_utxos = 0;
         for (utxo_hash, utxo) in &import.utxo_set {
             if !self.utxo_set.contains_key(utxo_hash as &Hash) {
@@ -9632,7 +10718,7 @@ impl Blockchain {
         if unique_utxos > 0 {
             merge_report.push(format!("imported {} unique UTXOs", unique_utxos));
         }
-        
+
         // Extract unique contracts from imported chain
         let mut unique_token_contracts = 0;
         for (contract_id, contract) in &import.token_contracts {
@@ -9642,9 +10728,12 @@ impl Blockchain {
             }
         }
         if unique_token_contracts > 0 {
-            merge_report.push(format!("imported {} unique token contracts", unique_token_contracts));
+            merge_report.push(format!(
+                "imported {} unique token contracts",
+                unique_token_contracts
+            ));
         }
-        
+
         let mut unique_web4_contracts = 0;
         for (contract_id, contract) in &import.web4_contracts {
             if !self.web4_contracts.contains_key(contract_id as &[u8; 32]) {
@@ -9653,54 +10742,64 @@ impl Blockchain {
             }
         }
         if unique_web4_contracts > 0 {
-            merge_report.push(format!("imported {} unique web4 contracts", unique_web4_contracts));
+            merge_report.push(format!(
+                "imported {} unique web4 contracts",
+                unique_web4_contracts
+            ));
         }
-        
+
         // Post-merge economic state
         let post_merge_utxo_count = self.utxo_set.len();
-        
+
         info!(" Post-merge economic state:");
         info!("   Total UTXOs after merge: {}", post_merge_utxo_count);
         info!("   All imported users' assets preserved in stronger local network");
-        
-        merge_report.push(format!("consolidated {} UTXOs from both networks", 
-                                  post_merge_utxo_count));
-        
+
+        merge_report.push(format!(
+            "consolidated {} UTXOs from both networks",
+            post_merge_utxo_count
+        ));
+
         info!(" Imported network successfully merged into local base!");
-        info!("   Final network: {} blocks, {} identities, {} validators, {} UTXOs", 
-              self.blocks.len(), self.identity_registry.len(), 
-              self.validator_registry.len(), self.utxo_set.len());
+        info!(
+            "   Final network: {} blocks, {} identities, {} validators, {} UTXOs",
+            self.blocks.len(),
+            self.identity_registry.len(),
+            self.validator_registry.len(),
+            self.utxo_set.len()
+        );
         info!("   Local chain history preserved, imported users migrated successfully");
         self.rebuild_dao_registry_index();
-        
+
         if merge_report.is_empty() {
             Ok("kept local chain (no unique imported data to merge)".to_string())
         } else {
             Ok(format!("kept local chain and {}", merge_report.join(", ")))
         }
     }
-    
+
     /// Merge unique content from shorter chain into longer chain
     /// This prevents data loss when local chain is longer but imported has unique identities/wallets/contracts
     fn merge_unique_content(&mut self, import: &BlockchainImport) -> Result<String> {
         let mut merged_items = Vec::new();
-        
+
         info!("Extracting unique content from shorter chain (height {}) into longer chain (height {})",
               import.blocks.len(), self.blocks.len());
-        
+
         // Merge identities (add new ones that don't exist in local chain)
         let mut new_identities = 0;
         for (did, identity_data) in &import.identity_registry {
             if !self.identity_registry.contains_key(did) {
                 info!("  Adding unique identity: {}", did);
-                self.identity_registry.insert(did.clone(), identity_data.clone());
+                self.identity_registry
+                    .insert(did.clone(), identity_data.clone());
                 new_identities += 1;
             }
         }
         if new_identities > 0 {
             merged_items.push(format!("{} identities", new_identities));
         }
-        
+
         // Merge wallets (add new ones that don't exist in local chain)
         let mut new_wallets = 0;
         for (wallet_id, wallet_ref) in &import.wallet_references {
@@ -9710,7 +10809,10 @@ impl Blockchain {
                 let wallet_data = crate::transaction::WalletTransactionData {
                     wallet_id: wallet_ref.wallet_id,
                     wallet_type: wallet_ref.wallet_type.clone(),
-                    wallet_name: format!("Wallet-{}", hex::encode(&wallet_ref.wallet_id.as_bytes()[..8])),
+                    wallet_name: format!(
+                        "Wallet-{}",
+                        hex::encode(&wallet_ref.wallet_id.as_bytes()[..8])
+                    ),
                     alias: None,
                     public_key: wallet_ref.public_key.clone(),
                     owner_identity_id: wallet_ref.owner_identity_id,
@@ -9727,12 +10829,15 @@ impl Blockchain {
         if new_wallets > 0 {
             merged_items.push(format!("{} wallets", new_wallets));
         }
-        
+
         // Merge contracts (add new ones that don't exist in local chain)
         let mut new_token_contracts = 0;
         for (contract_id, contract) in &import.token_contracts {
             if !self.token_contracts.contains_key(contract_id as &[u8; 32]) {
-                info!("  Adding unique token contract: {:?}", hex::encode(contract_id));
+                info!(
+                    "  Adding unique token contract: {:?}",
+                    hex::encode(contract_id)
+                );
                 self.token_contracts.insert(*contract_id, contract.clone());
                 new_token_contracts += 1;
             }
@@ -9740,11 +10845,14 @@ impl Blockchain {
         if new_token_contracts > 0 {
             merged_items.push(format!("{} token contracts", new_token_contracts));
         }
-        
+
         let mut new_web4_contracts = 0;
         for (contract_id, contract) in &import.web4_contracts {
             if !self.web4_contracts.contains_key(contract_id as &[u8; 32]) {
-                info!("  Adding unique web4 contract: {:?}", hex::encode(contract_id));
+                info!(
+                    "  Adding unique web4 contract: {:?}",
+                    hex::encode(contract_id)
+                );
                 self.web4_contracts.insert(*contract_id, contract.clone());
                 new_web4_contracts += 1;
             }
@@ -9752,7 +10860,7 @@ impl Blockchain {
         if new_web4_contracts > 0 {
             merged_items.push(format!("{} web4 contracts", new_web4_contracts));
         }
-        
+
         // Merge UTXOs (add new ones that aren't spent in local chain)
         let mut new_utxos = 0;
         for (utxo_hash, utxo) in &import.utxo_set {
@@ -9764,7 +10872,7 @@ impl Blockchain {
         if new_utxos > 0 {
             merged_items.push(format!("{} UTXOs", new_utxos));
         }
-        
+
         // Merge contract deployment records
         let mut _new_contract_blocks = 0;
         for (contract_id, block_height) in &import.contract_blocks {
@@ -9774,7 +10882,7 @@ impl Blockchain {
             }
         }
         self.rebuild_dao_registry_index();
-        
+
         if merged_items.is_empty() {
             Ok("no unique content found in shorter chain".to_string())
         } else {
@@ -9784,34 +10892,40 @@ impl Blockchain {
     }
 
     /// Create chain summary for imported blockchain
-    fn create_imported_chain_summary(&self, 
-        blocks: &[Block], 
+    fn create_imported_chain_summary(
+        &self,
+        blocks: &[Block],
         identity_registry: &HashMap<String, IdentityTransactionData>,
         utxo_set: &HashMap<Hash, TransactionOutput>,
         token_contracts: &HashMap<[u8; 32], crate::contracts::TokenContract>,
-        web4_contracts: &HashMap<[u8; 32], crate::contracts::web4::Web4Contract>
+        web4_contracts: &HashMap<[u8; 32], crate::contracts::web4::Web4Contract>,
     ) -> lib_consensus::ChainSummary {
         // Use merkle root as genesis hash - this reflects the actual transaction content
         // Different validators in genesis will have different merkle roots
-        let genesis_hash = blocks.first()
+        let genesis_hash = blocks
+            .first()
             .map(|b| b.header.merkle_root.to_string())
             .unwrap_or_else(|| "none".to_string());
-            
-        let genesis_timestamp = blocks.first()
-            .map(|b| b.header.timestamp)
-            .unwrap_or(0);
-            
-        let latest_timestamp = blocks.last()
-            .map(|b| b.header.timestamp)
-            .unwrap_or(0);
+
+        let genesis_timestamp = blocks.first().map(|b| b.header.timestamp).unwrap_or(0);
+
+        let latest_timestamp = blocks.last().map(|b| b.header.timestamp).unwrap_or(0);
 
         // Estimate TPS based on recent blocks in imported chain
         let expected_tps = if blocks.len() >= 10 {
             let recent_blocks = &blocks[blocks.len().saturating_sub(10)..];
-            let total_txs: u64 = recent_blocks.iter().map(|b| b.transactions.len() as u64).fold(0u64, |acc, x| acc.saturating_add(x));
-            let time_span = recent_blocks.last().map(|b| b.header.timestamp)
-                .unwrap_or(0) - recent_blocks.first().map(|b| b.header.timestamp)
-                .unwrap_or(0);
+            let total_txs: u64 = recent_blocks
+                .iter()
+                .map(|b| b.transactions.len() as u64)
+                .fold(0u64, |acc, x| acc.saturating_add(x));
+            let time_span = recent_blocks
+                .last()
+                .map(|b| b.header.timestamp)
+                .unwrap_or(0)
+                - recent_blocks
+                    .first()
+                    .map(|b| b.header.timestamp)
+                    .unwrap_or(0);
             if time_span > 0 {
                 total_txs / time_span.max(1)
             } else {
@@ -9825,29 +10939,41 @@ impl Blockchain {
         let network_size = identity_registry.len().max(1) as u64;
 
         // Bridge node count from imported identity registry
-        let bridge_node_count = identity_registry.values()
+        let bridge_node_count = identity_registry
+            .values()
             .filter(|id| id.identity_type.contains("bridge") || id.identity_type.contains("Bridge"))
             .count() as u64;
 
         // For imported chains, we don't have access to their consensus coordinator
         // So we estimate validator info from special identity types
-        let validator_count = identity_registry.values()
-            .filter(|id| id.identity_type.contains("validator") || id.identity_type.contains("Validator"))
+        let validator_count = identity_registry
+            .values()
+            .filter(|id| {
+                id.identity_type.contains("validator") || id.identity_type.contains("Validator")
+            })
             .count() as u64;
 
         // Estimate total stake from validator identities (if they have reputation scores)
-        let total_validator_stake: u128 = identity_registry.values()
-            .filter(|id| id.identity_type.contains("validator") || id.identity_type.contains("Validator"))
+        let total_validator_stake: u128 = identity_registry
+            .values()
+            .filter(|id| {
+                id.identity_type.contains("validator") || id.identity_type.contains("Validator")
+            })
             .map(|id| id.registration_fee as u128)
             .fold(0u128, |acc, x| acc.saturating_add(x));
 
         // Calculate validator set hash from imported identities
-        let validator_identities: Vec<String> = identity_registry.iter()
-            .filter(|(_, id)| id.identity_type.contains("validator") || id.identity_type.contains("Validator"))
+        let validator_identities: Vec<String> = identity_registry
+            .iter()
+            .filter(|(_, id)| {
+                id.identity_type.contains("validator") || id.identity_type.contains("Validator")
+            })
             .map(|(did, _)| did.clone())
             .collect();
         let validator_set_hash = if !validator_identities.is_empty() {
-            hex::encode(lib_crypto::hash_blake3(format!("{:?}", validator_identities).as_bytes()))
+            hex::encode(lib_crypto::hash_blake3(
+                format!("{:?}", validator_identities).as_bytes(),
+            ))
         } else {
             String::new()
         };
@@ -9855,7 +10981,10 @@ impl Blockchain {
         lib_consensus::ChainSummary {
             height: blocks.len().saturating_sub(1) as u64,
             total_work: self.calculate_imported_total_work(blocks),
-            total_transactions: blocks.iter().map(|b| b.transactions.len() as u64).fold(0u64, |acc, x| acc.saturating_add(x)),
+            total_transactions: blocks
+                .iter()
+                .map(|b| b.transactions.len() as u64)
+                .fold(0u64, |acc, x| acc.saturating_add(x)),
             total_identities: identity_registry.len() as u64,
             total_utxos: utxo_set.len() as u64,
             total_contracts: (token_contracts.len() + web4_contracts.len()) as u64,
@@ -9873,14 +11002,16 @@ impl Blockchain {
 
     /// Calculate total work for imported blocks
     fn calculate_imported_total_work(&self, blocks: &[Block]) -> u128 {
-        blocks.iter()
+        blocks
+            .iter()
             .map(|block| block.header.difficulty.work())
             .fold(0u128, |acc, work| acc.saturating_add(work))
     }
 
     /// Calculate total work for current blockchain
     fn calculate_total_work(&self) -> u128 {
-        self.blocks.iter()
+        self.blocks
+            .iter()
             .map(|block| block.header.difficulty.work())
             .fold(0u128, |acc, work| acc.saturating_add(work))
     }
@@ -9888,19 +11019,31 @@ impl Blockchain {
     // ============================================================================
     // SMART CONTRACT REGISTRY METHODS
     // ============================================================================
-    
+
     /// Register a token contract in the blockchain
-    pub fn register_token_contract(&mut self, contract_id: [u8; 32], contract: crate::contracts::TokenContract, block_height: u64) {
+    pub fn register_token_contract(
+        &mut self,
+        contract_id: [u8; 32],
+        contract: crate::contracts::TokenContract,
+        block_height: u64,
+    ) {
         self.token_contracts.insert(contract_id, contract);
         self.contract_blocks.insert(contract_id, block_height);
-        info!(" Registered token contract {} at block {}", hex::encode(contract_id), block_height);
+        info!(
+            " Registered token contract {} at block {}",
+            hex::encode(contract_id),
+            block_height
+        );
     }
-    
+
     /// Get a token contract from the blockchain
-    /// 
+    ///
     /// Reads from BlockchainStore (sled) if available, otherwise falls back to HashMap.
     /// This enables the single-source-of-truth pattern when using BlockExecutor.
-    pub fn get_token_contract(&self, contract_id: &[u8; 32]) -> Option<crate::contracts::TokenContract> {
+    pub fn get_token_contract(
+        &self,
+        contract_id: &[u8; 32],
+    ) -> Option<crate::contracts::TokenContract> {
         // Try store first (single source of truth when using BlockExecutor)
         if let Some(store) = self.get_store() {
             let token_id = crate::storage::TokenId::new(*contract_id);
@@ -9911,47 +11054,67 @@ impl Blockchain {
         // Fallback to HashMap (legacy path)
         self.token_contracts.get(contract_id).cloned()
     }
-    
+
     /// Get a mutable reference to a token contract
-    /// 
+    ///
     /// WARNING: This modifies the HashMap. For BlockExecutor path, use store methods instead.
-    pub fn get_token_contract_mut(&mut self, contract_id: &[u8; 32]) -> Option<&mut crate::contracts::TokenContract> {
+    pub fn get_token_contract_mut(
+        &mut self,
+        contract_id: &[u8; 32],
+    ) -> Option<&mut crate::contracts::TokenContract> {
         self.token_contracts.get_mut(contract_id)
     }
-    
+
     /// Register a Web4 contract in the blockchain
-    pub fn register_web4_contract(&mut self, contract_id: [u8; 32], contract: crate::contracts::web4::Web4Contract, block_height: u64) {
+    pub fn register_web4_contract(
+        &mut self,
+        contract_id: [u8; 32],
+        contract: crate::contracts::web4::Web4Contract,
+        block_height: u64,
+    ) {
         self.web4_contracts.insert(contract_id, contract);
         self.contract_blocks.insert(contract_id, block_height);
-        info!(" Registered Web4 contract {} at block {}", hex::encode(contract_id), block_height);
+        info!(
+            " Registered Web4 contract {} at block {}",
+            hex::encode(contract_id),
+            block_height
+        );
     }
-    
+
     /// Get a Web4 contract from the blockchain
-    pub fn get_web4_contract(&self, contract_id: &[u8; 32]) -> Option<&crate::contracts::web4::Web4Contract> {
+    pub fn get_web4_contract(
+        &self,
+        contract_id: &[u8; 32],
+    ) -> Option<&crate::contracts::web4::Web4Contract> {
         self.web4_contracts.get(contract_id)
     }
-    
+
     /// Get a mutable reference to a Web4 contract
-    pub fn get_web4_contract_mut(&mut self, contract_id: &[u8; 32]) -> Option<&mut crate::contracts::web4::Web4Contract> {
+    pub fn get_web4_contract_mut(
+        &mut self,
+        contract_id: &[u8; 32],
+    ) -> Option<&mut crate::contracts::web4::Web4Contract> {
         self.web4_contracts.get_mut(contract_id)
     }
-    
+
     /// Get all token contracts
     pub fn get_all_token_contracts(&self) -> &HashMap<[u8; 32], crate::contracts::TokenContract> {
         &self.token_contracts
     }
-    
+
     /// Get all Web4 contracts
-    pub fn get_all_web4_contracts(&self) -> &HashMap<[u8; 32], crate::contracts::web4::Web4Contract> {
+    pub fn get_all_web4_contracts(
+        &self,
+    ) -> &HashMap<[u8; 32], crate::contracts::web4::Web4Contract> {
         &self.web4_contracts
     }
-    
+
     /// Check if a contract exists
     pub fn contract_exists(&self, contract_id: &[u8; 32]) -> bool {
-        self.token_contracts.contains_key(contract_id) || 
-        self.web4_contracts.contains_key(contract_id)
+        self.token_contracts.contains_key(contract_id)
+            || self.web4_contracts.contains_key(contract_id)
     }
-    
+
     /// Get the block height where a contract was deployed
     pub fn get_contract_block_height(&self, contract_id: &[u8; 32]) -> Option<u64> {
         self.contract_blocks.get(contract_id).copied()
@@ -9983,13 +11146,21 @@ impl Blockchain {
     /// Current file format version
     const FILE_VERSION: u16 = 4;
 
-    #[deprecated(since = "0.2.0", note = "Use Phase 2 incremental storage with SledStore instead")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use Phase 2 incremental storage with SledStore instead"
+    )]
     pub fn save_to_file(&self, path: &std::path::Path) -> Result<()> {
         use std::io::Write;
 
-        info!("💾 Saving blockchain to {} (height: {}, identities: {}, wallets: {}, tokens: {})",
-              path.display(), self.height, self.identity_registry.len(),
-              self.wallet_registry.len(), self.token_contracts.len());
+        info!(
+            "💾 Saving blockchain to {} (height: {}, identities: {}, wallets: {}, tokens: {})",
+            path.display(),
+            self.height,
+            self.identity_registry.len(),
+            self.wallet_registry.len(),
+            self.token_contracts.len()
+        );
 
         let start = std::time::Instant::now();
 
@@ -10021,8 +11192,12 @@ impl Blockchain {
         std::fs::rename(&temp_path, path)?;
 
         let elapsed = start.elapsed();
-        info!("💾 Blockchain saved successfully (v{}, {} bytes, {:?})",
-              Self::FILE_VERSION, file_data.len(), elapsed);
+        info!(
+            "💾 Blockchain saved successfully (v{}, {} bytes, {:?})",
+            Self::FILE_VERSION,
+            file_data.len(),
+            elapsed
+        );
 
         Ok(())
     }
@@ -10044,7 +11219,10 @@ impl Blockchain {
     /// ```ignore
     /// let blockchain = Blockchain::load_from_file(Path::new("./data/blockchain.dat"))?;
     /// ```
-    #[deprecated(since = "0.2.0", note = "Use Phase 2 incremental storage with SledStore instead")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use Phase 2 incremental storage with SledStore instead"
+    )]
     pub fn load_from_file(path: &std::path::Path) -> Result<Self> {
         info!("📂 Loading blockchain from {}", path.display());
 
@@ -10076,7 +11254,10 @@ impl Blockchain {
                         }
                         Err(storage_err) => {
                             // Fallback: v4 header but direct Blockchain format
-                            info!("📂 BlockchainStorageV4 failed, trying direct format: {}", storage_err);
+                            info!(
+                                "📂 BlockchainStorageV4 failed, trying direct format: {}",
+                                storage_err
+                            );
                             match bincode::deserialize::<Blockchain>(data) {
                                 Ok(bc) => {
                                     info!("📂 Loaded v4 with direct Blockchain format (legacy v4)");
@@ -10105,7 +11286,10 @@ impl Blockchain {
                         Err(storage_err) => {
                             // Fallback: v3 header but old direct Blockchain format
                             // (files saved between adding header and adding BlockchainStorageV3)
-                            info!("📂 BlockchainStorageV3 failed, trying direct format: {}", storage_err);
+                            info!(
+                                "📂 BlockchainStorageV3 failed, trying direct format: {}",
+                                storage_err
+                            );
                             match bincode::deserialize::<Blockchain>(data) {
                                 Ok(bc) => {
                                     info!("📂 Loaded v3 with direct Blockchain format (legacy v3)");
@@ -10116,7 +11300,8 @@ impl Blockchain {
                                     error!("   BlockchainStorageV3 error: {}", storage_err);
                                     error!("   Direct format error: {}", direct_err);
                                     return Err(anyhow::anyhow!(
-                                        "Failed to deserialize v3 blockchain: {}", storage_err
+                                        "Failed to deserialize v3 blockchain: {}",
+                                        storage_err
                                     ));
                                 }
                             }
@@ -10125,12 +11310,15 @@ impl Blockchain {
                 }
                 2 => {
                     // Future: V2 format migration
-                    return Err(anyhow::anyhow!("V2 format not supported - please use newer binary"));
+                    return Err(anyhow::anyhow!(
+                        "V2 format not supported - please use newer binary"
+                    ));
                 }
                 _ => {
                     return Err(anyhow::anyhow!(
                         "Unsupported blockchain file version: {}. This binary supports v{}",
-                        version, Self::FILE_VERSION
+                        version,
+                        Self::FILE_VERSION
                     ));
                 }
             }
@@ -10222,7 +11410,8 @@ impl Blockchain {
                     if let Ok(()) = token.mint(&recipient_pk, *amount) {
                         info!(
                             "Backfill: credited {} SOV to wallet {}",
-                            amount, &wallet_id[..16.min(wallet_id.len())]
+                            amount,
+                            &wallet_id[..16.min(wallet_id.len())]
                         );
                     }
                 }
@@ -10252,9 +11441,7 @@ impl Blockchain {
                     let current = token.balance_of(&recipient_pk);
                     if current > 0 && current < *expected {
                         let deficit = expected - current;
-                        if let Some(token_mut) =
-                            blockchain.token_contracts.get_mut(&sov_token_id)
-                        {
+                        if let Some(token_mut) = blockchain.token_contracts.get_mut(&sov_token_id) {
                             if let Ok(()) = token_mut.mint(&recipient_pk, deficit) {
                                 corrections += 1;
                                 info!(
@@ -10278,23 +11465,31 @@ impl Blockchain {
         }
 
         if let Err(e) = blockchain.process_approved_governance_proposals() {
-            warn!("Failed to apply governance parameter updates during load_from_file: {}", e);
+            warn!(
+                "Failed to apply governance parameter updates during load_from_file: {}",
+                e
+            );
         }
 
         // ORACLE-R4: Migrate epoch tracking if needed (legacy format used epoch IDs)
-        if blockchain.oracle_state.needs_epoch_tracking_migration(blockchain.last_oracle_epoch_processed) {
-            blockchain.last_oracle_epoch_processed = blockchain.oracle_state.migrate_epoch_tracking(
-                blockchain.last_oracle_epoch_processed
-            );
+        if blockchain
+            .oracle_state
+            .needs_epoch_tracking_migration(blockchain.last_oracle_epoch_processed)
+        {
+            blockchain.last_oracle_epoch_processed = blockchain
+                .oracle_state
+                .migrate_epoch_tracking(blockchain.last_oracle_epoch_processed);
         }
 
         // Catch up oracle epoch advancement for any epochs missed while offline
         // ORACLE-R4: Uses timestamp-based comparison for consistency
         if blockchain.oracle_state.should_process_epoch(
             blockchain.last_committed_timestamp(),
-            blockchain.last_oracle_epoch_processed
+            blockchain.last_oracle_epoch_processed,
         ) {
-            let current_epoch = blockchain.oracle_state.epoch_id(blockchain.last_committed_timestamp());
+            let current_epoch = blockchain
+                .oracle_state
+                .epoch_id(blockchain.last_committed_timestamp());
             blockchain.oracle_state.apply_pending_updates(current_epoch);
             blockchain.last_oracle_epoch_processed = blockchain.last_committed_timestamp();
             info!("🔮 Oracle caught up to epoch {} during load", current_epoch);
@@ -10337,8 +11532,11 @@ impl Blockchain {
                     return Ok((blockchain, true));
                 }
                 Err(e) => {
-                    error!("⚠️ Failed to load blockchain from {}: {}. Creating new blockchain.",
-                           path.display(), e);
+                    error!(
+                        "⚠️ Failed to load blockchain from {}: {}. Creating new blockchain.",
+                        path.display(),
+                        e
+                    );
                     // Don't delete the corrupt file - keep it for debugging
                     let backup_path = path.with_extension("dat.corrupt");
                     if let Err(rename_err) = std::fs::rename(path, &backup_path) {
@@ -10349,7 +11547,10 @@ impl Blockchain {
                 }
             }
         } else {
-            info!("📂 No existing blockchain found at {}, creating new blockchain", path.display());
+            info!(
+                "📂 No existing blockchain found at {}, creating new blockchain",
+                path.display()
+            );
         }
 
         let blockchain = Self::new()?;
@@ -10444,7 +11645,9 @@ impl Blockchain {
     pub fn update_confirmation_counts(&mut self) {
         for receipt in self.receipts.values_mut() {
             receipt.update_confirmations(self.height);
-            if receipt.is_finalized() && receipt.status != crate::receipts::TransactionStatus::Finalized {
+            if receipt.is_finalized()
+                && receipt.status != crate::receipts::TransactionStatus::Finalized
+            {
                 receipt.finalize();
             }
         }
@@ -10493,7 +11696,8 @@ impl Blockchain {
 
         for (block_height, tx_count) in finalized_data {
             // Collect transaction hashes for this block
-            let tx_hashes: Vec<Hash> = self.blocks
+            let tx_hashes: Vec<Hash> = self
+                .blocks
                 .iter()
                 .find(|b| b.header.height == block_height)
                 .map(|b| b.transactions.iter().map(|tx| tx.hash()).collect())
@@ -10535,8 +11739,11 @@ impl Blockchain {
                         // Don't fail finalization for event publishing errors
                     }
                 } else {
-                    warn!("Unexpected block hash size {} bytes for finalization event at height {}",
-                          block_hash_bytes.len(), block_height);
+                    warn!(
+                        "Unexpected block hash size {} bytes for finalization event at height {}",
+                        block_hash_bytes.len(),
+                        block_height
+                    );
                 }
             }
         }
@@ -10553,7 +11760,11 @@ impl Blockchain {
     // ========================================================================
 
     /// Detect if a new block creates a fork
-    pub fn detect_fork_at_height(&self, height: u64, new_block_hash: Hash) -> Option<crate::fork_recovery::ForkDetection> {
+    pub fn detect_fork_at_height(
+        &self,
+        height: u64,
+        new_block_hash: Hash,
+    ) -> Option<crate::fork_recovery::ForkDetection> {
         // Find existing block at this height
         let existing_block = self.blocks.iter().find(|b| b.header.height == height)?;
 
@@ -10588,7 +11799,10 @@ impl Blockchain {
         );
 
         self.fork_points.insert(height, fork_point);
-        info!("🍴 Fork recorded at height {}: {:?} -> {:?}", height, original_hash, forked_hash);
+        info!(
+            "🍴 Fork recorded at height {}: {:?} -> {:?}",
+            height, original_hash, forked_hash
+        );
     }
 
     /// Prevent reorg below finalized blocks
@@ -10630,7 +11844,11 @@ impl Blockchain {
     ///
     /// # Returns
     /// Number of blocks removed and replaced
-    pub async fn reorg_to_fork(&mut self, target_height: u64, new_blocks: Vec<Block>) -> Result<u64> {
+    pub async fn reorg_to_fork(
+        &mut self,
+        target_height: u64,
+        new_blocks: Vec<Block>,
+    ) -> Result<u64> {
         // Safety checks
         self.can_reorg_to_height_anyhow(target_height)?;
 
@@ -10650,10 +11868,16 @@ impl Blockchain {
         // Verify chain continuity
         for i in 1..new_blocks.len() {
             if new_blocks[i].header.height != new_blocks[i - 1].header.height + 1 {
-                return Err(anyhow::anyhow!("Block height gap in new chain at position {}", i));
+                return Err(anyhow::anyhow!(
+                    "Block height gap in new chain at position {}",
+                    i
+                ));
             }
             if new_blocks[i].header.previous_block_hash != new_blocks[i - 1].header.block_hash {
-                return Err(anyhow::anyhow!("Block chain linkage broken at position {}", i));
+                return Err(anyhow::anyhow!(
+                    "Block chain linkage broken at position {}",
+                    i
+                ));
             }
         }
 
@@ -10664,7 +11888,8 @@ impl Blockchain {
         );
 
         // Capture old block hash before removing blocks for audit trail
-        let old_block_hash = self.blocks
+        let old_block_hash = self
+            .blocks
             .iter()
             .find(|b| b.header.height == target_height)
             .map(|b| b.header.block_hash);
@@ -10735,12 +11960,16 @@ impl Blockchain {
         self.contract_states.insert(contract_id, new_state.clone());
 
         // Save snapshot for this block height
-        let snapshot = self.contract_state_history
+        let snapshot = self
+            .contract_state_history
             .entry(block_height)
             .or_insert_with(HashMap::new);
         snapshot.insert(contract_id, new_state);
 
-        debug!("💾 Contract state updated: {:?} at block {}", contract_id, block_height);
+        debug!(
+            "💾 Contract state updated: {:?} at block {}",
+            contract_id, block_height
+        );
         Ok(())
     }
 
@@ -10784,7 +12013,8 @@ impl Blockchain {
         }
 
         let prune_before = self.height.saturating_sub(keep_blocks - 1);
-        let keys_to_remove: Vec<u64> = self.contract_state_history
+        let keys_to_remove: Vec<u64> = self
+            .contract_state_history
             .iter()
             .filter(|(h, _)| **h < prune_before)
             .map(|(h, _)| *h)
@@ -10815,7 +12045,11 @@ impl Blockchain {
         // Save to snapshots map
         self.utxo_snapshots.insert(block_height, snapshot);
 
-        debug!("💾 UTXO snapshot saved at block {}: {} UTXOs", block_height, self.utxo_set.len());
+        debug!(
+            "💾 UTXO snapshot saved at block {}: {} UTXOs",
+            block_height,
+            self.utxo_set.len()
+        );
         Ok(())
     }
 
@@ -10846,7 +12080,8 @@ impl Blockchain {
         }
 
         let prune_before = self.height.saturating_sub(keep_blocks - 1);
-        let keys_to_remove: Vec<u64> = self.utxo_snapshots
+        let keys_to_remove: Vec<u64> = self
+            .utxo_snapshots
             .iter()
             .filter(|(h, _)| **h < prune_before)
             .map(|(h, _)| *h)
@@ -10871,7 +12106,11 @@ impl Blockchain {
     pub fn restore_utxo_set_from_snapshot(&mut self, height: u64) -> Result<()> {
         if let Some(snapshot) = self.utxo_snapshots.get(&height) {
             self.utxo_set = snapshot.clone();
-            info!("🔄 UTXO set restored from snapshot at height {}: {} UTXOs", height, self.utxo_set.len());
+            info!(
+                "🔄 UTXO set restored from snapshot at height {}: {} UTXOs",
+                height,
+                self.utxo_set.len()
+            );
             Ok(())
         } else {
             anyhow::bail!("No UTXO snapshot found at height {}", height)
@@ -10943,7 +12182,9 @@ impl Blockchain {
 
             // Check if due for payout
             let is_due = match entry.last_payout_block {
-                Some(last_block) => current_block.saturating_sub(last_block) >= Self::BLOCKS_PER_DAY,
+                Some(last_block) => {
+                    current_block.saturating_sub(last_block) >= Self::BLOCKS_PER_DAY
+                }
                 None => true, // Never received payout, eligible immediately
             };
 
@@ -11011,7 +12252,9 @@ impl Blockchain {
             }
 
             let is_due = match entry.last_payout_block {
-                Some(last_block) => current_block.saturating_sub(last_block) >= Self::BLOCKS_PER_DAY,
+                Some(last_block) => {
+                    current_block.saturating_sub(last_block) >= Self::BLOCKS_PER_DAY
+                }
                 None => true,
             };
 
@@ -11061,10 +12304,18 @@ impl Blockchain {
     ///
     /// Called when a new citizen identity is registered. Adds them to the UBI registry
     /// for automatic daily payouts.
-    pub fn register_for_ubi(&mut self, identity_id: String, ubi_wallet_id: String, current_block: u64) -> Result<()> {
+    pub fn register_for_ubi(
+        &mut self,
+        identity_id: String,
+        ubi_wallet_id: String,
+        current_block: u64,
+    ) -> Result<()> {
         // Check if already registered
         if self.ubi_registry.contains_key(&identity_id) {
-            return Err(anyhow::anyhow!("Identity {} already registered for UBI", identity_id));
+            return Err(anyhow::anyhow!(
+                "Identity {} already registered for UBI",
+                identity_id
+            ));
         }
 
         let monthly_amount = 1000u64; // 1000 SOV per month
@@ -11147,14 +12398,16 @@ impl Blockchain {
     ) -> anyhow::Result<()> {
         self.ensure_sov_token_contract();
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        let token = self.token_contracts.get_mut(&sov_token_id)
-            .ok_or_else(|| anyhow::anyhow!("SOV token contract not found after ensure_sov_token_contract"))?;
+        let token = self.token_contracts.get_mut(&sov_token_id).ok_or_else(|| {
+            anyhow::anyhow!("SOV token contract not found after ensure_sov_token_contract")
+        })?;
         let recipient = crate::integration::crypto_integration::PublicKey {
             dilithium_pk: vec![],
             kyber_pk: vec![],
             key_id: recipient_key_id,
         };
-        token.mint(&recipient, amount)
+        token
+            .mint(&recipient, amount)
             .map_err(|e| anyhow::anyhow!("POUW SOV mint failed: {}", e))?;
         Ok(())
     }
@@ -11203,11 +12456,7 @@ mod replay_contract_execution_tests {
         }
     }
 
-    fn contract_execution_tx(
-        signer: &PublicKey,
-        method: &str,
-        params: Vec<u8>,
-    ) -> Transaction {
+    fn contract_execution_tx(signer: &PublicKey, method: &str, params: Vec<u8>) -> Transaction {
         let call = ContractCall::token_call(method.to_string(), params);
         let payload = bincode::serialize(&(call, test_signature(signer)))
             .expect("contract call payload should serialize");
@@ -11321,8 +12570,14 @@ mod replay_contract_execution_tests {
         assert_eq!(direct_token.balance_of(&recipient), 250);
 
         assert_eq!(replayed_token.total_supply, direct_token.total_supply);
-        assert_eq!(replayed_token.balance_of(&creator), direct_token.balance_of(&creator));
-        assert_eq!(replayed_token.balance_of(&recipient), direct_token.balance_of(&recipient));
+        assert_eq!(
+            replayed_token.balance_of(&creator),
+            direct_token.balance_of(&creator)
+        );
+        assert_eq!(
+            replayed_token.balance_of(&recipient),
+            direct_token.balance_of(&recipient)
+        );
     }
 
     #[test]
@@ -11359,7 +12614,10 @@ mod replay_contract_execution_tests {
             .expect("contract execution should succeed");
 
         // Verify contract_blocks is updated with the correct block height
-        assert!(blockchain.token_contracts.contains_key(&token_id), "Token contract should exist");
+        assert!(
+            blockchain.token_contracts.contains_key(&token_id),
+            "Token contract should exist"
+        );
         assert_eq!(
             blockchain.get_contract_block_height(&token_id),
             Some(42),
@@ -11516,7 +12774,11 @@ mod replay_contract_execution_tests {
                 state_root: Hash::default(),
                 fee_model_version: 2,
             },
-            transactions: vec![dao_registry_tx(Blockchain::DAO_REGISTRY_REGISTER_EXEC, 0x11, 0x22)],
+            transactions: vec![dao_registry_tx(
+                Blockchain::DAO_REGISTRY_REGISTER_EXEC,
+                0x11,
+                0x22,
+            )],
         };
         let block2 = Block {
             header: BlockHeader {
@@ -11534,7 +12796,11 @@ mod replay_contract_execution_tests {
                 state_root: Hash::default(),
                 fee_model_version: 2,
             },
-            transactions: vec![dao_registry_tx(Blockchain::DAO_FACTORY_CREATE_EXEC, 0x33, 0x44)],
+            transactions: vec![dao_registry_tx(
+                Blockchain::DAO_FACTORY_CREATE_EXEC,
+                0x33,
+                0x44,
+            )],
         };
 
         let mut incremental = Blockchain::default();
@@ -11603,7 +12869,11 @@ mod store_backed_blockchain_tests {
         bc.add_block(genesis.clone())
             .await
             .expect("genesis should apply without error");
-        assert_eq!(bc.get_height(), 1, "blockchain height should be 1 after genesis");
+        assert_eq!(
+            bc.get_height(),
+            1,
+            "blockchain height should be 1 after genesis"
+        );
 
         // Block 1 — also verifies no double begin_block/commit_block regression
         let block1_header = make_header(1, genesis_header.block_hash);
@@ -11611,7 +12881,11 @@ mod store_backed_blockchain_tests {
         bc.add_block(block1)
             .await
             .expect("block 1 should apply without error");
-        assert_eq!(bc.get_height(), 2, "blockchain height should be 2 after block 1");
+        assert_eq!(
+            bc.get_height(),
+            2,
+            "blockchain height should be 2 after block 1"
+        );
 
         // Verify the store sees the committed blocks
         assert_eq!(
@@ -11631,10 +12905,12 @@ mod oracle_storage_migration_tests {
     fn load_v3_file_applies_default_oracle_state() {
         let mut blockchain = Blockchain::default();
         blockchain.oracle_state.config.epoch_duration_secs = 999;
-        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
-            epoch_id: 1,
-            sov_usd_price: 123_000_000,
-        });
+        blockchain
+            .oracle_state
+            .try_finalize_price(crate::oracle::FinalizedOraclePrice {
+                epoch_id: 1,
+                sov_usd_price: 123_000_000,
+            });
 
         // Emulate pre-oracle v3 payload (without oracle fields).
         let storage_v3 = BlockchainStorageV3::from_blockchain(&blockchain);
@@ -11663,51 +12939,80 @@ mod oracle_storage_migration_tests {
     #[test]
     fn test_blockchain_storage_v4_oracle_pending_update() {
         let mut bc = Blockchain::new().unwrap();
-        bc.oracle_state.committee.set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
-        
+        bc.oracle_state
+            .committee
+            .set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
+
         // Schedule update
-        let result = bc.oracle_state.schedule_committee_update(vec![[5u8; 32], [6u8; 32], [7u8; 32]], 10, 0, None);
+        let result = bc.oracle_state.schedule_committee_update(
+            vec![[5u8; 32], [6u8; 32], [7u8; 32]],
+            10,
+            0,
+            None,
+        );
         assert!(result.is_ok());
-        
-        println!("Before: pending_update = {:?}", bc.oracle_state.committee.pending_update());
-        
+
+        println!(
+            "Before: pending_update = {:?}",
+            bc.oracle_state.committee.pending_update()
+        );
+
         // Convert to storage V4 and back
         let storage = BlockchainStorageV4::from_blockchain(&bc);
-        println!("Storage: pending_update = {:?}", storage.oracle_state.committee.pending_update());
-        
+        println!(
+            "Storage: pending_update = {:?}",
+            storage.oracle_state.committee.pending_update()
+        );
+
         let bc2 = storage.to_blockchain();
-        println!("After: pending_update = {:?}", bc2.oracle_state.committee.pending_update());
-        
-        assert!(bc2.oracle_state.committee.pending_update().is_some(), "pending_update should survive V4 round-trip");
+        println!(
+            "After: pending_update = {:?}",
+            bc2.oracle_state.committee.pending_update()
+        );
+
+        assert!(
+            bc2.oracle_state.committee.pending_update().is_some(),
+            "pending_update should survive V4 round-trip"
+        );
     }
 
     #[test]
     fn test_blockchain_save_load_oracle_pending_update() {
         let mut bc = Blockchain::new().unwrap();
-        bc.oracle_state.committee.set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
-        
+        bc.oracle_state
+            .committee
+            .set_members_for_test(vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]);
+
         // Schedule update for a future epoch
-        let result = bc.oracle_state.schedule_committee_update(vec![[5u8; 32], [6u8; 32], [7u8; 32]], 10, 0, None);
+        let result = bc.oracle_state.schedule_committee_update(
+            vec![[5u8; 32], [6u8; 32], [7u8; 32]],
+            10,
+            0,
+            None,
+        );
         assert!(result.is_ok());
-        
+
         // Set last_oracle_epoch_processed to current timestamp to prevent apply_pending_updates
         // from activating the update during load (since genesis timestamp >> 0)
         bc.last_oracle_epoch_processed = bc.last_committed_timestamp();
-        
+
         // Save to temp file
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("test.dat");
-        
+
         #[allow(deprecated)]
         bc.save_to_file(&path).expect("save should succeed");
-        
+
         // Load from file
         #[allow(deprecated)]
         let bc2 = Blockchain::load_from_file(&path).expect("load should succeed");
-        
+
         // Verify pending update survived
-        assert!(bc2.oracle_state.committee.pending_update().is_some(), 
-            "pending_update should survive save/load, got: {:?}", bc2.oracle_state.committee.pending_update());
+        assert!(
+            bc2.oracle_state.committee.pending_update().is_some(),
+            "pending_update should survive save/load, got: {:?}",
+            bc2.oracle_state.committee.pending_update()
+        );
     }
 }
 
@@ -11724,8 +13029,10 @@ impl Blockchain {
         if !self.oracle_state.committee.members().is_empty() {
             return Err(anyhow::anyhow!("Oracle committee already initialized"));
         }
-        
-        self.oracle_state.committee.set_members_genesis_only(members);
+
+        self.oracle_state
+            .committee
+            .set_members_genesis_only(members);
         Ok(())
     }
 
@@ -11910,6 +13217,47 @@ impl Blockchain {
         self.blocks.push(Self::make_minimal_test_block(vec![tx]));
     }
 
+    /// Push a governance-parameter-update DAO proposal into `self.blocks` for test use.
+    /// Bypasses block validation — do NOT call outside of unit tests.
+    pub fn push_test_governance_parameter_proposal(
+        &mut self,
+        proposal_id: Hash,
+        quorum: u8,
+        updates: Vec<lib_consensus::dao::dao_types::GovernanceParameterValue>,
+    ) {
+        use crate::transaction::DaoProposalData;
+        use lib_consensus::dao::dao_types::{
+            DaoExecutionAction, DaoExecutionParams, GovernanceParameterUpdate,
+        };
+
+        let params = DaoExecutionParams {
+            action: DaoExecutionAction::GovernanceParameterUpdate(GovernanceParameterUpdate {
+                updates,
+            }),
+        };
+        let params_bytes = bincode::serialize(&params).expect("DaoExecutionParams must serialize");
+        let tx = Transaction::new_dao_proposal(
+            DaoProposalData {
+                proposal_id,
+                proposer: "did:zhtp:test".to_string(),
+                title: "Governance Update".to_string(),
+                description: "Test governance update".to_string(),
+                proposal_type: "governance_parameter_update".to_string(),
+                voting_period_blocks: 1000,
+                quorum_required: quorum,
+                execution_params: Some(params_bytes),
+                created_at: 0,
+                created_at_height: 0,
+            },
+            vec![],
+            vec![],
+            0,
+            Signature::default(),
+            vec![],
+        );
+        self.blocks.push(Self::make_minimal_test_block(vec![tx]));
+    }
+
     /// Push a minimal DAO vote into `self.blocks` for test use.
     /// Bypasses block validation — do NOT call outside of unit tests.
     pub fn push_test_dao_vote(&mut self, proposal_id: Hash, voter: &str, choice: &str) {
@@ -12068,7 +13416,7 @@ impl Blockchain {
 
         // ORACLE-5 / ORACLE-R3: Get fresh oracle price with staleness check
         let current_epoch = self.oracle_state.epoch_id(block_timestamp);
-        
+
         let fresh_price = self.oracle_state.latest_fresh_price(current_epoch)
             .ok_or_else(|| anyhow::anyhow!(
                 "CBE graduation blocked: no fresh finalized oracle price available (current_epoch={})",
@@ -12079,19 +13427,17 @@ impl Blockchain {
         // usd_value = (reserve_sov * sov_usd_price) / ORACLE_PRICE_SCALE
         let reserve_sov = token.reserve_balance as u128;
         let sov_usd_price = fresh_price.sov_usd_price;
-        
+
         // Use checked arithmetic for safety
-        let usd_value_scaled = reserve_sov
-            .checked_mul(sov_usd_price)
-            .ok_or_else(|| anyhow::anyhow!(
-                "CBE graduation blocked: arithmetic overflow in USD value calculation"
-            ))?;
-        
+        let usd_value_scaled = reserve_sov.checked_mul(sov_usd_price).ok_or_else(|| {
+            anyhow::anyhow!("CBE graduation blocked: arithmetic overflow in USD value calculation")
+        })?;
+
         let usd_value_micro = usd_value_scaled
             .checked_div(ORACLE_PRICE_SCALE)
-            .ok_or_else(|| anyhow::anyhow!(
-                "CBE graduation blocked: division by zero in USD value calculation"
-            ))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("CBE graduation blocked: division by zero in USD value calculation")
+            })?;
 
         // Convert threshold to micro-USD for comparison
         // threshold_micro = $269,000 * 1_000_000 (since 1 USD = 1_000_000 micro-USD)
@@ -12114,7 +13460,9 @@ impl Blockchain {
 
     fn validate_block_cbe_graduation_gating(&self, block: &Block) -> Result<()> {
         for tx in &block.transactions {
-            if tx.transaction_type != crate::types::transaction_type::TransactionType::BondingCurveGraduate {
+            if tx.transaction_type
+                != crate::types::transaction_type::TransactionType::BondingCurveGraduate
+            {
                 continue;
             }
             let data = tx
@@ -12178,8 +13526,11 @@ impl Blockchain {
         self.treasury_frozen = true;
         self.treasury_frozen_at = Some(self.height);
         self.treasury_freeze_expiry = Some(self.height + 10_080); // ~1 week at 10s blocks
-        // Store validator DIDs with empty signatures (signatures verified separately)
-        self.treasury_freeze_signatures = validator_dids.into_iter().map(|d| (d, Vec::new())).collect();
+                                                                  // Store validator DIDs with empty signatures (signatures verified separately)
+        self.treasury_freeze_signatures = validator_dids
+            .into_iter()
+            .map(|d| (d, Vec::new()))
+            .collect();
 
         Ok(())
     }
@@ -12192,15 +13543,24 @@ impl Blockchain {
         reason: String,
     ) -> Result<()> {
         // Verify signer is a council member
-        if !self.council_members.iter().any(|m| m.identity_id == signer_did) {
+        if !self
+            .council_members
+            .iter()
+            .any(|m| m.identity_id == signer_did)
+        {
             return Err(anyhow::anyhow!("Signer is not a council member"));
         }
 
-        let vetoes = self.pending_vetoes.entry(proposal_id.as_array()).or_default();
-        
+        let vetoes = self
+            .pending_vetoes
+            .entry(proposal_id.as_array())
+            .or_default();
+
         // Check for duplicate veto
         if vetoes.iter().any(|(did, _)| did == &signer_did) {
-            return Err(anyhow::anyhow!("Council member already vetoed this proposal"));
+            return Err(anyhow::anyhow!(
+                "Council member already vetoed this proposal"
+            ));
         }
 
         vetoes.push((signer_did, reason));
@@ -12215,15 +13575,24 @@ impl Blockchain {
         signature: Vec<u8>,
     ) -> Result<()> {
         // Verify signer is a council member
-        if !self.council_members.iter().any(|m| m.identity_id == signer_did) {
+        if !self
+            .council_members
+            .iter()
+            .any(|m| m.identity_id == signer_did)
+        {
             return Err(anyhow::anyhow!("Signer is not a council member"));
         }
 
-        let cosigns = self.pending_cosigns.entry(proposal_id.as_array()).or_default();
-        
+        let cosigns = self
+            .pending_cosigns
+            .entry(proposal_id.as_array())
+            .or_default();
+
         // Check for duplicate cosign
         if cosigns.iter().any(|(did, _)| did == &signer_did) {
-            return Err(anyhow::anyhow!("Council member already cosigned this proposal"));
+            return Err(anyhow::anyhow!(
+                "Council member already cosigned this proposal"
+            ));
         }
 
         cosigns.push((signer_did, signature));
@@ -12275,13 +13644,14 @@ impl Blockchain {
         self.oracle_state.committee.remove_member(key_id);
 
         // 4. Record the slash event
-        self.oracle_slash_events.push(crate::oracle::OracleSlashEvent {
-            validator_key_id: key_id,
-            reason,
-            epoch_id,
-            slash_amount,
-            slashed_at_height: self.height,
-        });
+        self.oracle_slash_events
+            .push(crate::oracle::OracleSlashEvent {
+                validator_key_id: key_id,
+                reason,
+                epoch_id,
+                slash_amount,
+                slashed_at_height: self.height,
+            });
 
         if slash_amount > 0 {
             warn!(
@@ -12307,8 +13677,8 @@ impl Blockchain {
 #[cfg(test)]
 mod cbe_graduation_oracle_gate_tests {
     use super::*;
-    use crate::contracts::tokens::CBE_SYMBOL;
     use crate::contracts::bonding_curve::{BondingCurveToken, Phase};
+    use crate::contracts::tokens::CBE_SYMBOL;
 
     fn create_test_cbe_token(reserve_micro_usd: u64) -> BondingCurveToken {
         BondingCurveToken {
@@ -12340,14 +13710,15 @@ mod cbe_graduation_oracle_gate_tests {
         let token = create_test_cbe_token(300_000_000_000); // $300K reserve
         blockchain.bonding_curve_registry.register(token).unwrap();
 
-        let result = blockchain.validate_cbe_graduation_oracle_gate(
-            [1u8; 32],
-            1_700_000_000
-        );
+        let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], 1_700_000_000);
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("no fresh finalized oracle price"), "Error: {}", err_msg);
+        assert!(
+            err_msg.contains("no fresh finalized oracle price"),
+            "Error: {}",
+            err_msg
+        );
     }
 
     #[test]
@@ -12357,10 +13728,12 @@ mod cbe_graduation_oracle_gate_tests {
         blockchain.bonding_curve_registry.register(token).unwrap();
 
         // Set a finalized price at epoch 0
-        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
-            epoch_id: 0,
-            sov_usd_price: 100_000_000, // $1.00
-        });
+        blockchain
+            .oracle_state
+            .try_finalize_price(crate::oracle::FinalizedOraclePrice {
+                epoch_id: 0,
+                sov_usd_price: 100_000_000, // $1.00
+            });
 
         // Configure oracle to have short staleness window
         blockchain.oracle_state.config.max_price_staleness_epochs = 5;
@@ -12368,14 +13741,15 @@ mod cbe_graduation_oracle_gate_tests {
 
         // Try to graduate at timestamp that puts us at epoch 10 (stale)
         let block_timestamp = 10 * 300; // epoch 10
-        let result = blockchain.validate_cbe_graduation_oracle_gate(
-            [1u8; 32],
-            block_timestamp
-        );
+        let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], block_timestamp);
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("no fresh finalized oracle price"), "Error: {}", err_msg);
+        assert!(
+            err_msg.contains("no fresh finalized oracle price"),
+            "Error: {}",
+            err_msg
+        );
     }
 
     #[test]
@@ -12385,20 +13759,19 @@ mod cbe_graduation_oracle_gate_tests {
         blockchain.bonding_curve_registry.register(token).unwrap();
 
         // Set a finalized price at epoch 5
-        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
-            epoch_id: 5,
-            sov_usd_price: 100_000_000, // $1.00
-        });
+        blockchain
+            .oracle_state
+            .try_finalize_price(crate::oracle::FinalizedOraclePrice {
+                epoch_id: 5,
+                sov_usd_price: 100_000_000, // $1.00
+            });
 
         blockchain.oracle_state.config.max_price_staleness_epochs = 10;
         blockchain.oracle_state.config.epoch_duration_secs = 300;
 
         // Try to graduate at epoch 10 (age = 5, within threshold)
         let block_timestamp = 10 * 300;
-        let result = blockchain.validate_cbe_graduation_oracle_gate(
-            [1u8; 32],
-            block_timestamp
-        );
+        let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], block_timestamp);
 
         assert!(result.is_ok(), "Expected Ok but got: {:?}", result);
     }
@@ -12411,19 +13784,18 @@ mod cbe_graduation_oracle_gate_tests {
         blockchain.bonding_curve_registry.register(token).unwrap();
 
         // Set a finalized price at current epoch
-        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
-            epoch_id: 10,
-            sov_usd_price: 100_000_000,
-        });
+        blockchain
+            .oracle_state
+            .try_finalize_price(crate::oracle::FinalizedOraclePrice {
+                epoch_id: 10,
+                sov_usd_price: 100_000_000,
+            });
 
         blockchain.oracle_state.config.max_price_staleness_epochs = 10;
         blockchain.oracle_state.config.epoch_duration_secs = 300;
 
         let block_timestamp = 10 * 300; // same epoch as finalized price
-        let result = blockchain.validate_cbe_graduation_oracle_gate(
-            [1u8; 32],
-            block_timestamp
-        );
+        let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], block_timestamp);
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
@@ -12437,21 +13809,24 @@ mod cbe_graduation_oracle_gate_tests {
         let token = create_test_cbe_token(269_000_000_000);
         blockchain.bonding_curve_registry.register(token).unwrap();
 
-        blockchain.oracle_state.try_finalize_price(crate::oracle::FinalizedOraclePrice {
-            epoch_id: 10,
-            sov_usd_price: 100_000_000,
-        });
+        blockchain
+            .oracle_state
+            .try_finalize_price(crate::oracle::FinalizedOraclePrice {
+                epoch_id: 10,
+                sov_usd_price: 100_000_000,
+            });
 
         blockchain.oracle_state.config.max_price_staleness_epochs = 10;
         blockchain.oracle_state.config.epoch_duration_secs = 300;
 
         let block_timestamp = 10 * 300;
-        let result = blockchain.validate_cbe_graduation_oracle_gate(
-            [1u8; 32],
-            block_timestamp
-        );
+        let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], block_timestamp);
 
-        assert!(result.is_ok(), "Expected Ok for exact threshold boundary but got: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected Ok for exact threshold boundary but got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -12462,10 +13837,7 @@ mod cbe_graduation_oracle_gate_tests {
         blockchain.bonding_curve_registry.register(token).unwrap();
 
         // No oracle price needed for non-CBE tokens
-        let result = blockchain.validate_cbe_graduation_oracle_gate(
-            [1u8; 32],
-            1_700_000_000
-        );
+        let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], 1_700_000_000);
 
         assert!(result.is_ok(), "Non-CBE tokens should skip oracle gate");
     }
@@ -12478,11 +13850,11 @@ mod cbe_graduation_oracle_gate_tests {
         blockchain.bonding_curve_registry.register(token).unwrap();
 
         // No oracle price needed for already-graduated tokens
-        let result = blockchain.validate_cbe_graduation_oracle_gate(
-            [1u8; 32],
-            1_700_000_000
-        );
+        let result = blockchain.validate_cbe_graduation_oracle_gate([1u8; 32], 1_700_000_000);
 
-        assert!(result.is_ok(), "Already graduated tokens should skip oracle gate");
+        assert!(
+            result.is_ok(),
+            "Already graduated tokens should skip oracle gate"
+        );
     }
 }

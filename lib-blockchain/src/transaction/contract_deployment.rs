@@ -6,8 +6,8 @@
 //! Both `encode_memo` and `decode_memo` use `bincode::DefaultOptions::new().with_limit(...)` to
 //! guarantee deterministic round-trip compatibility required for consensus serialization.
 
-use serde::{Deserialize, Serialize};
 use bincode::Options;
+use serde::{Deserialize, Serialize};
 
 /// Shared bincode options used by both `encode_memo` and `decode_memo` to guarantee
 /// deterministic round-trip compatibility required for consensus serialization.
@@ -163,7 +163,8 @@ mod tests {
     fn test_encode_decode_round_trip() {
         let payload = valid_payload();
         let memo = payload.encode_memo().expect("encode should succeed");
-        let decoded = ContractDeploymentPayloadV1::decode_memo(&memo).expect("decode should succeed");
+        let decoded =
+            ContractDeploymentPayloadV1::decode_memo(&memo).expect("decode should succeed");
         assert_eq!(payload, decoded);
     }
 
@@ -172,7 +173,9 @@ mod tests {
     fn test_decode_rejects_missing_prefix() {
         let result = ContractDeploymentPayloadV1::decode_memo(b"not_a_valid_memo");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("missing deployment memo prefix"));
+        assert!(result
+            .unwrap_err()
+            .contains("missing deployment memo prefix"));
     }
 
     /// A payload that fails validation must not be encodable.
@@ -197,7 +200,9 @@ mod tests {
             gas_limit: crate::execution_limits::MAX_TX_GAS,
             memory_limit_bytes: MAX_DEPLOYMENT_MEMORY_BYTES,
         };
-        let memo = payload.encode_memo().expect("near-bounds encode should succeed");
+        let memo = payload
+            .encode_memo()
+            .expect("near-bounds encode should succeed");
         let decoded = ContractDeploymentPayloadV1::decode_memo(&memo)
             .expect("near-bounds decode should succeed");
         assert_eq!(payload, decoded);

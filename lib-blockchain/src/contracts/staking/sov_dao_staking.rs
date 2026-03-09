@@ -16,12 +16,12 @@
 //! - Non-Profit DAOs: Recommended ~50,000 SOV
 //! - For-Profit DAOs: Recommended ~200,000 SOV
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use anyhow::{Result, anyhow};
 use crate::integration::crypto_integration::PublicKey;
 use crate::types::dao::DAOType;
+use anyhow::{anyhow, Result};
 use blake3;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Global protocol-level guardrails for staking
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +37,7 @@ pub struct GlobalStakingGuardrails {
 impl Default for GlobalStakingGuardrails {
     fn default() -> Self {
         Self {
-            min_threshold: 10_000_00000000,    // 10,000 SOV (8 decimals)
+            min_threshold: 10_000_00000000,     // 10,000 SOV (8 decimals)
             max_threshold: 10_000_000_00000000, // 10,000,000 SOV (8 decimals)
             governance_addr: PublicKey {
                 dilithium_pk: vec![],
@@ -163,7 +163,10 @@ impl SovDaoStaking {
 
         // Validate min stakers (at least 10)
         if min_stakers < 10 {
-            return Err(anyhow!("Min stakers must be at least 10, got {}", min_stakers));
+            return Err(anyhow!(
+                "Min stakers must be at least 10, got {}",
+                min_stakers
+            ));
         }
 
         // Validate deadline (30-365 days, assuming 10s blocks = 8,640 blocks/day)
@@ -174,7 +177,9 @@ impl SovDaoStaking {
         if deadline_blocks < min_deadline_blocks || deadline_blocks > max_deadline_blocks {
             return Err(anyhow!(
                 "Deadline must be 30-365 days ({}-{} blocks at 10s/block), got {} blocks",
-                min_deadline_blocks, max_deadline_blocks, deadline_blocks
+                min_deadline_blocks,
+                max_deadline_blocks,
+                deadline_blocks
             ));
         }
 
@@ -258,7 +263,9 @@ impl SovDaoStaking {
 
         if let Some(pos) = existing_pos {
             // Add to existing position
-            pos.amount = pos.amount.checked_add(amount)
+            pos.amount = pos
+                .amount
+                .checked_add(amount)
                 .ok_or_else(|| anyhow!("Stake amount overflow"))?;
         } else {
             // Create new position
@@ -280,7 +287,8 @@ impl SovDaoStaking {
             .ok_or_else(|| anyhow!("Total staked overflow"))?;
 
         // Update contract total
-        self.total_staked_sov = self.total_staked_sov
+        self.total_staked_sov = self
+            .total_staked_sov
             .checked_add(amount)
             .ok_or_else(|| anyhow!("Total SOV locked overflow"))?;
 
@@ -323,11 +331,7 @@ impl SovDaoStaking {
     }
 
     /// Claim DAO tokens for a staker after DAO launch
-    pub fn claim_dao_tokens(
-        &mut self,
-        dao_id: [u8; 32],
-        caller: PublicKey,
-    ) -> Result<u64> {
+    pub fn claim_dao_tokens(&mut self, dao_id: [u8; 32], caller: PublicKey) -> Result<u64> {
         // Verify DAO is launched
         let _launched_dao = self
             .launched_daos
@@ -701,7 +705,9 @@ mod tests {
         }
 
         // First staker claims tokens
-        let tokens = staking.claim_dao_tokens(dao_id, test_public_key(2)).unwrap();
+        let tokens = staking
+            .claim_dao_tokens(dao_id, test_public_key(2))
+            .unwrap();
         assert_eq!(tokens, 5_000_00000000); // 1:1 ratio
     }
 

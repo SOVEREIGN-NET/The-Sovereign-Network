@@ -3,11 +3,10 @@
 //! Generates realistic PoUW receipts for stress testing the validation pipeline.
 
 use crate::pouw::types::{
-    ChallengeToken, Receipt, SignedReceipt, Policy, ProofType,
-    DEFAULT_CHALLENGE_TTL_SECS, DEFAULT_MAX_RECEIPTS, DEFAULT_MAX_BYTES_TOTAL,
-    DEFAULT_MIN_BYTES_PER_RECEIPT, POUW_VERSION,
+    ChallengeToken, Policy, ProofType, Receipt, SignedReceipt, DEFAULT_CHALLENGE_TTL_SECS,
+    DEFAULT_MAX_BYTES_TOTAL, DEFAULT_MAX_RECEIPTS, DEFAULT_MIN_BYTES_PER_RECEIPT, POUW_VERSION,
 };
-use rand::{Rng, thread_rng};
+use rand::{thread_rng, Rng};
 use std::time::{Duration, Instant};
 
 /// Configuration for load test generation
@@ -65,7 +64,7 @@ impl ProofTypeDistribution {
     pub fn select_proof_type(&self) -> ProofType {
         let mut rng = thread_rng();
         let roll: f32 = rng.gen_range(0.0..100.0);
-        
+
         if roll < self.hash_percent {
             ProofType::Hash
         } else if roll < self.hash_percent + self.merkle_percent {
@@ -103,7 +102,7 @@ impl SyntheticReceiptGenerator {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         // Create a policy for the proof type
         let policy = Policy {
             max_receipts: DEFAULT_MAX_RECEIPTS,
@@ -111,7 +110,7 @@ impl SyntheticReceiptGenerator {
             min_bytes_per_receipt: DEFAULT_MIN_BYTES_PER_RECEIPT,
             allowed_proof_types: vec![proof_type],
         };
-        
+
         // Generate challenge with proper types
         ChallengeToken {
             version: POUW_VERSION,
@@ -132,10 +131,10 @@ impl SyntheticReceiptGenerator {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         // Select a random client DID
         let client_did = self.client_dids[rng.gen_range(0..self.client_dids.len())].clone();
-        
+
         // Select proof type from the challenge policy
         let proof_type = if challenge.policy.allowed_proof_types.is_empty() {
             ProofType::Hash
@@ -145,7 +144,7 @@ impl SyntheticReceiptGenerator {
 
         // Generate bytes verified (between min and a reasonable max)
         let bytes_verified = rng.gen_range(
-            challenge.policy.min_bytes_per_receipt..=challenge.policy.min_bytes_per_receipt * 10
+            challenge.policy.min_bytes_per_receipt..=challenge.policy.min_bytes_per_receipt * 10,
         );
 
         let receipt = Receipt {
@@ -190,14 +189,14 @@ impl SyntheticReceiptGenerator {
     pub fn generate_batch(&self, size: usize) -> Vec<(ChallengeToken, SignedReceipt)> {
         let mut rng = thread_rng();
         let mut batch = Vec::with_capacity(size);
-        
+
         for _ in 0..size {
             let challenge = self.generate_challenge();
             let valid = rng.gen_range(0.0..100.0) >= self.config.invalid_receipt_percentage;
             let receipt = self.generate_receipt(&challenge, valid);
             batch.push((challenge, receipt));
         }
-        
+
         batch
     }
 
@@ -250,7 +249,7 @@ impl LoadTestResults {
         } else {
             0.0
         };
-        
+
         format!(
             "Load Test Results:\n\
              - Duration: {:?}\n\
@@ -264,8 +263,10 @@ impl LoadTestResults {
              - Latency P99: {} us",
             self.duration,
             self.total_submitted,
-            self.accepted, accepted_pct,
-            self.rejected, rejected_pct,
+            self.accepted,
+            accepted_pct,
+            self.rejected,
+            rejected_pct,
             self.errors,
             self.throughput_rps,
             self.p50_latency_us,
@@ -284,27 +285,31 @@ pub async fn run_load_test(config: LoadTestConfig) -> LoadTestResults {
 
     // Calculate how many batches to generate
     // Use as_secs_f64() to handle sub-second durations correctly
-    let total_receipts = (config.receipts_per_second as f64 * config.duration.as_secs_f64()).ceil() as usize;
+    let total_receipts =
+        (config.receipts_per_second as f64 * config.duration.as_secs_f64()).ceil() as usize;
     // Ensure at least one batch for short durations
-    let num_batches = std::cmp::max(1, (total_receipts + config.batch_size - 1) / config.batch_size);
+    let num_batches = std::cmp::max(
+        1,
+        (total_receipts + config.batch_size - 1) / config.batch_size,
+    );
 
     for _ in 0..num_batches {
         let batch_start = Instant::now();
         let batch = generator.generate_batch(config.batch_size);
-        
+
         for (challenge, receipt) in batch {
             results.total_submitted += 1;
-            
+
             // Simulate validation (would call actual validator in real test)
             let validation_start = Instant::now();
-            
+
             // Simplified validation: check task_id matches challenge
             let is_valid = receipt.receipt.task_id == challenge.task_id
                 && receipt.receipt.challenge_nonce == challenge.challenge_nonce;
-            
+
             let latency = validation_start.elapsed().as_micros() as u64;
             latencies.push(latency);
-            
+
             if is_valid {
                 results.accepted += 1;
             } else {
@@ -313,9 +318,8 @@ pub async fn run_load_test(config: LoadTestConfig) -> LoadTestResults {
         }
 
         // Rate limiting to match target throughput
-        let expected_duration = Duration::from_secs_f64(
-            config.batch_size as f64 / config.receipts_per_second as f64
-        );
+        let expected_duration =
+            Duration::from_secs_f64(config.batch_size as f64 / config.receipts_per_second as f64);
         let actual_duration = batch_start.elapsed();
         if actual_duration < expected_duration {
             tokio::time::sleep(expected_duration - actual_duration).await;
@@ -341,7 +345,8 @@ pub async fn run_load_test(config: LoadTestConfig) -> LoadTestResults {
         results.avg_latency_us = sum / latencies.len() as u64;
         results.p50_latency_us = latencies[latencies.len() / 2];
         results.p90_latency_us = latencies[(latencies.len() * 90) / 100];
-        results.p99_latency_us = latencies[std::cmp::min((latencies.len() * 99) / 100, latencies.len() - 1)];
+        results.p99_latency_us =
+            latencies[std::cmp::min((latencies.len() * 99) / 100, latencies.len() - 1)];
     }
 
     results
@@ -358,7 +363,7 @@ mod tests {
             merkle_percent: 0.0,
             signature_percent: 0.0,
         };
-        
+
         // Should always return Hash
         for _ in 0..10 {
             assert!(matches!(dist.select_proof_type(), ProofType::Hash));
@@ -369,7 +374,7 @@ mod tests {
     fn test_generate_challenge() {
         let config = LoadTestConfig::default();
         let generator = SyntheticReceiptGenerator::new(config);
-        
+
         let challenge = generator.generate_challenge();
         assert_eq!(challenge.task_id.len(), 16);
         assert_eq!(challenge.challenge_nonce.len(), 32);
@@ -380,10 +385,10 @@ mod tests {
     fn test_generate_receipt() {
         let config = LoadTestConfig::default();
         let generator = SyntheticReceiptGenerator::new(config);
-        
+
         let challenge = generator.generate_challenge();
         let receipt = generator.generate_receipt(&challenge, true);
-        
+
         // Valid receipt should have matching task_id and challenge_nonce
         assert_eq!(receipt.receipt.task_id, challenge.task_id);
         assert_eq!(receipt.receipt.challenge_nonce, challenge.challenge_nonce);
@@ -397,7 +402,7 @@ mod tests {
             ..Default::default()
         };
         let generator = SyntheticReceiptGenerator::new(config);
-        
+
         let batch = generator.generate_batch(10);
         assert_eq!(batch.len(), 10);
     }
@@ -411,7 +416,7 @@ mod tests {
             batch_size: 5,
             ..Default::default()
         };
-        
+
         let results = run_load_test(config).await;
         assert!(results.total_submitted > 0);
     }
@@ -433,10 +438,16 @@ mod stress_tests {
         node_id.copy_from_slice(&node_pubkey[..32]);
 
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        ReceiptValidator::new(generator, Arc::new(RwLock::new(lib_identity::IdentityManager::new())))
+        ReceiptValidator::new(
+            generator,
+            Arc::new(RwLock::new(lib_identity::IdentityManager::new())),
+        )
     }
 
-    fn build_batch_with_client(config: &LoadTestConfig, client_did: &str) -> crate::pouw::types::ReceiptBatch {
+    fn build_batch_with_client(
+        config: &LoadTestConfig,
+        client_did: &str,
+    ) -> crate::pouw::types::ReceiptBatch {
         let synth_gen = SyntheticReceiptGenerator::new(config.clone());
         let receipts: Vec<SignedReceipt> = synth_gen
             .generate_batch(config.batch_size)
@@ -480,13 +491,17 @@ mod stress_tests {
         let elapsed = start.elapsed();
         let total_processed = total_accepted + total_rejected;
         let throughput = total_processed as f64 / elapsed.as_secs_f64();
-        
+
         println!(
             "High throughput validation test: {} receipts/sec (accepted={}, rejected={})",
             throughput, total_accepted, total_rejected
         );
         assert_eq!(total_processed, 1000, "Expected 1000 processed receipts");
-        assert!(throughput > 100.0, "Expected >100 receipts/sec, got {}", throughput);
+        assert!(
+            throughput > 100.0,
+            "Expected >100 receipts/sec, got {}",
+            throughput
+        );
     }
 
     #[tokio::test]
@@ -502,7 +517,7 @@ mod stress_tests {
 
         let start = Instant::now();
         let mut handles = vec![];
-        
+
         for _ in 0..20 {
             let validator = Arc::clone(&validator);
             let receipts = base_receipts.clone();
@@ -529,8 +544,14 @@ mod stress_tests {
             "Concurrent overlap validation: {} receipts/sec processed={}",
             throughput, total_processed
         );
-        assert_eq!(total_processed, 1000, "Should process 1000 receipts concurrently");
-        assert!(throughput > 100.0, "Should process >100 receipts/sec concurrently");
+        assert_eq!(
+            total_processed, 1000,
+            "Should process 1000 receipts concurrently"
+        );
+        assert!(
+            throughput > 100.0,
+            "Should process >100 receipts/sec concurrently"
+        );
     }
 
     #[tokio::test]
@@ -541,10 +562,10 @@ mod stress_tests {
             batch_size: 100,
             ..Default::default()
         };
-        
+
         let generator = SyntheticReceiptGenerator::new(config.clone());
         let mut duplicates = 0u64;
-        
+
         for _ in 0..10 {
             let batch = generator.generate_batch(config.batch_size);
             for (_, receipt) in batch {
@@ -556,7 +577,7 @@ mod stress_tests {
                 }
             }
         }
-        
+
         println!(
             "Deduplication test: {} duplicate nonces observed in 1000 generated nonces",
             duplicates
@@ -567,28 +588,28 @@ mod stress_tests {
     #[tokio::test]
     async fn test_signature_verification_throughput() {
         let validator = build_validator();
-        
+
         let config = LoadTestConfig {
             batch_size: 100,
             ..Default::default()
         };
-        
+
         let start = Instant::now();
         let iterations = 100;
         let mut total_accepted = 0u64;
         let mut total_rejected = 0u64;
-        
+
         for _ in 0..iterations {
             let batch_struct = build_batch_with_client(&config, "did:sov:signature-path");
             let result = validator.validate_batch(&batch_struct).await.unwrap();
             total_accepted += result.accepted.len() as u64;
             total_rejected += result.rejected.len() as u64;
         }
-        
+
         let elapsed = start.elapsed();
         let total_processed = total_accepted + total_rejected;
         let throughput = total_processed as f64 / elapsed.as_secs_f64();
-        
+
         println!(
             "Signature-path throughput: {} receipts/sec (accepted={}, rejected={})",
             throughput, total_accepted, total_rejected
@@ -605,22 +626,20 @@ mod stress_tests {
             duration: Duration::from_secs(2),
             ..Default::default()
         };
-        
+
         let generator = SyntheticReceiptGenerator::new(config.clone());
         let mut all_batches = vec![];
-        
+
         for _ in 0..10 {
             let batch = generator.generate_batch(config.batch_size);
             all_batches.push(batch);
         }
-        
-        let total_receipts: usize = all_batches.iter()
-            .map(|b| b.len())
-            .sum();
-        
+
+        let total_receipts: usize = all_batches.iter().map(|b| b.len()).sum();
+
         println!("Memory test: {} receipts stored in memory", total_receipts);
         assert!(total_receipts == 5000, "Should have 5000 receipts");
-        
+
         drop(all_batches);
     }
 
@@ -628,14 +647,14 @@ mod stress_tests {
     async fn test_rate_limiter_stress() {
         use crate::pouw::PouwRateLimiter;
         use std::net::IpAddr;
-        
+
         let limiter = Arc::new(PouwRateLimiter::with_defaults());
         let test_ip: IpAddr = "192.168.1.100".parse().unwrap();
-        
+
         let start = Instant::now();
         let mut accepted = 0u64;
         let mut rejected = 0u64;
-        
+
         for i in 0..1000 {
             let did = format!("did:sov:stress-client-{}", i);
             match limiter.check_request(test_ip, &did).await {
@@ -647,13 +666,18 @@ mod stress_tests {
                 }
             }
         }
-        
+
         let elapsed = start.elapsed();
         let throughput = 1000 as f64 / elapsed.as_secs_f64();
-        
-        println!("Rate limiter stress: {} req/sec, accepted={}, rejected={}", 
-                 throughput, accepted, rejected);
-        assert!(throughput > 10000.0, "Rate limiter should handle >10k req/sec");
+
+        println!(
+            "Rate limiter stress: {} req/sec, accepted={}, rejected={}",
+            throughput, accepted, rejected
+        );
+        assert!(
+            throughput > 10000.0,
+            "Rate limiter should handle >10k req/sec"
+        );
     }
 
     #[tokio::test]
@@ -662,38 +686,41 @@ mod stress_tests {
             batch_size: 100,
             ..Default::default()
         };
-        
+
         let (node_pubkey, node_privkey) = lib_crypto::classical::ed25519::ed25519_keypair();
         let mut priv_arr = [0u8; 32];
         let mut node_id = [0u8; 32];
         priv_arr.copy_from_slice(&node_privkey[..32]);
         node_id.copy_from_slice(&node_pubkey[..32]);
-        
+
         let generator = Arc::new(ChallengeGenerator::new(priv_arr, node_id));
-        let validator = ReceiptValidator::new(generator, Arc::new(RwLock::new(lib_identity::IdentityManager::new())));
-        
+        let validator = ReceiptValidator::new(
+            generator,
+            Arc::new(RwLock::new(lib_identity::IdentityManager::new())),
+        );
+
         let mut latencies = vec![];
-        
+
         for _ in 0..100 {
             let synth_gen = SyntheticReceiptGenerator::new(config.clone());
             let batch = synth_gen.generate_batch(config.batch_size);
             let receipts: Vec<SignedReceipt> = batch.into_iter().map(|(_, r)| r).collect();
-            
+
             let batch_struct = crate::pouw::types::ReceiptBatch {
                 version: POUW_VERSION,
                 client_did: "did:sov:latency-test".to_string(),
                 receipts,
             };
-            
+
             let start = Instant::now();
             let _ = validator.validate_batch(&batch_struct).await;
             latencies.push(start.elapsed().as_millis() as f64);
         }
-        
+
         latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p50 = latencies[latencies.len() / 2];
         let p99 = latencies[(latencies.len() * 99) / 100];
-        
+
         println!("Batch processing latency: P50={}ms, P99={}ms", p50, p99);
         assert!(p50 < 100.0, "P50 latency should be <100ms");
         assert!(p99 < 500.0, "P99 latency should be <500ms");
@@ -702,47 +729,52 @@ mod stress_tests {
     #[tokio::test]
     async fn test_concurrent_batch_validation() {
         let validator = Arc::new(build_validator());
-        
+
         let config = LoadTestConfig {
             batch_size: 50,
             ..Default::default()
         };
         let base_batch = build_batch_with_client(&config, "did:sov:concurrent-test");
         let base_receipts = base_batch.receipts.clone();
-        
+
         let start = Instant::now();
-        
+
         let mut handles = vec![];
         for _ in 0..20 {
             let validator = validator.clone();
             let receipts = base_receipts.clone();
-            
+
             let handle = tokio::spawn(async move {
                 let batch_struct = crate::pouw::types::ReceiptBatch {
                     version: POUW_VERSION,
                     client_did: "did:sov:concurrent-test".to_string(),
                     receipts,
                 };
-                
+
                 validator.validate_batch(&batch_struct).await
             });
             handles.push(handle);
         }
-        
+
         let mut total_accepted = 0u64;
         let mut total_rejected = 0u64;
-        
+
         for handle in handles {
             let result = handle.await.unwrap().unwrap();
             total_accepted += result.accepted.len() as u64;
             total_rejected += result.rejected.len() as u64;
         }
-        
+
         let elapsed = start.elapsed();
         let throughput = (total_accepted + total_rejected) as f64 / elapsed.as_secs_f64();
-        
-        println!("Concurrent validation: {} receipts/sec, accepted={}, rejected={}", 
-                 throughput, total_accepted, total_rejected);
-        assert!(throughput > 100.0, "Should process >100 receipts/sec concurrently");
+
+        println!(
+            "Concurrent validation: {} receipts/sec, accepted={}, rejected={}",
+            throughput, total_accepted, total_rejected
+        );
+        assert!(
+            throughput > 100.0,
+            "Should process >100 receipts/sec concurrently"
+        );
     }
 }

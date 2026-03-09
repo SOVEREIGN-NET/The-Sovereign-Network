@@ -6,11 +6,11 @@
 //! - Timestamp validation for replay attack prevention
 //! - Nonce management and verification
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use hkdf::Hkdf;
 use sha3::Sha3_256;
-use subtle::ConstantTimeEq;
 use std::time::{SystemTime, UNIX_EPOCH};
+use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Configuration for timestamp validation
@@ -56,7 +56,9 @@ pub fn validate_timestamp(timestamp: u64, config: &TimestampConfig) -> Result<()
     if timestamp > now + config.clock_skew_tolerance {
         return Err(anyhow!(
             "Timestamp in future: {} > {} (+{} tolerance)",
-            timestamp, now, config.clock_skew_tolerance
+            timestamp,
+            now,
+            config.clock_skew_tolerance
         ));
     }
 
@@ -65,16 +67,14 @@ pub fn validate_timestamp(timestamp: u64, config: &TimestampConfig) -> Result<()
     if age > config.max_age_secs {
         return Err(anyhow!(
             "Timestamp too old: {} seconds (max: {})",
-            age, config.max_age_secs
+            age,
+            config.max_age_secs
         ));
     }
 
     // 3. Reject timestamps before protocol launch
     if timestamp < config.min_timestamp {
-        return Err(anyhow!(
-            "Timestamp predates protocol launch: {}",
-            timestamp
-        ));
+        return Err(anyhow!("Timestamp predates protocol launch: {}", timestamp));
     }
 
     // 4. Reject zero timestamp
@@ -170,7 +170,7 @@ fn build_context_info(context: &SessionContext) -> Vec<u8> {
     let mut info = Vec::new();
     // CRITICAL: Domain separation to prevent key reuse across protocols
     // Network session keys MUST NEVER be used for blockchain transaction signing
-    info.extend_from_slice(b"ZHTP-NETWORK-SESSION-ONLY-v2");  // Domain tag
+    info.extend_from_slice(b"ZHTP-NETWORK-SESSION-ONLY-v2"); // Domain tag
     info.push(0x00); // Separator
     info.extend_from_slice(&context.protocol_version.to_le_bytes());
     info.extend_from_slice(context.client_did.as_bytes());
@@ -323,14 +323,14 @@ impl CanonicalRequest {
 
         // Path length (u16 BE) + path bytes
         let path_bytes = self.path.as_bytes();
-        let path_len_u16 = u16::try_from(path_bytes.len())
-            .expect("CanonicalRequest path length exceeds u16::MAX");
+        let path_len_u16 =
+            u16::try_from(path_bytes.len()).expect("CanonicalRequest path length exceeds u16::MAX");
         bytes.extend_from_slice(&path_len_u16.to_be_bytes());
         bytes.extend_from_slice(path_bytes);
 
         // Body length (u32 BE) + body bytes
-        let body_len_u32 = u32::try_from(self.body.len())
-            .expect("CanonicalRequest body length exceeds u32::MAX");
+        let body_len_u32 =
+            u32::try_from(self.body.len()).expect("CanonicalRequest body length exceeds u32::MAX");
         bytes.extend_from_slice(&body_len_u32.to_be_bytes());
         bytes.extend_from_slice(&self.body);
 
@@ -354,8 +354,7 @@ pub fn compute_v2_mac(
 
     type HmacSha3 = Hmac<Sha3_256>;
 
-    let mut mac = HmacSha3::new_from_slice(mac_key)
-        .expect("HMAC can take key of any size");
+    let mut mac = HmacSha3::new_from_slice(mac_key).expect("HMAC can take key of any size");
 
     // canonical_bytes(request)
     mac.update(&request.to_bytes());

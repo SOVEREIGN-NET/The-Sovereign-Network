@@ -1,7 +1,4 @@
-use std::any::Any;
-use std::net::SocketAddr;
-use rlibbencode::variables::bencode_bytes::BencodeBytes;
-use rlibbencode::variables::bencode_object::{BencodeObject, GetObject, ObjectOptions, PutObject};
+use super::inter::method_message_base::MethodMessageBase;
 use crate::kad::server::TID_LENGTH;
 use crate::messages::inter::message_base::{MessageBase, TID_KEY};
 use crate::messages::inter::message_exception::MessageException;
@@ -11,7 +8,10 @@ use crate::utils::net::address_utils::{pack_address, unpack_address};
 use crate::utils::node::Node;
 use crate::utils::node_utils::{pack_nodes, unpack_nodes};
 use crate::utils::uid::{ID_LENGTH, UID};
-use super::inter::method_message_base::MethodMessageBase;
+use rlibbencode::variables::bencode_bytes::BencodeBytes;
+use rlibbencode::variables::bencode_object::{BencodeObject, GetObject, ObjectOptions, PutObject};
+use std::any::Any;
+use std::net::SocketAddr;
 
 pub const NODE_CAP: usize = 20;
 
@@ -22,11 +22,10 @@ pub struct FindNodeResponse {
     public: Option<SocketAddr>,
     destination: Option<SocketAddr>,
     origin: Option<SocketAddr>,
-    nodes: Vec<Node>
+    nodes: Vec<Node>,
 }
 
 impl FindNodeResponse {
-
     pub fn new(tid: [u8; TID_LENGTH]) -> Self {
         Self {
             tid,
@@ -55,7 +54,7 @@ impl FindNodeResponse {
     }
 
     pub fn add_nodes(&mut self, nodes: Vec<Node>) {
-        if nodes.len()+self.nodes.len() > NODE_CAP {
+        if nodes.len() + self.nodes.len() > NODE_CAP {
             //throw new IllegalArgumentException("Adding nodes would exceed Node Cap of "+NODE_CAP);
         }
         self.nodes.extend(nodes);
@@ -91,7 +90,6 @@ impl FindNodeResponse {
 }
 
 impl Default for FindNodeResponse {
-
     fn default() -> Self {
         Self {
             uid: None,
@@ -99,14 +97,13 @@ impl Default for FindNodeResponse {
             public: None,
             destination: None,
             origin: None,
-            nodes: Vec::new()
+            nodes: Vec::new(),
         }
     }
 }
 
 //I WONDER IF WE CAN MACRO THIS SHIT FOR EVERY CLASS...?
 impl MessageBase for FindNodeResponse {
-
     fn set_uid(&mut self, uid: UID) {
         self.uid = Some(uid);
     }
@@ -160,7 +157,9 @@ impl MessageBase for FindNodeResponse {
 
         ben.put(self.get_type().rpc_type_name(), self.get_method());
         ben.put(self.get_type().inner_key(), BencodeObject::new());
-        ben.get_mut::<BencodeObject>(self.get_type().inner_key()).unwrap().put("id", self.uid.unwrap().bytes().clone());
+        ben.get_mut::<BencodeObject>(self.get_type().inner_key())
+            .unwrap()
+            .put("id", self.uid.unwrap().bytes().clone());
 
         if let Some(public) = self.public {
             ben.put("ip", pack_address(&public));
@@ -172,12 +171,16 @@ impl MessageBase for FindNodeResponse {
 
         let nodes = self.get_all_ipv4_nodes();
         if !nodes.is_empty() {
-            ben.get_mut::<BencodeObject>(self.get_type().inner_key()).unwrap().put("nodes", pack_nodes(nodes, AddressTypes::Ipv4));
+            ben.get_mut::<BencodeObject>(self.get_type().inner_key())
+                .unwrap()
+                .put("nodes", pack_nodes(nodes, AddressTypes::Ipv4));
         }
 
         let nodes = self.get_all_ipv6_nodes();
         if !nodes.is_empty() {
-            ben.get_mut::<BencodeObject>(self.get_type().inner_key()).unwrap().put("nodes6", pack_nodes(nodes, AddressTypes::Ipv6));
+            ben.get_mut::<BencodeObject>(self.get_type().inner_key())
+                .unwrap()
+                .put("nodes6", pack_nodes(nodes, AddressTypes::Ipv6));
         }
 
         ben
@@ -185,35 +188,59 @@ impl MessageBase for FindNodeResponse {
 
     fn decode(&mut self, ben: &BencodeObject) -> Result<(), MessageException> {
         if !ben.contains_key(self.get_type().inner_key()) {
-            return Err(MessageException::new("Protocol Error, such as a malformed packet.", 203));
+            return Err(MessageException::new(
+                "Protocol Error, such as a malformed packet.",
+                203,
+            ));
         }
 
-        match ben.get::<BencodeObject>(self.get_type().inner_key()).unwrap().get::<BencodeBytes>("id") {
+        match ben
+            .get::<BencodeObject>(self.get_type().inner_key())
+            .unwrap()
+            .get::<BencodeBytes>("id")
+        {
             Some(id) => {
                 let mut bid = [0u8; ID_LENGTH];
                 bid.copy_from_slice(&id.as_bytes()[..ID_LENGTH]);
                 self.uid = Some(UID::from(bid));
             }
-            _ => return Err(MessageException::new("Protocol Error, such as a malformed packet.", 203))
+            _ => {
+                return Err(MessageException::new(
+                    "Protocol Error, such as a malformed packet.",
+                    203,
+                ))
+            }
         }
 
         match ben.get::<BencodeBytes>("ip") {
             Some(addr) => {
                 self.public = match unpack_address(addr.as_bytes()) {
                     Ok(addr) => Some(addr),
-                    _ => None
+                    _ => None,
                 }
             }
             _ => {}
         }
 
-        match ben.get::<BencodeObject>(self.get_type().inner_key()).unwrap().get::<BencodeBytes>("nodes") {
-            Some(nodes) => self.nodes.extend(unpack_nodes(nodes.as_bytes(), AddressTypes::Ipv4)),
+        match ben
+            .get::<BencodeObject>(self.get_type().inner_key())
+            .unwrap()
+            .get::<BencodeBytes>("nodes")
+        {
+            Some(nodes) => self
+                .nodes
+                .extend(unpack_nodes(nodes.as_bytes(), AddressTypes::Ipv4)),
             _ => {}
         }
 
-        match ben.get::<BencodeObject>(self.get_type().inner_key()).unwrap().get::<BencodeBytes>("nodes6") {
-            Some(nodes) => self.nodes.extend(unpack_nodes(nodes.as_bytes(), AddressTypes::Ipv6)),
+        match ben
+            .get::<BencodeObject>(self.get_type().inner_key())
+            .unwrap()
+            .get::<BencodeBytes>("nodes6")
+        {
+            Some(nodes) => self
+                .nodes
+                .extend(unpack_nodes(nodes.as_bytes(), AddressTypes::Ipv6)),
             _ => {}
         }
 
@@ -230,7 +257,6 @@ impl MessageBase for FindNodeResponse {
 }
 
 impl MethodMessageBase for FindNodeResponse {
-
     fn get_method(&self) -> &str {
         "find_node"
     }

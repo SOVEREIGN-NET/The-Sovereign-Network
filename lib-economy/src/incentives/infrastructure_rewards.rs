@@ -1,13 +1,13 @@
 //! Infrastructure-based reward calculation for ISP replacement economics
-//! 
+//!
 //! Implements the core economic model that rewards infrastructure providers
 //! with token payments similar to how ISPs and CDNs generate revenue.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use crate::types::{WorkMetrics, IspBypassWork};
 use crate::models::EconomicModel;
+use crate::types::{IspBypassWork, WorkMetrics};
 use crate::wasm::logging::info;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Infrastructure reward categories
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,20 +28,20 @@ impl InfrastructureRewards {
         // INTERNET INFRASTRUCTURE REWARDS (like ISP/CDN revenue sharing)
         // Routing: 1 SOV per MB of data routed (actual bandwidth costs)
         let routing_rewards = (work.routing_work / 1_000_000) * model.base_routing_rate; // bytes to MB
-        
+
         // Storage: 10 SOV per GB stored per month (cloud storage pricing model)
         let storage_rewards = (work.storage_work / 1_000_000_000) * model.base_storage_rate; // bytes to GB
-        
+
         // Compute: Minimal processing fee for consensus validation
         let compute_rewards = work.compute_work * model.base_compute_rate;
-        
+
         let total_infrastructure_rewards = routing_rewards + storage_rewards + compute_rewards;
-        
+
         info!(
             "Infrastructure rewards calculated: routing={} SOV, storage={} SOV, compute={} SOV, total={} SOV",
             routing_rewards, storage_rewards, compute_rewards, total_infrastructure_rewards
         );
-        
+
         Ok(InfrastructureRewards {
             routing_rewards,
             storage_rewards,
@@ -49,20 +49,20 @@ impl InfrastructureRewards {
             total_infrastructure_rewards,
         })
     }
-    
+
     /// Calculate  specific infrastructure rewards
     pub fn calculate_isp_bypass(work: &IspBypassWork) -> Result<Self> {
         //  INFRASTRUCTURE REWARDS - replacing traditional ISP revenue
-        
+
         // Bandwidth sharing reward: 100 SOV per GB shared (like ISP revenue per customer)
         let bandwidth_reward = work.bandwidth_shared_gb * crate::ISP_BYPASS_CONNECTIVITY_RATE;
-        
+
         // Packet routing reward: 1 SOV per MB routed (like peering fees)
         let routing_reward = work.packets_routed_mb * crate::ISP_BYPASS_MESH_RATE;
-        
+
         // Uptime bonus: 10 SOV per hour of connectivity provided
         let uptime_reward = work.uptime_hours * crate::ISP_BYPASS_UPTIME_BONUS;
-        
+
         // Quality multiplier for high-quality connections (like premium ISP tiers)
         let base_total = bandwidth_reward + routing_reward + uptime_reward;
         let quality_multiplier = if work.connection_quality > 0.9 {
@@ -72,9 +72,9 @@ impl InfrastructureRewards {
         } else {
             1.0 // No bonus for basic quality
         };
-        
+
         let total_with_quality = ((base_total as f64) * quality_multiplier) as u64;
-        
+
         info!(
             " rewards: bandwidth={}GB ({}SOV), routing={}MB ({}SOV), uptime={}h ({}SOV), quality={:.1}x, total={} SOV",
             work.bandwidth_shared_gb, bandwidth_reward,
@@ -82,20 +82,20 @@ impl InfrastructureRewards {
             work.uptime_hours, uptime_reward,
             quality_multiplier, total_with_quality
         );
-        
+
         Ok(InfrastructureRewards {
             routing_rewards: routing_reward,
-            storage_rewards: 0, // Not applicable for 
-            compute_rewards: 0, // Not applicable for 
+            storage_rewards: 0, // Not applicable for
+            compute_rewards: 0, // Not applicable for
             total_infrastructure_rewards: total_with_quality,
         })
     }
-    
+
     /// Apply infrastructure scaling adjustments
     pub fn apply_infrastructure_scaling(&mut self, network_load_factor: f64) -> Result<()> {
         // INFRASTRUCTURE SCALING (like ISP capacity planning)
         // Higher network load = higher rewards to incentivize more infrastructure
-        
+
         let scaling_multiplier = if network_load_factor > 0.9 {
             1.1 // +10% for high network load
         } else if network_load_factor > 0.7 {
@@ -105,22 +105,24 @@ impl InfrastructureRewards {
         } else {
             1.0 // No adjustment for normal load
         };
-        
+
         self.routing_rewards = ((self.routing_rewards as f64) * scaling_multiplier) as u64;
         self.storage_rewards = ((self.storage_rewards as f64) * scaling_multiplier) as u64;
         self.compute_rewards = ((self.compute_rewards as f64) * scaling_multiplier) as u64;
-        self.total_infrastructure_rewards = self.routing_rewards + self.storage_rewards + self.compute_rewards;
-        
+        self.total_infrastructure_rewards =
+            self.routing_rewards + self.storage_rewards + self.compute_rewards;
+
         if scaling_multiplier != 1.0 {
             info!(
                 "Applied infrastructure scaling: {:.1}x multiplier due to network load {:.1}%",
-                scaling_multiplier, network_load_factor * 100.0
+                scaling_multiplier,
+                network_load_factor * 100.0
             );
         }
-        
+
         Ok(())
     }
-    
+
     /// Get detailed infrastructure reward breakdown
     pub fn get_breakdown(&self) -> serde_json::Value {
         serde_json::json!({

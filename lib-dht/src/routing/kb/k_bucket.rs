@@ -6,15 +6,14 @@ const MAX_STALE_COUNT: u32 = 1;
 
 pub struct KBucket {
     pub(crate) nodes: Vec<Node>,
-    pub(crate) cache: Vec<Node>
+    pub(crate) cache: Vec<Node>,
 }
 
 impl KBucket {
-
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
-            cache: Vec::new()
+            cache: Vec::new(),
         }
     }
 
@@ -22,17 +21,18 @@ impl KBucket {
         if let Some(node) = self.nodes.iter_mut().find(|c| n.eq(c)) {
             node.seen();
             self.nodes.sort_by(|a, b| ls_compare(a, b));
-
         } else if self.nodes.len() >= MAX_BUCKET_SIZE {
             if let Some(node) = self.cache.iter_mut().find(|c| n.eq(c)) {
                 node.seen();
-
             } else if self.cache.len() >= MAX_BUCKET_SIZE {
-                let mut index = MAX_BUCKET_SIZE+1;
+                let mut index = MAX_BUCKET_SIZE + 1;
 
                 for i in 0..self.cache.len() {
                     if self.cache.get(i).unwrap().stale >= MAX_STALE_COUNT {
-                        if index < MAX_BUCKET_SIZE && self.cache.get(i).unwrap().stale > self.cache.get(index).unwrap().stale {
+                        if index < MAX_BUCKET_SIZE
+                            && self.cache.get(i).unwrap().stale
+                                > self.cache.get(index).unwrap().stale
+                        {
                             index = i;
                         }
                     }
@@ -42,11 +42,10 @@ impl KBucket {
                     self.cache.remove(index);
                     self.cache.push(n);
                 }
-
-            }else{
+            } else {
                 self.cache.push(n);
             }
-        }else{
+        } else {
             self.nodes.push(n);
             self.nodes.sort_by(|a, b| ls_compare(a, b));
         }
@@ -77,7 +76,11 @@ impl KBucket {
     */
 
     pub fn unqueried_nodes(&self, now: u128) -> Vec<Node> {
-        self.nodes.iter().filter(|&n| !n.has_queried(now)).cloned().collect()
+        self.nodes
+            .iter()
+            .filter(|&n| !n.has_queried(now))
+            .cloned()
+            .collect()
     }
 
     /*

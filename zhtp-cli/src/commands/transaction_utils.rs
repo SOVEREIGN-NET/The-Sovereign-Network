@@ -1,7 +1,7 @@
 use crate::error::{CliError, CliResult};
 use lib_blockchain::Transaction;
 use lib_network::client::ZhtpClient;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub const TX_BROADCAST_ENDPOINT: &str = "/api/v1/blockchain/transaction/broadcast";
 
@@ -23,7 +23,11 @@ pub fn parse_hex_32(name: &str, value: &str) -> CliResult<[u8; 32]> {
     Ok(out)
 }
 
-pub async fn submit_signed_tx(client: &ZhtpClient, endpoint: &str, tx: &Transaction) -> CliResult<Value> {
+pub async fn submit_signed_tx(
+    client: &ZhtpClient,
+    endpoint: &str,
+    tx: &Transaction,
+) -> CliResult<Value> {
     let tx_bytes = bincode::serialize(tx)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {e}")))?;
     let request_body = json!({ "transaction_data": hex::encode(tx_bytes) });
@@ -45,4 +49,3 @@ pub async fn submit_signed_tx(client: &ZhtpClient, endpoint: &str, tx: &Transact
 pub async fn broadcast_signed_tx(client: &ZhtpClient, tx: &Transaction) -> CliResult<Value> {
     submit_signed_tx(client, TX_BROADCAST_ENDPOINT, tx).await
 }
-

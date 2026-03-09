@@ -24,13 +24,19 @@ pub enum BlockValidateError {
     InvalidVersion(u32),
 
     #[error("Transaction count mismatch: header says {header_count}, actual {actual_count}")]
-    TransactionCountMismatch { header_count: usize, actual_count: usize },
+    TransactionCountMismatch {
+        header_count: usize,
+        actual_count: usize,
+    },
 
     #[error("Invalid block height: expected {expected}, got {actual}")]
     InvalidHeight { expected: u64, actual: u64 },
 
     #[error("Invalid previous block hash: expected {expected}, got {actual}")]
-    InvalidPreviousHash { expected: BlockHash, actual: BlockHash },
+    InvalidPreviousHash {
+        expected: BlockHash,
+        actual: BlockHash,
+    },
 
     #[error("Previous block not found at height {0}")]
     PreviousBlockNotFound(u64),
@@ -56,7 +62,6 @@ pub enum BlockValidateError {
     // =========================================================================
     // Block Resource Limit Errors
     // =========================================================================
-
     #[error("Block payload bytes exceeded: {actual} > max {max}")]
     PayloadBytesExceeded { actual: u64, max: u32 },
 
@@ -76,7 +81,6 @@ pub enum TxValidateError {
     // =========================================================================
     // Type Errors
     // =========================================================================
-
     #[error("Unsupported transaction type for Phase 2: {0}")]
     UnsupportedType(String),
 
@@ -86,7 +90,6 @@ pub enum TxValidateError {
     // =========================================================================
     // Structure Errors
     // =========================================================================
-
     #[error("Transaction has no inputs")]
     EmptyInputs,
 
@@ -105,7 +108,6 @@ pub enum TxValidateError {
     // =========================================================================
     // UTXO Errors
     // =========================================================================
-
     #[error("UTXO not found: {0}")]
     UtxoNotFound(OutPoint),
 
@@ -115,7 +117,6 @@ pub enum TxValidateError {
     // =========================================================================
     // Fee Errors
     // =========================================================================
-
     #[error("Fee too low: {fee} < minimum {min_fee}")]
     FeeTooLow { fee: u64, min_fee: u64 },
 
@@ -128,7 +129,6 @@ pub enum TxValidateError {
     // =========================================================================
     // Signature Errors
     // =========================================================================
-
     #[error("Invalid signature")]
     InvalidSignature,
 
@@ -138,7 +138,6 @@ pub enum TxValidateError {
     // =========================================================================
     // Field Errors
     // =========================================================================
-
     #[error("Missing required field: {0}")]
     MissingField(String),
 
@@ -148,14 +147,12 @@ pub enum TxValidateError {
     // =========================================================================
     // Block Limit Errors
     // =========================================================================
-
     #[error("Block limit exceeded: {0}")]
     BlockLimitExceeded(String),
 
     // =========================================================================
     // General Errors
     // =========================================================================
-
     #[error("Storage error: {0}")]
     StorageError(String),
 }

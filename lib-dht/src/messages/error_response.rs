@@ -1,16 +1,16 @@
-use std::any::Any;
-use std::net::SocketAddr;
-use rlibbencode::variables::bencode_array::{AddArray, BencodeArray};
-use rlibbencode::variables::bencode_bytes::BencodeBytes;
-use rlibbencode::variables::bencode_number::BencodeNumber;
-use rlibbencode::variables::bencode_object::{BencodeObject, GetObject, ObjectOptions, PutObject};
-use rlibbencode::variables::inter::bencode_variable::BencodeVariable;
 use crate::kad::server::TID_LENGTH;
 use crate::messages::inter::message_base::{MessageBase, TID_KEY};
 use crate::messages::inter::message_exception::MessageException;
 use crate::messages::inter::message_type::{MessageType, TYPE_KEY};
 use crate::utils::net::address_utils::pack_address;
 use crate::utils::uid::UID;
+use rlibbencode::variables::bencode_array::{AddArray, BencodeArray};
+use rlibbencode::variables::bencode_bytes::BencodeBytes;
+use rlibbencode::variables::bencode_number::BencodeNumber;
+use rlibbencode::variables::bencode_object::{BencodeObject, GetObject, ObjectOptions, PutObject};
+use rlibbencode::variables::inter::bencode_variable::BencodeVariable;
+use std::any::Any;
+use std::net::SocketAddr;
 
 #[derive(Clone)]
 pub struct ErrorResponse {
@@ -20,11 +20,10 @@ pub struct ErrorResponse {
     destination: Option<SocketAddr>,
     origin: Option<SocketAddr>,
     code: i32,
-    description: Option<String>
+    description: Option<String>,
 }
 
 impl ErrorResponse {
-
     pub fn new(tid: [u8; TID_LENGTH]) -> Self {
         Self {
             tid,
@@ -50,7 +49,6 @@ impl ErrorResponse {
 }
 
 impl Default for ErrorResponse {
-
     fn default() -> Self {
         Self {
             uid: None,
@@ -59,13 +57,12 @@ impl Default for ErrorResponse {
             destination: None,
             origin: None,
             code: 0,
-            description: None
+            description: None,
         }
     }
 }
 
 impl MessageBase for ErrorResponse {
-
     fn set_uid(&mut self, uid: UID) {
         self.uid = Some(uid);
     }
@@ -112,7 +109,7 @@ impl MessageBase for ErrorResponse {
 
     fn encode(&self) -> BencodeObject {
         let mut ben = BencodeObject::new();
-        
+
         ben.put(TID_KEY, self.tid.clone());
         ben.put("v", "1.0");
         ben.put(TYPE_KEY, self.get_type().rpc_type_name());
@@ -131,18 +128,44 @@ impl MessageBase for ErrorResponse {
 
     fn decode(&mut self, ben: &BencodeObject) -> Result<(), MessageException> {
         if !ben.contains_key(self.get_type().inner_key()) {
-            return Err(MessageException::new("Protocol Error, such as a malformed packet.", 203));
+            return Err(MessageException::new(
+                "Protocol Error, such as a malformed packet.",
+                203,
+            ));
         }
 
-        if ben.get::<BencodeArray>(self.get_type().inner_key()).unwrap().len() < 2 {
-            return Err(MessageException::new("Protocol Error, such as a malformed packet.", 203));
+        if ben
+            .get::<BencodeArray>(self.get_type().inner_key())
+            .unwrap()
+            .len()
+            < 2
+        {
+            return Err(MessageException::new(
+                "Protocol Error, such as a malformed packet.",
+                203,
+            ));
         }
 
-        self.code = ben.get::<BencodeArray>(self.get_type().inner_key()).unwrap()
-            .get::<BencodeNumber>(0).ok_or_else(|| MessageException::new("Protocol Error, such as a malformed packet.", 100))?
-            .parse::<i32>().map_err(|_| MessageException::new("Protocol Error, such as a malformed packet.", 100))?;
-        self.description = Some(ben.get::<BencodeArray>(self.get_type().inner_key()).unwrap()
-            .get::<BencodeBytes>(1).ok_or_else(|| MessageException::new("Protocol Error, such as a malformed packet.", 100))?.to_string());
+        self.code = ben
+            .get::<BencodeArray>(self.get_type().inner_key())
+            .unwrap()
+            .get::<BencodeNumber>(0)
+            .ok_or_else(|| {
+                MessageException::new("Protocol Error, such as a malformed packet.", 100)
+            })?
+            .parse::<i32>()
+            .map_err(|_| {
+                MessageException::new("Protocol Error, such as a malformed packet.", 100)
+            })?;
+        self.description = Some(
+            ben.get::<BencodeArray>(self.get_type().inner_key())
+                .unwrap()
+                .get::<BencodeBytes>(1)
+                .ok_or_else(|| {
+                    MessageException::new("Protocol Error, such as a malformed packet.", 100)
+                })?
+                .to_string(),
+        );
 
         Ok(())
     }

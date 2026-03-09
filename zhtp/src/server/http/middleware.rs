@@ -1,19 +1,23 @@
 //! HTTP Middleware Components
-//! 
+//!
 //! Provides CORS, rate limiting, and authentication middleware for HTTP requests
 
-use std::sync::Arc;
-use std::collections::HashMap;
-use std::time::SystemTime;
-use tokio::sync::RwLock;
 use anyhow::Result;
 use async_trait::async_trait;
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::SystemTime;
+use tokio::sync::RwLock;
 
 /// Middleware trait for request processing
 #[async_trait]
 pub trait Middleware: Send + Sync {
-    async fn process(&self, request: &mut ZhtpRequest, response: &mut Option<ZhtpResponse>) -> Result<bool>;
+    async fn process(
+        &self,
+        request: &mut ZhtpRequest,
+        response: &mut Option<ZhtpResponse>,
+    ) -> Result<bool>;
     fn name(&self) -> &str;
 }
 
@@ -22,15 +26,26 @@ pub struct CorsMiddleware;
 
 #[async_trait]
 impl Middleware for CorsMiddleware {
-    async fn process(&self, _request: &mut ZhtpRequest, response: &mut Option<ZhtpResponse>) -> Result<bool> {
+    async fn process(
+        &self,
+        _request: &mut ZhtpRequest,
+        response: &mut Option<ZhtpResponse>,
+    ) -> Result<bool> {
         if let Some(resp) = response {
-            resp.headers.set("Access-Control-Allow-Origin", "*".to_string());
-            resp.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS".to_string());
-            resp.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization".to_string());
+            resp.headers
+                .set("Access-Control-Allow-Origin", "*".to_string());
+            resp.headers.set(
+                "Access-Control-Allow-Methods",
+                "GET, POST, PUT, DELETE, OPTIONS".to_string(),
+            );
+            resp.headers.set(
+                "Access-Control-Allow-Headers",
+                "Content-Type, Authorization".to_string(),
+            );
         }
         Ok(true) // Continue processing
     }
-    
+
     fn name(&self) -> &str {
         "CORS"
     }
@@ -55,20 +70,27 @@ impl RateLimitMiddleware {
 
 #[async_trait]
 impl Middleware for RateLimitMiddleware {
-    async fn process(&self, request: &mut ZhtpRequest, response: &mut Option<ZhtpResponse>) -> Result<bool> {
-        let client_key = request.headers.get("X-Forwarded-For")
+    async fn process(
+        &self,
+        request: &mut ZhtpRequest,
+        response: &mut Option<ZhtpResponse>,
+    ) -> Result<bool> {
+        let client_key = request
+            .headers
+            .get("X-Forwarded-For")
             .or_else(|| request.headers.get("X-Real-IP"))
             .unwrap_or("unknown".to_string());
-            
+
         let mut counts = self.request_counts.write().await;
         let now = SystemTime::now();
-        
-        let (count, last_window) = counts.get(&client_key)
-            .copied()
-            .unwrap_or((0, now));
-            
-        let elapsed = now.duration_since(last_window).unwrap_or_default().as_secs();
-        
+
+        let (count, last_window) = counts.get(&client_key).copied().unwrap_or((0, now));
+
+        let elapsed = now
+            .duration_since(last_window)
+            .unwrap_or_default()
+            .as_secs();
+
         if elapsed >= self.window_seconds {
             // Reset window
             counts.insert(client_key, (1, now));
@@ -86,7 +108,7 @@ impl Middleware for RateLimitMiddleware {
             Ok(true)
         }
     }
-    
+
     fn name(&self) -> &str {
         "RateLimit"
     }
@@ -97,7 +119,11 @@ pub struct AuthMiddleware;
 
 #[async_trait]
 impl Middleware for AuthMiddleware {
-    async fn process(&self, request: &mut ZhtpRequest, response: &mut Option<ZhtpResponse>) -> Result<bool> {
+    async fn process(
+        &self,
+        request: &mut ZhtpRequest,
+        response: &mut Option<ZhtpResponse>,
+    ) -> Result<bool> {
         // Skip auth for public endpoints
         if request.uri.starts_with("/api/v1/public/") || 
            request.uri == "/api/v1/health" ||
@@ -109,22 +135,24 @@ impl Middleware for AuthMiddleware {
            request.uri.starts_with("/api/v1/identity/") ||  // Allow identity creation without auth
            request.uri.starts_with("/api/marketplace/") ||
            request.uri.starts_with("/api/content/") ||
-           request.uri.starts_with("/api/wallet/") {
+           request.uri.starts_with("/api/wallet/")
+        {
             return Ok(true);
         }
-        
+
         // Check for Authorization header
         if let Some(auth_header) = request.headers.get("Authorization") {
             if auth_header.starts_with("Bearer ") {
                 let token = &auth_header[7..];
                 // In a real implementation, verify JWT token
-                if token.len() > 10 { // Simple validation
+                if token.len() > 10 {
+                    // Simple validation
                     request.headers.set("X-Authenticated", "true".to_string());
                     return Ok(true);
                 }
             }
         }
-        
+
         // Authentication required but not provided
         *response = Some(ZhtpResponse::error(
             ZhtpStatus::Unauthorized,
@@ -132,7 +160,7 @@ impl Middleware for AuthMiddleware {
         ));
         Ok(false) // Stop processing
     }
-    
+
     fn name(&self) -> &str {
         "Auth"
     }

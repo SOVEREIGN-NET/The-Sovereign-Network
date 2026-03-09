@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use tokio::time::Duration;
 // use rand; // Removed - unused import
-use lib_crypto::PublicKey;
 use crate::discovery::hardware::HardwareCapabilities;
+use lib_crypto::PublicKey;
 
 /// Satellite uplink information from discovery
 #[derive(Debug, Clone)]
@@ -36,7 +36,9 @@ pub async fn discover_satellite_uplinks() -> Result<Vec<SatelliteInfo>> {
 }
 
 /// Discover satellite uplinks with pre-detected hardware capabilities (avoids duplicate detection)
-pub async fn discover_satellite_uplinks_with_capabilities(_capabilities: &HardwareCapabilities) -> Result<Vec<SatelliteInfo>> {
+pub async fn discover_satellite_uplinks_with_capabilities(
+    _capabilities: &HardwareCapabilities,
+) -> Result<Vec<SatelliteInfo>> {
     tracing::debug!("🛰️ Scanning for satellite uplinks...");
 
     // Check for actual satellite modem hardware
@@ -44,30 +46,33 @@ pub async fn discover_satellite_uplinks_with_capabilities(_capabilities: &Hardwa
         tracing::debug!("🛰️ No satellite hardware detected - skipping satellite discovery");
         return Ok(Vec::new());
     }
-    
+
     let mut discovered_satellites = Vec::new();
-    
+
     // Scan for actual satellite networks
     let satellite_networks = vec![
-        ("Starlink", 12000), // Starlink constellation
-        ("OneWeb", 7700),    // OneWeb constellation  
+        ("Starlink", 12000),      // Starlink constellation
+        ("OneWeb", 7700),         // OneWeb constellation
         ("Amazon Kuiper", 13000), // Kuiper constellation
-        ("Telesat", 1671),   // Telesat LEO
+        ("Telesat", 1671),        // Telesat LEO
     ];
-    
+
     for (network_name, satellite_count) in satellite_networks {
         if let Ok(satellite_info) = scan_satellite_network(network_name, satellite_count).await {
             discovered_satellites.push(satellite_info);
         }
     }
-    
+
     // Only report satellites found - no fake data
     if discovered_satellites.is_empty() {
         println!("🛰️ No satellite uplinks accessible (requires satellite hardware)");
     } else {
-        println!("🛰️ Discovered {} satellite uplinks", discovered_satellites.len());
+        println!(
+            "🛰️ Discovered {} satellite uplinks",
+            discovered_satellites.len()
+        );
     }
-    
+
     Ok(discovered_satellites)
 }
 
@@ -84,22 +89,25 @@ async fn has_satellite_hardware() -> bool {
     // - Starlink dish connectivity
     // - Iridium/Globalstar modems
     // - Amateur radio satellite transponders
-    
+
     // For development, always return false since satellite hardware is rare
     // In production, this would do actual hardware enumeration
     false
 }
 
 /// Scan for satellite network connectivity
-async fn scan_satellite_network(network_name: &str, _satellite_count: u32) -> Result<SatelliteInfo> {
+async fn scan_satellite_network(
+    network_name: &str,
+    _satellite_count: u32,
+) -> Result<SatelliteInfo> {
     // satellite scanning would:
     // 1. Check for satellite modem hardware
     // 2. Attempt connection to satellite network
     // 3. Verify signal strength and capabilities
-    
+
     println!("Scanning for {} satellite access...", network_name);
     tokio::time::sleep(Duration::from_millis(200)).await;
-    
+
     // Only return satellites if hardware is available
     return Err(anyhow!("No {} satellite hardware detected", network_name));
 }

@@ -29,7 +29,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::storage::{BlockchainStore, StorageError, SledStore};
+use crate::storage::{BlockchainStore, SledStore, StorageError};
 use crate::types::hash::blake3_hash;
 
 /// Errors that can occur during snapshot operations
@@ -99,10 +99,11 @@ impl SnapshotId {
 
     /// Parse from hex string
     pub fn from_hex(hex: &str) -> Result<Self, SnapshotError> {
-        let bytes = hex::decode(hex)
-            .map_err(|e| SnapshotError::InvalidFormat(e.to_string()))?;
+        let bytes = hex::decode(hex).map_err(|e| SnapshotError::InvalidFormat(e.to_string()))?;
         if bytes.len() != 32 {
-            return Err(SnapshotError::InvalidFormat("Invalid snapshot ID length".to_string()));
+            return Err(SnapshotError::InvalidFormat(
+                "Invalid snapshot ID length".to_string(),
+            ));
         }
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&bytes);
@@ -214,7 +215,10 @@ impl SnapshotManager {
             fs::create_dir_all(&snapshot_dir)?;
         }
 
-        Ok(Self { store, snapshot_dir })
+        Ok(Self {
+            store,
+            snapshot_dir,
+        })
     }
 
     /// Create a snapshot at the specified height
@@ -230,18 +234,19 @@ impl SnapshotManager {
     /// * `NotInitialized` - If chain has no blocks
     pub fn snapshot_at(&self, height: u64) -> SnapshotResult<SnapshotId> {
         // Verify height exists
-        let latest_height = self.store.latest_height()
-            .map_err(|e| match e {
-                StorageError::NotInitialized => SnapshotError::NotInitialized,
-                other => SnapshotError::Storage(other),
-            })?;
+        let latest_height = self.store.latest_height().map_err(|e| match e {
+            StorageError::NotInitialized => SnapshotError::NotInitialized,
+            other => SnapshotError::Storage(other),
+        })?;
 
         if height > latest_height {
             return Err(SnapshotError::HeightNotFound(height));
         }
 
         // Get the block hash at this height
-        let block = self.store.get_block_by_height(height)?
+        let block = self
+            .store
+            .get_block_by_height(height)?
             .ok_or(SnapshotError::HeightNotFound(height))?;
         let block_hash = block.header.block_hash.as_array();
 
@@ -332,16 +337,20 @@ impl SnapshotManager {
 
         // Update meta (including latest_height)
         let meta_tree = self.store.meta();
-        meta_tree.clear().map_err(|e| SnapshotError::Storage(StorageError::Database(e.to_string())))?;
+        meta_tree
+            .clear()
+            .map_err(|e| SnapshotError::Storage(StorageError::Database(e.to_string())))?;
 
         // Set latest height to snapshot height
-        meta_tree.insert("latest_height", &snapshot_data.height.to_be_bytes())
+        meta_tree
+            .insert("latest_height", &snapshot_data.height.to_be_bytes())
             .map_err(|e| SnapshotError::Storage(StorageError::Database(e.to_string())))?;
 
         // Restore other meta entries (except latest_height which we just set)
         for (key, value) in &snapshot_data.meta {
             if key != b"latest_height" {
-                meta_tree.insert(key.as_slice(), value.as_slice())
+                meta_tree
+                    .insert(key.as_slice(), value.as_slice())
                     .map_err(|e| SnapshotError::Storage(StorageError::Database(e.to_string())))?;
             }
         }
@@ -437,7 +446,8 @@ impl SnapshotManager {
         let mut data = Vec::new();
 
         for entry in tree.iter() {
-            let (key, value) = entry.map_err(|e| SnapshotError::Storage(StorageError::Database(e.to_string())))?;
+            let (key, value) =
+                entry.map_err(|e| SnapshotError::Storage(StorageError::Database(e.to_string())))?;
             data.push((key.to_vec(), value.to_vec()));
         }
 
@@ -446,7 +456,8 @@ impl SnapshotManager {
 
     fn restore_tree(&self, tree: &sled::Tree, data: &[(Vec<u8>, Vec<u8>)]) -> SnapshotResult<()> {
         // Clear existing data
-        tree.clear().map_err(|e| SnapshotError::Storage(StorageError::Database(e.to_string())))?;
+        tree.clear()
+            .map_err(|e| SnapshotError::Storage(StorageError::Database(e.to_string())))?;
 
         // Insert new data
         for (key, value) in data {
@@ -470,11 +481,13 @@ impl SnapshotManager {
 
             // Store by height
             let height_key = height.to_be_bytes();
-            blocks_by_height.insert(&height_key, hash.as_ref())
+            blocks_by_height
+                .insert(&height_key, hash.as_ref())
                 .map_err(|e| SnapshotError::Storage(StorageError::Database(e.to_string())))?;
 
             // Store by hash
-            blocks_by_hash.insert(hash.as_ref(), block_bytes.as_slice())
+            blocks_by_hash
+                .insert(hash.as_ref(), block_bytes.as_slice())
                 .map_err(|e| SnapshotError::Storage(StorageError::Database(e.to_string())))?;
         }
 
@@ -507,8 +520,8 @@ pub struct SnapshotInfo {
 mod tests {
     use super::*;
     use crate::block::{Block, BlockHeader};
-    use crate::storage::{Address, TokenId, OutPoint, TxHash, Utxo};
-    use crate::types::{Hash, Difficulty};
+    use crate::storage::{Address, OutPoint, TokenId, TxHash, Utxo};
+    use crate::types::{Difficulty, Hash};
     use tempfile::TempDir;
 
     fn create_test_store() -> (TempDir, Arc<SledStore>) {
@@ -607,7 +620,10 @@ mod tests {
 
         // Verify all blocks are restored
         let restored_genesis = store.get_block_by_height(0).unwrap().unwrap();
-        assert_eq!(restored_genesis.header.block_hash, genesis.header.block_hash);
+        assert_eq!(
+            restored_genesis.header.block_hash,
+            genesis.header.block_hash
+        );
 
         let restored_block1 = store.get_block_by_height(1).unwrap().unwrap();
         assert_eq!(restored_block1.header.block_hash, block1.header.block_hash);

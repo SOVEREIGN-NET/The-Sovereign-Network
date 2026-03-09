@@ -19,9 +19,9 @@
 //!   possible, which would break BFT finality.
 
 use anyhow::Result;
-use lib_blockchain::{Block, BlockHeader, Blockchain, ValidatorInfo};
 use lib_blockchain::types::mining::get_mining_config_from_env;
 use lib_blockchain::types::Hash;
+use lib_blockchain::{Block, BlockHeader, Blockchain, ValidatorInfo};
 
 // ============================================================================
 // Helpers
@@ -129,8 +129,7 @@ async fn test_no_reorg_after_commit_with_four_validators() -> Result<()> {
     let alt_block_h1 = build_next_block(&alt_genesis, 1); // extra_nonce=1 → different hash
     alternate_chain.add_block(alt_block_h1).await?;
     assert_eq!(
-        alternate_chain.height,
-        1,
+        alternate_chain.height, 1,
         "Alternate chain should also be at height 1"
     );
 
@@ -138,8 +137,7 @@ async fn test_no_reorg_after_commit_with_four_validators() -> Result<()> {
     let local_h1_hash = local_chain.blocks[1].hash();
     let alt_h1_hash = alternate_chain.blocks[1].hash();
     assert_ne!(
-        local_h1_hash,
-        alt_h1_hash,
+        local_h1_hash, alt_h1_hash,
         "Alternate block at H=1 must differ from committed block — otherwise this test is vacuous"
     );
 
@@ -152,9 +150,7 @@ async fn test_no_reorg_after_commit_with_four_validators() -> Result<()> {
     // This MUST return Err.  The post-commit reorg guard in
     // `evaluate_and_merge_chain` (introduced in issue #940) rejects any
     // import when `finalized_blocks` is non-empty.
-    let result = local_chain
-        .evaluate_and_merge_chain(alternate_bytes)
-        .await;
+    let result = local_chain.evaluate_and_merge_chain(alternate_bytes).await;
 
     assert!(
         result.is_err(),
@@ -168,8 +164,7 @@ async fn test_no_reorg_after_commit_with_four_validators() -> Result<()> {
     // the right code path fired (not some unrelated error).
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("Post-commit reorg forbidden")
-            || err_msg.contains("finalized blocks"),
+        err_msg.contains("Post-commit reorg forbidden") || err_msg.contains("finalized blocks"),
         "Error message should mention post-commit reorg guard.  Got: {}",
         err_msg
     );
@@ -177,8 +172,7 @@ async fn test_no_reorg_after_commit_with_four_validators() -> Result<()> {
     // Confirm the local chain was NOT modified — committed blocks are
     // immutable.
     assert_eq!(
-        local_chain.height,
-        1,
+        local_chain.height, 1,
         "Local chain height must be unchanged after rejected reorg attempt"
     );
     assert_eq!(
@@ -220,15 +214,12 @@ async fn test_reorg_rejected_regardless_of_imported_chain_length() -> Result<()>
     let alt_h2 = build_next_block(&alt_h1_blk, 0);
     alternate_chain.add_block(alt_h2).await?;
     assert_eq!(
-        alternate_chain.height,
-        2,
+        alternate_chain.height, 2,
         "Alternate chain should be two blocks tall (longer than local)"
     );
 
     let alternate_bytes = alternate_chain.export_chain()?;
-    let result = local_chain
-        .evaluate_and_merge_chain(alternate_bytes)
-        .await;
+    let result = local_chain.evaluate_and_merge_chain(alternate_bytes).await;
 
     assert!(
         result.is_err(),
@@ -262,9 +253,7 @@ async fn test_import_succeeds_before_any_commit() -> Result<()> {
     // Without finalized blocks the import path is permitted (result may be
     // LocalKept, ContentMerged, or ImportedAdopted depending on chain
     // evaluation — but not Err due to the post-commit guard).
-    let result = local_chain
-        .evaluate_and_merge_chain(alternate_bytes)
-        .await;
+    let result = local_chain.evaluate_and_merge_chain(alternate_bytes).await;
 
     // We only assert it does NOT return an error that contains the
     // post-commit guard message.  Any other result is acceptable.

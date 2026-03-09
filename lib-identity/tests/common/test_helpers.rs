@@ -4,9 +4,9 @@
 
 #![allow(dead_code)]
 
+use lib_crypto::{PrivateKey, PublicKey};
 use lib_identity::identity::ZhtpIdentity;
 use lib_identity::types::IdentityType;
-use lib_crypto::{PublicKey, PrivateKey};
 use lib_proofs::ZeroKnowledgeProof;
 
 /// Create a standard test identity with realistic Dilithium2 key sizes.
@@ -55,7 +55,8 @@ pub fn create_test_identity_with_device(device: &str, citizenship_verified: bool
         Some("US".to_string()),
         citizenship_verified,
         ownership_proof,
-    ).expect("Failed to create test identity")
+    )
+    .expect("Failed to create test identity")
 }
 
 /// Create a test identity for async contexts (same as sync version).

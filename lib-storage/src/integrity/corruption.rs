@@ -1,8 +1,8 @@
 //! Corruption detection
 
-use serde::{Deserialize, Serialize};
 use crate::integrity::{CorruptionIssue, CorruptionType};
 use lib_crypto::hashing::hash_blake3;
+use serde::{Deserialize, Serialize};
 
 /// Corruption detector
 pub struct CorruptionDetector {
@@ -25,7 +25,7 @@ impl CorruptionDetector {
 
         for (i, (block, &expected)) in blocks.iter().zip(expected_checksums.iter()).enumerate() {
             let actual = hash_blake3(block);
-            
+
             if actual != expected {
                 issues.push(CorruptionIssue {
                     issue_type: CorruptionType::ChecksumMismatch,
@@ -41,14 +41,22 @@ impl CorruptionDetector {
     }
 
     /// Detect bit-level corruption
-    pub fn detect_bit_corruption(&self, original: &[u8], current: &[u8]) -> Option<CorruptionIssue> {
+    pub fn detect_bit_corruption(
+        &self,
+        original: &[u8],
+        current: &[u8],
+    ) -> Option<CorruptionIssue> {
         if original.len() != current.len() {
             return Some(CorruptionIssue {
                 issue_type: CorruptionType::SizeMismatch,
                 block_index: 0,
                 expected_checksum: None,
                 actual_checksum: None,
-                details: format!("Size mismatch: expected {}, got {}", original.len(), current.len()),
+                details: format!(
+                    "Size mismatch: expected {}, got {}",
+                    original.len(),
+                    current.len()
+                ),
             });
         }
 
@@ -100,9 +108,9 @@ pub struct CorruptionReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CorruptionSeverity {
     None,
-    Low,     // < 10% corrupted
-    Medium,  // 10-30% corrupted
-    High,    // 30-50% corrupted
+    Low,      // < 10% corrupted
+    Medium,   // 10-30% corrupted
+    High,     // 30-50% corrupted
     Critical, // > 50% corrupted
 }
 

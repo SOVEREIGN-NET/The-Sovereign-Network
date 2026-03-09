@@ -192,7 +192,10 @@ mod tests {
         // v2 active from height 0
         assert_eq!(params.active_fee_model_version(0), fee_model::VERSION_2);
         assert_eq!(params.active_fee_model_version(100), fee_model::VERSION_2);
-        assert_eq!(params.active_fee_model_version(u64::MAX), fee_model::VERSION_2);
+        assert_eq!(
+            params.active_fee_model_version(u64::MAX),
+            fee_model::VERSION_2
+        );
     }
 
     #[test]
@@ -214,10 +217,16 @@ mod tests {
         let params = ProtocolParams::new_with_v2_activation(100);
 
         // Height 99: v1 accepted, v2 rejected
-        assert!(params.validate_fee_model_version(99, fee_model::VERSION_1).is_ok());
+        assert!(params
+            .validate_fee_model_version(99, fee_model::VERSION_1)
+            .is_ok());
         assert!(matches!(
             params.validate_fee_model_version(99, fee_model::VERSION_2),
-            Err(ProtocolError::InvalidFeeModelVersion { height: 99, version: 2, expected: 1 })
+            Err(ProtocolError::InvalidFeeModelVersion {
+                height: 99,
+                version: 2,
+                expected: 1
+            })
         ));
     }
 
@@ -226,10 +235,16 @@ mod tests {
         let params = ProtocolParams::new_with_v2_activation(100);
 
         // Height 100: v2 accepted, v1 rejected
-        assert!(params.validate_fee_model_version(100, fee_model::VERSION_2).is_ok());
+        assert!(params
+            .validate_fee_model_version(100, fee_model::VERSION_2)
+            .is_ok());
         assert!(matches!(
             params.validate_fee_model_version(100, fee_model::VERSION_1),
-            Err(ProtocolError::InvalidFeeModelVersion { height: 100, version: 1, expected: 2 })
+            Err(ProtocolError::InvalidFeeModelVersion {
+                height: 100,
+                version: 1,
+                expected: 2
+            })
         ));
     }
 
@@ -238,10 +253,16 @@ mod tests {
         let params = ProtocolParams::new_with_v2_activation(100);
 
         // Height 101: v2 accepted, v1 rejected
-        assert!(params.validate_fee_model_version(101, fee_model::VERSION_2).is_ok());
+        assert!(params
+            .validate_fee_model_version(101, fee_model::VERSION_2)
+            .is_ok());
         assert!(matches!(
             params.validate_fee_model_version(101, fee_model::VERSION_1),
-            Err(ProtocolError::InvalidFeeModelVersion { height: 101, version: 1, expected: 2 })
+            Err(ProtocolError::InvalidFeeModelVersion {
+                height: 101,
+                version: 1,
+                expected: 2
+            })
         ));
     }
 
@@ -261,8 +282,12 @@ mod tests {
         let params = ProtocolParams::new_with_v2_activation(0);
 
         assert_eq!(params.active_fee_model_version(0), fee_model::VERSION_2);
-        assert!(params.validate_fee_model_version(0, fee_model::VERSION_2).is_ok());
-        assert!(params.validate_fee_model_version(0, fee_model::VERSION_1).is_err());
+        assert!(params
+            .validate_fee_model_version(0, fee_model::VERSION_2)
+            .is_ok());
+        assert!(params
+            .validate_fee_model_version(0, fee_model::VERSION_1)
+            .is_err());
     }
 
     #[test]
@@ -271,7 +296,13 @@ mod tests {
         let params = ProtocolParams::new_with_v2_activation(u64::MAX);
 
         assert_eq!(params.active_fee_model_version(0), fee_model::VERSION_1);
-        assert_eq!(params.active_fee_model_version(u64::MAX - 1), fee_model::VERSION_1);
-        assert_eq!(params.active_fee_model_version(u64::MAX), fee_model::VERSION_2);
+        assert_eq!(
+            params.active_fee_model_version(u64::MAX - 1),
+            fee_model::VERSION_1
+        );
+        assert_eq!(
+            params.active_fee_model_version(u64::MAX),
+            fee_model::VERSION_2
+        );
     }
 }

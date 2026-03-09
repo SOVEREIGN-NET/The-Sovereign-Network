@@ -1,9 +1,9 @@
 //! Random number generation module for ZHTP cryptography
-//! 
+//!
 //! Provides secure random number generation for cryptographic operations
 
-use rand::{CryptoRng, RngCore};
 use rand::rngs::OsRng;
+use rand::{CryptoRng, RngCore};
 
 /// Secure random number generator wrapper
 pub struct SecureRng {
@@ -13,9 +13,7 @@ pub struct SecureRng {
 impl SecureRng {
     /// Create a new secure RNG instance
     pub fn new() -> Self {
-        Self {
-            rng: OsRng,
-        }
+        Self { rng: OsRng }
     }
 
     /// Generate random bytes into the provided buffer
@@ -140,7 +138,7 @@ mod tests {
         let mut rng = SecureRng::new();
         let bytes1 = rng.generate_bytes(32);
         let bytes2 = rng.generate_bytes(32);
-        
+
         assert_eq!(bytes1.len(), 32);
         assert_eq!(bytes2.len(), 32);
         assert_ne!(bytes1, bytes2); // Should be different
@@ -151,7 +149,7 @@ mod tests {
         let mut rng = SecureRng::new();
         let key1 = rng.generate_key();
         let key2 = rng.generate_key();
-        
+
         assert_eq!(key1.len(), 32);
         assert_eq!(key2.len(), 32);
         assert_ne!(key1, key2); // Should be different
@@ -162,7 +160,7 @@ mod tests {
         let bytes = generate_random_bytes(16);
         let key = generate_random_key();
         let seed = generate_random_seed();
-        
+
         assert_eq!(bytes.len(), 16);
         assert_eq!(key.len(), 32);
         assert_eq!(seed.len(), 64);
@@ -173,10 +171,10 @@ mod tests {
         let mut rng = SecureRng::new();
         let _u32_val = rng.next_u32();
         let _u64_val = rng.next_u64();
-        
+
         let mut buffer = [0u8; 16];
         rng.fill_bytes(&mut buffer);
-        
+
         // Check that buffer was modified
         assert_ne!(buffer, [0u8; 16]);
     }

@@ -18,23 +18,25 @@ pub mod trust;
 
 // Web4 system - always compiled with protocol-only design
 // Uses trait-based UnifiedStorage from lib-network, never depends on lib-storage directly
-pub mod domain_registry;
-pub mod name_resolver;
-pub mod content_publisher;
-pub mod content_service;
-pub mod types;
 #[cfg(feature = "quic")]
 pub mod client;
+pub mod content_publisher;
+pub mod content_service;
+pub mod domain_registry;
+pub mod name_resolver;
+pub mod types;
 
-pub use domain_registry::*;
-pub use name_resolver::NameResolver;
-pub use content_publisher::*;
-pub use content_service::*;
-pub use types::*;
 #[cfg(feature = "quic")]
 pub use client::Web4Client;
+pub use content_publisher::*;
+pub use content_service::*;
+pub use domain_registry::*;
+pub use name_resolver::NameResolver;
 #[cfg(feature = "quic")]
-pub use trust::{TrustConfig, TrustDb, TrustAnchor, TrustPolicy, TrustAuditEntry, ZhtpTrustVerifier};
+pub use trust::{
+    TrustAnchor, TrustAuditEntry, TrustConfig, TrustDb, TrustPolicy, ZhtpTrustVerifier,
+};
+pub use types::*;
 
 // NOTE: initialization helpers removed - zhtp is the composition root
 // zhtp wires DomainRegistry + ContentPublisher -> Web4Manager directly

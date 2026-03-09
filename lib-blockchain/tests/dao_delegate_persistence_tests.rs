@@ -67,14 +67,14 @@ fn dao_execution_tx(
         token_transfer_data: None,
         token_mint_data: None,
         governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
     }
 }
 
@@ -212,13 +212,16 @@ fn test_delegate_replay_determinism_from_chain_history() -> Result<()> {
 
     let node_a = lib_blockchain::Blockchain::load_from_store(store.clone())?
         .expect("node A should load from store");
-    let node_b = lib_blockchain::Blockchain::load_from_store(store)?
-        .expect("node B should load from store");
+    let node_b =
+        lib_blockchain::Blockchain::load_from_store(store)?.expect("node B should load from store");
 
     let state_a = reconstruct_active_delegates(&node_a.get_dao_executions());
     let state_b = reconstruct_active_delegates(&node_b.get_dao_executions());
 
-    assert_eq!(state_a, state_b, "delegate state must be deterministic across nodes");
+    assert_eq!(
+        state_a, state_b,
+        "delegate state must be deterministic across nodes"
+    );
     assert_eq!(state_a.len(), 2);
     assert_eq!(state_a.get(did_alice).unwrap().0, "alice-v2");
     assert_eq!(state_a.get(did_alice).unwrap().1, "Alice 2");
@@ -253,11 +256,14 @@ fn test_delegate_restart_reconstruction_equivalence() -> Result<()> {
         .expect("before restart should load");
     let expected_state = reconstruct_active_delegates(&before_restart.get_dao_executions());
 
-    let after_restart = lib_blockchain::Blockchain::load_from_store(store)?
-        .expect("after restart should load");
+    let after_restart =
+        lib_blockchain::Blockchain::load_from_store(store)?.expect("after restart should load");
     let actual_state = reconstruct_active_delegates(&after_restart.get_dao_executions());
 
-    assert_eq!(expected_state, actual_state, "restart must preserve delegate reconstruction state");
+    assert_eq!(
+        expected_state, actual_state,
+        "restart must preserve delegate reconstruction state"
+    );
     assert!(actual_state.contains_key(did));
 
     Ok(())

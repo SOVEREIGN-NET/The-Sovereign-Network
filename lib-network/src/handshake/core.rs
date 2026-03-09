@@ -18,7 +18,7 @@
 //! ```ignore
 //! use lib_network::handshake::{HandshakeContext, handshake_as_initiator};
 //! use tokio::net::TcpStream;
-//! 
+//!
 //! async fn connect(stream: &mut TcpStream, ctx: &HandshakeContext) {
 //!     let result = handshake_as_initiator(stream, ctx).await.unwrap();
 //!     println!("Session established: {:?}", result.session_id);
@@ -26,19 +26,18 @@
 //! ```
 
 use super::{
-    ClientHello, ServerHello, ClientFinish, HandshakeMessage, HandshakePayload,
-    HandshakeContext, HandshakeResult, HandshakeSessionInfo, HandshakeRole,
-    HandshakeCapabilities,
-    decapsulate_pqc, verify_pqc_offer, compute_transcript_hash,
+    compute_transcript_hash, decapsulate_pqc, verify_pqc_offer, ClientFinish, ClientHello,
+    HandshakeCapabilities, HandshakeContext, HandshakeMessage, HandshakePayload, HandshakeResult,
+    HandshakeRole, HandshakeSessionInfo, ServerHello,
 };
 use anyhow::Result;
-use lib_identity::ZhtpIdentity;
 use lib_crypto::KeyPair;
+use lib_identity::ZhtpIdentity;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::{trace, debug, error};
+use tracing::{debug, error, trace};
 
 // Use orchestrator helpers to reduce duplication
-use crate::handshake::orchestrator::{extract_payload, check_for_error};
+use crate::handshake::orchestrator::{check_for_error, extract_payload};
 
 // ============================================================================
 // Error Types
@@ -66,10 +65,7 @@ pub enum HandshakeIoError {
     InvalidMessageOrder,
 
     /// Unexpected message type
-    UnexpectedMessageType {
-        expected: String,
-        got: String,
-    },
+    UnexpectedMessageType { expected: String, got: String },
 
     /// Protocol error
     Protocol(String),
@@ -88,7 +84,11 @@ impl std::fmt::Display for HandshakeIoError {
             Self::NonceMissing => write!(f, "Invalid nonce"),
             Self::InvalidMessageOrder => write!(f, "Invalid message order or nonce mismatch"),
             Self::UnexpectedMessageType { expected, got } => {
-                write!(f, "Unexpected message type: expected {}, got {}", expected, got)
+                write!(
+                    f,
+                    "Unexpected message type: expected {}, got {}",
+                    expected, got
+                )
             }
             Self::Protocol(s) => write!(f, "Protocol error: {}", s),
             Self::IdentityError(s) => write!(f, "Identity error: {}", s),
@@ -142,7 +142,10 @@ impl<'a> NonceTracker<'a> {
 ///
 /// Uses unified framing module for consistent message serialization across all transports.
 /// Format: [4-byte length][message bytes]
-pub async fn send_message<S>(stream: &mut S, message: &HandshakeMessage) -> Result<(), HandshakeIoError>
+pub async fn send_message<S>(
+    stream: &mut S,
+    message: &HandshakeMessage,
+) -> Result<(), HandshakeIoError>
 where
     S: AsyncWrite + Unpin,
 {
@@ -171,8 +174,7 @@ where
         .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
     // Deserialize message
-    HandshakeMessage::from_bytes(&bytes)
-        .map_err(|e| HandshakeIoError::Serialization(e.to_string()))
+    HandshakeMessage::from_bytes(&bytes).map_err(|e| HandshakeIoError::Serialization(e.to_string()))
 }
 
 async fn send_message_with_bytes<S>(
@@ -290,7 +292,7 @@ where
         &keypair,
         &ctx,
     )
-        .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
+    .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
 
     // 7. Send ClientFinish
     let finish_msg = HandshakeMessage::new(HandshakePayload::ClientFinish(client_finish));
@@ -371,7 +373,10 @@ where
     // 1. Receive ClientHello
     trace!("core::handshake_as_responder: step 1 - receiving ClientHello...");
     let (client_msg, client_hello_bytes) = recv_message_with_bytes(stream).await?;
-    debug!("core::handshake_as_responder: received ClientHello ({} bytes)", client_hello_bytes.len());
+    debug!(
+        "core::handshake_as_responder: received ClientHello ({} bytes)",
+        client_hello_bytes.len()
+    );
     let client_hello = extract_payload(&client_msg, "ClientHello", |payload| {
         if let HandshakePayload::ClientHello(ch) = payload {
             Some(ch.clone())
@@ -379,7 +384,10 @@ where
             None
         }
     })?;
-    trace!("core::handshake_as_responder: ClientHello parsed, client_did={}", client_hello.identity.did);
+    trace!(
+        "core::handshake_as_responder: ClientHello parsed, client_did={}",
+        client_hello.identity.did
+    );
 
     // 2. Verify client signature
     trace!("core::handshake_as_responder: step 2 - verifying client signature...");
@@ -388,14 +396,8 @@ where
             "core::handshake_as_responder: signature verification FAILED: {}",
             e
         );
-        error!(
-            "  client_did: {}",
-            client_hello.identity.did
-        );
-        error!(
-            "  client_device_id: {}",
-            client_hello.identity.device_id
-        );
+        error!("  client_did: {}", client_hello.identity.did);
+        error!("  client_device_id: {}", client_hello.identity.device_id);
         return Err(HandshakeIoError::InvalidSignature);
     }
     trace!("core::handshake_as_responder: client signature verified");
@@ -419,19 +421,25 @@ where
         &client_hello_hash,
         &ctx,
     )
-        .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
+    .map_err(|e| HandshakeIoError::Protocol(e.to_string()))?;
     trace!("core::handshake_as_responder: ServerHello created");
 
     // 5. Send ServerHello
     trace!("core::handshake_as_responder: step 5 - sending ServerHello...");
     let hello_msg = HandshakeMessage::new(HandshakePayload::ServerHello(server_hello.clone()));
     let server_hello_bytes = send_message_with_bytes(stream, &hello_msg).await?;
-    debug!("core::handshake_as_responder: sent ServerHello ({} bytes)", server_hello_bytes.len());
+    debug!(
+        "core::handshake_as_responder: sent ServerHello ({} bytes)",
+        server_hello_bytes.len()
+    );
 
     // 6. Receive ClientFinish
     trace!("core::handshake_as_responder: step 6 - receiving ClientFinish...");
     let (finish_msg, client_finish_bytes) = recv_message_with_bytes(stream).await?;
-    debug!("core::handshake_as_responder: received ClientFinish ({} bytes)", client_finish_bytes.len());
+    debug!(
+        "core::handshake_as_responder: received ClientFinish ({} bytes)",
+        client_finish_bytes.len()
+    );
     check_for_error(&finish_msg)?;
     let client_finish = extract_payload(&finish_msg, "ClientFinish", |payload| {
         if let HandshakePayload::ClientFinish(cf) = payload {
@@ -456,8 +464,9 @@ where
     // 8. Decapsulate PQC shared secret if client sent ciphertext
     let pqc_shared_secret = match (&client_finish.pqc_ciphertext, &pqc_state) {
         (Some(ciphertext), Some(state)) => {
-            let secret = decapsulate_pqc(ciphertext, state)
-                .map_err(|e| HandshakeIoError::Protocol(format!("PQC decapsulation failed: {}", e)))?;
+            let secret = decapsulate_pqc(ciphertext, state).map_err(|e| {
+                HandshakeIoError::Protocol(format!("PQC decapsulation failed: {}", e))
+            })?;
             Some(secret)
         }
         _ => None,
@@ -478,9 +487,9 @@ where
         server_hello.negotiated.clone(),
         &client_hello.challenge_nonce,
         &server_hello.response_nonce,
-        &client_hello.identity.did,  // FIX: client_did is the CLIENT's DID
-        &local_identity.did,          // FIX: server_did is the SERVER's (local) DID
-        client_hello.timestamp, // VULN-003 FIX: Use ClientHello timestamp
+        &client_hello.identity.did, // FIX: client_did is the CLIENT's DID
+        &local_identity.did,        // FIX: server_did is the SERVER's (local) DID
+        client_hello.timestamp,     // VULN-003 FIX: Use ClientHello timestamp
         &session_info,
         pqc_shared_secret.as_ref(),
         transcript_hash,
@@ -524,21 +533,24 @@ where
     stream.shutdown().await?;
 
     // Step 3: Drain any remaining data with timeout (prevents hanging)
-    let drain_result = timeout(
-        Duration::from_secs(timeout_secs),
-        drain_stream(stream)
-    ).await;
+    let drain_result = timeout(Duration::from_secs(timeout_secs), drain_stream(stream)).await;
 
     match drain_result {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => {
             // Drain error is not fatal - the shutdown already succeeded
-            debug!("Graceful shutdown: drain completed with error (non-fatal): {}", e);
+            debug!(
+                "Graceful shutdown: drain completed with error (non-fatal): {}",
+                e
+            );
             Ok(())
         }
         Err(_) => {
             // Timeout is not fatal - the shutdown already succeeded
-            debug!("Graceful shutdown: drain timed out after {}s (non-fatal)", timeout_secs);
+            debug!(
+                "Graceful shutdown: drain timed out after {}s (non-fatal)",
+                timeout_secs
+            );
             Ok(())
         }
     }
@@ -629,7 +641,8 @@ mod tests {
                 let _ = graceful_shutdown(&mut server_stream, 5).await;
                 result
             }
-        ).expect("Handshake should complete successfully");
+        )
+        .expect("Handshake should complete successfully");
 
         // Verify session keys match
         assert_eq!(client_result.session_key, server_result.session_key);
@@ -692,15 +705,24 @@ mod tests {
 
             // Create a ClientHello manually to control the nonce
             let client_ctx = ctx.with_roles(HandshakeRole::Client, HandshakeRole::Server);
-            let client_hello = ClientHello::new(&client_identity, HandshakeCapabilities::default(), &client_ctx).unwrap();
+            let client_hello = ClientHello::new(
+                &client_identity,
+                HandshakeCapabilities::default(),
+                &client_ctx,
+            )
+            .unwrap();
 
             // Register this nonce in the cache (simulating first handshake)
-            ctx.nonce_cache.check_and_store(&client_hello.challenge_nonce, client_hello.timestamp).unwrap();
+            ctx.nonce_cache
+                .check_and_store(&client_hello.challenge_nonce, client_hello.timestamp)
+                .unwrap();
 
             // Now try to use it again - should be detected as replay
-            let result = ctx.nonce_cache.check_and_store(&client_hello.challenge_nonce, client_hello.timestamp);
+            let result = ctx
+                .nonce_cache
+                .check_and_store(&client_hello.challenge_nonce, client_hello.timestamp);
             assert!(result.is_err());
-            
+
             // Cleanup streams
             let _ = graceful_shutdown(&mut client_stream, 5).await;
             let _ = graceful_shutdown(&mut server_stream, 5).await;
@@ -729,7 +751,8 @@ mod tests {
         // Create a test message
         let identity = create_test_identity("test-io");
         let ctx = HandshakeContext::new_test();
-        let client_hello = ClientHello::new(&identity, HandshakeCapabilities::default(), &ctx).unwrap();
+        let client_hello =
+            ClientHello::new(&identity, HandshakeCapabilities::default(), &ctx).unwrap();
         let message = HandshakeMessage::new(HandshakePayload::ClientHello(client_hello.clone()));
 
         // Send from client
@@ -767,7 +790,7 @@ mod tests {
         // Server should reject
         let result = recv_message(&mut server).await;
         let _ = graceful_shutdown(&mut server, 5).await;
-        
+
         assert!(result.is_err());
         match result.unwrap_err() {
             HandshakeIoError::Protocol(msg) => assert!(msg.contains("too large")),

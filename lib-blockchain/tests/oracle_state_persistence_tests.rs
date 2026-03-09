@@ -4,10 +4,12 @@ use lib_blockchain::{Blockchain, FinalizedOraclePrice};
 fn oracle_state_round_trip_persists_finalized_prices() {
     let mut blockchain = Blockchain::default();
     // Use the public try_finalize_price API to insert a finalized price.
-    blockchain.oracle_state.try_finalize_price(FinalizedOraclePrice {
-        epoch_id: 7,
-        sov_usd_price: 218_000_000,
-    });
+    blockchain
+        .oracle_state
+        .try_finalize_price(FinalizedOraclePrice {
+            epoch_id: 7,
+            sov_usd_price: 218_000_000,
+        });
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let path = tmp.path().join("blockchain_oracle_v4.dat");

@@ -1,14 +1,18 @@
+use crate::utils::node::Node;
+use crate::utils::uid::UID;
 use std::any::Any;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
-use crate::utils::node::Node;
-use crate::utils::uid::UID;
 
 pub trait RoutingTable: Send {
-
     fn get_update_public_ip_consensus(&self) -> fn(Arc<Mutex<dyn RoutingTable>>, IpAddr, IpAddr);
 
-    fn update_public_ip_consensus(routing_table: Arc<Mutex<dyn RoutingTable>>, source: IpAddr, addr: IpAddr) where Self: Sized;
+    fn update_public_ip_consensus(
+        routing_table: Arc<Mutex<dyn RoutingTable>>,
+        source: IpAddr,
+        addr: IpAddr,
+    ) where
+        Self: Sized;
 
     fn set_external_address(&mut self, address: IpAddr);
 
@@ -42,7 +46,9 @@ pub trait RoutingTable: Send {
 
     fn get_restart(&self) -> fn(Arc<Mutex<dyn RoutingTable>>);
 
-    fn restart(routing_table: Arc<Mutex<dyn RoutingTable>>) where Self: Sized;
+    fn restart(routing_table: Arc<Mutex<dyn RoutingTable>>)
+    where
+        Self: Sized;
 
     fn upcast(&self) -> &dyn RoutingTable;
 

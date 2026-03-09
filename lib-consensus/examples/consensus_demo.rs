@@ -16,7 +16,7 @@ use tracing_subscriber;
 
 use lib_consensus::{
     ConsensusConfig, ConsensusEngine, ConsensusType, DaoProposalType, DaoVoteChoice,
-    ValidatorStatus, NoOpBroadcaster,
+    NoOpBroadcaster, ValidatorStatus,
 };
 use lib_crypto::Hash;
 use lib_identity::IdentityId;

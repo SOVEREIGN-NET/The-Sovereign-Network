@@ -23,11 +23,11 @@ pub struct BlockLimits {
 impl Default for BlockLimits {
     fn default() -> Self {
         Self {
-            max_payload_bytes: 1_048_576,      // 1 MB
-            max_witness_bytes: 524_288,        // 512 KB
-            max_verify_units: 1_000_000,       // 1M verify units
-            max_state_write_bytes: 2_097_152,  // 2 MB
-            max_tx_count: 10_000,              // 10k txs
+            max_payload_bytes: 1_048_576,     // 1 MB
+            max_witness_bytes: 524_288,       // 512 KB
+            max_verify_units: 1_000_000,      // 1M verify units
+            max_state_write_bytes: 2_097_152, // 2 MB
+            max_tx_count: 10_000,             // 10k txs
         }
     }
 }
@@ -315,7 +315,11 @@ mod tests {
         assert!(result.is_err());
 
         // State must be unchanged
-        assert_eq!(acc.usage(), (p, w, v, s, t), "State changed after failed add_tx");
+        assert_eq!(
+            acc.usage(),
+            (p, w, v, s, t),
+            "State changed after failed add_tx"
+        );
     }
 
     /// Invariant: Each limit type must be independently enforced

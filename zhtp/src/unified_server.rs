@@ -21,29 +21,29 @@
 //! - Discovery coordinators (DHT, mDNS, BLE, etc.)
 //! - Protocol handlers for mesh-local transport
 
-use std::sync::Arc;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 // REMOVED: TCP/UDP no longer used - QUIC-only architecture
 // use tokio::net::{TcpListener, UdpSocket, TcpStream};
-use anyhow::{Result, Context};
-use tracing::{info, warn, error, debug};
+use anyhow::{Context, Result};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 // Import from libraries (no circular dependencies!)
-use lib_protocols::zhtp::ZhtpRequestHandler;
 use lib_network::protocols::quic_mesh::QuicMeshProtocol;
+use lib_protocols::zhtp::ZhtpRequestHandler;
 
 // Import new QUIC handler for native ZHTP-over-QUIC
+use crate::monitoring::MonitoringSystem;
 use crate::server::QuicHandler;
 use lib_blockchain::Blockchain;
-use lib_storage::PersistentStorageSystem;
-use lib_identity::IdentityManager;
-use lib_economy::EconomicModel;
 use lib_crypto::PublicKey;
+use lib_economy::EconomicModel;
+use lib_identity::IdentityManager;
 use lib_network::web4::DomainRegistry;
-use crate::monitoring::MonitoringSystem;
+use lib_storage::PersistentStorageSystem;
 
 // Import keystore filename constants
 use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
@@ -53,40 +53,17 @@ const QUIC_PORT: u16 = 9334;
 
 // Import our comprehensive API handlers
 use crate::api::handlers::{
-    DhtHandler,
-    ProtocolHandler,
-    BlockchainHandler,
-    IdentityHandler,
-    StorageHandler,
-    WalletHandler,
-    DaoHandler,
-    Web4Handler,
-    DnsHandler,
-    TokenHandler,
+    BlockchainHandler, DaoHandler, DhtHandler, DnsHandler, IdentityHandler, ProtocolHandler,
+    StorageHandler, TokenHandler, WalletHandler, Web4Handler,
 };
 use crate::session_manager::SessionManager;
 
 // Re-export for backward compatibility with code that imports from crate::unified_server::*
 pub use crate::server::{
-    IncomingProtocol,
-    Middleware,
-    CorsMiddleware,
-    RateLimitMiddleware,
-    AuthMiddleware,
-    MeshRouter,
-    PeerReputation,
-    PeerRateLimit,
-    BroadcastMetrics,
-    SyncPerformanceMetrics,
-    SyncAlert,
-    AlertLevel,
-    AlertThresholds,
-    MetricsSnapshot,
-    PeerPerformanceStats,
-    WiFiRouter,
-    BluetoothRouter,
-    BluetoothClassicRouter,
-    ClassicProtocol,
+    AlertLevel, AlertThresholds, AuthMiddleware, BluetoothClassicRouter, BluetoothRouter,
+    BroadcastMetrics, ClassicProtocol, CorsMiddleware, IncomingProtocol, MeshRouter,
+    MetricsSnapshot, Middleware, PeerPerformanceStats, PeerRateLimit, PeerReputation,
+    RateLimitMiddleware, SyncAlert, SyncPerformanceMetrics, WiFiRouter,
 };
 
 /// Main unified server that handles all protocols
@@ -102,13 +79,13 @@ pub struct ZhtpUnifiedServer {
     wifi_router: WiFiRouter,
     bluetooth_router: BluetoothRouter,
     bluetooth_classic_router: BluetoothClassicRouter,
-    
+
     // Shared backend state (from ZHTP orchestrator)
     blockchain: Arc<RwLock<Blockchain>>,
     storage: Arc<RwLock<PersistentStorageSystem>>,
     identity_manager: Arc<RwLock<IdentityManager>>,
     economic_model: Arc<RwLock<EconomicModel>>,
-    
+
     // Session management
     _session_manager: Arc<SessionManager>,
 
@@ -150,10 +127,10 @@ impl ZhtpUnifiedServer {
     #[allow(dead_code)]
     fn is_self_connection(addr: &std::net::SocketAddr) -> bool {
         let ip = addr.ip();
-        
+
         // IMPORTANT: Do NOT block loopback (127.0.0.1) - that's how browsers connect!
         // We only want to block our actual network IP connecting to itself
-        
+
         // Check if the source IP matches our local network IP
         // (This prevents Ethernet connecting to WiFi on same machine)
         if let Ok(local_ip) = local_ip_address::local_ip() {
@@ -162,7 +139,7 @@ impl ZhtpUnifiedServer {
                 return true;
             }
         }
-        
+
         // Check for link-local auto-assigned addresses (169.254.x.x, fe80::/10)
         // These can cause issues on multi-NIC systems
         match ip {
@@ -189,7 +166,7 @@ impl ZhtpUnifiedServer {
                 }
             }
         }
-        
+
         false
     }
 
@@ -204,7 +181,7 @@ impl ZhtpUnifiedServer {
     ///
     /// Production systems MUST have a persistent keystore. Fails hard if keystore is missing in release mode.
     fn create_server_identity(server_id: Uuid) -> Result<Arc<lib_identity::ZhtpIdentity>> {
-        use lib_identity::{ZhtpIdentity, IdentityType};
+        use lib_identity::{IdentityType, ZhtpIdentity};
 
         // Try to load from keystore first (consistent with WalletStartupManager)
         let keystore_dir = dirs::home_dir()
@@ -221,12 +198,19 @@ impl ZhtpUnifiedServer {
                     if let Ok(key_store) = serde_json::from_str::<serde_json::Value>(&key_data) {
                         // Extract private key components
                         if let (Some(dilithium), Some(kyber), Some(seed)) = (
-                            key_store.get("dilithium_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                            key_store.get("kyber_sk").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
-                            key_store.get("master_seed").and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                            key_store
+                                .get("dilithium_sk")
+                                .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                            key_store
+                                .get("kyber_sk")
+                                .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
+                            key_store
+                                .get("master_seed")
+                                .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok()),
                         ) {
                             // Get dilithium_pk if present, otherwise use empty (backward compat)
-                            let dilithium_pk = key_store.get("dilithium_pk")
+                            let dilithium_pk = key_store
+                                .get("dilithium_pk")
                                 .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok())
                                 .unwrap_or_default();
                             let private_key = lib_crypto::PrivateKey {
@@ -236,7 +220,8 @@ impl ZhtpUnifiedServer {
                                 master_seed: seed,
                             };
 
-                            if let Ok(identity) = ZhtpIdentity::from_serialized(&data, &private_key) {
+                            if let Ok(identity) = ZhtpIdentity::from_serialized(&data, &private_key)
+                            {
                                 tracing::info!(
                                     did = %identity.did,
                                     "Loaded server identity from keystore"
@@ -284,7 +269,8 @@ impl ZhtpUnifiedServer {
             None,                 // No jurisdiction for devices
             "zhtp-server",        // Device name
             Some(seed),           // Deterministic seed from UUID
-        ).context("Failed to create server identity")?;
+        )
+        .context("Failed to create server identity")?;
 
         Ok(Arc::new(identity))
     }
@@ -293,13 +279,13 @@ impl ZhtpUnifiedServer {
     pub async fn get_broadcast_metrics(&self) -> BroadcastMetrics {
         self.mesh_router.get_broadcast_metrics().await
     }
-    
+
     /// Get the mesh router as an Arc for global provider access
     pub fn get_mesh_router_arc(&self) -> Arc<MeshRouter> {
         // mesh_router is already Arc<MeshRouter>, so clone just increments refcount
         self.mesh_router.clone()
     }
-    
+
     /// Create new unified server with comprehensive backend integration
     pub async fn new(
         blockchain: Arc<RwLock<Blockchain>>,
@@ -308,9 +294,21 @@ impl ZhtpUnifiedServer {
         economic_model: Arc<RwLock<EconomicModel>>,
         port: u16, // Port from configuration
     ) -> Result<Self> {
-        Self::new_with_peer_notification(blockchain, storage, identity_manager, economic_model, port, None, None, None, None, None).await
+        Self::new_with_peer_notification(
+            blockchain,
+            storage,
+            identity_manager,
+            economic_model,
+            port,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
     }
-    
+
     /// Create new unified server with peer discovery notification channel
     pub async fn new_with_peer_notification(
         blockchain: Arc<RwLock<Blockchain>>,
@@ -335,18 +333,22 @@ impl ZhtpUnifiedServer {
         if discovery_port == quic_port {
             return Err(anyhow::anyhow!(
                 "Discovery port ({}) and QUIC port ({}) must be different",
-                discovery_port, quic_port
+                discovery_port,
+                quic_port
             ));
         }
 
         info!("Creating ZHTP Unified Server (ID: {})", server_id);
         info!("Port: {} (HTTP + UDP + WiFi + Bootstrap)", port);
-        info!("Discovery port: {}, QUIC port: {}", discovery_port, quic_port);
-        
+        info!(
+            "Discovery port: {}, QUIC port: {}",
+            discovery_port, quic_port
+        );
+
         // Initialize session manager first
         let _session_manager = Arc::new(SessionManager::new());
         _session_manager.start_cleanup_task();
-        
+
         // Initialize discovery coordinator (Phase 3 consolidation)
         // Create DiscoveryConfig from runtime bootstrap peers (ARCHITECTURE: Runtime topology, not Environment defaults)
         let discovery_config = crate::discovery_coordinator::DiscoveryConfig::new(
@@ -358,43 +360,51 @@ impl ZhtpUnifiedServer {
                 crate::discovery_coordinator::DiscoveryProtocol::DHT,
             ],
         );
-        let discovery_coordinator = Arc::new(crate::discovery_coordinator::DiscoveryCoordinator::new(discovery_config));
+        let discovery_coordinator = Arc::new(
+            crate::discovery_coordinator::DiscoveryCoordinator::new(discovery_config),
+        );
         discovery_coordinator.start_event_listener().await;
-        info!(" Discovery coordinator initialized - all protocols will report to single coordinator");
-        
+        info!(
+            " Discovery coordinator initialized - all protocols will report to single coordinator"
+        );
+
         // Initialize protocol routers
-        let mut zhtp_router = crate::server::zhtp::ZhtpRouter::new();  // Native ZHTP router for QUIC - ONLY ROUTER NEEDED
+        let mut zhtp_router = crate::server::zhtp::ZhtpRouter::new(); // Native ZHTP router for QUIC - ONLY ROUTER NEEDED
         let mut mesh_router = MeshRouter::new(server_id, _session_manager.clone());
         let wifi_router = WiFiRouter::new_with_peer_notification(peer_discovery_tx);
         let bluetooth_router = BluetoothRouter::new();
         let bluetooth_classic_router = BluetoothClassicRouter::new();
-        
+
         // Set identity manager on mesh router for direct UDP access
         // This is used by send_with_routing() and broadcast_to_peers() to get sender identity
         // Failure to set this before set_broadcast_receiver() will cause broadcast to fail
         mesh_router.set_identity_manager(identity_manager.clone());
-        
+
         // Set identity manager on WiFi router for UHP handshake authentication
-        wifi_router.set_identity_manager(identity_manager.clone()).await;
-        
+        wifi_router
+            .set_identity_manager(identity_manager.clone())
+            .await;
+
         // Create blockchain broadcast channel for real-time sync
         let (broadcast_sender, broadcast_receiver) = tokio::sync::mpsc::unbounded_channel();
-        
+
         // Configure blockchain to use broadcast channel
         // NOTE: 'blockchain' should BE the shared instance, not a separate copy
         {
             let mut blockchain_write = blockchain.write().await;
             blockchain_write.set_broadcast_channel(broadcast_sender);
         }
-        
+
         // Configure mesh router to receive broadcasts
         // CRITICAL INITIALIZATION ORDER:
         // 1. identity_manager must be set (line 297) BEFORE this call
         // 2. Blockchain broadcast immediately sends blocks/transactions when channel is ready
         // 3. If identity is not initialized, broadcast_to_peers() will panic with configuration error
         let mesh_router_arc = Arc::new(mesh_router);
-        mesh_router_arc.set_broadcast_receiver(broadcast_receiver).await;
-        
+        mesh_router_arc
+            .set_broadcast_receiver(broadcast_receiver)
+            .await;
+
         // Initialize WiFi Direct protocol
         if let Err(e) = wifi_router.initialize().await {
             warn!("WiFi Direct initialization failed: {}", e);
@@ -402,16 +412,20 @@ impl ZhtpUnifiedServer {
             info!(" WiFi Direct protocol initialized but DISABLED by default");
             info!("   Use API endpoint /api/v1/protocols/wifi-direct/enable to activate");
         }
-        
+
         // NOTE: Bluetooth initialization happens in start() to avoid double initialization
         // The bluetooth_router is created here but initialized later when server starts
 
         // Initialize QUIC mesh protocol (uses configurable QUIC port to avoid conflicts)
         // QUIC is now REQUIRED (not optional) for all networking
         info!(" [UNIFIED_SERVER] Calling init_quic_mesh()");
-        let quic_mesh = Self::init_quic_mesh(quic_port, server_id).await
+        let quic_mesh = Self::init_quic_mesh(quic_port, server_id)
+            .await
             .context("Failed to initialize QUIC mesh protocol - QUIC is required")?;
-        info!(" [UNIFIED_SERVER] QUIC mesh protocol initialized on UDP port {}", quic_port);
+        info!(
+            " [UNIFIED_SERVER] QUIC mesh protocol initialized on UDP port {}",
+            quic_port
+        );
 
         info!(" [UNIFIED_SERVER] Wrapping quic_mesh in Arc");
         let quic_arc = Arc::new(quic_mesh);
@@ -424,35 +438,37 @@ impl ZhtpUnifiedServer {
         // Issue #167: Wire protocol handlers to message router (Transport Manager)
         // Create TransportManager with QUIC handler and set on mesh message router
         info!(" [UNIFIED_SERVER] Creating TransportManager with QUIC handler (Issue #167)");
-        let transport_manager = lib_network::transport::TransportManager::default()
-            .with_quic(quic_arc.clone());
-        mesh_router_arc.set_transport_manager(transport_manager).await;
+        let transport_manager =
+            lib_network::transport::TransportManager::default().with_quic(quic_arc.clone());
+        mesh_router_arc
+            .set_transport_manager(transport_manager)
+            .await;
         info!(" [UNIFIED_SERVER] TransportManager set on mesh message router (Issue #167)");
 
         // Create DHT handler for pure UDP mesh protocol and register it on mesh_router
         // This MUST happen before register_api_handlers to ensure the actual mesh_router instance gets the handler
-        let dht_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            DhtHandler::new_with_storage(mesh_router_arc.clone(), storage.clone())
-        );
+        let dht_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(DhtHandler::new_with_storage(
+            mesh_router_arc.clone(),
+            storage.clone(),
+        ));
         mesh_router_arc.set_dht_handler(dht_handler.clone()).await;
 
         // Create canonical domain registry (shared by all components)
         // MUST be created BEFORE register_api_handlers so Web4Handler can use it
         // Note: storage is injected here - zhtp is the composition root
         // Wrap storage in UnifiedStorageWrapper to implement the UnifiedStorage trait
-        let storage_wrapper = crate::storage_network_integration::UnifiedStorageWrapper(
-            storage.clone(),
-        );
-        let storage_trait: Arc<dyn lib_network::storage_stub::UnifiedStorage> = Arc::new(storage_wrapper);
-        let domain_registry = Arc::new(
-            DomainRegistry::new(storage_trait.clone()).await?
-        );
+        let storage_wrapper =
+            crate::storage_network_integration::UnifiedStorageWrapper(storage.clone());
+        let storage_trait: Arc<dyn lib_network::storage_stub::UnifiedStorage> =
+            Arc::new(storage_wrapper);
+        let domain_registry = Arc::new(DomainRegistry::new(storage_trait.clone()).await?);
         info!(" Domain registry initialized (canonical instance)");
 
         // Create content publisher with same storage backend
-        let content_publisher = Arc::new(
-            lib_network::web4::ContentPublisher::new(domain_registry.clone(), storage_trait)
-        );
+        let content_publisher = Arc::new(lib_network::web4::ContentPublisher::new(
+            domain_registry.clone(),
+            storage_trait,
+        ));
         info!(" Content publisher initialized");
 
         // Create PoUW shared infrastructure — created here so it can be wired into
@@ -483,14 +499,15 @@ impl ZhtpUnifiedServer {
             content_publisher.clone(),
             pouw_session_log.clone(),
             pouw_node_did.clone(),
-        ).await?;
+        )
+        .await?;
 
         // Initialize QUIC handler for native ZHTP-over-QUIC (AFTER handler registration)
         let zhtp_router_arc = Arc::new(zhtp_router);
         let quic_handler = QuicHandler::new(
-            Arc::new(RwLock::new((*zhtp_router_arc).clone())),  // Native ZhtpRouter wrapped in RwLock
-            quic_arc.clone(),                    // QuicMeshProtocol for transport
-            identity_manager.clone(),            // Identity manager for auto-registration
+            Arc::new(RwLock::new((*zhtp_router_arc).clone())), // Native ZhtpRouter wrapped in RwLock
+            quic_arc.clone(),                                  // QuicMeshProtocol for transport
+            identity_manager.clone(), // Identity manager for auto-registration
         );
 
         // Issue #907: QuicMeshProtocol is now the SINGLE canonical connection store.
@@ -504,7 +521,9 @@ impl ZhtpUnifiedServer {
         info!(" QUIC handler initialized for native ZHTP-over-QUIC");
 
         // Set ZHTP router on mesh_router for proper endpoint routing over UDP
-        mesh_router_arc.set_zhtp_router(zhtp_router_arc.clone()).await;
+        mesh_router_arc
+            .set_zhtp_router(zhtp_router_arc.clone())
+            .await;
         info!(" ZHTP router registered with mesh router for UDP endpoint handling");
 
         // Wire PoUW routing event channel into MeshMessageRouter
@@ -520,19 +539,21 @@ impl ZhtpUnifiedServer {
             pouw_routing_rx,
             pouw_node_did.clone(),
         );
-        info!("✓ PoUW mesh routing listener spawned (did: {})", pouw_node_did);
+        info!(
+            "✓ PoUW mesh routing listener spawned (did: {})",
+            pouw_node_did
+        );
 
         // Initialize NodeRuntime - Policy Authority (NR-1: Policy Ownership)
         // Delegates all "should we?" decisions to runtime, server only executes "can we?" operations
-        let runtime: Arc<dyn crate::runtime::NodeRuntime> = Arc::new(
-            crate::runtime::DefaultNodeRuntime::full_validator()
-        );
+        let runtime: Arc<dyn crate::runtime::NodeRuntime> =
+            Arc::new(crate::runtime::DefaultNodeRuntime::full_validator());
         info!("✓ NodeRuntime initialized - Policy authority ready");
 
         // Initialize NodeRuntimeOrchestrator - Periodic policy driver
-        let runtime_orchestrator = Arc::new(
-            crate::runtime::NodeRuntimeOrchestrator::new(runtime.clone())
-        );
+        let runtime_orchestrator = Arc::new(crate::runtime::NodeRuntimeOrchestrator::new(
+            runtime.clone(),
+        ));
         info!("✓ NodeRuntimeOrchestrator initialized - Periodic decisions ready");
 
         // SECURITY FIX: Start orchestrator BEFORE registering with discovery (prevents race condition)
@@ -542,7 +563,9 @@ impl ZhtpUnifiedServer {
 
         // THEN register runtime and action queue with discovery coordinator
         let action_queue = runtime_orchestrator.action_queue().clone();
-        discovery_coordinator.set_runtime(runtime.clone(), action_queue).await;
+        discovery_coordinator
+            .set_runtime(runtime.clone(), action_queue)
+            .await;
         info!("✓ Discovery coordinator integrated with NodeRuntime");
 
         Ok(Self {
@@ -571,11 +594,12 @@ impl ZhtpUnifiedServer {
             quic_port,
         })
     }
-    
+
     /// Initialize QUIC mesh protocol with configurable port
     async fn init_quic_mesh(quic_port: u16, server_id: Uuid) -> Result<QuicMeshProtocol> {
         info!(" [QUIC] Parsing bind address for port {}", quic_port);
-        let bind_addr: std::net::SocketAddr = format!("0.0.0.0:{}", quic_port).parse()
+        let bind_addr: std::net::SocketAddr = format!("0.0.0.0:{}", quic_port)
+            .parse()
             .context("Failed to parse QUIC bind address")?;
 
         // Create server identity for UHP+Kyber authentication
@@ -589,7 +613,7 @@ impl ZhtpUnifiedServer {
             Ok(q) => {
                 info!(" [QUIC] ✅ QuicMeshProtocol created successfully");
                 q
-            },
+            }
             Err(e) => {
                 info!(" [QUIC] ❌ QuicMeshProtocol::new() failed: {}", e);
                 return Err(anyhow::anyhow!("Failed to create QuicMeshProtocol: {}", e));
@@ -598,9 +622,12 @@ impl ZhtpUnifiedServer {
 
         // Configure bootstrap peers with optional SPKI pins for certificate verification.
         // Peers with a configured pin enforce strict SPKI match; others use TOFU.
-        if let Some(bootstrap_peers) = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers().await {
+        if let Some(bootstrap_peers) =
+            crate::runtime::bootstrap_peers_provider::get_bootstrap_peers().await
+        {
             // Load any configured SPKI pins from the bootstrap peers provider
-            let pin_map = crate::runtime::bootstrap_peers_provider::get_bootstrap_peer_pins().await
+            let pin_map = crate::runtime::bootstrap_peers_provider::get_bootstrap_peer_pins()
+                .await
                 .unwrap_or_default();
 
             let peer_addrs: Vec<(std::net::SocketAddr, Option<[u8; 32]>)> = bootstrap_peers
@@ -648,7 +675,9 @@ impl ZhtpUnifiedServer {
                 quic_mesh.set_bootstrap_peers(peer_addrs.clone());
                 info!(
                     " [QUIC] Configured {} bootstrap peer(s) ({} pinned, {} TOFU): {:?}",
-                    peer_addrs.len(), pinned_count, tofu_count,
+                    peer_addrs.len(),
+                    pinned_count,
+                    tofu_count,
                     peer_addrs.iter().map(|(a, _)| a).collect::<Vec<_>>()
                 );
 
@@ -681,8 +710,11 @@ impl ZhtpUnifiedServer {
         );
 
         // Wire identity store-and-forward for identity envelopes
-        let mut identity_store = lib_network::identity_store_forward::IdentityStoreForward::new(128);
-        identity_store.set_pouw_verifier(lib_network::identity_store_forward::IdentityStoreForward::default_pouw_verifier());
+        let mut identity_store =
+            lib_network::identity_store_forward::IdentityStoreForward::new(128);
+        identity_store.set_pouw_verifier(
+            lib_network::identity_store_forward::IdentityStoreForward::default_pouw_verifier(),
+        );
         let identity_store = Arc::new(RwLock::new(identity_store));
         message_handler.set_identity_store_forward(identity_store);
 
@@ -702,7 +734,7 @@ impl ZhtpUnifiedServer {
         info!(" [QUIC] QUIC mesh protocol ready on UDP port {} (unified handler will accept connections)", quic_port);
         Ok(quic_mesh)
     }
-    
+
     /// Register all comprehensive API handlers on ZHTP router
     /// QUIC is the ONLY entry point - HTTP requests go through HttpCompatibilityLayer → ZhtpRouter
     async fn register_api_handlers(
@@ -717,20 +749,21 @@ impl ZhtpUnifiedServer {
         content_publisher: Arc<lib_network::web4::ContentPublisher>,
         pouw_session_log: crate::pouw::SharedSessionLog,
         node_did: String,
-    ) -> Result<(Arc<RwLock<crate::pouw::validation::ReceiptValidator>>, Arc<crate::pouw::RewardCalculator>)> {
+    ) -> Result<(
+        Arc<RwLock<crate::pouw::validation::ReceiptValidator>>,
+        Arc<crate::pouw::RewardCalculator>,
+    )> {
         info!("📝 Registering API handlers on ZHTP router (QUIC is the only entry point)...");
-        
+
         // Blockchain operations
-        let blockchain_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            BlockchainHandler::new(blockchain.clone())
-        );
+        let blockchain_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(BlockchainHandler::new(blockchain.clone()));
         zhtp_router.register_handler("/api/v1/blockchain".to_string(), blockchain_handler);
-        
+
         // Identity and wallet management
         // Note: Using lib_identity::economics::EconomicModel as expected by IdentityHandler
-        let identity_economic_model = Arc::new(RwLock::new(
-            lib_identity::economics::EconomicModel::new()
-        ));
+        let identity_economic_model =
+            Arc::new(RwLock::new(lib_identity::economics::EconomicModel::new()));
 
         // Create rate limiter for authentication endpoints
         let rate_limiter = Arc::new(crate::api::middleware::RateLimiter::new());
@@ -738,118 +771,110 @@ impl ZhtpUnifiedServer {
         rate_limiter.start_cleanup_task();
 
         // Create account lockout tracker for per-identity brute force protection
-        let account_lockout = Arc::new(crate::api::handlers::identity::login_handlers::AccountLockout::new());
+        let account_lockout =
+            Arc::new(crate::api::handlers::identity::login_handlers::AccountLockout::new());
 
         // Create CSRF protection (P0-7)
         let csrf_protection = Arc::new(crate::api::middleware::CsrfProtection::new());
 
         // Create recovery phrase manager for backup/recovery (Issue #100)
-        let recovery_phrase_manager = Arc::new(RwLock::new(
-            lib_identity::RecoveryPhraseManager::new()
-        ));
+        let recovery_phrase_manager =
+            Arc::new(RwLock::new(lib_identity::RecoveryPhraseManager::new()));
 
-        let identity_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            IdentityHandler::new(
-                identity_manager.clone(),
-                identity_economic_model,
-                _session_manager.clone(),
-                rate_limiter.clone(),
-                account_lockout,
-                csrf_protection,
-                recovery_phrase_manager,
-                storage.clone(),
-            )
-        );
+        let identity_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(IdentityHandler::new(
+            identity_manager.clone(),
+            identity_economic_model,
+            _session_manager.clone(),
+            rate_limiter.clone(),
+            account_lockout,
+            csrf_protection,
+            recovery_phrase_manager,
+            storage.clone(),
+        ));
         zhtp_router.register_handler("/api/v1/identity".to_string(), identity_handler);
 
         // Guardian social recovery handler (Issue #116)
-        let recovery_manager = Arc::new(RwLock::new(
-            lib_identity::SocialRecoveryManager::new()
-        ));
+        let recovery_manager = Arc::new(RwLock::new(lib_identity::SocialRecoveryManager::new()));
 
-        let guardian_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::guardian::GuardianHandler::new(
+        let guardian_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(crate::api::handlers::guardian::GuardianHandler::new(
                 identity_manager.clone(),
                 _session_manager.clone(),
                 recovery_manager,
                 rate_limiter.clone(),
-            )
+            ));
+        zhtp_router.register_handler(
+            "/api/v1/identity/guardians".to_string(),
+            guardian_handler.clone(),
         );
-        zhtp_router.register_handler("/api/v1/identity/guardians".to_string(), guardian_handler.clone());
         zhtp_router.register_handler("/api/v1/identity/recovery".to_string(), guardian_handler);
 
         // Zero-knowledge proof handler (Issue #117)
-        let zkp_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::zkp::ZkpHandler::new(
+        let zkp_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(crate::api::handlers::zkp::ZkpHandler::new(
                 identity_manager.clone(),
                 _session_manager.clone(),
                 rate_limiter.clone(),
-            )
-        );
+            ));
         zhtp_router.register_handler("/api/v1/zkp".to_string(), zkp_handler);
 
         // Wallet content ownership manager (shared across handlers)
-        let wallet_content_manager = Arc::new(RwLock::new(lib_storage::WalletContentManager::new()));
-        
+        let wallet_content_manager =
+            Arc::new(RwLock::new(lib_storage::WalletContentManager::new()));
+
         // Storage operations (with wallet content manager for ownership tracking)
         let storage_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             StorageHandler::new(storage.clone())
-                .with_wallet_manager(Arc::clone(&wallet_content_manager))
+                .with_wallet_manager(Arc::clone(&wallet_content_manager)),
         );
         zhtp_router.register_handler("/api/v1/storage".to_string(), storage_handler);
 
         // Wallet operations
-        let wallet_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            WalletHandler::new(identity_manager.clone())
-        );
+        let wallet_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(WalletHandler::new(identity_manager.clone()));
         zhtp_router.register_handler("/api/v1/wallet".to_string(), wallet_handler);
 
         // Token operations (custom token creation, minting, transfer)
-        let token_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            TokenHandler::new()
-        );
+        let token_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(TokenHandler::new());
         zhtp_router.register_handler("/api/v1/token".to_string(), token_handler);
 
         // Bonding curve operations (CurveHandler - deploy, buy, sell, graduation)
-        let curve_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::CurveHandler::new()
-        );
+        let curve_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(crate::api::handlers::CurveHandler::new());
         zhtp_router.register_handler("/api/v1/curve".to_string(), curve_handler);
 
         // AMM swap operations (SwapHandler - post-graduation swaps, liquidity)
-        let swap_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::SwapHandler::new()
-        );
+        let swap_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(crate::api::handlers::SwapHandler::new());
         zhtp_router.register_handler("/api/v1/swap".to_string(), swap_handler);
 
         // Valuation operations (ValuationHandler - read-only price queries)
-        let valuation_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::ValuationHandler::new()
-        );
+        let valuation_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(crate::api::handlers::ValuationHandler::new());
         zhtp_router.register_handler("/api/v1/price".to_string(), valuation_handler.clone());
         zhtp_router.register_handler("/api/v1/valuation".to_string(), valuation_handler);
 
         // DAO operations
-        let dao_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            DaoHandler::new(identity_manager.clone(), _session_manager.clone())
-        );
+        let dao_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(DaoHandler::new(
+            identity_manager.clone(),
+            _session_manager.clone(),
+        ));
         zhtp_router.register_handler("/api/v1/dao".to_string(), dao_handler);
 
         // Oracle price/status endpoints
-        let oracle_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::oracle::OracleHandler::new()
-        );
+        let oracle_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(crate::api::handlers::oracle::OracleHandler::new());
         zhtp_router.register_handler("/api/v1/oracle".to_string(), oracle_handler);
 
         // Crypto utilities (sign message, verify signature, generate keypair)
         let crypto_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::CryptoHandler::new(identity_manager.clone())
+            crate::api::handlers::CryptoHandler::new(identity_manager.clone()),
         );
         zhtp_router.register_handler("/api/v1/crypto".to_string(), crypto_handler);
 
         // Register DHT handler on ZHTP (already registered on mesh_router for pure UDP)
         zhtp_router.register_handler("/api/v1/dht".to_string(), dht_handler);
-        
+
         // PoUW validator (created early so it can be shared with Web4 handlers)
         // Derive node key/id from identity manager; never use shared placeholder material.
         let (pouw_node_key, pouw_node_id) = {
@@ -859,9 +884,7 @@ impl ZhtpUnifiedServer {
                 let node_key = identity
                     .private_key
                     .as_ref()
-                    .map(|k| {
-                        lib_crypto::hash_blake3(&k.dilithium_sk)
-                    })
+                    .map(|k| lib_crypto::hash_blake3(&k.dilithium_sk))
                     .unwrap_or_else(|| lib_crypto::hash_blake3(identity.did.as_bytes()));
                 let node_id = *identity.node_id.as_bytes();
                 (node_key, node_id)
@@ -888,9 +911,12 @@ impl ZhtpUnifiedServer {
             pouw_node_key,
             pouw_node_id,
         ));
-        let pouw_validator = crate::pouw::ReceiptValidator::new(pouw_generator_arc.clone(), identity_manager.clone())
-            .with_session_log(pouw_session_log.clone())
-            .with_min_identity_age(crate::api::handlers::pouw::MIN_IDENTITY_AGE_SECS);
+        let pouw_validator = crate::pouw::ReceiptValidator::new(
+            pouw_generator_arc.clone(),
+            identity_manager.clone(),
+        )
+        .with_session_log(pouw_session_log.clone())
+        .with_min_identity_age(crate::api::handlers::pouw::MIN_IDENTITY_AGE_SECS);
         let pouw_validator_arc: Arc<RwLock<crate::pouw::validation::ReceiptValidator>> =
             Arc::new(RwLock::new(pouw_validator));
 
@@ -901,23 +927,26 @@ impl ZhtpUnifiedServer {
             domain_registry.clone(),
             content_publisher.clone(),
             identity_manager.clone(),
-            blockchain.clone()
-        ).await?
+            blockchain.clone(),
+        )
+        .await?
         .with_pouw_validator(pouw_validator_arc.clone(), node_did.clone());
         let wallet_content_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::WalletContentHandler::new(Arc::clone(&wallet_content_manager))
+            crate::api::handlers::WalletContentHandler::new(Arc::clone(&wallet_content_manager)),
         );
-        zhtp_router.register_handler("/api/wallet".to_string(), Arc::clone(&wallet_content_handler));
+        zhtp_router.register_handler(
+            "/api/wallet".to_string(),
+            Arc::clone(&wallet_content_handler),
+        );
         zhtp_router.register_handler("/api/content".to_string(), wallet_content_handler);
 
         // Marketplace handler for buying/selling content (shares managers with wallet content)
-        let marketplace_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::MarketplaceHandler::new(
+        let marketplace_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(crate::api::handlers::MarketplaceHandler::new(
                 Arc::clone(&wallet_content_manager),
                 Arc::clone(&blockchain),
-                Arc::clone(&identity_manager)
-            )
-        );
+                Arc::clone(&identity_manager),
+            ));
         zhtp_router.register_handler("/api/marketplace".to_string(), marketplace_handler);
 
         // DNS resolution for .zhtp domains (connect to domain registry)
@@ -933,21 +962,23 @@ impl ZhtpUnifiedServer {
 
         // Web4 gateway handler — Host-based routing (.sov/.zhtp domains in browser)
         // Auto-emits Web4ContentServed (×3) and Web4ManifestRoute (×2) POUW receipts
-        let gateway_handler = crate::api::handlers::web4::Web4GatewayHandler::new(domain_registry.clone())
-            .with_pouw_validator(pouw_validator_arc.clone(), node_did.clone());
-        zhtp_router.register_handler("/api/v1/web4/gateway".to_string(), Arc::new(gateway_handler));
+        let gateway_handler =
+            crate::api::handlers::web4::Web4GatewayHandler::new(domain_registry.clone())
+                .with_pouw_validator(pouw_validator_arc.clone(), node_did.clone());
+        zhtp_router.register_handler(
+            "/api/v1/web4/gateway".to_string(),
+            Arc::new(gateway_handler),
+        );
         info!("✓ Web4 gateway handler registered");
 
         // Validator management
         let validator_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::ValidatorHandler::new(blockchain.clone())
+            crate::api::handlers::ValidatorHandler::new(blockchain.clone()),
         );
         zhtp_router.register_handler("/api/v1/validator".to_string(), validator_handler);
 
         // Protocol management
-        let protocol_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            ProtocolHandler::new()
-        );
+        let protocol_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(ProtocolHandler::new());
         zhtp_router.register_handler("/api/v1/protocol".to_string(), protocol_handler);
 
         // NOTE: NetworkHandler and MeshHandler require RuntimeOrchestrator, which is not
@@ -968,7 +999,7 @@ impl ZhtpUnifiedServer {
         info!("✅ All API handlers registered successfully on ZHTP router");
         Ok((pouw_validator_arc, pouw_calculator))
     }
-    
+
     /// Start the unified server on port 9333
     pub async fn start(&mut self) -> Result<()> {
         info!("Starting ZHTP Unified Server on port {}", self.port);
@@ -991,10 +1022,15 @@ impl ZhtpUnifiedServer {
         crate::network_output_dispatcher::spawn_app_network_output_processor();
 
         // Restore persisted POUW rewards from disk
-        let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(
-            std::path::Path::new(&crate::config::environment::Environment::default().blockchain_data_path())
-        );
-        if let Err(e) = self.pouw_calculator_arc.load_rewards_from_file(&rewards_path).await {
+        let pouw_env = crate::config::environment::detect_environment();
+        let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(std::path::Path::new(
+            &pouw_env.blockchain_data_path(),
+        ));
+        if let Err(e) = self
+            .pouw_calculator_arc
+            .load_rewards_from_file(&rewards_path)
+            .await
+        {
             tracing::warn!("Failed to load POUW rewards from disk: {}", e);
         }
 
@@ -1006,7 +1042,7 @@ impl ZhtpUnifiedServer {
         } else {
             info!(" Network isolation applied - mesh is now ISP-free");
         }
-        
+
         // Initialize ZHTP relay protocol ONLY if not already initialized
         // (components.rs may have already initialized it with authentication)
         if self.mesh_router.relay_protocol.read().await.is_none() {
@@ -1022,14 +1058,17 @@ impl ZhtpUnifiedServer {
         // NODERUNTIMEORCHESTRATOR ALREADY STARTED IN new()
         // ============================================================================
         info!("✓ NodeRuntimeOrchestrator is running - Periodic decisions active");
-        info!("  Node Role: {}", match self.runtime.get_role() {
-            crate::runtime::NodeRole::FullValidator => "FullValidator",
-            crate::runtime::NodeRole::LightNode => "LightNode",
-            crate::runtime::NodeRole::MobileNode => "MobileNode",
-            crate::runtime::NodeRole::BootstrapNode => "BootstrapNode",
-            crate::runtime::NodeRole::Observer => "Observer",
-            crate::runtime::NodeRole::ArchivalNode => "ArchivalNode",
-        });
+        info!(
+            "  Node Role: {}",
+            match self.runtime.get_role() {
+                crate::runtime::NodeRole::FullValidator => "FullValidator",
+                crate::runtime::NodeRole::LightNode => "LightNode",
+                crate::runtime::NodeRole::MobileNode => "MobileNode",
+                crate::runtime::NodeRole::BootstrapNode => "BootstrapNode",
+                crate::runtime::NodeRole::Observer => "Observer",
+                crate::runtime::NodeRole::ArchivalNode => "ArchivalNode",
+            }
+        );
 
         // Start action execution loop - executes NodeActions from orchestrator queue
         let action_queue = self.runtime_orchestrator.action_queue().clone();
@@ -1040,9 +1079,16 @@ impl ZhtpUnifiedServer {
             info!("📋 Action executor started - consuming NodeActions from queue");
             while let Some(action) = action_queue.dequeue().await {
                 match action {
-                    crate::runtime::NodeAction::Connect { peer, protocol, address } => {
-                        info!("→ Executing Connect action: peer={:?}, protocol={:?}",
-                              hex::encode(&peer.key_id[..8]), protocol);
+                    crate::runtime::NodeAction::Connect {
+                        peer,
+                        protocol,
+                        address,
+                    } => {
+                        info!(
+                            "→ Executing Connect action: peer={:?}, protocol={:?}",
+                            hex::encode(&peer.key_id[..8]),
+                            protocol
+                        );
                         if let Some(addr_str) = address {
                             if let Ok(addr) = addr_str.parse::<std::net::SocketAddr>() {
                                 if let Err(e) = quic_mesh_for_actions.connect_to_peer(addr).await {
@@ -1054,14 +1100,21 @@ impl ZhtpUnifiedServer {
                     crate::runtime::NodeAction::BootstrapFrom(peers) => {
                         info!("→ Executing BootstrapFrom action: {} peers", peers.len());
                         for peer_str in peers {
-                            let addr_str = peer_str.trim_start_matches("zhtp://").trim_start_matches("http://");
+                            let addr_str = peer_str
+                                .trim_start_matches("zhtp://")
+                                .trim_start_matches("http://");
                             if let Ok(mut peer_addr) = addr_str.parse::<std::net::SocketAddr>() {
                                 // Use configured ports for mapping (not hardcoded)
                                 if peer_addr.port() == discovery_port {
                                     peer_addr.set_port(quic_port);
-                                    info!("Port mapping: {} → {} (discovery → QUIC)", discovery_port, quic_port);
+                                    info!(
+                                        "Port mapping: {} → {} (discovery → QUIC)",
+                                        discovery_port, quic_port
+                                    );
                                 }
-                                if let Err(e) = quic_mesh_for_actions.connect_to_peer(peer_addr).await {
+                                if let Err(e) =
+                                    quic_mesh_for_actions.connect_to_peer(peer_addr).await
+                                {
                                     warn!("  Failed to bootstrap from {}: {}", peer_addr, e);
                                 }
                             }
@@ -1071,7 +1124,10 @@ impl ZhtpUnifiedServer {
                         debug!("→ Executing DiscoverVia action: {:?}", protocol);
                     }
                     _ => {
-                        debug!("→ Action queued (executor will handle in future): {:?}", action);
+                        debug!(
+                            "→ Action queued (executor will handle in future): {:?}",
+                            action
+                        );
                     }
                 }
             }
@@ -1084,7 +1140,7 @@ impl ZhtpUnifiedServer {
         info!("═══════════════════════════════════════════════════════════════");
         info!("  PEER DISCOVERY METHODS - STATUS REPORT");
         info!("═══════════════════════════════════════════════════════════════");
-        
+
         // Get our public key for discovery protocols
         let _our_public_key_for_discovery = match self.mesh_router.get_sender_public_key().await {
             Ok(pk) => pk,
@@ -1093,33 +1149,35 @@ impl ZhtpUnifiedServer {
                 return Ok(()); // Skip discovery initialization if we can't get public key
             }
         };
-        
+
         // Create callback for discovery coordinator (Phase 3 integration)
         let coordinator_for_callback = self.discovery_coordinator.clone();
-        let _peer_discovered_callback = Arc::new(move |peer_addr: String, _peer_pubkey: lib_crypto::PublicKey| {
-            let coordinator = coordinator_for_callback.clone();
-            let addr = peer_addr.clone();
-            
-            // Spawn task to register peer with coordinator
-            tokio::spawn(async move {
-                use crate::discovery_coordinator::{DiscoveredPeer, DiscoveryProtocol};
-                use std::time::SystemTime;
-                
-                let now = SystemTime::now();
-                let discovered_peer = DiscoveredPeer {
-                    public_key: None,  // Will be learned during TCP handshake
-                    addresses: vec![addr],
-                    discovered_via: DiscoveryProtocol::UdpMulticast,
-                    first_seen: now,
-                    last_seen: now,
-                    node_id: None,
-                    capabilities: None,
-                };
-                
-                let _ = coordinator.register_peer(discovered_peer).await;
-            });
-        });
-        
+        let _peer_discovered_callback = Arc::new(
+            move |peer_addr: String, _peer_pubkey: lib_crypto::PublicKey| {
+                let coordinator = coordinator_for_callback.clone();
+                let addr = peer_addr.clone();
+
+                // Spawn task to register peer with coordinator
+                tokio::spawn(async move {
+                    use crate::discovery_coordinator::{DiscoveredPeer, DiscoveryProtocol};
+                    use std::time::SystemTime;
+
+                    let now = SystemTime::now();
+                    let discovered_peer = DiscoveredPeer {
+                        public_key: None, // Will be learned during TCP handshake
+                        addresses: vec![addr],
+                        discovered_via: DiscoveryProtocol::UdpMulticast,
+                        first_seen: now,
+                        last_seen: now,
+                        node_id: None,
+                        capabilities: None,
+                    };
+
+                    let _ = coordinator.register_peer(discovered_peer).await;
+                });
+            },
+        );
+
         // NOTE: Multicast discovery is already started in Phase 1 (runtime/mod.rs start_network_components_for_discovery)
         // Starting it again here would create a second UUID and cause self-discovery
         // The Phase 1 multicast will continue running and handle peer discovery
@@ -1127,13 +1185,13 @@ impl ZhtpUnifiedServer {
         info!("   → Already broadcasting every 30s from Phase 1 initialization");
         info!("   → Connected to discovery coordinator ✓");
         let multicast_status = "ACTIVE (Phase 1)";
-        
+
         // IP scanning disabled - using multicast/mDNS/WiFi Direct for efficient discovery
         info!("  IP Scanner: DISABLED (inefficient, replaced by broadcast)");
-        
+
         // Create BLE peer discovery notification channel for blockchain sync trigger
         let (ble_peer_tx, mut ble_peer_rx) = tokio::sync::mpsc::unbounded_channel::<PublicKey>();
-        
+
         // Get our public key for BLE handshakes
         let our_public_key = match self.mesh_router.get_sender_public_key().await {
             Ok(pk) => pk,
@@ -1142,7 +1200,7 @@ impl ZhtpUnifiedServer {
                 return Ok(()); // Skip BLE initialization if we can't get public key
             }
         };
-        
+
         // Initialize Bluetooth LE discovery (pass mesh_connections and peer notification channel for GATT handler)
         // Spawn as background task to avoid blocking HTTP server startup
         let bluetooth_router_clone = self.bluetooth_router.clone();
@@ -1155,7 +1213,11 @@ impl ZhtpUnifiedServer {
         let mesh_router_bluetooth_protocol = self.mesh_router.bluetooth_protocol.clone();
 
         // Get Bluetooth enabled flag from config (AUTHORITATIVE CONFIG LAYER)
-        let enable_bluetooth_from_config = self.protocols_config.as_ref().map(|cfg| cfg.enable_bluetooth).unwrap_or(false);
+        let enable_bluetooth_from_config = self
+            .protocols_config
+            .as_ref()
+            .map(|cfg| cfg.enable_bluetooth)
+            .unwrap_or(false);
 
         tokio::spawn(async move {
             // AUTHORITATIVE CONFIG LAYER: Check if Bluetooth should be disabled via configuration
@@ -1174,18 +1236,28 @@ impl ZhtpUnifiedServer {
             }
 
             info!("Initializing Bluetooth mesh protocol for phone connectivity...");
-            match bluetooth_router_clone.initialize(
-                peer_registry_clone,
-                Some(ble_peer_tx_clone),
-                our_public_key_clone,
-                bluetooth_provider,
-                sync_coordinator_clone,
-                mesh_router_clone,
-            ).await {
+            match bluetooth_router_clone
+                .initialize(
+                    peer_registry_clone,
+                    Some(ble_peer_tx_clone),
+                    our_public_key_clone,
+                    bluetooth_provider,
+                    sync_coordinator_clone,
+                    mesh_router_clone,
+                )
+                .await
+            {
                 Ok(_) => {
                     // Store bluetooth protocol in mesh router for send_to_peer()
                     let protocol_opt = bluetooth_router_clone.get_protocol().await;
-                    info!(" DEBUG: get_protocol() returned: {}", if protocol_opt.is_some() { "Some(protocol)" } else { "None" });
+                    info!(
+                        " DEBUG: get_protocol() returned: {}",
+                        if protocol_opt.is_some() {
+                            "Some(protocol)"
+                        } else {
+                            "None"
+                        }
+                    );
 
                     if let Some(protocol) = protocol_opt {
                         *mesh_router_bluetooth_protocol.write().await = Some(protocol.clone());
@@ -1193,8 +1265,14 @@ impl ZhtpUnifiedServer {
 
                         // Verify it was set correctly
                         let verify = mesh_router_bluetooth_protocol.read().await;
-                        info!(" DEBUG: Verified mesh_router.bluetooth_protocol is now: {}",
-                              if verify.is_some() { "Some(protocol)" } else { "None" });
+                        info!(
+                            " DEBUG: Verified mesh_router.bluetooth_protocol is now: {}",
+                            if verify.is_some() {
+                                "Some(protocol)"
+                            } else {
+                                "None"
+                            }
+                        );
                     } else {
                         warn!(" Bluetooth protocol not available after initialization - BLE sync will fail");
                     }
@@ -1209,10 +1287,10 @@ impl ZhtpUnifiedServer {
             }
         });
         let bluetooth_le_status = "INITIALIZING";
-        
+
         // BLE peer discovery is now coordinated through discovery coordinator
         let coordinator_for_ble = self.discovery_coordinator.clone();
-        
+
         // BLE Peer Discovery Handler - Simplified (Policy moved to NodeRuntime)
         // This just notifies discovery coordinator; runtime makes all "should we?" decisions
         tokio::spawn(async move {
@@ -1248,14 +1326,14 @@ impl ZhtpUnifiedServer {
             }
             info!("BLE peer discovery listener stopped");
         });
-        
+
         // Skip Bluetooth Classic for now (focusing on BLE only)
         let bluetooth_classic_status = {
             info!("  Bluetooth Classic: SKIPPED (focusing on BLE implementation)");
             info!("   → Will be enabled later for high-bandwidth transfers");
             "DISABLED"
         };
-        
+
         // Initialize WiFi Direct + mDNS
         let wifi_direct_status = if let Err(e) = self.wifi_router.initialize().await {
             warn!(" WiFi Direct + mDNS: FAILED - {}", e);
@@ -1268,41 +1346,59 @@ impl ZhtpUnifiedServer {
             info!("   → Automatic service discovery on local network");
             "ACTIVE"
         };
-        
+
         info!("───────────────────────────────────────────────────────────────");
         info!("  DISCOVERY SUMMARY:");
         info!("    UDP Multicast:      {}", multicast_status);
-        info!("    mDNS/Bonjour:       {}", if wifi_direct_status == "ACTIVE" { "ACTIVE" } else { "FAILED" });
+        info!(
+            "    mDNS/Bonjour:       {}",
+            if wifi_direct_status == "ACTIVE" {
+                "ACTIVE"
+            } else {
+                "FAILED"
+            }
+        );
         info!("    WiFi Direct P2P:    {}", wifi_direct_status);
         info!("    Bluetooth LE:       {}", bluetooth_le_status);
         info!("    Bluetooth Classic:  {}", bluetooth_classic_status);
         info!("    IP Scanner:         DISABLED");
         info!("═══════════════════════════════════════════════════════════════");
-        
+
         // Inform user about what's working
-        let active_count = [multicast_status, wifi_direct_status, bluetooth_le_status, bluetooth_classic_status]
-            .iter()
-            .filter(|&&s| s == "ACTIVE")
-            .count();
-        
+        let active_count = [
+            multicast_status,
+            wifi_direct_status,
+            bluetooth_le_status,
+            bluetooth_classic_status,
+        ]
+        .iter()
+        .filter(|&&s| s == "ACTIVE")
+        .count();
+
         if active_count == 0 {
             warn!("  WARNING: NO DISCOVERY METHODS ARE WORKING!");
             warn!("   This node cannot discover peers automatically.");
             warn!("   Check firewall, WiFi adapter capabilities, and Bluetooth hardware.");
         } else if active_count == 1 {
-            info!("  {} discovery method active - limited peer discovery", active_count);
+            info!(
+                "  {} discovery method active - limited peer discovery",
+                active_count
+            );
             info!("   For best results, enable WiFi Direct and Bluetooth");
         } else {
-            info!(" {} discovery methods active - excellent peer discovery!", active_count);
+            info!(
+                " {} discovery methods active - excellent peer discovery!",
+                active_count
+            );
             info!("   Your node can discover peers via multiple protocols");
         }
-        
+
         info!("═══════════════════════════════════════════════════════════════");
-        
+
         // QUIC-ONLY MODE: Native ZHTP-over-QUIC (TCP/UDP deprecated)
         info!(" QUIC-Only Mode: Native ZHTP protocol over QUIC transport");
         info!(" TCP/UDP deprecated - using QUIC for all networking");
-        
+
         // Get QUIC endpoint from QuicMeshProtocol for accept loop
         let endpoint = self.quic_mesh.get_endpoint();
 
@@ -1325,7 +1421,10 @@ impl ZhtpUnifiedServer {
                     error!("   Error: {}", e);
                     error!("   QUIC is the only entry point in this architecture.");
                     error!("   Without it, the node cannot receive or send messages.");
-                    panic!("QUIC accept loop critical failure - crashing for restart: {}", e);
+                    panic!(
+                        "QUIC accept loop critical failure - crashing for restart: {}",
+                        e
+                    );
                 }
             }
         });
@@ -1346,7 +1445,7 @@ impl ZhtpUnifiedServer {
 
         // Store the accept loop handle to detect crashes during runtime
         // (In production, would use watchdog to restart if it crashes)
-        
+
         // Start mesh protocol handlers (background listeners only)
         self.start_bluetooth_mesh_handler().await?;
         self.start_bluetooth_classic_handler().await?;
@@ -1356,9 +1455,10 @@ impl ZhtpUnifiedServer {
         // Periodic POUW rewards persistence (every 60 seconds)
         {
             let calc = self.pouw_calculator_arc.clone();
-            let rewards_path = crate::pouw::RewardCalculator::rewards_path_for(
-                std::path::Path::new(&crate::config::environment::Environment::default().blockchain_data_path())
-            );
+            let rewards_path =
+                crate::pouw::RewardCalculator::rewards_path_for(std::path::Path::new(
+                    &crate::config::environment::detect_environment().blockchain_data_path(),
+                ));
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
                 interval.tick().await; // skip the immediate first tick
@@ -1375,17 +1475,21 @@ impl ZhtpUnifiedServer {
         crate::pouw::spawn_pouw_payout_task(
             self.pouw_calculator_arc.clone(),
             self.blockchain.clone(),
-            std::path::PathBuf::from(crate::config::environment::Environment::default().blockchain_data_path()),
+            std::path::PathBuf::from(
+                crate::config::environment::detect_environment().blockchain_data_path(),
+            ),
             crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS,
         );
-        info!("✓ POUW reward payout task spawned (epoch interval: {}s)",
-              crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS);
+        info!(
+            "✓ POUW reward payout task spawned (epoch interval: {}s)",
+            crate::pouw::rewards::DEFAULT_EPOCH_DURATION_SECS
+        );
 
         info!("🔒 ZHTP Unified Server ONLINE (QUIC-ONLY architecture)");
         info!("   Entry point: QUIC (required and primary)");
         info!("   Discovery: BLE, BT Classic, WiFi Direct, LoRaWAN");
         info!("   Relay: Encrypted DHT with Dilithium2 + Kyber1024 + ChaCha20");
-        
+
         // Verify network isolation is working
         info!(" Verifying network isolation...");
         match crate::config::network_isolation::verify_mesh_isolation().await {
@@ -1401,44 +1505,44 @@ impl ZhtpUnifiedServer {
                 warn!(" Could not verify network isolation: {}", e);
             }
         }
-        
+
         Ok(())
     }
 
     /// Start Bluetooth mesh protocol handler
     async fn start_bluetooth_mesh_handler(&self) -> Result<()> {
         info!(" Starting Bluetooth LE mesh handler...");
-        
+
         // Check if protocol is initialized (should be done in run_pure_mesh already)
         let protocol_guard = self.bluetooth_router.get_protocol().await;
         let is_initialized = protocol_guard.is_some();
         drop(protocol_guard);
-        
+
         if !is_initialized {
             warn!("Bluetooth LE protocol not initialized - skipping handler");
             return Ok(());
         }
-        
+
         info!(" Bluetooth LE mesh handler active - discoverable for phone connections");
-        
+
         Ok(())
     }
 
     /// Start Bluetooth Classic RFCOMM mesh handler
     async fn start_bluetooth_classic_handler(&self) -> Result<()> {
         info!(" Starting Bluetooth Classic RFCOMM mesh handler...");
-        
+
         // Check if protocol is initialized (should be done in run_pure_mesh already)
         let protocol_guard = self.bluetooth_classic_router.get_protocol().await;
         let is_initialized = protocol_guard.is_some();
-        
+
         if !is_initialized {
             warn!("Bluetooth Classic protocol not initialized - skipping handler");
             return Ok(());
         }
-        
+
         info!(" Bluetooth Classic RFCOMM handler active");
-        
+
         // Note: Windows Bluetooth API types are not Send, so periodic discovery
         // cannot run in a spawned task. Manual discovery can still be triggered.
         #[cfg(not(all(target_os = "windows", feature = "windows-bluetooth")))]
@@ -1448,16 +1552,16 @@ impl ZhtpUnifiedServer {
             let bt_router = self.bluetooth_classic_router.clone();
             let mesh_router = self.mesh_router.clone();
             let is_running = self.is_running.clone();
-            
+
             tokio::spawn(async move {
                 // Initial discovery after 5 seconds
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                
+
                 let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
-                
+
                 while *is_running.read().await {
                     interval.tick().await;
-                    
+
                     info!(" Bluetooth Classic: Starting periodic peer discovery...");
                     match bt_router.discover_and_connect_peers(&mesh_router).await {
                         Ok(count) => {
@@ -1474,13 +1578,13 @@ impl ZhtpUnifiedServer {
                 }
             });
         }
-        
+
         #[cfg(all(target_os = "windows", feature = "windows-bluetooth"))]
         {
             info!("  Windows: Automatic periodic discovery disabled (API not thread-safe)");
             info!("    Use manual discovery commands or API calls instead");
         }
-        
+
         info!(" Bluetooth Classic periodic discovery task started (60s interval)");
 
         Ok(())
@@ -1489,20 +1593,16 @@ impl ZhtpUnifiedServer {
     /// Start LoRaWAN mesh protocol handler
     async fn start_lorawan_handler(&self) -> Result<()> {
         info!(" Starting LoRaWAN mesh handler...");
-        
+
         // LoRaWAN requires specific hardware - check availability
         info!(" LoRaWAN mesh protocol ready (requires LoRa hardware)");
         info!(" Long-range mesh capability available");
-        
+
         Ok(())
     }
-    
+
     /// Start TCP connection handler (HTTP + TCP mesh + WiFi + Bootstrap)
 
-
-
-
-    
     /// Connect to bootstrap peers and initiate blockchain sync via QUIC
     /// This method should be called after the server starts to establish outgoing connections
     pub async fn connect_to_bootstrap_peers(&self, bootstrap_peers: Vec<String>) -> Result<()> {
@@ -1510,12 +1610,17 @@ impl ZhtpUnifiedServer {
             info!(" No bootstrap peers to connect to");
             return Ok(());
         }
-        
-        info!(" Connecting to {} bootstrap peer(s) for blockchain sync via QUIC...", bootstrap_peers.len());
-        
+
+        info!(
+            " Connecting to {} bootstrap peer(s) for blockchain sync via QUIC...",
+            bootstrap_peers.len()
+        );
+
         for peer_str in &bootstrap_peers {
             // Parse the peer address - it might be at discovery port or QUIC port
-            let addr_str = peer_str.trim_start_matches("zhtp://").trim_start_matches("http://");
+            let addr_str = peer_str
+                .trim_start_matches("zhtp://")
+                .trim_start_matches("http://");
 
             match addr_str.parse::<SocketAddr>() {
                 Ok(mut peer_addr) => {
@@ -1527,27 +1632,33 @@ impl ZhtpUnifiedServer {
                     } else {
                         info!("   Connecting to bootstrap peer: {}", peer_addr);
                     }
-                    
+
                     // Establish QUIC mesh connection
                     match self.quic_mesh.connect_to_peer(peer_addr).await {
                         Ok(()) => {
                             info!("   ✓ Connected to bootstrap peer {} via QUIC", peer_addr);
                         }
                         Err(e) => {
-                            warn!("   Failed to connect to bootstrap peer {}: {}", peer_addr, e);
+                            warn!(
+                                "   Failed to connect to bootstrap peer {}: {}",
+                                peer_addr, e
+                            );
                         }
                     }
                 }
                 Err(e) => {
-                    warn!("   Failed to parse bootstrap peer address '{}': {}", peer_str, e);
+                    warn!(
+                        "   Failed to parse bootstrap peer address '{}': {}",
+                        peer_str, e
+                    );
                 }
             }
         }
-        
+
         info!(" Bootstrap peer connections completed");
         Ok(())
     }
-    
+
     /// Stop the unified server
     pub async fn stop(&mut self) -> Result<()> {
         info!("Stopping ZHTP Unified Server...");
@@ -1562,70 +1673,92 @@ impl ZhtpUnifiedServer {
         info!("ZHTP Unified Server stopped");
         Ok(())
     }
-    
+
     /// Get server status
     pub async fn is_running(&self) -> bool {
         *self.is_running.read().await
     }
-    
+
     /// Initialize ZHTP authentication manager (wrapper for mesh_router method)
-    pub async fn initialize_auth_manager(&mut self, blockchain_pubkey: lib_crypto::PublicKey) -> Result<()> {
-        self.mesh_router.initialize_auth_manager(blockchain_pubkey).await
+    pub async fn initialize_auth_manager(
+        &mut self,
+        blockchain_pubkey: lib_crypto::PublicKey,
+    ) -> Result<()> {
+        self.mesh_router
+            .initialize_auth_manager(blockchain_pubkey)
+            .await
     }
-    
+
     /// Initialize ZHTP relay protocol (wrapper for mesh_router method)
     pub async fn initialize_relay_protocol(&self) -> Result<()> {
         self.mesh_router.initialize_relay_protocol().await
     }
-    
+
     /// Initialize WiFi Direct authentication with blockchain identity
     /// SECURITY: Ensures only ZHTP nodes can connect via WiFi Direct
-    pub async fn initialize_wifi_direct_auth(&self, identity_manager: Arc<RwLock<lib_identity::IdentityManager>>) -> Result<()> {
+    pub async fn initialize_wifi_direct_auth(
+        &self,
+        identity_manager: Arc<RwLock<lib_identity::IdentityManager>>,
+    ) -> Result<()> {
         info!(" Initializing WiFi Direct ZHTP authentication...");
-        
+
         // Get blockchain public key from identity manager
         let mgr = identity_manager.read().await;
         let identities = mgr.list_identities();
-        
+
         if identities.is_empty() {
             warn!("  No identities found - WiFi Direct authentication cannot be initialized");
             return Ok(()); // Non-fatal, WiFi Direct will work without auth
         }
-        
+
         // Use first identity - identities is Vec<ZhtpIdentity>
         let identity = &identities[0];
-        
+
         // Create PublicKey from identity's public_key field (Dilithium2 public key)
         let blockchain_pubkey = identity.public_key.clone();
-        
-        info!(" Using identity {} for WiFi Direct authentication", hex::encode(&identity.id.0[..8]));
-        info!("   Public key: {}...", hex::encode(&blockchain_pubkey.as_bytes()[..8]));
-        
+
+        info!(
+            " Using identity {} for WiFi Direct authentication",
+            hex::encode(&identity.id.0[..8])
+        );
+        info!(
+            "   Public key: {}...",
+            hex::encode(&blockchain_pubkey.as_bytes()[..8])
+        );
+
         // Access WiFi Direct protocol and initialize authentication
         let protocol_guard = self.wifi_router.get_protocol().await;
         if let Some(wifi_protocol) = protocol_guard.as_ref() {
             wifi_protocol.initialize_auth(blockchain_pubkey).await?;
-            
+
             info!(" WiFi Direct authentication initialized successfully");
             info!("    Non-ZHTP devices will be rejected");
             info!("    Hidden SSID mode enabled");
         } else {
             warn!("  WiFi Direct protocol not initialized - authentication setup skipped");
         }
-        
+
         Ok(())
     }
-    
+
     /// Set blockchain provider for network layer (delegates to mesh router)
-    pub async fn set_blockchain_provider(&mut self, provider: Arc<dyn lib_network::blockchain_sync::BlockchainProvider>) {
+    pub async fn set_blockchain_provider(
+        &mut self,
+        provider: Arc<dyn lib_network::blockchain_sync::BlockchainProvider>,
+    ) {
         self.mesh_router.set_blockchain_provider(provider).await;
     }
 
     /// Set blockchain event receiver for receive-side block/tx forwarding (#916)
-    pub async fn set_blockchain_event_receiver(&mut self, receiver: Arc<dyn lib_network::blockchain_sync::BlockchainEventReceiver>) {
-        self.mesh_router.set_blockchain_event_receiver(receiver).await;
+    pub async fn set_blockchain_event_receiver(
+        &mut self,
+        receiver: Arc<dyn lib_network::blockchain_sync::BlockchainEventReceiver>,
+    ) {
+        self.mesh_router
+            .set_blockchain_event_receiver(receiver)
+            .await;
     }
-    
+
     /// Configure sync manager for edge node mode (headers + ZK proofs only)
     pub async fn set_edge_sync_mode(&mut self, max_headers: usize) {
         info!("🔧 Configuring edge sync mode: max_headers={}", max_headers);
@@ -1639,9 +1772,9 @@ impl ZhtpUnifiedServer {
     /// deferred registration method.
     pub async fn register_runtime_handlers(
         &mut self,
-        runtime: Arc<crate::runtime::RuntimeOrchestrator>
+        runtime: Arc<crate::runtime::RuntimeOrchestrator>,
     ) -> Result<()> {
-        use crate::api::handlers::{NetworkHandler, MeshHandler, MonitorHandler};
+        use crate::api::handlers::{MeshHandler, MonitorHandler, NetworkHandler};
         use lib_protocols::zhtp::ZhtpRequestHandler;
 
         info!("🔌 Registering runtime-dependent API handlers...");
@@ -1651,26 +1784,26 @@ impl ZhtpUnifiedServer {
         let mut router_write = zhtp_router.write().await;
 
         // Network management (gas pricing, peers, sync metrics)
-        let network_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            NetworkHandler::new(runtime.clone())
-        );
+        let network_handler: Arc<dyn ZhtpRequestHandler> =
+            Arc::new(NetworkHandler::new(runtime.clone()));
         router_write.register_handler("/api/v1/network".to_string(), network_handler.clone());
-        router_write.register_handler("/api/v1/blockchain/network".to_string(), network_handler.clone());
+        router_write.register_handler(
+            "/api/v1/blockchain/network".to_string(),
+            network_handler.clone(),
+        );
         router_write.register_handler("/api/v1/blockchain/sync".to_string(), network_handler);
 
         // Mesh blockchain operations
-        let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            MeshHandler::new(runtime.clone())
-        );
+        let mesh_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(MeshHandler::new(runtime.clone()));
         router_write.register_handler("/api/v1/mesh".to_string(), mesh_handler);
 
         // Issue #1801: Monitoring endpoints (health, system, performance)
-        let monitor_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            MonitorHandler::new(runtime)
-        );
+        let monitor_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(MonitorHandler::new(runtime));
         router_write.register_handler("/api/v1/monitor".to_string(), monitor_handler);
 
-        info!("✅ Runtime-dependent handlers registered: NetworkHandler, MeshHandler, MonitorHandler");
+        info!(
+            "✅ Runtime-dependent handlers registered: NetworkHandler, MeshHandler, MonitorHandler"
+        );
         Ok(())
     }
 
@@ -1685,7 +1818,7 @@ impl ZhtpUnifiedServer {
     pub fn get_domain_registry(&self) -> Arc<DomainRegistry> {
         Arc::clone(&self.domain_registry)
     }
-    
+
     /// Get blockchain statistics
     pub async fn get_blockchain_stats(&self) -> Result<serde_json::Value> {
         let blockchain = self.blockchain.read().await;
@@ -1696,7 +1829,7 @@ impl ZhtpUnifiedServer {
             "server_id": self.server_id
         }))
     }
-    
+
     /// Get storage system status
     pub async fn get_storage_status(&self) -> Result<serde_json::Value> {
         let _storage = self.storage.read().await;
@@ -1706,7 +1839,7 @@ impl ZhtpUnifiedServer {
             "storage_type": "unified"
         }))
     }
-    
+
     /// Get identity manager statistics  
     pub async fn get_identity_stats(&self) -> Result<serde_json::Value> {
         let identity_manager = self.identity_manager.read().await;
@@ -1716,7 +1849,7 @@ impl ZhtpUnifiedServer {
             "server_id": self.server_id
         }))
     }
-    
+
     /// Get economic model information
     pub async fn get_economic_info(&self) -> Result<serde_json::Value> {
         let _economic_model = self.economic_model.read().await;

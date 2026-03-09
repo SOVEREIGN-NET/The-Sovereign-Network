@@ -52,7 +52,8 @@ fn test_basic_validation_rewards() -> Result<()> {
 
     for (i, (name, stake, storage)) in validators.iter().enumerate() {
         let identity = create_test_identity(name);
-        register_test_validator(&mut validator_manager, 
+        register_test_validator(
+            &mut validator_manager,
             identity,
             *stake,
             *storage,
@@ -85,7 +86,8 @@ fn test_stake_proportional_rewards() -> Result<()> {
     let alice_id = create_test_identity("alice");
     let bob_id = create_test_identity("bob");
 
-    register_test_validator(&mut validator_manager, 
+    register_test_validator(
+        &mut validator_manager,
         alice_id.clone(),
         alice_stake,
         200 * 1024 * 1024 * 1024,
@@ -93,7 +95,8 @@ fn test_stake_proportional_rewards() -> Result<()> {
         5,
     )?;
 
-    register_test_validator(&mut validator_manager, 
+    register_test_validator(
+        &mut validator_manager,
         bob_id.clone(),
         bob_stake,
         200 * 1024 * 1024 * 1024,
@@ -131,7 +134,8 @@ fn test_reputation_bonus_rewards() -> Result<()> {
     let alice_id = create_test_identity("alice");
     let bob_id = create_test_identity("bob");
 
-    register_test_validator(&mut validator_manager, 
+    register_test_validator(
+        &mut validator_manager,
         alice_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
@@ -139,7 +143,8 @@ fn test_reputation_bonus_rewards() -> Result<()> {
         5,
     )?;
 
-    register_test_validator(&mut validator_manager, 
+    register_test_validator(
+        &mut validator_manager,
         bob_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
@@ -185,7 +190,8 @@ fn test_storage_provision_rewards() -> Result<()> {
     let alice_id = create_test_identity("alice");
     let bob_id = create_test_identity("bob");
 
-    register_test_validator(&mut validator_manager, 
+    register_test_validator(
+        &mut validator_manager,
         alice_id.clone(),
         2000 * 1_000_000,
         500 * 1024 * 1024 * 1024, // 500 GB - high storage
@@ -193,7 +199,8 @@ fn test_storage_provision_rewards() -> Result<()> {
         5,
     )?;
 
-    register_test_validator(&mut validator_manager, 
+    register_test_validator(
+        &mut validator_manager,
         bob_id.clone(),
         2000 * 1_000_000,
         100 * 1024 * 1024 * 1024, // 100 GB - minimum storage
@@ -230,7 +237,8 @@ fn test_commission_rate_impact() -> Result<()> {
     let alice_id = create_test_identity("alice");
     let bob_id = create_test_identity("bob");
 
-    register_test_validator(&mut validator_manager, 
+    register_test_validator(
+        &mut validator_manager,
         alice_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
@@ -238,7 +246,8 @@ fn test_commission_rate_impact() -> Result<()> {
         5, // 5% commission
     )?;
 
-    register_test_validator(&mut validator_manager, 
+    register_test_validator(
+        &mut validator_manager,
         bob_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
@@ -294,7 +303,8 @@ fn test_reward_round_structure() -> Result<()> {
 
     // Register a validator
     let alice_id = create_test_identity("alice");
-    register_test_validator(&mut validator_manager, 
+    register_test_validator(
+        &mut validator_manager,
         alice_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
@@ -353,7 +363,8 @@ fn test_reward_consistency() -> Result<()> {
 
     // Register validator
     let alice_id = create_test_identity("alice");
-    register_test_validator(&mut validator_manager, 
+    register_test_validator(
+        &mut validator_manager,
         alice_id.clone(),
         2000 * 1_000_000,
         200 * 1024 * 1024 * 1024,
