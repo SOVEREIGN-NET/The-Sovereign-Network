@@ -516,6 +516,10 @@ impl OracleHandler {
                         lib_blockchain::contracts::bonding_curve::types::CurveType::Linear { base_price, .. } => base_price as u128,
                         lib_blockchain::contracts::bonding_curve::types::CurveType::Exponential { base_price, .. } => base_price as u128,
                         lib_blockchain::contracts::bonding_curve::types::CurveType::Sigmoid { max_price, .. } => (max_price as u128) / 2,
+                        lib_blockchain::contracts::bonding_curve::types::CurveType::PiecewiseLinear(ref curve) => {
+                            // Use initial price from first band as base
+                            curve.price_at(0) as u128
+                        }
                     };
                     let current_price = Self::price_f64_from_atomic(current_price_atomic);
                     let base_price = Self::price_f64_from_atomic(base_price_atomic);

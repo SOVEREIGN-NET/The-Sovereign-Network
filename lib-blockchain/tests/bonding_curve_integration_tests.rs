@@ -65,12 +65,13 @@ fn test_bonding_curve_full_lifecycle() {
         .register(token)
         .expect("Failed to register token");
 
-    assert_eq!(blockchain.bonding_curve_registry.total_count(), 1);
+    // Note: CBE token is now initialized at genesis, so we expect 2 tokens total
+    assert_eq!(blockchain.bonding_curve_registry.total_count(), 2);
     assert_eq!(
         blockchain
             .bonding_curve_registry
             .count_by_phase(Phase::Curve),
-        1
+        2
     );
 
     // Test 2: Simulate buying tokens from curve
@@ -251,13 +252,13 @@ fn test_multiple_tokens_different_phases() {
             .expect("Failed to register token");
     }
 
-    // Verify counts
-    assert_eq!(blockchain.bonding_curve_registry.total_count(), 3);
+    // Verify counts (note: CBE token is now initialized at genesis in Curve phase)
+    assert_eq!(blockchain.bonding_curve_registry.total_count(), 4);
     assert_eq!(
         blockchain
             .bonding_curve_registry
             .count_by_phase(Phase::Curve),
-        1
+        2  // CBE + TK1
     );
     assert_eq!(
         blockchain
@@ -272,8 +273,7 @@ fn test_multiple_tokens_different_phases() {
 
     // Test get_by_phase
     let curve_tokens = blockchain.bonding_curve_registry.get_by_phase(Phase::Curve);
-    assert_eq!(curve_tokens.len(), 1);
-    assert_eq!(curve_tokens[0].symbol, "TK1");
+    assert_eq!(curve_tokens.len(), 2);  // CBE + TK1
 
     println!("✅ Multiple tokens in different phases test passed!");
 }
