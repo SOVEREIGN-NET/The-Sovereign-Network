@@ -36,14 +36,6 @@ use lib_blockchain::contracts::bonding_curve::{
 };
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::Blockchain;
-use lib_blockchain::Transaction;
-
-/// Request to submit a signed bonding curve transaction
-#[derive(Debug, Deserialize)]
-pub struct SubmitBondingCurveTransactionRequest {
-    /// Hex-encoded bincode Transaction
-    pub signed_tx: String,
-}
 
 /// Helper function to create JSON responses
 fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
@@ -317,157 +309,226 @@ impl CurveHandler {
         Self { blockchain }
     }
 
-    /// POST /api/v1/curve/deploy - Submit signed bonding curve deploy transaction
-    /// 
-    /// Accepts a signed BondingCurveDeploy transaction and submits it to the mempool.
-    /// The transaction must be built using lib-client (build_bonding_curve_deploy_tx)
-    /// or equivalent client library.
+    /// POST /api/v1/curve/deploy - Deploy new bonding curve token
     async fn handle_deploy(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let submit_req: SubmitBondingCurveTransactionRequest = serde_json::from_slice(&request.body)
+        let deploy_req: DeployCurveTokenRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        // Decode the signed transaction
-        let tx_bytes = hex::decode(&submit_req.signed_tx)
-            .map_err(|e| anyhow::anyhow!("Invalid hex in signed_tx: {}", e))?;
-        let tx: Transaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize transaction: {}", e))?;
-
-        // Validate transaction type
-        if tx.transaction_type != lib_blockchain::TransactionType::BondingCurveDeploy {
+        // Validate
+        if deploy_req.name.is_empty() || deploy_req.symbol.is_empty() {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                "Transaction must be of type BondingCurveDeploy".to_string(),
+                "Name and symbol required".to_string(),
             ));
         }
 
-        // Get deploy data for response (clone to avoid borrow issues)
-        let deploy_data = tx.bonding_curve_deploy_data.clone().ok_or_else(|| {
-            anyhow::anyhow!("BondingCurveDeploy transaction missing deploy data")
-        })?;
-        let tx_hash = hex::encode(tx.hash().as_bytes());
-        let name = deploy_data.name.clone();
-        let symbol = deploy_data.symbol.clone();
+        if deploy_req.symbol.len() > 10 {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Symbol max 10 characters".to_string(),
+            ));
+        }
 
-        // Submit to mempool
-        self.submit_to_mempool(tx).await.map_err(|e| {
-            anyhow::anyhow!("Failed to submit deploy transaction to mempool: {}", e)
-        })?;
+        // Get creator from requester (must be authenticated)
+        let creator = self.get_requester_key(&request)?;
+
+        // Generate token ID deterministically
+        let token_id =
+            self.generate_token_id(&deploy_req.name, &deploy_req.symbol, &creator.key_id);
+
+        // Gate 1 + duplicate check inside single read lock
+        let creator_did = {
+            let blockchain = self.blockchain.read().await;
+
+            if blockchain.bonding_curve_registry.contains(&token_id) {
+                return Ok(create_error_response(
+                    ZhtpStatus::Conflict,
+                    "Token with this name and symbol already exists".to_string(),
+                ));
+            }
+
+            // Gate 1: creator must have a registered on-chain identity (DID).
+            let identity = blockchain.get_identity_by_public_key(&creator.dilithium_pk);
+            let identity =
+                match identity {
+                    Some(id) => id,
+                    None => return Ok(create_error_response(
+                        ZhtpStatus::Unauthorized,
+                        "Deployer must have a registered identity (DID) on-chain to deploy a token"
+                            .to_string(),
+                    )),
+                };
+            let did = identity.did.clone();
+
+            // Gate 2: creator must hold at least 100 SOV.
+            const CBE_DEPLOY_MIN_SOV: u64 = 100 * 100_000_000; // 100 SOV atomic
+            let sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
+            let sov_token = blockchain.token_contracts.get(&sov_id);
+            // Resolve the creator's primary wallet and check SOV balance against the wallet-based key.
+            let sov_balance = match sov_token {
+                Some(token) => {
+                    let primary_wallet_id = match blockchain
+                        .primary_wallet_id_for_signer(&creator.key_id)
+                    {
+                        Some(wallet_id) => wallet_id,
+                        None => {
+                            return Ok(create_error_response(
+                                ZhtpStatus::Unauthorized,
+                                "Deployer must have a primary wallet registered to hold SOV before deploying a token".to_string(),
+                            ));
+                        }
+                    };
+                    let sov_wallet_key =
+                        lib_blockchain::Blockchain::sov_key_from_wallet_id(&primary_wallet_id);
+                    token.balance_of(&sov_wallet_key)
+                }
+                None => 0,
+            };
+            if sov_balance < CBE_DEPLOY_MIN_SOV {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    format!(
+                        "Deployer must hold at least 100 SOV to deploy a token (current balance: {:.2} SOV)",
+                        sov_balance as f64 / 100_000_000.0
+                    ),
+                ));
+            }
+
+            did
+        };
+
+        // Deploy token
+        let curve_type: CurveType = deploy_req.curve_type.into();
+        let threshold: Threshold = deploy_req.threshold.into();
+
+        let mut token = BondingCurveToken::deploy(
+            token_id,
+            deploy_req.name.clone(),
+            deploy_req.symbol.clone(),
+            curve_type,
+            threshold,
+            deploy_req.sell_enabled,
+            creator,
+            creator_did,
+            self.get_current_block().await?,
+            self.get_current_timestamp().await?,
+        )
+        .map_err(|e| anyhow::anyhow!("Deploy failed: {}", e))?;
+
+        // Register in blockchain
+        {
+            let mut blockchain = self.blockchain.write().await;
+            blockchain
+                .bonding_curve_registry
+                .register(token.clone())
+                .map_err(|e| anyhow::anyhow!("Registration failed: {}", e))?;
+        }
 
         info!(
-            "Bonding curve deploy submitted to mempool: {} ({}) - creator={}",
-            name,
-            symbol,
-            hex::encode(&deploy_data.creator[..8])
+            "Bonding curve token deployed: {} ({}) - id={}",
+            deploy_req.name,
+            deploy_req.symbol,
+            hex::encode(&token_id[..8])
         );
 
         create_json_response(json!({
             "success": true,
-            "tx_hash": tx_hash,
-            "name": name,
-            "symbol": symbol,
-            "tx_status": "submitted_to_mempool"
+            "token_id": hex::encode(token_id),
+            "name": deploy_req.name,
+            "symbol": deploy_req.symbol,
+            "phase": "curve",
+            "tx_status": "confirmed"
         }))
     }
 
-    /// POST /api/v1/curve/buy - Submit signed bonding curve buy transaction
-    ///
-    /// Accepts a signed BondingCurveBuy transaction and submits it to the mempool.
-    /// The transaction must be built using lib-client (build_bonding_curve_buy_tx)
-    /// or equivalent client library.
+    /// POST /api/v1/curve/buy - Buy tokens from curve
     async fn handle_buy(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let submit_req: SubmitBondingCurveTransactionRequest = serde_json::from_slice(&request.body)
+        let buy_req: BuyTokensRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        // Decode the signed transaction
-        let tx_bytes = hex::decode(&submit_req.signed_tx)
-            .map_err(|e| anyhow::anyhow!("Invalid hex in signed_tx: {}", e))?;
-        let tx: Transaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize transaction: {}", e))?;
+        let token_id =
+            hex::decode(&buy_req.token_id).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
-        // Validate transaction type
-        if tx.transaction_type != lib_blockchain::TransactionType::BondingCurveBuy {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Transaction must be of type BondingCurveBuy".to_string(),
-            ));
-        }
+        let buyer = self.get_requester_key(&request)?;
+        let block_height = self.get_current_block().await?;
+        let timestamp = self.get_current_timestamp().await?;
 
-        // Get buy data for response (clone to avoid borrow issues)
-        let buy_data = tx.bonding_curve_buy_data.clone().ok_or_else(|| {
-            anyhow::anyhow!("BondingCurveBuy transaction missing buy data")
-        })?;
-        let tx_hash = hex::encode(tx.hash().as_bytes());
-        let token_id = hex::encode(buy_data.token_id);
-        let stable_amount = buy_data.stable_amount;
+        let mut blockchain = self.blockchain.write().await;
 
-        // Submit to mempool
-        self.submit_to_mempool(tx).await.map_err(|e| {
-            anyhow::anyhow!("Failed to submit buy transaction to mempool: {}", e)
-        })?;
+        let token = blockchain
+            .bonding_curve_registry
+            .get_mut(&token_id)
+            .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
-        info!(
-            "Bonding curve buy submitted to mempool: token={}, amount={}",
-            &token_id[..16.min(token_id.len())],
-            stable_amount
-        );
+        // Execute buy (contract enforces phase == Curve)
+        let (token_amount, _event) = token
+            .buy(buyer, buy_req.stable_amount, block_height, timestamp)
+            .map_err(|e| anyhow::anyhow!("Buy failed: {}", e))?;
+
+        // Check for automatic graduation
+        let graduated = if token.can_graduate(timestamp) {
+            match token.graduate(timestamp, block_height) {
+                Ok(grad_event) => {
+                    info!("Token {} auto-graduated", hex::encode(&token_id[..8]));
+                    // Emit graduation event (in production, this would be indexed)
+                    Some(grad_event)
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        drop(blockchain);
 
         create_json_response(json!({
             "success": true,
-            "tx_hash": tx_hash,
-            "token_id": token_id,
-            "stable_amount": stable_amount,
-            "tx_status": "submitted_to_mempool"
+            "token_id": buy_req.token_id,
+            "stable_paid": buy_req.stable_amount,
+            "tokens_received": token_amount,
+            "auto_graduated": graduated.is_some(),
+            "tx_status": "confirmed"
         }))
     }
 
-    /// POST /api/v1/curve/sell - Submit signed bonding curve sell transaction
-    ///
-    /// Accepts a signed BondingCurveSell transaction and submits it to the mempool.
-    /// The transaction must be built using lib-client (build_bonding_curve_sell_tx)
-    /// or equivalent client library.
+    /// POST /api/v1/curve/sell - Sell tokens back to curve
     async fn handle_sell(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let submit_req: SubmitBondingCurveTransactionRequest = serde_json::from_slice(&request.body)
+        let sell_req: SellTokensRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
 
-        // Decode the signed transaction
-        let tx_bytes = hex::decode(&submit_req.signed_tx)
-            .map_err(|e| anyhow::anyhow!("Invalid hex in signed_tx: {}", e))?;
-        let tx: Transaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize transaction: {}", e))?;
+        let token_id =
+            hex::decode(&sell_req.token_id).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
-        // Validate transaction type
-        if tx.transaction_type != lib_blockchain::TransactionType::BondingCurveSell {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Transaction must be of type BondingCurveSell".to_string(),
-            ));
-        }
+        let seller = self.get_requester_key(&request)?;
+        let block_height = self.get_current_block().await?;
+        let timestamp = self.get_current_timestamp().await?;
 
-        // Get sell data for response (clone to avoid borrow issues)
-        let sell_data = tx.bonding_curve_sell_data.clone().ok_or_else(|| {
-            anyhow::anyhow!("BondingCurveSell transaction missing sell data")
-        })?;
-        let tx_hash = hex::encode(tx.hash().as_bytes());
-        let token_id = hex::encode(sell_data.token_id);
-        let token_amount = sell_data.token_amount;
+        let mut blockchain = self.blockchain.write().await;
 
-        // Submit to mempool
-        self.submit_to_mempool(tx).await.map_err(|e| {
-            anyhow::anyhow!("Failed to submit sell transaction to mempool: {}", e)
-        })?;
+        let token = blockchain
+            .bonding_curve_registry
+            .get_mut(&token_id)
+            .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
-        info!(
-            "Bonding curve sell submitted to mempool: token={}, amount={}",
-            &token_id[..16.min(token_id.len())],
-            token_amount
-        );
+        // Execute sell (contract enforces phase == Curve and sell_enabled)
+        let (stable_amount, _event) = token
+            .sell(seller, sell_req.token_amount, block_height, timestamp)
+            .map_err(|e| anyhow::anyhow!("Sell failed: {}", e))?;
+
+        drop(blockchain);
 
         create_json_response(json!({
             "success": true,
-            "tx_hash": tx_hash,
-            "token_id": token_id,
-            "token_amount": token_amount,
-            "tx_status": "submitted_to_mempool"
+            "token_id": sell_req.token_id,
+            "tokens_sold": sell_req.token_amount,
+            "stable_received": stable_amount,
+            "tx_status": "confirmed"
         }))
     }
 
@@ -612,56 +673,6 @@ impl CurveHandler {
         }))
     }
 
-    /// POST /api/v1/curve/graduate - Submit signed bonding curve graduate transaction
-    ///
-    /// Accepts a signed BondingCurveGraduate transaction and submits it to the mempool.
-    /// The transaction must be built using lib-client (build_bonding_curve_graduate_tx)
-    /// or equivalent client library.
-    async fn handle_graduate(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let submit_req: SubmitBondingCurveTransactionRequest = serde_json::from_slice(&request.body)
-            .map_err(|e| anyhow::anyhow!("Invalid request: {}", e))?;
-
-        // Decode the signed transaction
-        let tx_bytes = hex::decode(&submit_req.signed_tx)
-            .map_err(|e| anyhow::anyhow!("Invalid hex in signed_tx: {}", e))?;
-        let tx: Transaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize transaction: {}", e))?;
-
-        // Validate transaction type
-        if tx.transaction_type != lib_blockchain::TransactionType::BondingCurveGraduate {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Transaction must be of type BondingCurveGraduate".to_string(),
-            ));
-        }
-
-        // Get graduate data for response (clone to avoid borrow issues)
-        let grad_data = tx.bonding_curve_graduate_data.clone().ok_or_else(|| {
-            anyhow::anyhow!("BondingCurveGraduate transaction missing graduate data")
-        })?;
-        let tx_hash = hex::encode(tx.hash().as_bytes());
-        let token_id = hex::encode(grad_data.token_id);
-        let pool_id = hex::encode(grad_data.pool_id);
-
-        // Submit to mempool
-        self.submit_to_mempool(tx).await.map_err(|e| {
-            anyhow::anyhow!("Failed to submit graduate transaction to mempool: {}", e)
-        })?;
-
-        info!(
-            "Bonding curve graduate submitted to mempool: token={}",
-            &token_id[..16.min(token_id.len())]
-        );
-
-        create_json_response(json!({
-            "success": true,
-            "tx_hash": tx_hash,
-            "token_id": token_id,
-            "pool_id": pool_id,
-            "tx_status": "submitted_to_mempool"
-        }))
-    }
-
     /// GET /api/v1/curve/ready-to-graduate - List tokens that can graduate
     async fn handle_ready_to_graduate(&self) -> Result<ZhtpResponse> {
         let blockchain = self.blockchain.read().await;
@@ -723,14 +734,6 @@ impl CurveHandler {
             .unwrap_or_default()
             .as_secs())
     }
-
-    /// Submit a transaction to the mempool for BFT consensus processing
-    async fn submit_to_mempool(&self, tx: Transaction) -> Result<()> {
-        let mut blockchain = self.blockchain.write().await;
-        blockchain
-            .add_pending_transaction(tx)
-            .map_err(|e| anyhow::anyhow!("Failed to submit transaction to mempool: {}", e))
-    }
 }
 
 #[async_trait::async_trait]
@@ -748,8 +751,6 @@ impl ZhtpRequestHandler for CurveHandler {
             (ZhtpMethod::Post, "/api/v1/curve/buy") => self.handle_buy(request).await,
             // POST /api/v1/curve/sell
             (ZhtpMethod::Post, "/api/v1/curve/sell") => self.handle_sell(request).await,
-            // POST /api/v1/curve/graduate
-            (ZhtpMethod::Post, "/api/v1/curve/graduate") => self.handle_graduate(request).await,
             // GET /api/v1/curve/list
             (ZhtpMethod::Get, "/api/v1/curve/list") => self.handle_list().await,
             // GET /api/v1/curve/ready-to-graduate
@@ -1149,85 +1150,241 @@ impl ValuationHandler {
         Self { blockchain }
     }
 
-    /// GET /api/v1/price/{token_id}?type=spot|twap
-    ///
-    /// Returns unified price with source and pricing mode (Issue #1819)
-    /// Default type is twap (safer)
-    async fn handle_price(&self, token_id_hex: &str, _query: &str) -> Result<ZhtpResponse> {
-        // For now, default to twap. Full query parsing can be added later.
-        let price_type = "twap";
+    // -------------------------------------------------------------------------
+    // Stable price schema helpers
+    // -------------------------------------------------------------------------
 
-        // SOV special case - use unified pricing
-        if token_id_hex == "sov" || token_id_hex == "SOV" {
-            return self.get_sov_price_unified().await;
-        }
+    /// Convert an 8-decimal atomic price to f64 USD and integer 4-decimal cents.
+    /// price_usd_cents = round(price_usd * 10_000) — i.e. units of 0.0001 USD.
+    fn atomic_to_price(atomic: u64) -> (f64, u64) {
+        let price_usd = atomic as f64 / 100_000_000.0;
+        let price_usd_cents = (price_usd * 10_000.0).round() as u64;
+        (price_usd, price_usd_cents)
+    }
 
-        // Check if it's CBE token
+    /// Build stable SOV price response (Phase 1: SRV; Phase 2: oracle-derived).
+    async fn build_sov_price_response(&self) -> Result<serde_json::Value> {
         let blockchain = self.blockchain.read().await;
-        use lib_blockchain::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
-        let cbe_token_id = {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            CBE_NAME.hash(&mut hasher);
-            CBE_SYMBOL.hash(&mut hasher);
-            let hash = hasher.finish();
-            let mut id = [0u8; 32];
-            id[..8].copy_from_slice(&hash.to_le_bytes());
-            for i in 8..32 {
-                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
-            }
-            id
+
+        // Phase 1: SRV from treasury kernel.
+        let srv_atomic = if let Some(kernel) = blockchain.treasury_kernel.as_ref() {
+            kernel.srv_state().current_srv
+        } else {
+            2_180_000u64 // $0.0218 genesis SRV
+        };
+        let (srv_usd, srv_cents) = Self::atomic_to_price(srv_atomic);
+
+        let last_updated = blockchain.last_committed_timestamp();
+
+        // Phase 2: check oracle for CBE-derived SOV price.
+        let block_ts = last_updated;
+        let current_epoch = blockchain.oracle_state.epoch_id(block_ts);
+        let oracle_price = blockchain.oracle_state.latest_finalized_price_at_or_before(current_epoch);
+
+        let (price_usd, price_usd_cents, price_mode, price_source, components) = if let Some(fp) = oracle_price {
+            // Oracle finalized price is SOV/USD directly.
+            let (oracle_usd, oracle_cents) = Self::atomic_to_price(fp.sov_usd_price as u64);
+            (
+                oracle_usd,
+                oracle_cents,
+                "dynamic",
+                "oracle",
+                json!({
+                    "srv": srv_usd,
+                    "oracle_price": oracle_usd,
+                    "cbe_usd": null,
+                    "cbe_sov": null,
+                }),
+            )
+        } else {
+            (
+                srv_usd,
+                srv_cents,
+                "fixed",
+                "srv",
+                json!({
+                    "srv": srv_usd,
+                    "cbe_usd": null,
+                    "cbe_sov": null,
+                }),
+            )
         };
 
-        // Try to decode token_id
-        let token_id = hex::decode(token_id_hex).ok().and_then(|bytes| {
-            bytes.try_into().ok().map(|arr: [u8; 32]| arr)
-        });
+        Ok(json!({
+            "token_id": "sov",
+            "symbol": "SOV",
+            "price_usd": price_usd,
+            "price_usd_cents": price_usd_cents,
+            "price_mode": price_mode,
+            "price_source": price_source,
+            "components": components,
+            "last_updated": last_updated,
+        }))
+    }
 
-        // Check if it's CBE
-        if let Some(id) = token_id {
-            if id == cbe_token_id {
-                return self.get_cbe_price_unified().await;
-            }
+    /// Build stable token price response for a bonding curve or regular token.
+    fn build_token_price_response(
+        token_id_hex: &str,
+        bc_token: Option<&BondingCurveToken>,
+        reg_token: Option<&lib_blockchain::contracts::TokenContract>,
+        srv_usd: f64,
+        last_updated: u64,
+    ) -> Result<serde_json::Value> {
+        if let Some(token) = bc_token {
+            let curve_price_atomic = token.current_price();
+            let (curve_price_sov, _) = Self::atomic_to_price(curve_price_atomic);
+            let price_usd = curve_price_sov * srv_usd;
+            let price_usd_cents = (price_usd * 10_000.0).round() as u64;
 
-            // Try bonding curve
-            if let Some(token) = blockchain.bonding_curve_registry.get(&id) {
-                let valuation = self.get_curve_valuation(token, price_type)?;
-                return create_json_response(json!({
-                    "token_id": token_id_hex,
-                    "symbol": token.symbol,
-                    "price_usd_cents": valuation.price_usd_cents,
-                    "price_mode": "pre_graduation",
-                    "price_source": valuation.source.name(),
-                    "phase": token.phase.to_string(),
-                }));
-            }
+            let (price_mode, price_source) = match token.phase {
+                Phase::Curve => ("pre_graduation", "bonding_curve"),
+                Phase::Graduated => ("pre_graduation", "bonding_curve"),
+                Phase::AMM => ("post_graduation", "amm"),
+            };
+
+            Ok(json!({
+                "token_id": token_id_hex,
+                "symbol": token.symbol,
+                "price_usd": price_usd,
+                "price_usd_cents": price_usd_cents,
+                "price_mode": price_mode,
+                "price_source": price_source,
+                "phase": format!("{:?}", token.phase),
+                "reserve_usd": token.reserve_balance as f64 / 100_000_000.0 * srv_usd,
+                "supply": token.total_supply,
+                "components": {
+                    "curve_price_sov": curve_price_sov,
+                    "sov_usd": srv_usd,
+                },
+                "oracle_confidence": null,
+                "last_updated": last_updated,
+            }))
+        } else if let Some(token) = reg_token {
+            Ok(json!({
+                "token_id": token_id_hex,
+                "symbol": token.symbol,
+                "price_usd": null,
+                "price_usd_cents": null,
+                "price_mode": "none",
+                "price_source": "none",
+                "supply": token.total_supply,
+                "components": null,
+                "oracle_confidence": null,
+                "last_updated": last_updated,
+                "message": "No pricing available for this token type",
+            }))
+        } else {
+            anyhow::bail!("Token not found")
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Endpoint handlers
+    // -------------------------------------------------------------------------
+
+    /// GET /api/v1/price/sov
+    /// GET /api/v1/price/{token_id}
+    async fn handle_price(&self, token_id_hex: &str, _query: &str) -> Result<ZhtpResponse> {
+        if token_id_hex.eq_ignore_ascii_case("sov") {
+            let body = self.build_sov_price_response().await?;
+            return create_json_response(body);
         }
 
-        // Try regular token
-        if let Some(id) = token_id {
-            if let Some(token) = blockchain.get_token_contract(&id) {
-                let _ = token; // Silence unused warning for now
-                return create_json_response(json!({
-                    "token_id": token_id_hex,
-                    "price_usd_cents": 0,
-                    "price_mode": "unknown",
-                    "price_source": "none",
-                    "message": "No pricing available for this token type",
-                }));
-            }
+        let token_id =
+            hex::decode(token_id_hex).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
+        let token_id: [u8; 32] = token_id
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
+
+        let blockchain = self.blockchain.read().await;
+        let last_updated = blockchain.last_committed_timestamp();
+        let srv_atomic = if let Some(k) = blockchain.treasury_kernel.as_ref() {
+            k.srv_state().current_srv
+        } else {
+            2_180_000u64
+        };
+        let (srv_usd, _) = Self::atomic_to_price(srv_atomic);
+
+        let bc_token = blockchain.bonding_curve_registry.get(&token_id);
+        let reg_token = if bc_token.is_none() {
+            blockchain.get_token_contract(&token_id)
+        } else {
+            None
+        };
+
+        let body = Self::build_token_price_response(
+            token_id_hex,
+            bc_token,
+            reg_token.as_ref(),
+            srv_usd,
+            last_updated,
+        )?;
+        create_json_response(body)
+    }
+
+    /// GET /api/v1/price/by-symbol/{symbol}
+    async fn handle_price_by_symbol(&self, symbol: &str) -> Result<ZhtpResponse> {
+        if symbol.eq_ignore_ascii_case("sov") {
+            let body = self.build_sov_price_response().await?;
+            return create_json_response(body);
         }
 
-        Err(anyhow::anyhow!("Token not found"))
+        let symbol_upper = symbol.to_uppercase();
+        let blockchain = self.blockchain.read().await;
+        let last_updated = blockchain.last_committed_timestamp();
+        let srv_atomic = if let Some(k) = blockchain.treasury_kernel.as_ref() {
+            k.srv_state().current_srv
+        } else {
+            2_180_000u64
+        };
+        let (srv_usd, _) = Self::atomic_to_price(srv_atomic);
+
+        // Check bonding curve registry first.
+        let bc_token = blockchain
+            .bonding_curve_registry
+            .get_all()
+            .into_iter()
+            .find(|t| t.symbol.to_uppercase() == symbol_upper);
+
+        if let Some(ref token) = bc_token {
+            let token_id_hex = hex::encode(token.token_id);
+            let body = Self::build_token_price_response(
+                &token_id_hex,
+                Some(token),
+                None,
+                srv_usd,
+                last_updated,
+            )?;
+            return create_json_response(body);
+        }
+
+        // Fall back to regular token_contracts.
+        let reg_token = blockchain
+            .token_contracts
+            .iter()
+            .find(|(_, t)| t.symbol.to_uppercase() == symbol_upper)
+            .map(|(id, t)| (hex::encode(id), t.clone()));
+
+        if let Some((token_id_hex, token)) = reg_token {
+            let body = Self::build_token_price_response(
+                &token_id_hex,
+                None,
+                Some(&token),
+                srv_usd,
+                last_updated,
+            )?;
+            return create_json_response(body);
+        }
+
+        Err(anyhow::anyhow!("Token with symbol '{}' not found", symbol))
     }
 
     /// GET /api/v1/valuation/{token_id}
-    ///
-    /// Full valuation with value calculation
     async fn handle_valuation(&self, token_id_hex: &str) -> Result<ZhtpResponse> {
         if token_id_hex == "sov" || token_id_hex == "SOV" {
-            return self.get_sov_valuation().await;
+            // Delegate to stable price response for valuation too.
+            let body = self.build_sov_price_response().await?;
+            return create_json_response(body);
         }
 
         let token_id =
@@ -1272,8 +1429,6 @@ impl ValuationHandler {
     }
 
     /// GET /api/v1/valuation/batch
-    ///
-    /// Batch valuation for multiple tokens
     async fn handle_batch_valuation(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
         #[derive(Deserialize)]
         struct BatchRequest {
@@ -1288,12 +1443,18 @@ impl ValuationHandler {
 
         for token_id_hex in req.token_ids {
             let valuation = if token_id_hex == "sov" || token_id_hex == "SOV" {
-                let srv = self.get_srv_from_treasury().await;
+                let srv_atomic = if let Some(k) = blockchain.treasury_kernel.as_ref() {
+                    k.srv_state().current_srv
+                } else {
+                    2_180_000u64
+                };
+                let (srv_usd, srv_cents) = Self::atomic_to_price(srv_atomic);
                 json!({
                     "token_id": "sov",
-                    "price_usd_cents": srv,
-                    "source": "srv",
-                    "confidence_level": "deterministic_curve",
+                    "symbol": "SOV",
+                    "price_usd": srv_usd,
+                    "price_usd_cents": srv_cents,
+                    "price_source": "srv",
                 })
             } else if let Ok(token_id) = hex::decode(&token_id_hex) {
                 if let Ok(arr) = token_id.try_into() as Result<[u8; 32], _> {
@@ -1301,10 +1462,10 @@ impl ValuationHandler {
                         let price = token.current_price();
                         json!({
                             "token_id": token_id_hex,
+                            "symbol": token.symbol,
                             "price_usd_cents": price,
-                            "source": "bonding_curve",
-                            "confidence_level": "deterministic_curve",
-                            "phase": token.phase.to_string(),
+                            "price_source": "bonding_curve",
+                            "phase": format!("{:?}", token.phase),
                         })
                     } else {
                         json!({
@@ -1334,233 +1495,6 @@ impl ValuationHandler {
     }
 
     // Helper methods
-    async fn get_sov_price(&self, price_type: &str) -> Result<ZhtpResponse> {
-        // Query Treasury Kernel for SRV
-        let srv = self.get_srv_from_treasury().await;
-
-        create_json_response(json!({
-            "token_id": "sov",
-            "price_usd_cents": srv,
-            "source": "srv",
-            "confidence_level": "deterministic_curve",
-            "price_type_requested": price_type,
-        }))
-    }
-
-    async fn get_sov_valuation(&self) -> Result<ZhtpResponse> {
-        let srv = self.get_srv_from_treasury().await;
-
-        // Get supply from Treasury Kernel
-        let blockchain = self.blockchain.read().await;
-        let supply = self.get_circulating_supply_from_treasury(&blockchain).await;
-        drop(blockchain);
-
-        create_json_response(json!({
-            "token_id": "sov",
-            "name": "Sovereign",
-            "symbol": "SOV",
-            "price_usd_cents": srv,
-            "circulating_supply": supply,
-            "market_cap_usd_cents": (supply as u128 * srv as u128 / 100_000_000) as u64,
-            "source": "srv",
-            "confidence_level": "deterministic_curve",
-            "phase": "sov",
-        }))
-    }
-
-    /// Get SRV from Treasury Kernel
-    /// Returns SRV in cents (8 decimal precision stored, converted to cents for API)
-    async fn get_srv_from_treasury(&self) -> u64 {
-        let blockchain = self.blockchain.read().await;
-
-        if let Some(kernel) = blockchain.treasury_kernel.as_ref() {
-            // SRV is stored with 8 decimals, convert to cents (2 decimals)
-            // SRVState.current_srv has 8 decimal precision
-            let srv_8dec = kernel.srv_state().current_srv;
-            // Convert: value * 100 / 100_000_000 = value / 1_000_000
-            srv_8dec / 1_000_000
-        } else {
-            // Fallback to genesis SRV if kernel not initialized
-            2180000u64 // $0.0218
-        }
-    }
-
-    /// Get circulating supply from Treasury Kernel
-    async fn get_circulating_supply_from_treasury(&self, blockchain: &Blockchain) -> u64 {
-        if let Some(kernel) = blockchain.treasury_kernel.as_ref() {
-            kernel.srv_state().circulating_supply_sov
-        } else {
-            // Fallback to genesis supply
-            50_000_000_000_000_000u64 // 50M SOV with 8 decimals
-        }
-    }
-
-    /// Issue #1819: Unified SOV price response (Issue #1819)
-    /// Returns unified pricing format supporting both SRV (fixed) and oracle-derived (dynamic) modes
-    async fn get_sov_price_unified(&self) -> Result<ZhtpResponse> {
-        use lib_blockchain::pricing::{PRICE_SCALE, GENESIS_SRV_8DEC};
-        
-        let blockchain = self.blockchain.read().await;
-        let pricing = &blockchain.token_pricing_state;
-        
-        // Check if we have oracle-derived pricing (dynamic pricing is active)
-        if pricing.dynamic_pricing_active {
-            // Dynamic pricing mode: SOV/USD derived from CBE/USD oracle
-            let price_8dec = pricing.get_sov_price_8dec();
-            let price_cents = ((price_8dec * 100) / PRICE_SCALE) as u64;
-            
-            return create_json_response(json!({
-                "token_id": "sov",
-                "symbol": "SOV",
-                "price_usd_cents": price_cents,
-                "price_mode": "dynamic",
-                "price_source": "oracle_derived",
-                "source_components": {
-                    "cbe_usd_oracle": pricing.cbe_usd_price,
-                    "cbe_sov_ratio": pricing.cbe_sov_ratio,
-                },
-                "last_updated": pricing.last_updated,
-                "confidence_level": "high",
-            }));
-        }
-        
-        // Fallback to SRV (fixed pricing) when no oracle data available
-        let srv = self.get_srv_from_treasury().await;
-        
-        create_json_response(json!({
-            "token_id": "sov",
-            "symbol": "SOV", 
-            "price_usd_cents": srv,
-            "price_mode": "fixed",
-            "price_source": "srv",
-            "confidence_level": "deterministic_curve",
-            "note": "CBE/USD oracle not yet available, using fixed SRV pricing",
-        }))
-    }
-
-    /// Issue #1819: Unified CBE price response (Issue #1819)
-    /// Returns unified pricing format for CBE token
-    async fn get_cbe_price_unified(&self) -> Result<ZhtpResponse> {
-        use lib_blockchain::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
-        
-        let blockchain = self.blockchain.read().await;
-        let pricing = &blockchain.token_pricing_state;
-        
-        // Get CBE price info (returns Option<CbePriceInfo>)
-        let price_info = blockchain.get_cbe_price_info();
-        
-        // Get CBE token for phase info
-        let cbe_token_id = {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            CBE_NAME.hash(&mut hasher);
-            CBE_SYMBOL.hash(&mut hasher);
-            let hash = hasher.finish();
-            let mut id = [0u8; 32];
-            id[..8].copy_from_slice(&hash.to_le_bytes());
-            for i in 8..32 {
-                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
-            }
-            id
-        };
-        
-        let phase = blockchain.bonding_curve_registry
-            .get(&cbe_token_id)
-            .map(|t| t.phase.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        
-        // Use the price_info if available, otherwise fall back to pricing state
-        match price_info {
-            Some(info) => {
-                create_json_response(json!({
-                    "token_id": hex::encode(&cbe_token_id),
-                    "symbol": "CBE",
-                    "price_usd_cents": info.price_usd_cents,
-                    "price_mode": info.price_mode.to_string(),
-                    "price_source": info.price_source.to_string(),
-                    "phase": info.phase,
-                    "components": info.components,
-                    "oracle_confidence": info.oracle_confidence,
-                    "reserve_usd": info.reserve_usd,
-                    "supply": info.supply,
-                    "confidence_level": if info.price_mode.to_string() == "dynamic" { "high" } else { "deterministic_curve" },
-                    "last_updated": info.last_updated,
-                }))
-            }
-            None => {
-                // Fallback: build response from pricing state
-                let (price_mode, price_source) = if pricing.cbe_usd_price.is_some() {
-                    ("dynamic", "oracle")
-                } else {
-                    ("pre_graduation", "bonding_curve")
-                };
-                
-                // Get curve price from registry
-                let curve_price_cents = blockchain.bonding_curve_registry
-                    .get(&cbe_token_id)
-                    .map(|t| t.current_price())
-                    .unwrap_or(1); // $0.0001 fallback
-                
-                create_json_response(json!({
-                    "token_id": hex::encode(&cbe_token_id),
-                    "symbol": "CBE",
-                    "price_usd_cents": curve_price_cents,
-                    "price_mode": price_mode,
-                    "price_source": price_source,
-                    "phase": phase,
-                    "confidence_level": if price_mode == "dynamic" { "high" } else { "deterministic_curve" },
-                    "last_updated": pricing.last_updated,
-                    "note": "Using fallback pricing (get_cbe_price_info returned None)",
-                }))
-            }
-        }
-    }
-
-    fn get_curve_valuation(
-        &self,
-        token: &BondingCurveToken,
-        price_type: &str,
-    ) -> Result<Valuation> {
-        match token.phase {
-            Phase::Curve => {
-                // Curve phase: always use curve pricing
-                Ok(Valuation {
-                    price_usd_cents: token.current_price(),
-                    value_usd_cents: 0,
-                    source: PriceSource::BondingCurve,
-                    confidence: ConfidenceLevel::DeterministicCurve,
-                })
-            }
-            Phase::AMM => {
-                // AMM phase: use requested type (default twap)
-                let source = if price_type == "spot" {
-                    PriceSource::AMM_Spot
-                } else {
-                    PriceSource::AMM_TWAP
-                };
-                let confidence = if price_type == "spot" {
-                    ConfidenceLevel::TwapLowLiquidity // Spot is less reliable
-                } else {
-                    ConfidenceLevel::TwapLiquiditySufficient
-                };
-
-                // In production, query actual AMM
-                Ok(Valuation {
-                    price_usd_cents: token.current_price(), // Mock: would be AMM price
-                    value_usd_cents: 0,
-                    source,
-                    confidence,
-                })
-            }
-            Phase::Graduated => Ok(Valuation {
-                price_usd_cents: 0,
-                value_usd_cents: 0,
-                source: PriceSource::BondingCurve,
-                confidence: ConfidenceLevel::None,
-            }),
-        }
-    }
 }
 
 #[async_trait::async_trait]
@@ -1580,6 +1514,12 @@ impl ZhtpRequestHandler for ValuationHandler {
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/valuation/") => {
                 let token_id = path.strip_prefix("/api/v1/valuation/").unwrap_or("");
                 self.handle_valuation(token_id).await
+            }
+            // GET /api/v1/price/by-symbol/{symbol}
+            (ZhtpMethod::Get, path) if path.starts_with("/api/v1/price/by-symbol/") => {
+                let symbol = path.strip_prefix("/api/v1/price/by-symbol/").unwrap_or("");
+                let symbol = symbol.split('?').next().unwrap_or(symbol);
+                self.handle_price_by_symbol(symbol).await
             }
             // GET /api/v1/price/{token_id} (with optional query params)
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/price/") => {

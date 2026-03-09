@@ -85,6 +85,7 @@ impl ObserverHandler {
     pub fn new(_runtime: Arc<RuntimeOrchestrator>) -> Self {
         Self { _runtime }
     }
+
 }
 
 #[async_trait::async_trait]
