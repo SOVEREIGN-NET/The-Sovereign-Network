@@ -204,6 +204,7 @@ fn test_committee_membership_verification() {
     let mut attestation = lib_blockchain::oracle::OraclePriceAttestation {
         epoch_id: current_epoch,
         sov_usd_price: 100_000_000,
+        cbe_usd_price: None,
         timestamp: harness.current_timestamp,
         validator_pubkey: non_committee.key_id,
         signature: Vec::new(),

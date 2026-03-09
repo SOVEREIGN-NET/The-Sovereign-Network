@@ -16,19 +16,25 @@ pub const ORACLE_PRICE_SCALE: u128 = 100_000_000;
 pub const ORACLE_ATTESTATION_DOMAIN: &str = "SOVN_ORACLE_V1";
 
 /// Canonical payload covered by oracle attestation signatures.
+/// Issue #1819: Extended with CBE/USD price for unified token pricing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OraclePriceAttestationPayload {
     pub epoch_id: u64,
     pub sov_usd_price: u128,
+    /// Issue #1819: CBE/USD price for unified pricing (8-decimal precision)
+    pub cbe_usd_price: Option<u128>,
     pub timestamp: u64,
     pub validator_pubkey: [u8; 32],
 }
 
 /// Canonical oracle attestation.
+/// Issue #1819: Extended with CBE/USD price for unified token pricing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OraclePriceAttestation {
     pub epoch_id: u64,
     pub sov_usd_price: u128,
+    /// Issue #1819: CBE/USD price for unified pricing (8-decimal precision)
+    pub cbe_usd_price: Option<u128>,
     pub timestamp: u64,
     pub validator_pubkey: [u8; 32],
     pub signature: Vec<u8>,
@@ -91,6 +97,7 @@ impl OraclePriceAttestation {
         OraclePriceAttestationPayload {
             epoch_id: self.epoch_id,
             sov_usd_price: self.sov_usd_price,
+            cbe_usd_price: self.cbe_usd_price,
             timestamp: self.timestamp,
             validator_pubkey: self.validator_pubkey,
         }
@@ -451,26 +458,38 @@ impl OracleCommitteeState {
 }
 
 /// Canonical finalized price for an epoch.
+/// Issue #1819: Extended with CBE/USD price for unified token pricing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FinalizedOraclePrice {
     pub epoch_id: u64,
     #[serde(alias = "price")]
     pub sov_usd_price: u128,
+    /// Issue #1819: Finalized CBE/USD price (8-decimal precision)
+    pub cbe_usd_price: Option<u128>,
 }
 
 /// Oracle aggregation/finalization status for an epoch.
+/// Issue #1819: Extended with CBE price tracking for unified token pricing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct OracleEpochState {
-    /// First price to hit threshold for this epoch.
+    /// First SOV price to hit threshold for this epoch.
     pub winning_price: Option<u128>,
+    /// First CBE price to hit threshold for this epoch (Issue #1819).
+    pub winning_cbe_price: Option<u128>,
     /// Whether this epoch is finalized.
     pub finalized: bool,
-    /// Candidate signatures grouped by price.
+    /// Candidate signatures grouped by SOV price.
     #[serde(default)]
     pub price_signers: BTreeMap<u128, BTreeSet<[u8; 32]>>,
-    /// Signer -> attested price for conflict detection.
+    /// Candidate signatures grouped by CBE price (Issue #1819).
+    #[serde(default)]
+    pub cbe_price_signers: BTreeMap<u128, BTreeSet<[u8; 32]>>,
+    /// Signer -> attested SOV price for conflict detection.
     #[serde(default)]
     pub signer_prices: BTreeMap<[u8; 32], u128>,
+    /// Signer -> attested CBE price for conflict detection (Issue #1819).
+    #[serde(default)]
+    pub signer_cbe_prices: BTreeMap<[u8; 32], u128>,
 }
 
 /// Root oracle consensus state.
@@ -757,6 +776,7 @@ impl OracleState {
     }
 
     /// Finalize a price for an epoch exactly once.
+    /// Issue #1819: Now handles both SOV/USD and CBE/USD prices.
     ///
     /// Returns `true` if the price was written, `false` if that epoch already has
     /// a finalized price (first-write-wins).
@@ -766,9 +786,11 @@ impl OracleState {
             return false;
         }
         let winning_price = finalized_price.sov_usd_price;
+        let winning_cbe_price = finalized_price.cbe_usd_price;
         self.finalized_prices.insert(epoch_id, finalized_price);
         let epoch_state = self.epoch_state.entry(epoch_id).or_default();
         epoch_state.winning_price = Some(winning_price);
+        epoch_state.winning_cbe_price = winning_cbe_price;
         epoch_state.finalized = true;
         true
     }
@@ -1044,6 +1066,7 @@ impl OracleState {
     }
 
     /// Mutating attestation admission + deterministic finalization.
+    /// Issue #1819: Now handles both SOV/USD and CBE/USD prices.
     pub fn process_attestation<R>(
         &mut self,
         attestation: &OraclePriceAttestation,
@@ -1062,6 +1085,8 @@ impl OracleState {
         let threshold = self.committee.threshold() as usize;
 
         let epoch_state = self.epoch_state.entry(current_epoch).or_default();
+        
+        // Track SOV price
         epoch_state
             .signer_prices
             .insert(attestation.validator_pubkey, attestation.sov_usd_price);
@@ -1070,7 +1095,27 @@ impl OracleState {
             .entry(attestation.sov_usd_price)
             .or_default();
         signer_set.insert(attestation.validator_pubkey);
+        
+        // Track CBE price if provided (Issue #1819)
+        let mut cbe_finalized = false;
+        if let Some(cbe_price) = attestation.cbe_usd_price {
+            epoch_state
+                .signer_cbe_prices
+                .insert(attestation.validator_pubkey, cbe_price);
+            let cbe_signer_set = epoch_state
+                .cbe_price_signers
+                .entry(cbe_price)
+                .or_default();
+            cbe_signer_set.insert(attestation.validator_pubkey);
 
+            // Check if CBE price has reached threshold
+            if epoch_state.winning_cbe_price.is_none() && cbe_signer_set.len() >= threshold {
+                epoch_state.winning_cbe_price = Some(cbe_price);
+                cbe_finalized = true;
+            }
+        }
+
+        // Check if SOV price has reached threshold
         if !epoch_state.finalized && signer_set.len() >= threshold {
             epoch_state.finalized = true;
             epoch_state.winning_price = Some(attestation.sov_usd_price);
@@ -1078,6 +1123,7 @@ impl OracleState {
             let finalized = FinalizedOraclePrice {
                 epoch_id: current_epoch,
                 sov_usd_price: attestation.sov_usd_price,
+                cbe_usd_price: epoch_state.winning_cbe_price,
             };
 
             if let Some(existing) = self.finalized_prices.get(&current_epoch) {
@@ -1095,6 +1141,10 @@ impl OracleState {
 
             return Ok(OracleAttestationAdmission::Finalized(finalized));
         }
+
+        // Note: CBE price is finalized independently but included in SOV finalization
+        // CBE finalization alone doesn't trigger OracleAttestationAdmission::Finalized
+        // because SOV/USD is the primary oracle output
 
         Ok(OracleAttestationAdmission::Accepted)
     }
@@ -1320,10 +1370,12 @@ mod tests {
         let first = FinalizedOraclePrice {
             epoch_id: 7,
             sov_usd_price: 100_000_000,
+            cbe_usd_price: None,
         };
         let second = FinalizedOraclePrice {
             epoch_id: 7,
             sov_usd_price: 200_000_000,
+            cbe_usd_price: None,
         };
 
         assert!(state.try_finalize_price(first.clone()));
@@ -1340,10 +1392,12 @@ mod tests {
         assert!(state.try_finalize_price(FinalizedOraclePrice {
             epoch_id: 1,
             sov_usd_price: 100_000_000,
+            cbe_usd_price: None,
         }));
         assert!(state.try_finalize_price(FinalizedOraclePrice {
             epoch_id: 2,
             sov_usd_price: 120_000_000,
+            cbe_usd_price: None,
         }));
         assert_eq!(state.finalized_prices_len(), 2);
     }
@@ -1354,6 +1408,7 @@ mod tests {
         assert!(state.try_finalize_price(FinalizedOraclePrice {
             epoch_id: 7,
             sov_usd_price: 123_000_000,
+            cbe_usd_price: None,
         }));
         let epoch_state = state.epoch_state.get(&7).expect("epoch state must exist");
         assert_eq!(epoch_state.winning_price, Some(123_000_000));
@@ -1445,6 +1500,7 @@ mod tests {
         let attestation = OraclePriceAttestation {
             epoch_id: 7,
             sov_usd_price: 123_456_789,
+            cbe_usd_price: None,
             timestamp: 1_700_000_123,
             validator_pubkey: [9u8; 32],
             signature: vec![1u8; 32],
@@ -1468,6 +1524,7 @@ mod tests {
         let mut attestation = OraclePriceAttestation {
             epoch_id: 11,
             sov_usd_price: 222_000_000,
+            cbe_usd_price: None,
             timestamp: 1_700_000_222,
             validator_pubkey: validator_key_id,
             signature: Vec::new(),
@@ -1491,6 +1548,7 @@ mod tests {
         let mut attestation = OraclePriceAttestation {
             epoch_id: 11,
             sov_usd_price: 333_000_000,
+            cbe_usd_price: None,
             timestamp: 1_700_000_333,
             validator_pubkey: validator_key_id,
             signature: Vec::new(),
@@ -1519,6 +1577,7 @@ mod tests {
         let mut attestation = OraclePriceAttestation {
             epoch_id: 5,
             sov_usd_price: 999_000_000,
+            cbe_usd_price: None,
             timestamp: 1_700_000_555,
             validator_pubkey: validator_key_id,
             signature: Vec::new(),
@@ -1558,6 +1617,7 @@ mod tests {
             let mut att = OraclePriceAttestation {
                 epoch_id: epoch,
                 sov_usd_price: price,
+                cbe_usd_price: None,
                 timestamp: 1_700_000_000,
                 validator_pubkey: kp.public_key.key_id,
                 signature: Vec::new(),
@@ -1603,7 +1663,8 @@ mod tests {
             finalized,
             OracleAttestationAdmission::Finalized(FinalizedOraclePrice {
                 epoch_id: 42,
-                sov_usd_price: 200_000_000
+                sov_usd_price: 200_000_000,
+                cbe_usd_price: None,
             })
         ));
 
@@ -1627,6 +1688,7 @@ mod tests {
         let mut wrong_epoch = OraclePriceAttestation {
             epoch_id: 7,
             sov_usd_price: 222_000_000,
+            cbe_usd_price: None,
             timestamp: 1_700_000_001,
             validator_pubkey: keypair.public_key.key_id,
             signature: Vec::new(),
@@ -1656,6 +1718,7 @@ mod tests {
 
         let mut current = OraclePriceAttestation {
             epoch_id: 8,
+            cbe_usd_price: None,
             ..wrong_epoch.clone()
         };
         let digest_current = current.signing_digest().expect("digest");
@@ -1689,6 +1752,7 @@ mod tests {
         let mut att = OraclePriceAttestation {
             epoch_id: epoch,
             sov_usd_price: 300_000_000,
+            cbe_usd_price: None,
             timestamp: 1_700_000_010,
             validator_pubkey: k1.public_key.key_id,
             signature: Vec::new(),
@@ -1735,6 +1799,7 @@ mod tests {
             let mut att = OraclePriceAttestation {
                 epoch_id: epoch,
                 sov_usd_price: price,
+                cbe_usd_price: None,
                 timestamp: 1_700_000_100,
                 validator_pubkey: kp.public_key.key_id,
                 signature: Vec::new(),

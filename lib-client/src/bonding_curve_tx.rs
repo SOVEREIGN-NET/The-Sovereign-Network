@@ -11,13 +11,25 @@ use lib_blockchain::Transaction;
 use lib_blockchain::TransactionType;
 use lib_crypto::types::SignatureAlgorithm;
 
+/// Curve type constants for FFI
+pub const CURVE_TYPE_LINEAR: u8 = 0;
+pub const CURVE_TYPE_EXPONENTIAL: u8 = 1;
+pub const CURVE_TYPE_SIGMOID: u8 = 2;
+pub const CURVE_TYPE_PIECEWISE_LINEAR: u8 = 3; // CBE token default
+
 /// Build a signed bonding curve deploy transaction.
 /// Returns hex-encoded transaction ready to POST to /api/v1/curve/deploy
+/// 
+/// # Curve Types
+/// - 0 = Linear: price = base + slope × supply
+/// - 1 = Exponential: price = base × (1 + rate)^supply
+/// - 2 = Sigmoid: price = max / (1 + e^(-steepness × (supply - midpoint)))
+/// - 3 = PiecewiseLinear: 4-band CBE curve (uses CBE default parameters)
 pub fn build_bonding_curve_deploy_tx(
     identity: &crate::Identity,
     name: &str,
     symbol: &str,
-    curve_type: u8, // 0=Linear, 1=Exponential, 2=Sigmoid
+    curve_type: u8, // 0=Linear, 1=Exponential, 2=Sigmoid, 3=PiecewiseLinear
     base_price: u64,
     curve_param: u64,
     midpoint_supply: Option<u64>,

@@ -67,7 +67,7 @@ impl std::fmt::Display for Phase {
 }
 
 /// Bonding curve pricing formula types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CurveType {
     /// Linear: price = base_price + slope × supply
     Linear {
@@ -92,6 +92,9 @@ pub enum CurveType {
         /// Steepness of the curve (higher = steeper)
         steepness: u64,
     },
+    /// Piecewise Linear: Document-compliant 4-band curve
+    /// See: lib-blockchain/src/contracts/bonding_curve/pricing.rs
+    PiecewiseLinear(crate::contracts::bonding_curve::pricing::PiecewiseLinearCurve),
 }
 
 impl CurveType {
@@ -103,7 +106,7 @@ impl CurveType {
     /// # Returns
     /// Price per token in stablecoin atomic units
     pub fn calculate_price(&self, supply: u64) -> u64 {
-        match *self {
+        match self {
             CurveType::Linear { base_price, slope } => {
                 // price = base_price + slope × supply
                 // Note: supply is in atomic units, need to normalize
@@ -121,7 +124,7 @@ impl CurveType {
                 let multiplier = 10_000u64.saturating_add(
                     growth_rate_bps.saturating_mul(supply_whole.min(1000)), // Cap to prevent overflow
                 );
-                (base_price as u128)
+                (*base_price as u128)
                     .saturating_mul(multiplier as u128)
                     .saturating_div(10_000) as u64
             }
@@ -134,23 +137,26 @@ impl CurveType {
                 // For supply << midpoint: price ≈ max_price × e^(steepness × (supply - midpoint))
                 // For supply ≈ midpoint: price ≈ max_price / 2
                 // For supply >> midpoint: price ≈ max_price
-                if supply <= midpoint_supply {
+                if supply <= *midpoint_supply {
                     let ratio = (supply as u128)
                         .saturating_mul(100_000_000)
-                        .saturating_div(midpoint_supply as u128);
-                    (max_price as u128)
+                        .saturating_div(*midpoint_supply as u128);
+                    (*max_price as u128)
                         .saturating_mul(ratio)
                         .saturating_div(2_000_000_00) as u64 // Half max at midpoint
                 } else {
-                    let excess = supply.saturating_sub(midpoint_supply);
-                    let approach_factor = excess.saturating_mul(steepness).min(100_000_000);
-                    let half_max = max_price.saturating_div(2);
-                    let remaining = max_price.saturating_sub(half_max);
+                    let excess = supply.saturating_sub(*midpoint_supply);
+                    let approach_factor = excess.saturating_mul(*steepness).min(100_000_000);
+                    let half_max = (*max_price).saturating_div(2);
+                    let remaining = (*max_price).saturating_sub(half_max);
                     let additional = (remaining as u128)
                         .saturating_mul(approach_factor as u128)
                         .saturating_div(100_000_000) as u64;
                     half_max.saturating_add(additional)
                 }
+            }
+            CurveType::PiecewiseLinear(curve) => {
+                curve.price_at(supply).min(u64::MAX as u128) as u64
             }
         }
     }
@@ -161,6 +167,7 @@ impl CurveType {
             CurveType::Linear { .. } => "linear",
             CurveType::Exponential { .. } => "exponential",
             CurveType::Sigmoid { .. } => "sigmoid",
+            CurveType::PiecewiseLinear(_) => "piecewise_linear",
         }
     }
 
@@ -176,7 +183,10 @@ impl CurveType {
     /// # Returns
     /// Tokens to mint (in atomic units)
     pub fn calculate_buy_tokens(&self, current_supply: u64, stable_amount: u64) -> u64 {
-        match *self {
+        match self {
+            CurveType::PiecewiseLinear(curve) => {
+                curve.quote_buy(current_supply, stable_amount)
+            }
             CurveType::Linear { base_price, slope } => {
                 // For linear curve: price = base + slope × supply
                 // Cost to buy from supply S1 to S2:
@@ -185,11 +195,11 @@ impl CurveType {
                 // S2 = (-base + sqrt(base² + 2×slope×C + 2×base×slope×S1 + slope²×S1²)) / slope - S1
                 // Simplified: use iterative approach for accuracy
 
-                if slope == 0 {
+                if *slope == 0 {
                     // Constant price: tokens = stable / base
                     return (stable_amount as u128)
                         .saturating_mul(100_000_000)
-                        .saturating_div(base_price.max(1) as u128)
+                        .saturating_div((*base_price).max(1) as u128)
                         as u64;
                 }
 
@@ -197,7 +207,7 @@ impl CurveType {
                 let mut tokens_out: u64 = 0;
                 let mut remaining_stable = stable_amount;
                 let mut current_price =
-                    base_price.saturating_add(slope.saturating_mul(supply_whole));
+                    (*base_price).saturating_add((*slope).saturating_mul(supply_whole));
 
                 // Iterative approximation (max 1000 iterations for safety)
                 for _ in 0..1000 {
@@ -223,7 +233,7 @@ impl CurveType {
                     // Update price for next iteration
                     let new_supply_whole = supply_whole.saturating_add(tokens_out / 100_000_000);
                     current_price =
-                        base_price.saturating_add(slope.saturating_mul(new_supply_whole));
+                        (*base_price).saturating_add((*slope).saturating_mul(new_supply_whole));
                 }
 
                 tokens_out
@@ -234,9 +244,9 @@ impl CurveType {
             } => {
                 // Approximate: treat as linear with average growth
                 let supply_whole = current_supply / 100_000_000;
-                let current_price = base_price.saturating_add(
-                    base_price
-                        .saturating_mul(growth_rate_bps.saturating_mul(supply_whole.min(100)))
+                let current_price = (*base_price).saturating_add(
+                    (*base_price)
+                        .saturating_mul((*growth_rate_bps).saturating_mul(supply_whole.min(100)))
                         / 10_000,
                 );
 
@@ -250,15 +260,15 @@ impl CurveType {
                 steepness: _,
             } => {
                 // Approximate based on current price level
-                let current_price = if current_supply <= midpoint_supply {
+                let current_price = if current_supply <= *midpoint_supply {
                     let ratio = (current_supply as u128)
                         .saturating_mul(100_000_000)
-                        .saturating_div(midpoint_supply as u128);
-                    (max_price as u128)
+                        .saturating_div(*midpoint_supply as u128);
+                    (*max_price as u128)
                         .saturating_mul(ratio)
                         .saturating_div(2_000_000_00) as u64
                 } else {
-                    max_price.saturating_div(2)
+                    (*max_price).saturating_div(2)
                 };
 
                 (stable_amount as u128)
@@ -277,7 +287,10 @@ impl CurveType {
     /// # Returns
     /// Stablecoin to return (in atomic units)
     pub fn calculate_sell_stable(&self, current_supply: u64, token_amount: u64) -> u64 {
-        match *self {
+        match self {
+            CurveType::PiecewiseLinear(curve) => {
+                curve.quote_sell(current_supply, token_amount)
+            }
             CurveType::Linear { base_price, slope } => {
                 // Area under curve from (supply - tokens) to supply
                 let supply_whole = current_supply / 100_000_000;
@@ -285,9 +298,9 @@ impl CurveType {
                 let start_supply = supply_whole.saturating_sub(tokens_whole);
 
                 // Integral: base×tokens + slope/2×(supply² - start²)
-                let base_component = base_price.saturating_mul(tokens_whole);
+                let base_component = (*base_price).saturating_mul(tokens_whole);
 
-                let slope_component = slope.saturating_mul(
+                let slope_component = (*slope).saturating_mul(
                     supply_whole
                         .saturating_mul(supply_whole)
                         .saturating_sub(start_supply.saturating_mul(start_supply)),
@@ -303,8 +316,8 @@ impl CurveType {
                 let tokens_whole = token_amount / 100_000_000;
                 let avg_supply = supply_whole.saturating_sub(tokens_whole / 2);
 
-                let avg_price = base_price.saturating_add(
-                    base_price.saturating_mul(growth_rate_bps.saturating_mul(avg_supply.min(100)))
+                let avg_price = (*base_price).saturating_add(
+                    (*base_price).saturating_mul((*growth_rate_bps).saturating_mul(avg_supply.min(100)))
                         / 10_000,
                 );
 
@@ -321,15 +334,15 @@ impl CurveType {
                 let tokens_whole = token_amount / 100_000_000;
                 let avg_supply = supply_whole.saturating_sub(tokens_whole / 2);
 
-                let avg_price = if avg_supply <= midpoint_supply {
+                let avg_price = if avg_supply <= *midpoint_supply {
                     let ratio = (avg_supply as u128)
                         .saturating_mul(100_000_000)
-                        .saturating_div(midpoint_supply as u128);
-                    (max_price as u128)
+                        .saturating_div(*midpoint_supply as u128);
+                    (*max_price as u128)
                         .saturating_mul(ratio)
                         .saturating_div(2_000_000_00) as u64
                 } else {
-                    max_price.saturating_div(2)
+                    (*max_price).saturating_div(2)
                 };
 
                 (token_amount as u128)
@@ -460,9 +473,9 @@ pub enum PriceSource {
     /// Bonding curve pricing
     BondingCurve,
     /// AMM spot price
-    AMM_Spot,
+    AmmSpot,
     /// AMM TWAP price
-    AMM_TWAP,
+    AmmTwap,
 }
 
 impl PriceSource {
@@ -470,8 +483,8 @@ impl PriceSource {
         match self {
             PriceSource::SRV => "srv",
             PriceSource::BondingCurve => "bonding_curve",
-            PriceSource::AMM_Spot => "amm_spot",
-            PriceSource::AMM_TWAP => "amm_twap",
+            PriceSource::AmmSpot => "amm_spot",
+            PriceSource::AmmTwap => "amm_twap",
         }
     }
 }
@@ -514,6 +527,8 @@ pub enum CurveError {
     PoolNotFound,
     /// Unauthorized operation
     Unauthorized,
+    /// Purchase would exceed maximum token supply
+    SupplyCapExceeded { current: u64, requested: u64, max: u64 },
 }
 
 impl std::fmt::Display for CurveError {
@@ -534,6 +549,9 @@ impl std::fmt::Display for CurveError {
             CurveError::ThresholdNotMet => write!(f, "Graduation threshold not yet met"),
             CurveError::PoolNotFound => write!(f, "AMM pool not found"),
             CurveError::Unauthorized => write!(f, "Unauthorized operation"),
+            CurveError::SupplyCapExceeded { current, requested, max } => {
+                write!(f, "Supply cap exceeded: current={}, requested={}, max={}", current, requested, max)
+            }
         }
     }
 }
@@ -617,5 +635,29 @@ mod tests {
             steepness: 1000,
         };
         assert_eq!(sigmoid.name(), "sigmoid");
+    }
+
+    #[test]
+    fn test_supply_cap_exceeded_error() {
+        let error = CurveError::SupplyCapExceeded {
+            current: 90_000_000_000_000_000_00u64,
+            requested: 20_000_000_000_000_000_00u64,
+            max: 100_000_000_000_000_000_00u64,
+        };
+
+        let error_str = format!("{}", error);
+        assert!(error_str.contains("Supply cap exceeded"));
+        assert!(error_str.contains("current="));
+        assert!(error_str.contains("requested="));
+        assert!(error_str.contains("max="));
+    }
+
+    #[test]
+    fn test_price_source_names() {
+        // Test that PriceSource enum variants follow naming conventions
+        assert_eq!(PriceSource::SRV.name(), "srv");
+        assert_eq!(PriceSource::BondingCurve.name(), "bonding_curve");
+        assert_eq!(PriceSource::AmmSpot.name(), "amm_spot");
+        assert_eq!(PriceSource::AmmTwap.name(), "amm_twap");
     }
 }

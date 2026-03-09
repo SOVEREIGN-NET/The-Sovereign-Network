@@ -95,6 +95,9 @@ pub enum CurveTypeRequest {
         midpoint_supply: u64,
         steepness: u64,
     },
+    /// Piecewise linear curve (CBE token default)
+    /// Uses predefined 4-band configuration with document-compliant slopes
+    PiecewiseLinear,
 }
 
 impl From<CurveTypeRequest> for CurveType {
@@ -119,6 +122,11 @@ impl From<CurveTypeRequest> for CurveType {
                 midpoint_supply,
                 steepness,
             },
+            CurveTypeRequest::PiecewiseLinear => {
+                CurveType::PiecewiseLinear(
+                    lib_blockchain::contracts::bonding_curve::PiecewiseLinearCurve::cbe_default()
+                )
+            }
         }
     }
 }
@@ -1143,49 +1151,72 @@ impl ValuationHandler {
 
     /// GET /api/v1/price/{token_id}?type=spot|twap
     ///
-    /// Returns price with source and confidence level
+    /// Returns unified price with source and pricing mode (Issue #1819)
     /// Default type is twap (safer)
     async fn handle_price(&self, token_id_hex: &str, _query: &str) -> Result<ZhtpResponse> {
         // For now, default to twap. Full query parsing can be added later.
         let price_type = "twap";
 
-        // SOV special case
+        // SOV special case - use unified pricing
         if token_id_hex == "sov" || token_id_hex == "SOV" {
-            return self.get_sov_price(&price_type).await;
+            return self.get_sov_price_unified().await;
         }
 
-        // Regular token
-        let token_id =
-            hex::decode(token_id_hex).map_err(|_| anyhow::anyhow!("Invalid token_id hex"))?;
-        let token_id: [u8; 32] = token_id
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
-
+        // Check if it's CBE token
         let blockchain = self.blockchain.read().await;
+        use lib_blockchain::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+        let cbe_token_id = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            CBE_NAME.hash(&mut hasher);
+            CBE_SYMBOL.hash(&mut hasher);
+            let hash = hasher.finish();
+            let mut id = [0u8; 32];
+            id[..8].copy_from_slice(&hash.to_le_bytes());
+            for i in 8..32 {
+                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
+            }
+            id
+        };
 
-        // Try bonding curve first
-        if let Some(token) = blockchain.bonding_curve_registry.get(&token_id) {
-            let valuation = self.get_curve_valuation(token, price_type)?;
-            return create_json_response(json!({
-                "token_id": token_id_hex,
-                "price_usd_cents": valuation.price_usd_cents,
-                "source": valuation.source.name(),
-                "confidence_level": valuation.confidence.name(),
-                "phase": token.phase.to_string(),
-            }));
+        // Try to decode token_id
+        let token_id = hex::decode(token_id_hex).ok().and_then(|bytes| {
+            bytes.try_into().ok().map(|arr: [u8; 32]| arr)
+        });
+
+        // Check if it's CBE
+        if let Some(id) = token_id {
+            if id == cbe_token_id {
+                return self.get_cbe_price_unified().await;
+            }
+
+            // Try bonding curve
+            if let Some(token) = blockchain.bonding_curve_registry.get(&id) {
+                let valuation = self.get_curve_valuation(token, price_type)?;
+                return create_json_response(json!({
+                    "token_id": token_id_hex,
+                    "symbol": token.symbol,
+                    "price_usd_cents": valuation.price_usd_cents,
+                    "price_mode": "pre_graduation",
+                    "price_source": valuation.source.name(),
+                    "phase": token.phase.to_string(),
+                }));
+            }
         }
 
         // Try regular token
-        if let Some(token) = blockchain.get_token_contract(&token_id) {
-            // Regular tokens don't have built-in pricing
-            let _ = token; // Silence unused warning for now
-            return create_json_response(json!({
-                "token_id": token_id_hex,
-                "price_usd_cents": 0,
-                "source": "none",
-                "confidence_level": "none",
-                "message": "No pricing available for this token type",
-            }));
+        if let Some(id) = token_id {
+            if let Some(token) = blockchain.get_token_contract(&id) {
+                let _ = token; // Silence unused warning for now
+                return create_json_response(json!({
+                    "token_id": token_id_hex,
+                    "price_usd_cents": 0,
+                    "price_mode": "unknown",
+                    "price_source": "none",
+                    "message": "No pricing available for this token type",
+                }));
+            }
         }
 
         Err(anyhow::anyhow!("Token not found"))
@@ -1215,7 +1246,7 @@ impl ValuationHandler {
                     ConfidenceLevel::DeterministicCurve,
                 ),
                 Phase::AMM => (
-                    PriceSource::AMM_TWAP,
+                    PriceSource::AmmTwap,
                     ConfidenceLevel::TwapLiquiditySufficient,
                 ),
                 _ => (
@@ -1364,6 +1395,128 @@ impl ValuationHandler {
         }
     }
 
+    /// Issue #1819: Unified SOV price response (Issue #1819)
+    /// Returns unified pricing format supporting both SRV (fixed) and oracle-derived (dynamic) modes
+    async fn get_sov_price_unified(&self) -> Result<ZhtpResponse> {
+        use lib_blockchain::pricing::{PRICE_SCALE, GENESIS_SRV_8DEC};
+        
+        let blockchain = self.blockchain.read().await;
+        let pricing = &blockchain.token_pricing_state;
+        
+        // Check if we have oracle-derived pricing (dynamic pricing is active)
+        if pricing.dynamic_pricing_active {
+            // Dynamic pricing mode: SOV/USD derived from CBE/USD oracle
+            let price_8dec = pricing.get_sov_price_8dec();
+            let price_cents = ((price_8dec * 100) / PRICE_SCALE) as u64;
+            
+            return create_json_response(json!({
+                "token_id": "sov",
+                "symbol": "SOV",
+                "price_usd_cents": price_cents,
+                "price_mode": "dynamic",
+                "price_source": "oracle_derived",
+                "source_components": {
+                    "cbe_usd_oracle": pricing.cbe_usd_price,
+                    "cbe_sov_ratio": pricing.cbe_sov_ratio,
+                },
+                "last_updated": pricing.last_updated,
+                "confidence_level": "high",
+            }));
+        }
+        
+        // Fallback to SRV (fixed pricing) when no oracle data available
+        let srv = self.get_srv_from_treasury().await;
+        
+        create_json_response(json!({
+            "token_id": "sov",
+            "symbol": "SOV", 
+            "price_usd_cents": srv,
+            "price_mode": "fixed",
+            "price_source": "srv",
+            "confidence_level": "deterministic_curve",
+            "note": "CBE/USD oracle not yet available, using fixed SRV pricing",
+        }))
+    }
+
+    /// Issue #1819: Unified CBE price response (Issue #1819)
+    /// Returns unified pricing format for CBE token
+    async fn get_cbe_price_unified(&self) -> Result<ZhtpResponse> {
+        use lib_blockchain::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+        
+        let blockchain = self.blockchain.read().await;
+        let pricing = &blockchain.token_pricing_state;
+        
+        // Get CBE price info (returns Option<CbePriceInfo>)
+        let price_info = blockchain.get_cbe_price_info();
+        
+        // Get CBE token for phase info
+        let cbe_token_id = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            CBE_NAME.hash(&mut hasher);
+            CBE_SYMBOL.hash(&mut hasher);
+            let hash = hasher.finish();
+            let mut id = [0u8; 32];
+            id[..8].copy_from_slice(&hash.to_le_bytes());
+            for i in 8..32 {
+                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
+            }
+            id
+        };
+        
+        let phase = blockchain.bonding_curve_registry
+            .get(&cbe_token_id)
+            .map(|t| t.phase.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        
+        // Use the price_info if available, otherwise fall back to pricing state
+        match price_info {
+            Some(info) => {
+                create_json_response(json!({
+                    "token_id": hex::encode(&cbe_token_id),
+                    "symbol": "CBE",
+                    "price_usd_cents": info.price_usd_cents,
+                    "price_mode": info.price_mode.to_string(),
+                    "price_source": info.price_source.to_string(),
+                    "phase": info.phase,
+                    "components": info.components,
+                    "oracle_confidence": info.oracle_confidence,
+                    "reserve_usd": info.reserve_usd,
+                    "supply": info.supply,
+                    "confidence_level": if info.price_source == crate::pricing::PriceSource::Oracle { "high" } else { "deterministic_curve" },
+                    "last_updated": info.last_updated,
+                }))
+            }
+            None => {
+                // Fallback: build response from pricing state
+                let (price_mode, price_source) = if pricing.cbe_usd_price.is_some() {
+                    ("dynamic", "oracle")
+                } else {
+                    ("pre_graduation", "bonding_curve")
+                };
+                
+                // Get curve price from registry
+                let curve_price_cents = blockchain.bonding_curve_registry
+                    .get(&cbe_token_id)
+                    .map(|t| t.current_price())
+                    .unwrap_or(1); // $0.0001 fallback
+                
+                create_json_response(json!({
+                    "token_id": hex::encode(&cbe_token_id),
+                    "symbol": "CBE",
+                    "price_usd_cents": curve_price_cents,
+                    "price_mode": price_mode,
+                    "price_source": price_source,
+                    "phase": phase,
+                    "confidence_level": if price_source == "oracle" { "high" } else { "deterministic_curve" },
+                    "last_updated": pricing.last_updated,
+                    "note": "Using fallback pricing (get_cbe_price_info returned None)",
+                }))
+            }
+        }
+    }
+
     fn get_curve_valuation(
         &self,
         token: &BondingCurveToken,
@@ -1382,9 +1535,9 @@ impl ValuationHandler {
             Phase::AMM => {
                 // AMM phase: use requested type (default twap)
                 let source = if price_type == "spot" {
-                    PriceSource::AMM_Spot
+                    PriceSource::AmmSpot
                 } else {
-                    PriceSource::AMM_TWAP
+                    PriceSource::AmmTwap
                 };
                 let confidence = if price_type == "spot" {
                     ConfidenceLevel::TwapLowLiquidity // Spot is less reliable

@@ -346,6 +346,9 @@ pub struct Blockchain {
     /// Oracle protocol v1 consensus state (committee/config/finalized prices).
     #[serde(default)]
     pub oracle_state: crate::oracle::OracleState,
+    /// Unified token pricing state for SOV and CBE tokens (Issue #1819).
+    #[serde(default)]
+    pub token_pricing_state: crate::pricing::TokenPricingState,
     /// On-chain exchange state for SOV/USDC and other trading pairs.
     /// Provides price feeds to the oracle protocol.
     #[serde(default)]
@@ -727,6 +730,7 @@ impl BlockchainV1 {
             treasury_epoch_execution_count: HashMap::new(),
             max_executions_per_epoch: default_max_executions(),
             oracle_state: crate::oracle::OracleState::default(),
+            token_pricing_state: crate::pricing::TokenPricingState::new(),
             exchange_state: crate::exchange::ExchangeState::new(),
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
@@ -1188,6 +1192,7 @@ impl BlockchainStorageV3 {
             treasury_epoch_execution_count: self.treasury_epoch_execution_count,
             max_executions_per_epoch: self.max_executions_per_epoch,
             oracle_state: crate::oracle::OracleState::default(),
+            token_pricing_state: crate::pricing::TokenPricingState::new(),
             exchange_state: crate::exchange::ExchangeState::new(),
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
@@ -1355,6 +1360,7 @@ impl Blockchain {
             treasury_epoch_execution_count: HashMap::new(),
             max_executions_per_epoch: default_max_executions(),
             oracle_state: crate::oracle::OracleState::default(),
+            token_pricing_state: crate::pricing::TokenPricingState::new(),
             exchange_state: crate::exchange::ExchangeState::new(),
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
@@ -1451,6 +1457,141 @@ impl Blockchain {
         self.blocks.first()
             .map(|b| b.header.timestamp)
             .unwrap_or(1_700_000_000)
+    }
+
+    // =========================================================================
+    // Unified Pricing System (Issue #1819)
+    // =========================================================================
+
+    /// Update CBE/USD price from oracle (called when oracle finalizes CBE price)
+    pub fn update_cbe_usd_oracle_price(&mut self, price_8dec: u128, epoch: u64, timestamp: u64) {
+        self.token_pricing_state.update_cbe_usd_price(price_8dec, epoch, timestamp);
+
+        if self.token_pricing_state.dynamic_pricing_active {
+            info!(
+                "Unified pricing: Dynamic mode activated - SOV price = ${:.4}",
+                self.token_pricing_state.get_sov_price_8dec() as f64 / 100_000_000.0
+            );
+        }
+    }
+
+    /// Compute and update internal CBE/SOV ratio from bonding curve
+    /// Should be called periodically to keep the ratio current
+    ///
+    /// The ratio is: SOV per CBE (how many SOV atomic units to buy 1 CBE token)
+    /// This comes directly from the bonding curve price.
+    pub fn update_cbe_sov_ratio_from_curve(&mut self) {
+        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+
+        // Generate CBE token ID
+        let cbe_token_id = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            CBE_NAME.hash(&mut hasher);
+            CBE_SYMBOL.hash(&mut hasher);
+            let hash = hasher.finish();
+            let mut id = [0u8; 32];
+            id[..8].copy_from_slice(&hash.to_le_bytes());
+            for i in 8..32 {
+                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
+            }
+            id
+        };
+
+        // Get CBE token from registry
+        if let Some(cbe_token) = self.bonding_curve_registry.get(&cbe_token_id) {
+            // CBE token current_price() returns SOV-per-CBE in 8-decimal fixed point
+            // This is exactly the cbe_sov_ratio we need
+            let cbe_sov_ratio_8dec = cbe_token.current_price() as u128;
+            
+            if cbe_sov_ratio_8dec > 0 {
+                let timestamp = self.get_genesis_timestamp();
+                self.token_pricing_state.update_cbe_sov_ratio(cbe_sov_ratio_8dec, timestamp);
+            }
+        }
+    }
+
+    /// Get current SOV price information for API
+    pub fn get_sov_price_info(&self) -> crate::pricing::TokenPrice {
+        let price_8dec = self.token_pricing_state.get_sov_price_8dec();
+        let price_cents = crate::pricing::PricingCalculator::to_cents(price_8dec);
+        let components = self.token_pricing_state.get_sov_components();
+        
+        crate::pricing::TokenPrice {
+            token_id: "sov".to_string(),
+            symbol: "SOV".to_string(),
+            price_usd_cents: price_cents,
+            price_mode: self.token_pricing_state.get_sov_pricing_mode(),
+            price_source: self.token_pricing_state.get_sov_price_source(),
+            components,
+            last_updated: self.token_pricing_state.last_updated,
+        }
+    }
+
+    /// Get current CBE price information for API
+    pub fn get_cbe_price_info(&self) -> Option<crate::pricing::CbePriceInfo> {
+        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+
+        // Generate CBE token ID
+        let cbe_token_id = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            CBE_NAME.hash(&mut hasher);
+            CBE_SYMBOL.hash(&mut hasher);
+            let hash = hasher.finish();
+            let mut id = [0u8; 32];
+            id[..8].copy_from_slice(&hash.to_le_bytes());
+            for i in 8..32 {
+                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
+            }
+            id
+        };
+
+        let cbe_token = self.bonding_curve_registry.get(&cbe_token_id)?;
+        let sov_price_8dec = self.token_pricing_state.get_sov_price_8dec();
+
+        // Calculate CBE price in USD
+        // If oracle provides CBE/USD directly, use it; otherwise compute from curve + SOV price
+        let (price_cents, components, use_oracle_price) = if let Some(cbe_usd_8dec) = self.token_pricing_state.cbe_usd_price {
+            // Oracle provides direct CBE/USD price
+            let price_cents = crate::pricing::PricingCalculator::to_cents(cbe_usd_8dec);
+            (price_cents, crate::pricing::PriceComponents::from_oracle(cbe_usd_8dec, sov_price_8dec), true)
+        } else {
+            // Compute from bonding curve: CBE/SOV * SOV/USD
+            let (price_cents, components) = self.token_pricing_state.calculate_cbe_price(
+                sov_price_8dec,
+                cbe_token.current_price()
+            );
+            (price_cents, crate::pricing::PriceComponents::from_curve(cbe_token.current_price(), sov_price_8dec), false)
+        };
+
+        let (price_mode, price_source, oracle_confidence) = if use_oracle_price {
+            (
+                crate::pricing::PricingMode::PostGraduation,
+                crate::pricing::PriceSource::Oracle,
+                Some(0.95), // High confidence when oracle provides price
+            )
+        } else {
+            (
+                crate::pricing::PricingMode::PreGraduation,
+                crate::pricing::PriceSource::BondingCurve,
+                None,
+            )
+        };
+
+        Some(crate::pricing::CbePriceInfo {
+            price_usd_cents: price_cents,
+            price_mode,
+            price_source,
+            phase: cbe_token.phase.to_string(),
+            reserve_usd: cbe_token.reserve_balance,
+            supply: cbe_token.total_supply,
+            components,
+            oracle_confidence,
+            last_updated: self.token_pricing_state.last_updated,
+        })
     }
 
     /// Create a new blockchain with storage manager
@@ -13245,6 +13386,7 @@ mod oracle_storage_migration_tests {
             .try_finalize_price(crate::oracle::FinalizedOraclePrice {
                 epoch_id: 1,
                 sov_usd_price: 123_000_000,
+                cbe_usd_price: None,
             });
 
         // Emulate pre-oracle v3 payload (without oracle fields).
@@ -13383,6 +13525,7 @@ impl Blockchain {
                     let attestation = crate::oracle::OraclePriceAttestation {
                         epoch_id: data.epoch_id,
                         sov_usd_price: data.sov_usd_price,
+                        cbe_usd_price: data.cbe_usd_price,
                         timestamp: data.timestamp,
                         validator_pubkey: data.validator_pubkey,
                         signature: data.signature.clone(),
@@ -13471,6 +13614,21 @@ impl Blockchain {
                     admission,
                     crate::oracle::OracleAttestationAdmission::Finalized(_)
                 );
+
+                // Issue #1819: Update token pricing state when CBE price is finalized
+                if let crate::oracle::OracleAttestationAdmission::Finalized(ref price) = admission {
+                    if let Some(cbe_price) = price.cbe_usd_price {
+                        self.token_pricing_state.update_cbe_usd_price(
+                            cbe_price,
+                            price.epoch_id,
+                            block_timestamp,
+                        );
+                        info!(
+                            "💰 Token pricing state updated with CBE/USD price {} from oracle epoch {}",
+                            cbe_price, price.epoch_id
+                        );
+                    }
+                }
 
                 Ok(crate::execution::tx_apply::OracleAttestationOutcome {
                     epoch_id: attestation.epoch_id,
@@ -14147,6 +14305,7 @@ mod cbe_graduation_oracle_gate_tests {
             .try_finalize_price(crate::oracle::FinalizedOraclePrice {
                 epoch_id: 0,
                 sov_usd_price: 100_000_000, // $1.00
+                cbe_usd_price: None,
             });
 
         // Configure oracle to have short staleness window
@@ -14178,6 +14337,7 @@ mod cbe_graduation_oracle_gate_tests {
             .try_finalize_price(crate::oracle::FinalizedOraclePrice {
                 epoch_id: 5,
                 sov_usd_price: 100_000_000, // $1.00
+                cbe_usd_price: None,
             });
 
         blockchain.oracle_state.config.max_price_staleness_epochs = 10;
@@ -14203,6 +14363,7 @@ mod cbe_graduation_oracle_gate_tests {
             .try_finalize_price(crate::oracle::FinalizedOraclePrice {
                 epoch_id: 10,
                 sov_usd_price: 100_000_000,
+                cbe_usd_price: None,
             });
 
         blockchain.oracle_state.config.max_price_staleness_epochs = 10;
@@ -14228,6 +14389,7 @@ mod cbe_graduation_oracle_gate_tests {
             .try_finalize_price(crate::oracle::FinalizedOraclePrice {
                 epoch_id: 10,
                 sov_usd_price: 100_000_000,
+                cbe_usd_price: None,
             });
 
         blockchain.oracle_state.config.max_price_staleness_epochs = 10;

@@ -164,6 +164,7 @@ impl OracleProducerService {
         let mut attestation = OraclePriceAttestation {
             epoch_id,
             sov_usd_price: local_price,
+            cbe_usd_price: None,
             timestamp: current_timestamp,
             validator_pubkey,
             signature: Vec::new(),
