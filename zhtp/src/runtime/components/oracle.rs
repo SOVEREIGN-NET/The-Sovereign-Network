@@ -255,6 +255,30 @@ impl OracleComponent {
                                 attestation.epoch_id,
                             );
                         }
+                        Some(OracleSlashReason::DeviationBand) => {
+                            let (attested, median, max_dev, actual_dev) = match &validation_err {
+                                OracleAttestationValidationError::DeviationBand {
+                                    attested_price,
+                                    median_price,
+                                    max_deviation_bps,
+                                    actual_deviation_bps,
+                                } => (*attested_price, *median_price, *max_deviation_bps, *actual_deviation_bps),
+                                _ => (0, 0, 0, 0),
+                            };
+                            warn!(
+                                "🔮 Oracle: deviation-band violation (attested={}, median={}, max_dev={}bps, actual_dev={}bps) from {} — slashing",
+                                attested,
+                                median,
+                                max_dev,
+                                actual_dev,
+                                hex::encode(&attestation.validator_pubkey[..8])
+                            );
+                            bc.slash_oracle_validator(
+                                attestation.validator_pubkey,
+                                OracleSlashReason::DeviationBand,
+                                attestation.epoch_id,
+                            );
+                        }
                         Some(other_reason) => {
                             warn!(
                                 "🔮 Oracle attestation validation mapped to unsupported slash reason {:?}; rejecting without slashing (validator={})",
@@ -558,6 +582,9 @@ fn slash_reason_for_validation_error(
         lib_blockchain::oracle::OracleAttestationValidationError::WrongEpoch { .. } => {
             Some(lib_blockchain::oracle::OracleSlashReason::WrongEpoch)
         }
+        lib_blockchain::oracle::OracleAttestationValidationError::DeviationBand { .. } => {
+            Some(lib_blockchain::oracle::OracleSlashReason::DeviationBand)
+        }
         lib_blockchain::oracle::OracleAttestationValidationError::InvalidSignature
         | lib_blockchain::oracle::OracleAttestationValidationError::MissingSignerPublicKey(_)
         | lib_blockchain::oracle::OracleAttestationValidationError::NonCommitteeSigner(_)
@@ -606,7 +633,7 @@ mod tests {
     use lib_blockchain::oracle::{OracleAttestationValidationError, OracleSlashReason};
 
     #[test]
-    fn slashes_only_on_wrong_epoch_validation_error() {
+    fn slashes_on_wrong_epoch_and_deviation_band() {
         let wrong_epoch = OracleAttestationValidationError::WrongEpoch {
             expected: 10,
             got: 11,
@@ -614,6 +641,17 @@ mod tests {
         assert_eq!(
             slash_reason_for_validation_error(&wrong_epoch),
             Some(OracleSlashReason::WrongEpoch)
+        );
+
+        let deviation_band = OracleAttestationValidationError::DeviationBand {
+            attested_price: 100_000_000,
+            median_price: 50_000_000,
+            max_deviation_bps: 500,
+            actual_deviation_bps: 10_000,
+        };
+        assert_eq!(
+            slash_reason_for_validation_error(&deviation_band),
+            Some(OracleSlashReason::DeviationBand)
         );
 
         let non_committee = OracleAttestationValidationError::NonCommitteeSigner([1u8; 32]);

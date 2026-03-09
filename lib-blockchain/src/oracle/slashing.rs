@@ -3,6 +3,7 @@
 //! Implements §9 of Oracle Spec v1: penalties for misbehavior.
 //! - Double-sign: Two different prices for same epoch
 //! - Wrong-epoch: Attestation for non-current epoch
+//! - Deviation-band: Attestation price exceeds max deviation from median
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,10 @@ pub enum OracleSlashReason {
     ConflictingAttestation,
     /// Attestation stamped for an epoch other than current.
     WrongEpoch,
+    /// Attestation price exceeds maximum allowed deviation from median.
+    /// Spec §9: Validators attesting prices outside the configured deviation
+    /// band are slashed to prevent manipulation attempts.
+    DeviationBand,
 }
 
 impl std::fmt::Display for OracleSlashReason {
@@ -20,6 +25,7 @@ impl std::fmt::Display for OracleSlashReason {
         match self {
             OracleSlashReason::ConflictingAttestation => write!(f, "conflicting_attestation"),
             OracleSlashReason::WrongEpoch => write!(f, "wrong_epoch"),
+            OracleSlashReason::DeviationBand => write!(f, "deviation_band"),
         }
     }
 }
@@ -37,6 +43,21 @@ pub struct OracleSlashEvent {
     pub slash_amount: u64,
     /// Block height where slash was recorded.
     pub slashed_at_height: u64,
+    /// Committee removal timing.
+    /// If Some(epoch), validator will be removed from committee at the start of the specified epoch.
+    /// If None, removal happens immediately (legacy behavior for V0 protocol).
+    pub committee_removal_at_epoch: Option<u64>,
+}
+
+/// Committee removal queue entry for epoch-safe removal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommitteeRemovalEntry {
+    /// Validator key_id to remove.
+    pub validator_key_id: [u8; 32],
+    /// Epoch at which removal should occur.
+    pub remove_at_epoch: u64,
+    /// Reason for removal (links to slash event).
+    pub reason: OracleSlashReason,
 }
 
 /// Slashing configuration for oracle protocol.
@@ -81,6 +102,7 @@ mod tests {
             "conflicting_attestation"
         );
         assert_eq!(OracleSlashReason::WrongEpoch.to_string(), "wrong_epoch");
+        assert_eq!(OracleSlashReason::DeviationBand.to_string(), "deviation_band");
     }
 
     #[test]
@@ -112,11 +134,26 @@ mod tests {
             epoch_id: 100,
             slash_amount: 5000,
             slashed_at_height: 1000,
+            committee_removal_at_epoch: Some(101), // Next epoch removal
         };
 
         let serialized = bincode::serialize(&event).unwrap();
         let deserialized: OracleSlashEvent = bincode::deserialize(&serialized).unwrap();
 
         assert_eq!(event, deserialized);
+    }
+
+    #[test]
+    fn committee_removal_entry_serialization() {
+        let entry = CommitteeRemovalEntry {
+            validator_key_id: [1u8; 32],
+            remove_at_epoch: 100,
+            reason: OracleSlashReason::DeviationBand,
+        };
+
+        let serialized = bincode::serialize(&entry).unwrap();
+        let deserialized: CommitteeRemovalEntry = bincode::deserialize(&serialized).unwrap();
+
+        assert_eq!(entry, deserialized);
     }
 }
