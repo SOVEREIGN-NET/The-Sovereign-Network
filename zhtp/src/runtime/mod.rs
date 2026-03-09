@@ -1660,36 +1660,8 @@ impl RuntimeOrchestrator {
                 // If oracle committee is empty after Sled load (node missed init_oracle_committee,
                 // or Sled was wiped), restore oracle_state from blockchain.dat which persists it
                 // via BlockchainStorageV4.
-                if bc.oracle_state.committee.members().is_empty() && dat_path.exists() {
-                    #[allow(deprecated)]
-                    match lib_blockchain::Blockchain::load_from_file(&dat_path) {
-                        Ok(dat_bc) if !dat_bc.oracle_state.committee.members().is_empty() => {
-                            let count = dat_bc.oracle_state.committee.members().len();
-                            bc.oracle_state = dat_bc.oracle_state;
-                            info!(
-                                "🔮 Restored oracle committee from blockchain.dat ({} members)",
-                                count
-                            );
-                            // Write back to Sled so future restarts don't need the .dat fallback.
-                            if let Some(store_ref) = bc.store.as_ref() {
-                                if let Err(e) = store_ref.save_oracle_state(&bc.oracle_state) {
-                                    warn!(
-                                        "⚠️ Failed to persist restored oracle_state to Sled: {}",
-                                        e
-                                    );
-                                }
-                            }
-                        }
-                        Ok(_) => {
-                            info!("🔮 blockchain.dat has no oracle committee either — will rebuild from validator registry");
-                        }
-                        Err(e) => {
-                            warn!(
-                                "⚠️ Failed to read blockchain.dat for oracle_state fallback: {}",
-                                e
-                            );
-                        }
-                    }
+                if bc.oracle_state.committee.members().is_empty() {
+                    try_restore_oracle_from_dat(&mut bc, &dat_path);
                 }
 
                 (bc, true)
@@ -4578,6 +4550,46 @@ impl RuntimeOrchestrator {
     }
 }
 
+/// Tries to restore the oracle committee from a `blockchain.dat` backup file.
+///
+/// Called when the blockchain was successfully loaded from Sled but the oracle
+/// committee is empty — which can happen when Sled is wiped or the node missed
+/// `init_oracle_committee` before the first restart.
+///
+/// Returns `true` if the committee was restored, `false` otherwise (dat absent,
+/// dat also has an empty committee, or the file could not be read).
+pub(super) fn try_restore_oracle_from_dat(
+    bc: &mut lib_blockchain::Blockchain,
+    dat_path: &std::path::Path,
+) -> bool {
+    if !dat_path.exists() {
+        return false;
+    }
+    #[allow(deprecated)]
+    match lib_blockchain::Blockchain::load_from_file(dat_path) {
+        Ok(dat_bc) if !dat_bc.oracle_state.committee.members().is_empty() => {
+            let count = dat_bc.oracle_state.committee.members().len();
+            bc.oracle_state = dat_bc.oracle_state;
+            info!("🔮 Restored oracle committee from blockchain.dat ({} members)", count);
+            // Write back to Sled so future restarts don't need the .dat fallback.
+            if let Some(store_ref) = bc.store.as_ref() {
+                if let Err(e) = store_ref.save_oracle_state(&bc.oracle_state) {
+                    warn!("⚠️ Failed to persist restored oracle_state to Sled: {}", e);
+                }
+            }
+            true
+        }
+        Ok(_) => {
+            info!("🔮 blockchain.dat has no oracle committee either — will rebuild from validator registry");
+            false
+        }
+        Err(e) => {
+            warn!("⚠️ Failed to read blockchain.dat for oracle_state fallback: {}", e);
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod runtime_orchestrator_tests {
     use super::RuntimeOrchestrator;
@@ -4603,6 +4615,200 @@ mod runtime_orchestrator_tests {
             RuntimeOrchestrator::validate_validator_endpoint("validator-g2.example.net:9334")
                 .is_ok()
         );
+    }
+}
+
+#[cfg(test)]
+mod oracle_startup_tests {
+    use super::try_restore_oracle_from_dat;
+    use lib_blockchain::{Blockchain, ValidatorInfo};
+    use tempfile::tempdir;
+
+    // ------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------
+
+    /// Build a fresh `Blockchain` (no Sled store) with the oracle committee
+    /// seeded from the given key_ids.
+    fn make_blockchain_with_committee(member_ids: Vec<[u8; 32]>) -> Blockchain {
+        let mut bc = Blockchain::new().expect("Blockchain::new");
+        if !member_ids.is_empty() {
+            let members_with_pubkeys: Vec<([u8; 32], Vec<u8>)> =
+                member_ids.into_iter().map(|id| (id, vec![])).collect();
+            bc.bootstrap_oracle_committee(members_with_pubkeys)
+                .expect("bootstrap_oracle_committee");
+        }
+        bc
+    }
+
+    // ------------------------------------------------------------------
+    // try_restore_oracle_from_dat
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn restore_succeeds_when_dat_has_committee() {
+        let dir = tempdir().unwrap();
+        let dat_path = dir.path().join("blockchain.dat");
+
+        // Persist a blockchain that has an oracle committee to the dat file.
+        let src = make_blockchain_with_committee(vec![[1u8; 32], [2u8; 32]]);
+        #[allow(deprecated)]
+        src.save_to_file(&dat_path).expect("save_to_file");
+
+        // Target blockchain loaded from Sled with empty oracle committee.
+        let mut target = Blockchain::new().expect("Blockchain::new");
+        assert!(target.oracle_state.committee.members().is_empty());
+
+        let restored = try_restore_oracle_from_dat(&mut target, &dat_path);
+
+        assert!(restored, "expected restoration to succeed");
+        assert_eq!(
+            target.oracle_state.committee.members().len(),
+            2,
+            "committee should have been restored from dat"
+        );
+    }
+
+    #[test]
+    fn restore_is_noop_when_dat_committee_is_empty() {
+        let dir = tempdir().unwrap();
+        let dat_path = dir.path().join("blockchain.dat");
+
+        // Persist a blockchain with NO oracle committee.
+        let empty_src = Blockchain::new().expect("Blockchain::new");
+        #[allow(deprecated)]
+        empty_src.save_to_file(&dat_path).expect("save_to_file");
+
+        let mut target = Blockchain::new().expect("Blockchain::new");
+        let restored = try_restore_oracle_from_dat(&mut target, &dat_path);
+
+        assert!(!restored, "should not restore when dat also has empty committee");
+        assert!(
+            target.oracle_state.committee.members().is_empty(),
+            "committee should remain empty"
+        );
+    }
+
+    #[test]
+    fn restore_is_noop_when_dat_file_absent() {
+        let dir = tempdir().unwrap();
+        let nonexistent = dir.path().join("does_not_exist.dat");
+
+        let mut target = Blockchain::new().expect("Blockchain::new");
+        let restored = try_restore_oracle_from_dat(&mut target, &nonexistent);
+
+        assert!(!restored, "should not restore when dat file does not exist");
+        assert!(target.oracle_state.committee.members().is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // Fallback bootstrap from validator registry
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn bootstrap_from_validator_registry_populates_committee() {
+        const DILITHIUM2_PK_LEN: usize = 1312;
+
+        let mut bc = Blockchain::new().expect("Blockchain::new");
+        assert!(bc.oracle_state.committee.members().is_empty());
+
+        // Insert an active validator with a Dilithium2-sized consensus key.
+        let consensus_key = vec![0xABu8; DILITHIUM2_PK_LEN];
+        let key_id = lib_blockchain::blake3_hash(&consensus_key).as_array();
+        bc.validator_registry.insert(
+            "did:zhtp:validator-test".to_string(),
+            ValidatorInfo {
+                identity_id: "did:zhtp:validator-test".to_string(),
+                stake: 1_000_000,
+                storage_provided: 0,
+                consensus_key: consensus_key.clone(),
+                networking_key: vec![0xCDu8; 32],
+                rewards_key: vec![0xEFu8; 32],
+                network_address: "10.0.0.1:9334".to_string(),
+                commission_rate: 5,
+                status: "active".to_string(),
+                registered_at: 0,
+                last_activity: 0,
+                blocks_validated: 0,
+                slash_count: 0,
+                admission_source: "test".to_string(),
+                governance_proposal_id: None,
+                oracle_key_id: None,
+            },
+        );
+
+        // Replicate the bootstrap logic from seed_blockchain_validator_registry.
+        let mut committee_members: Vec<([u8; 32], Vec<u8>)> = bc
+            .validator_registry
+            .values()
+            .filter(|v| v.status == "active")
+            .filter_map(|v| {
+                if v.consensus_key.len() == DILITHIUM2_PK_LEN {
+                    let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
+                    Some((kid, v.consensus_key.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        committee_members.sort_by(|(a, _), (b, _)| a.cmp(b));
+        committee_members.dedup_by(|(a, _), (b, _)| a == b);
+
+        bc.bootstrap_oracle_committee(committee_members)
+            .expect("bootstrap_oracle_committee");
+
+        assert_eq!(bc.oracle_state.committee.members().len(), 1);
+        assert!(bc.oracle_state.committee.members().contains(&key_id));
+    }
+
+    #[test]
+    fn bootstrap_skips_validators_with_wrong_key_length() {
+        let mut bc = Blockchain::new().expect("Blockchain::new");
+
+        // Insert a validator with an invalid consensus key length.
+        bc.validator_registry.insert(
+            "did:zhtp:bad-validator".to_string(),
+            ValidatorInfo {
+                identity_id: "did:zhtp:bad-validator".to_string(),
+                stake: 1_000_000,
+                storage_provided: 0,
+                consensus_key: vec![0xFFu8; 64], // wrong length — neither Dilithium2 nor Dilithium5
+                networking_key: vec![0x01u8; 32],
+                rewards_key: vec![0x02u8; 32],
+                network_address: "10.0.0.2:9334".to_string(),
+                commission_rate: 0,
+                status: "active".to_string(),
+                registered_at: 0,
+                last_activity: 0,
+                blocks_validated: 0,
+                slash_count: 0,
+                admission_source: "test".to_string(),
+                governance_proposal_id: None,
+                oracle_key_id: None,
+            },
+        );
+
+        const DILITHIUM2_PK_LEN: usize = 1312;
+        const DILITHIUM5_PK_LEN: usize = 2592;
+
+        let committee_members: Vec<([u8; 32], Vec<u8>)> = bc
+            .validator_registry
+            .values()
+            .filter(|v| v.status == "active")
+            .filter_map(|v| {
+                let len = v.consensus_key.len();
+                if len == DILITHIUM2_PK_LEN || len == DILITHIUM5_PK_LEN {
+                    let kid = lib_blockchain::blake3_hash(&v.consensus_key).as_array();
+                    Some((kid, v.consensus_key.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // No valid keys — bootstrap should not be called, committee stays empty.
+        assert!(committee_members.is_empty(), "bad key lengths should be filtered out");
+        assert!(bc.oracle_state.committee.members().is_empty());
     }
 }
 
