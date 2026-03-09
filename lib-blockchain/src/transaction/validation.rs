@@ -1014,6 +1014,19 @@ impl TransactionValidator {
             return Ok(());
         }
 
+        if transaction.transaction_type == TransactionType::TokenCreation {
+            let required_fee = crate::transaction::required_token_creation_fee(&self.fee_config);
+            if transaction.fee != required_fee {
+                tracing::warn!(
+                    "[BREADCRUMB] validate_economics_with_system_check FAIL: token_creation fee={}, required={}",
+                    transaction.fee,
+                    required_fee
+                );
+                return Err(ValidationError::InvalidFee);
+            }
+            return Ok(());
+        }
+
         // Regular transaction fee validation
         let min_fee = crate::transaction::creation::utils::calculate_minimum_fee_with_config(
             transaction.size(),
@@ -1971,7 +1984,7 @@ impl<'a> StatefulTransactionValidator<'a> {
     }
 
     /// Validate OracleAttestation transaction at block execution time (ORACLE-9).
-    /// 
+    ///
     /// This performs the critical security checks:
     /// 1. Attestation data exists
     /// 2. Signer is in current oracle committee
@@ -1993,7 +2006,11 @@ impl<'a> StatefulTransactionValidator<'a> {
         let oracle_state = &blockchain.oracle_state;
 
         // 1. Check signer is in current committee
-        if !oracle_state.committee.members().contains(&data.validator_pubkey) {
+        if !oracle_state
+            .committee
+            .members()
+            .contains(&data.validator_pubkey)
+        {
             return Err(ValidationError::InvalidTransaction);
         }
 
@@ -2009,7 +2026,10 @@ impl<'a> StatefulTransactionValidator<'a> {
         // Replay protection is handled at execution time via oracle_state.record_attestation()
         // We check here but cannot mutate because validation takes &self, not &mut self.
         if let Some(epoch_state) = oracle_state.epoch_state.get(&data.epoch_id) {
-            if epoch_state.signer_prices.contains_key(&data.validator_pubkey) {
+            if epoch_state
+                .signer_prices
+                .contains_key(&data.validator_pubkey)
+            {
                 return Err(ValidationError::DoubleSpend);
             }
         }
@@ -2513,8 +2533,8 @@ mod tests {
                 bonding_curve_graduate_data: None,
                 oracle_committee_update_data: None,
                 oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+                oracle_attestation_data: None,
+                cancel_oracle_update_data: None,
             };
 
             assert!(
@@ -2557,8 +2577,8 @@ mod tests {
                 bonding_curve_graduate_data: None,
                 oracle_committee_update_data: None,
                 oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
+                oracle_attestation_data: None,
+                cancel_oracle_update_data: None,
             };
 
             assert!(
@@ -2861,6 +2881,48 @@ mod tests {
         }
     }
 
+    fn token_creation_tx_with_fee(fee: u64) -> Transaction {
+        let sender_key = test_public_key(3);
+        let payload = TokenCreationPayloadV1 {
+            name: "Canonical Token".to_string(),
+            symbol: "CAN".to_string(),
+            initial_supply: 1_000_000,
+            decimals: 8,
+            treasury_allocation_bps: 2_000,
+            treasury_recipient: test_public_key(4).key_id,
+        };
+
+        Transaction {
+            version: 2,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenCreation,
+            inputs: vec![],
+            outputs: vec![],
+            fee,
+            signature: test_signature(&sender_key),
+            memo: payload.encode_memo().unwrap(),
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
+        }
+    }
+
     #[test]
     fn test_token_transfer_nonzero_fee_rejected_with_system_flag_true() {
         // When is_system_transaction=true, signature validation is skipped, so the
@@ -2906,6 +2968,57 @@ mod tests {
         assert!(
             !matches!(result, Err(ValidationError::InvalidFee)),
             "TokenTransfer with fee=0 must not fail with InvalidFee (is_system=true), got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_token_creation_exact_fee_not_rejected_by_economics() {
+        let validator = TransactionValidator::with_fee_config(crate::transaction::TxFeeConfig {
+            token_creation_fee: 1_000,
+            ..crate::transaction::TxFeeConfig::default()
+        });
+        let tx = token_creation_tx_with_fee(1_000);
+
+        let result = validator.validate_economics_with_system_check(&tx, false);
+
+        assert!(
+            !matches!(result, Err(ValidationError::InvalidFee)),
+            "TokenCreation with exact canonical fee must not fail with InvalidFee, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_token_creation_low_fee_rejected() {
+        let validator = TransactionValidator::with_fee_config(crate::transaction::TxFeeConfig {
+            token_creation_fee: 1_000,
+            ..crate::transaction::TxFeeConfig::default()
+        });
+        let tx = token_creation_tx_with_fee(999);
+
+        let result = validator.validate_economics_with_system_check(&tx, false);
+
+        assert!(
+            matches!(result, Err(ValidationError::InvalidFee)),
+            "TokenCreation with low fee must be rejected with InvalidFee, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_token_creation_high_fee_rejected() {
+        let validator = TransactionValidator::with_fee_config(crate::transaction::TxFeeConfig {
+            token_creation_fee: 1_000,
+            ..crate::transaction::TxFeeConfig::default()
+        });
+        let tx = token_creation_tx_with_fee(1_001);
+
+        let result = validator.validate_economics_with_system_check(&tx, false);
+
+        assert!(
+            matches!(result, Err(ValidationError::InvalidFee)),
+            "TokenCreation with non-canonical high fee must be rejected with InvalidFee, got: {:?}",
             result
         );
     }
