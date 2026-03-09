@@ -128,7 +128,13 @@ impl ZhtpClient {
                 if let Some(cached) = BOOTSTRAP_NONCE_CACHE.get() {
                     cached.clone()
                 } else {
-                    let nonce_db_path = std::env::temp_dir().join("zhtp_bootstrap_nonce");
+                    // Use per-process subdirectory to avoid cross-process contention
+                    // when running multiple nodes on the same host (common in local testing)
+                    let pid = std::process::id();
+                    let nonce_db_path = std::env::temp_dir()
+                        .join("zhtp_bootstrap_nonce")
+                        .join(pid.to_string())
+                        .join("db");
                     if let Some(parent) = nonce_db_path.parent() {
                         std::fs::create_dir_all(parent)?;
                     }
@@ -149,11 +155,19 @@ impl ZhtpClient {
                     let cache = match NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch) {
                         Ok(c) => c,
                         Err(e) => {
-                            warn!("Bootstrap nonce cache open failed ({}); clearing stale DB and retrying", e);
-                            let _ = std::fs::remove_dir_all(&nonce_db_path);
-                            std::fs::create_dir_all(&nonce_db_path)?;
-                            NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
-                                .context("Failed to open nonce cache")?
+                            let err_str = e.to_string();
+                            // Only wipe and retry on epoch mismatch - not on lock contention,
+                            // permission errors, or I/O failures (which would be unsafe to delete)
+                            if err_str.contains("Network epoch mismatch") {
+                                warn!("Bootstrap nonce cache epoch mismatch ({}); clearing stale DB and retrying", e);
+                                let _ = std::fs::remove_dir_all(&nonce_db_path);
+                                std::fs::create_dir_all(&nonce_db_path)?;
+                                NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
+                                    .context("Failed to open nonce cache after epoch mismatch retry")?
+                            } else {
+                                // Don't wipe on lock contention, I/O errors, etc.
+                                return Err(e.into());
+                            }
                         }
                     };
                     let _ = BOOTSTRAP_NONCE_CACHE.set(cache.clone());
