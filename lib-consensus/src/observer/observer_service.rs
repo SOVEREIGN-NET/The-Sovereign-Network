@@ -177,19 +177,8 @@ impl ObserverService {
         // Encode states
         let encoded_states = encode_height_states(&parsed_trajectory, self.config.encoder_config);
 
-        // Update transition model
-        {
-            let mut model = match self.transition_model.lock() {
-                Ok(m) => m,
-                Err(_) => {
-                    warn!("Observer: failed to lock transition model");
-                    return;
-                }
-            };
-            model.observe_sequence(&encoded_states);
-        }
-
-        // Compute surprisal
+        // Compute surprisal against the model *before* observing this height
+        // to avoid data leakage that would artificially lower surprisal
         let surprisal_analysis = {
             let model = match self.transition_model.lock() {
                 Ok(m) => m,
@@ -200,6 +189,18 @@ impl ObserverService {
             };
             analyze_height_surprisal(height, &encoded_states, &model, &self.config.surprisal_config)
         };
+
+        // Update transition model with the new sequence for future heights
+        {
+            let mut model = match self.transition_model.lock() {
+                Ok(m) => m,
+                Err(_) => {
+                    warn!("Observer: failed to lock transition model");
+                    return;
+                }
+            };
+            model.observe_sequence(&encoded_states);
+        }
 
         // Compute height score
         let score = compute_height_score(
@@ -364,7 +365,8 @@ fn convert_round(round: &RoundTrajectory) -> ParsedRoundTrajectory {
 fn convert_phase(phase: &PhaseTrajectory) -> ParsedPhaseTrajectory {
     ParsedPhaseTrajectory {
         phase: convert_phase_type(phase.phase_type),
-        end_event: convert_behavior_event(phase.end_event),
+        end_event: convert_behavior_event(phase.end_event)
+            .unwrap_or(ParsedConsensusEvent::EnterPropose),
         duration: phase.duration,
     }
 }
@@ -383,21 +385,23 @@ fn convert_phase_type(phase: ConsensusPhaseType) -> ParsedConsensusPhase {
     }
 }
 
-fn convert_behavior_event(event: ConsensusBehaviorEventType) -> ParsedConsensusEvent {
+fn convert_behavior_event(event: ConsensusBehaviorEventType) -> Option<ParsedConsensusEvent> {
     match event {
-        ConsensusBehaviorEventType::EnterPropose => ParsedConsensusEvent::EnterPropose,
-        ConsensusBehaviorEventType::ProposalCreated => ParsedConsensusEvent::ProposalCreated,
-        ConsensusBehaviorEventType::ProposalReceived => ParsedConsensusEvent::ProposalReceived,
-        ConsensusBehaviorEventType::StepTimeout => ParsedConsensusEvent::StepTimeout,
-        ConsensusBehaviorEventType::BlockCommitted => ParsedConsensusEvent::BlockApplyStarted,
-        ConsensusBehaviorEventType::CommitQuorumReached => ParsedConsensusEvent::BlockApplySucceeded,
-        // Map other events to closest equivalent or default
-        _ => ParsedConsensusEvent::EnterPropose,
+        ConsensusBehaviorEventType::EnterPropose => Some(ParsedConsensusEvent::EnterPropose),
+        ConsensusBehaviorEventType::ProposalCreated => Some(ParsedConsensusEvent::ProposalCreated),
+        ConsensusBehaviorEventType::ProposalReceived => Some(ParsedConsensusEvent::ProposalReceived),
+        ConsensusBehaviorEventType::StepTimeout => Some(ParsedConsensusEvent::StepTimeout),
+        ConsensusBehaviorEventType::BlockApplyStarted => Some(ParsedConsensusEvent::BlockApplyStarted),
+        ConsensusBehaviorEventType::BlockApplySucceeded => Some(ParsedConsensusEvent::BlockApplySucceeded),
+        ConsensusBehaviorEventType::BlockApplyFailed => Some(ParsedConsensusEvent::BlockApplyFailed),
+        // Commit/quorum events are consensus outcomes, not execution/apply outcomes.
+        // Return None to avoid incorrectly signaling apply progress.
+        _ => None,
     }
 }
 
 fn convert_event(event: &ConsensusNormalizedEvent) -> Option<ParsedConsensusEvent> {
-    Some(convert_behavior_event(event.event_type))
+    convert_behavior_event(event.event_type)
 }
 
 #[cfg(test)]

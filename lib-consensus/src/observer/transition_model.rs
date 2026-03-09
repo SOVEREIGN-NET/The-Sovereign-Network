@@ -5,7 +5,7 @@
 //! observed transitions with additive smoothing for sparse data.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::observer::state_encoder::EncodedConsensusState;
 
@@ -59,8 +59,8 @@ pub struct TransitionModel {
     total_outgoing: HashMap<ConsensusStateKey, u64>,
     /// Additive smoothing parameter (Laplace smoothing).
     smoothing_alpha: f64,
-    /// Total number of distinct states seen (for smoothing denominator).
-    distinct_states: usize,
+    /// Set of distinct states seen (for smoothing denominator).
+    states_seen: HashSet<ConsensusStateKey>,
 }
 
 impl TransitionModel {
@@ -70,17 +70,21 @@ impl TransitionModel {
             transition_counts: HashMap::new(),
             total_outgoing: HashMap::new(),
             smoothing_alpha: 0.1, // Small smoothing for unseen transitions
-            distinct_states: 0,
+            states_seen: HashSet::new(),
         }
     }
 
     /// Create a new transition model with custom smoothing parameter.
+    ///
+    /// Non-positive values are clamped to a minimal positive epsilon to
+    /// avoid NaNs and invalid probabilities in downstream computations.
     pub fn with_smoothing(alpha: f64) -> Self {
+        let smoothing_alpha = if alpha > 0.0 { alpha } else { f64::EPSILON };
         Self {
             transition_counts: HashMap::new(),
             total_outgoing: HashMap::new(),
-            smoothing_alpha: alpha,
-            distinct_states: 0,
+            smoothing_alpha,
+            states_seen: HashSet::new(),
         }
     }
 
@@ -96,13 +100,9 @@ impl TransitionModel {
         *self.transition_counts.entry(transition).or_insert(0) += 1;
         *self.total_outgoing.entry(from_key).or_insert(0) += 1;
 
-        // Update distinct states count
-        let states_seen = self
-            .transition_counts
-            .keys()
-            .flat_map(|t| [t.from, t.to])
-            .collect::<std::collections::HashSet<_>>();
-        self.distinct_states = states_seen.len();
+        // Update distinct states incrementally (O(1) per observation)
+        self.states_seen.insert(from_key);
+        self.states_seen.insert(to_key);
     }
 
     /// Record multiple transitions from a sequence of states.
@@ -133,8 +133,8 @@ impl TransitionModel {
 
         // Additive smoothing: (count + alpha) / (total + alpha * N)
         // where N is the number of distinct states (use estimated state space if empty)
-        let n_states = if self.distinct_states > 0 {
-            self.distinct_states
+        let n_states = if !self.states_seen.is_empty() {
+            self.states_seen.len()
         } else {
             ESTIMATED_STATE_SPACE
         };
@@ -192,7 +192,7 @@ impl TransitionModel {
 
     /// Get the number of distinct states in the model.
     pub fn distinct_state_count(&self) -> usize {
-        self.distinct_states
+        self.states_seen.len()
     }
 
     /// Get the total number of transitions observed.
@@ -211,20 +211,15 @@ impl TransitionModel {
             *self.total_outgoing.entry(*state).or_insert(0) += total;
         }
 
-        // Recalculate distinct states
-        let states_seen = self
-            .transition_counts
-            .keys()
-            .flat_map(|t| [t.from, t.to])
-            .collect::<std::collections::HashSet<_>>();
-        self.distinct_states = states_seen.len();
+        // Merge distinct states from other model
+        self.states_seen.extend(&other.states_seen);
     }
 
     /// Clear all observations.
     pub fn clear(&mut self) {
         self.transition_counts.clear();
         self.total_outgoing.clear();
-        self.distinct_states = 0;
+        self.states_seen.clear();
     }
 }
 

@@ -64,17 +64,31 @@ impl SurprisalConfig {
 /// Compute surprisal for a single transition.
 ///
 /// Surprisal S = -log(P) where P is the transition probability.
-/// Returns None if probability is invalid (negative or NaN).
+/// Returns None if probability is invalid (negative, NaN, > 1.0, or infinite)
+/// or if config has invalid log_base.
 pub fn surprisal(probability: f64, config: &SurprisalConfig) -> Option<Surprisal> {
-    if probability.is_nan() || probability < 0.0 {
+    // Validate probability is finite and in valid range [0, 1]
+    if !probability.is_finite() || probability < 0.0 || probability > 1.0 {
         return None;
     }
 
-    // Clamp probability to avoid log(0)
-    let p = probability.max(config.min_probability);
+    // Validate log_base: must be finite, > 0, and != 1.0
+    let base = config.log_base;
+    if !base.is_finite() || base <= 0.0 || (base - 1.0).abs() < f64::EPSILON {
+        return None;
+    }
+
+    // Validate min_probability is in (0, 1]
+    let min_p = config.min_probability;
+    if !min_p.is_finite() || min_p <= 0.0 || min_p > 1.0 {
+        return None;
+    }
+
+    // Clamp probability to [min_probability, 1.0] to avoid log(0)
+    let p = probability.clamp(min_p, 1.0);
 
     // Compute -log_base(p) = -ln(p) / ln(base)
-    let raw_surprisal = -p.ln() / config.log_base.ln();
+    let raw_surprisal = -p.ln() / base.ln();
 
     // Cap at maximum for numerical stability
     Some(raw_surprisal.min(config.max_surprisal))
