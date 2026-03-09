@@ -111,7 +111,16 @@ impl ZhtpRequestHandler for ObserverHandler {
             "Observer API request received"
         );
 
-        let response = match (request.method, request.uri.as_str()) {
+        // Normalize URI: strip trailing slashes and query strings for consistent matching
+        let normalized_uri = request.uri.trim_end_matches('/');
+        let normalized_uri = if normalized_uri.is_empty() {
+            "/"
+        } else {
+            normalized_uri
+        };
+        let match_uri = normalized_uri.split('?').next().unwrap_or(normalized_uri);
+
+        let response = match (request.method, match_uri) {
             // Issue #1788: Per-height metrics endpoint
             (ZhtpMethod::Get, "/api/v1/observer/height/current") => {
                 self.handle_get_current_height_metrics(request).await
