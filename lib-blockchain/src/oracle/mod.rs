@@ -42,6 +42,14 @@ pub enum OracleAttestationValidationError {
     DuplicateSigner([u8; 32]),
     MissingSignerPublicKey([u8; 32]),
     InvalidSignature,
+    /// Attestation price exceeds maximum allowed deviation from median (Spec §9).
+    /// Contains the attested price, calculated median, and max deviation bps.
+    DeviationBand {
+        attested_price: u128,
+        median_price: u128,
+        max_deviation_bps: u32,
+        actual_deviation_bps: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -466,7 +474,7 @@ pub struct OracleEpochState {
 }
 
 /// Root oracle consensus state.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OracleState {
     #[serde(default)]
     pub config: OracleConfig,
@@ -499,6 +507,15 @@ pub struct OracleState {
     /// Used for migration to ensure consistent semantics after epoch_duration changes.
     #[serde(default = "default_epoch_tracking_version")]
     pub epoch_tracking_version: u8,
+    /// ORACLE-R1: Committee removal queue for epoch-safe slashing.
+    ///
+    /// Spec §9: Slashed validators are removed from the committee at the
+    /// next epoch boundary, not immediately. This queue tracks pending removals.
+    #[serde(default)]
+    pub committee_removal_queue: Vec<CommitteeRemovalEntry>,
+    /// ORACLE-R8: Observability, parity monitoring, and rollback controls.
+    #[serde(default)]
+    pub observability: OracleObservabilityState,
 }
 
 fn default_epoch_tracking_version() -> u8 {
@@ -516,6 +533,8 @@ impl Default for OracleState {
             oracle_signing_pubkeys: std::collections::HashMap::new(),
             protocol_config: protocol::OracleProtocolConfig::default(),
             epoch_tracking_version: 1, // New state uses current version
+            committee_removal_queue: Vec::new(),
+            observability: OracleObservabilityState::default(),
         }
     }
 }
@@ -934,7 +953,94 @@ impl OracleState {
         )
         .map_err(OracleAttestationAdmissionError::Validation)?;
 
+        // ORACLE-R1: Deviation band check (Spec §9)
+        // Only applied in strict spec mode to preserve V0 backward compatibility.
+        // Gate this check behind the protocol version/feature flag.
+        if self.protocol_config.is_strict_spec_active() {
+            if let Some(state) = epoch_state {
+                if !state.signer_prices.is_empty() {
+                    self.check_deviation_band(attestation, state)?;
+                }
+            }
+        }
+
         Ok(OracleAttestationAdmission::Accepted)
+    }
+
+    /// Calculate median of a slice of u128 values.
+    /// For even-length slices, returns the average of the two middle values.
+    fn calculate_median(values: &[u128]) -> u128 {
+        if values.is_empty() {
+            return 0;
+        }
+        let mut sorted = values.to_vec();
+        sorted.sort_unstable();
+        let len = sorted.len();
+        if len % 2 == 1 {
+            // Odd length: return middle element
+            sorted[len / 2]
+        } else {
+            // Even length: return average of two middle elements
+            // Use overflow-safe average without computing mid1 + mid2 directly.
+            let mid1 = sorted[len / 2 - 1];
+            let mid2 = sorted[len / 2];
+            let half_sum = (mid1 / 2) + (mid2 / 2);
+            let rem_sum = (mid1 % 2) + (mid2 % 2);
+            half_sum + (rem_sum / 2)
+        }
+    }
+
+    /// Check if attested price is within allowed deviation band from median.
+    ///
+    /// Spec §9: Validators attesting prices outside the configured deviation band
+    /// are subject to slashing for DeviationBand violation.
+    fn check_deviation_band(
+        &self,
+        attestation: &OraclePriceAttestation,
+        epoch_state: &OracleEpochState,
+    ) -> Result<(), OracleAttestationAdmissionError> {
+        // Calculate median of existing prices
+        let existing_prices: Vec<u128> = epoch_state
+            .signer_prices
+            .values()
+            .copied()
+            .collect();
+        
+        if existing_prices.is_empty() {
+            return Ok(());
+        }
+
+        let median = Self::calculate_median(&existing_prices);
+        let attested_price = attestation.sov_usd_price;
+
+        // Calculate deviation in basis points: |price - median| * 10000 / median
+        // Use saturating conversion to handle overflow safely.
+        let deviation_bps = if median > 0 {
+            let diff = if attested_price > median {
+                attested_price - median
+            } else {
+                median - attested_price
+            };
+            let deviation_raw = (diff as u128).saturating_mul(10_000) / median;
+            u32::try_from(deviation_raw).unwrap_or(u32::MAX)
+        } else {
+            0
+        };
+
+        let max_deviation_bps = self.config.max_deviation_bps;
+
+        if deviation_bps > max_deviation_bps {
+            return Err(OracleAttestationAdmissionError::Validation(
+                OracleAttestationValidationError::DeviationBand {
+                    attested_price,
+                    median_price: median,
+                    max_deviation_bps,
+                    actual_deviation_bps: deviation_bps,
+                },
+            ));
+        }
+
+        Ok(())
     }
 
     /// Mutating attestation admission + deterministic finalization.
@@ -1944,15 +2050,24 @@ mod tests {
     }
 }
 
+// ORACLE-R4: State migration and import/export compatibility
+pub mod migration;
+
+pub use migration::{
+    export_state, import_state, validate_import_envelope, ImportValidationResult, MigrationResult,
+    OracleStateEnvelope, OracleStateVersion,
+};
+
 // ORACLE-4: Slashing module
 pub mod slashing;
 
-pub use slashing::{OracleSlashEvent, OracleSlashReason, OracleSlashingConfig};
+pub use slashing::{CommitteeRemovalEntry, OracleSlashEvent, OracleSlashReason, OracleSlashingConfig};
 
 // ORACLE-R6: Protocol version and activation gate
 pub mod protocol;
 
 pub use protocol::{
-    OracleFeatureFlags, OracleProtocolConfig, OracleProtocolVersion, PendingProtocolActivation,
-    ProtocolScheduleError,
+    DivergenceAlarmConfig, OracleFeatureFlags, OracleObservabilityState, OracleParityMetrics,
+    OracleProtocolConfig, OracleProtocolVersion, PendingProtocolActivation, ProtocolScheduleError,
+    RollbackControls,
 };

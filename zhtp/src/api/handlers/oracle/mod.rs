@@ -1,18 +1,28 @@
 //! Oracle API Handler
 //!
-//! Endpoints:
+//! ORACLE-R9: Hardened API/Runtime Write Boundaries
+//! 
+//! All state mutations MUST go through governance-gated canonical paths.
+//! Direct state mutations via API are disabled in strict spec mode.
+//!
+//! Read Endpoints (always available):
 //!   GET /api/v1/oracle/price              — latest finalized SOV/USD price
 //!   GET /api/v1/oracle/status             — committee state, epoch, last finalized height
 //!   GET /api/v1/oracle/config             — all operating parameters
+//!   GET /api/v1/oracle/protocol           — protocol version and activation status
 //!   GET /api/v1/oracle/pending-updates    — pending committee/config updates
 //!   GET /api/v1/oracle/slashing-events    — last 100 oracle slash events
 //!   GET /api/v1/oracle/banned-validators  — currently banned validator key_ids
 //!   GET /api/v1/oracle/attestations/{epoch_id} — attestation status for epoch
 //!   
+//! Governance Path Endpoints (canonical write path):
 //!   POST /api/v1/oracle/committee/propose — submit DAO proposal for committee change
 //!   POST /api/v1/oracle/config/propose    — submit DAO proposal for config change
 //!   POST /api/v1/oracle/updates/cancel    — submit DAO proposal to cancel pending updates
-//!   POST /api/v1/oracle/attest            — submit oracle attestation (testnet only)
+//!
+//! Deprecated/Restricted Endpoints:
+//!   POST /api/v1/oracle/attest            — DISABLED in strict spec mode
+//!                                           Use transaction-based attestation instead
 
 use std::sync::Arc;
 
@@ -540,6 +550,7 @@ impl OracleHandler {
                 let reason_str = match e.reason {
                     OracleSlashReason::ConflictingAttestation => "conflicting_attestation",
                     OracleSlashReason::WrongEpoch => "wrong_epoch",
+                    OracleSlashReason::DeviationBand => "deviation_band",
                 };
                 json!({
                     "validator_key_id": hex::encode(e.validator_key_id),
@@ -909,8 +920,37 @@ impl OracleHandler {
     /// POST /api/v1/oracle/attest
     ///
     /// Manually submit an oracle attestation (testnet only).
-    /// Disabled on mainnet.
+    /// Disabled on mainnet and in strict spec mode.
+    /// 
+    /// ORACLE-R9: In strict spec mode, attestations MUST go through the canonical
+    /// transaction path. Direct API submission is disabled to prevent non-canonical
+    /// state mutations.
     async fn handle_manual_attest(&self, request: &ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+        // Check blockchain for strict spec mode
+        let bc_arc = match self.get_blockchain().await {
+            Ok(bc) => bc,
+            Err(e) => {
+                warn!("Oracle attest API: {}", e);
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::InternalServerError,
+                    e.to_string(),
+                ));
+            }
+        };
+
+        // ORACLE-R9: Strict spec mode disables direct attestation API
+        {
+            let bc = bc_arc.read().await;
+            if bc.oracle_state.is_strict_spec_active() {
+                return Ok(ZhtpResponse::error(
+                    ZhtpStatus::Forbidden,
+                    "Direct attestation API is disabled in strict spec mode. \
+                     Use transaction-based attestation submission."
+                        .to_string(),
+                ));
+            }
+        }
+
         // Check if on testnet
         if !self.is_testnet {
             return Ok(ZhtpResponse::error(
