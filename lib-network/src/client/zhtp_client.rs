@@ -109,15 +109,12 @@ impl ZhtpClient {
             .context("Failed to create QUIC endpoint")?;
 
         // Create nonce cache.
-        // Bootstrap mode uses a temporary path to avoid epoch-mismatch errors with any
-        // pre-existing nonce cache (which was written with the real network epoch).
+        // Bootstrap mode uses a fixed shared path so all short-lived bootstrap clients
+        // reuse the same sled database instead of creating a new one per call.
+        // A unique timestamp path was used previously, leaking one sled instance per
+        // observer_sync_loop tick (~6/min) and causing OOM after extended uptime.
         let nonce_db_path = if config.allow_bootstrap {
-            std::env::temp_dir().join(format!(
-                "zhtp_bootstrap_nonce_{}", std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-            ))
+            std::env::temp_dir().join("zhtp_bootstrap_nonce")
         } else {
             dirs::home_dir()
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
