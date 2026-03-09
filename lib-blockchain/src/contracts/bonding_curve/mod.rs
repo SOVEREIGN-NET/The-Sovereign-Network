@@ -27,6 +27,7 @@ pub mod types;
 // Re-export core types
 pub use event_indexer::SledEventIndexer;
 pub use events::{BondingCurveEvent, EventIndexer, InMemoryEventIndexer, ReserveUpdateReason};
+pub use pricing::PiecewiseLinearCurve;
 pub use registry::{BondingCurveRegistry, RegistryStats};
 pub use token::BondingCurveToken;
 pub use types::{

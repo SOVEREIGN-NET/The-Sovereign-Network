@@ -95,6 +95,9 @@ pub enum CurveTypeRequest {
         midpoint_supply: u64,
         steepness: u64,
     },
+    /// Piecewise linear curve (CBE token default)
+    /// Uses predefined 4-band configuration with document-compliant slopes
+    PiecewiseLinear,
 }
 
 impl From<CurveTypeRequest> for CurveType {
@@ -119,6 +122,11 @@ impl From<CurveTypeRequest> for CurveType {
                 midpoint_supply,
                 steepness,
             },
+            CurveTypeRequest::PiecewiseLinear => {
+                CurveType::PiecewiseLinear(
+                    lib_blockchain::contracts::bonding_curve::PiecewiseLinearCurve::cbe_default()
+                )
+            }
         }
     }
 }
