@@ -16,6 +16,10 @@ use super::{
 use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
 
+/// Issue #1844: Reserve/treasury split divisor.
+/// Reserve receives 1/RESERVE_SPLIT_DIVISOR (20%) of each buy; treasury receives the rest (80%).
+pub const RESERVE_SPLIT_DIVISOR: u64 = 5;
+
 /// Bonding Curve Token
 ///
 /// Manages token lifecycle from initial curve offering through AMM graduation.
@@ -237,8 +241,8 @@ impl BondingCurveToken {
         let token_amount = self.calculate_buy(stable_amount)?;
 
         // Issue #1844: Split purchase 20% reserve / 80% treasury
-        let to_reserve = stable_amount / 5;           // 20% - overflow-safe
-        let to_treasury = stable_amount - to_reserve; // 80%
+        let to_reserve = stable_amount / RESERVE_SPLIT_DIVISOR;
+        let to_treasury = stable_amount - to_reserve;
 
         // Update state
         self.reserve_balance = self
@@ -495,19 +499,20 @@ mod tests {
 
         let buyer = test_pubkey(2);
         // Buy with $1 (100_000_000 in stable atomic units with 6 decimals)
-        let (tokens, event) = token.buy(buyer, 100_000_000, 101, 1_600_000_001).unwrap();
+        let buy_amount = 100_000_000u64;
+        let (tokens, event) = token.buy(buyer, buy_amount, 101, 1_600_000_001).unwrap();
 
         // At $0.10 price, $1 buys 10 tokens
         // tokens = stable_amount / price * token_decimals
         // tokens = 100_000_000 / 10_000_000 * 100_000_000 = 1_000_000_000 (10 tokens)
         assert_eq!(tokens, 1_000_000_000); // 10 tokens
         assert_eq!(token.total_supply, tokens);
-        
+
         // Issue #1844: Verify 20/80 split
-        // Reserve gets 20%: 100_000_000 * 0.20 = 20_000_000
-        // Treasury gets 80%: 100_000_000 * 0.80 = 80_000_000
-        assert_eq!(token.reserve_balance, 20_000_000, "Reserve should get 20%");
-        assert_eq!(token.treasury_balance, 80_000_000, "Treasury should get 80%");
+        let expected_reserve = buy_amount / RESERVE_SPLIT_DIVISOR;
+        let expected_treasury = buy_amount - expected_reserve;
+        assert_eq!(token.reserve_balance, expected_reserve, "Reserve should get 20%");
+        assert_eq!(token.treasury_balance, expected_treasury, "Treasury should get 80%");
 
         match event {
             BondingCurveEvent::TokenPurchased { stable_amount, .. } => {
@@ -538,25 +543,30 @@ mod tests {
         .unwrap();
 
         let buyer = test_pubkey(2);
-        
+
         // Test multiple purchases accumulate correctly
-        // Purchase 1: $100 (10_000_000_000 in micro-USD)
-        let _ = token.buy(buyer.clone(), 10_000_000_000, 101, 1_600_000_001).unwrap();
-        assert_eq!(token.reserve_balance, 2_000_000_000, "20% of $100");
-        assert_eq!(token.treasury_balance, 8_000_000_000, "80% of $100");
-        
-        // Purchase 2: $50 (5_000_000_000 in micro-USD)
-        let _ = token.buy(buyer, 5_000_000_000, 102, 1_600_000_002).unwrap();
-        assert_eq!(token.reserve_balance, 3_000_000_000, "20% of $150");
-        assert_eq!(token.treasury_balance, 12_000_000_000, "80% of $150");
-        
+        let buy_1 = 10_000_000_000u64;
+        let _ = token.buy(buyer.clone(), buy_1, 101, 1_600_000_001).unwrap();
+        let expected_reserve_1 = buy_1 / RESERVE_SPLIT_DIVISOR;
+        let expected_treasury_1 = buy_1 - expected_reserve_1;
+        assert_eq!(token.reserve_balance, expected_reserve_1, "Reserve should be 20% of buy_1");
+        assert_eq!(token.treasury_balance, expected_treasury_1, "Treasury should be 80% of buy_1");
+
+        let buy_2 = 5_000_000_000u64;
+        let _ = token.buy(buyer, buy_2, 102, 1_600_000_002).unwrap();
+        let expected_reserve_2 = expected_reserve_1 + buy_2 / RESERVE_SPLIT_DIVISOR;
+        let expected_treasury_2 = expected_treasury_1 + (buy_2 - buy_2 / RESERVE_SPLIT_DIVISOR);
+        assert_eq!(token.reserve_balance, expected_reserve_2, "Reserve should accumulate 20% of each buy");
+        assert_eq!(token.treasury_balance, expected_treasury_2, "Treasury should accumulate 80% of each buy");
+
         // Verify total collected equals sum of all purchases
+        let total_bought = buy_1 + buy_2;
         assert_eq!(
             token.reserve_balance + token.treasury_balance,
-            15_000_000_000,
+            total_bought,
             "Total should equal sum of purchases"
         );
-        
+
         // Verify split ratio is exactly 20/80 using integer arithmetic
         let total = token.reserve_balance + token.treasury_balance;
         assert_eq!(token.reserve_balance * 10000 / total, 2000, "Reserve should be exactly 20%");

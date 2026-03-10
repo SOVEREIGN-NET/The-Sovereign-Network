@@ -8,7 +8,7 @@
 
 use lib_blockchain::{
     block::{Block, BlockHeader},
-    contracts::bonding_curve::{Phase, Threshold},
+    contracts::bonding_curve::{Phase, Threshold, RESERVE_SPLIT_DIVISOR},
     contracts::tokens::CBE_SYMBOL,
     integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm},
     transaction::{
@@ -252,17 +252,19 @@ fn test_bonding_curve_buy_transaction_success() {
     let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
 
     // Now buy tokens
-    let buy_tx = create_buy_transaction(&buyer, token_id, 1_000_000, 0, 0);
+    let buy_amount = 1_000_000u64;
+    let buy_tx = create_buy_transaction(&buyer, token_id, buy_amount, 0, 0);
     let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-    
+
     let result = blockchain.process_token_transactions(&block2);
     assert!(result.is_ok(), "Buy transaction should succeed: {:?}", result);
 
-    // Verify token state updated
-    // Issue #1844: 20/80 split - reserve gets 20%, treasury gets 80%
+    // Verify token state updated - Issue #1844: 20/80 split
+    let expected_reserve = buy_amount / RESERVE_SPLIT_DIVISOR;
+    let expected_treasury = buy_amount - expected_reserve;
     let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert_eq!(token.reserve_balance, 200_000, "Reserve should be 20% of buy amount");
-    assert_eq!(token.treasury_balance, 800_000, "Treasury should be 80% of buy amount");
+    assert_eq!(token.reserve_balance, expected_reserve, "Reserve should be 20% of buy amount");
+    assert_eq!(token.treasury_balance, expected_treasury, "Treasury should be 80% of buy amount");
     assert!(token.total_supply > 0);
 }
 
@@ -434,13 +436,15 @@ fn test_bonding_curve_graduate_transaction_success() {
     // Issue #1844: Buy tokens to reach graduation threshold
     // With 20/80 split, need 5x the threshold amount in buys
     // threshold = $50, so need $250 buy to get $50 in reserve
-    let buy_tx = create_buy_transaction(&buyer, token_id, 50_000_000, 0, 0);
+    let buy_amount = 50_000_000u64;
+    let buy_tx = create_buy_transaction(&buyer, token_id, buy_amount, 0, 0);
     let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
     blockchain.process_token_transactions(&block2).expect("Buy should succeed");
 
-    // Verify token can graduate (reserve should be 10 SOV)
+    // Verify token can graduate
+    let expected_reserve = buy_amount / RESERVE_SPLIT_DIVISOR;
     let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert_eq!(token.reserve_balance, 10_000_000, "Reserve should be 20% of 50 SOV = 10 SOV");
+    assert_eq!(token.reserve_balance, expected_reserve, "Reserve should be 20% of buy amount");
     assert!(token.can_graduate(1_700_000_200), "Token should be ready to graduate");
 
     // Graduate the token
@@ -505,16 +509,19 @@ fn test_bonding_curve_full_lifecycle_via_transactions() {
     let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
     assert_eq!(token.phase, Phase::Curve);
 
-    // Step 2: Buy
-    // Issue #1844: 20/80 split - reserve gets 20%
-    let buy_tx = create_buy_transaction(&buyer, token_id, 50_000_000, 0, 0);
+    // Step 2: Buy - Issue #1844: 20/80 split - reserve gets 20%
+    let buy_amount = 50_000_000u64;
+    let buy_tx = create_buy_transaction(&buyer, token_id, buy_amount, 0, 0);
     let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
     blockchain.process_token_transactions(&block2).expect("Buy should succeed");
 
+    let expected_reserve = buy_amount / RESERVE_SPLIT_DIVISOR;
+    let expected_treasury = buy_amount - expected_reserve;
     let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert_eq!(token.reserve_balance, 10_000_000, "Reserve should be 20% of 50 SOV");
-    assert_eq!(token.treasury_balance, 40_000_000, "Treasury should be 80% of 50 SOV");
+    assert_eq!(token.reserve_balance, expected_reserve, "Reserve should be 20% of buy amount");
+    assert_eq!(token.treasury_balance, expected_treasury, "Treasury should be 80% of buy amount");
     let tokens_before_sell = token.total_supply;
+    let reserve_before_sell = token.reserve_balance;
     // deploy() initializes total_supply to 0; all tokens come from buys
 
     // Step 3: Sell a small portion
@@ -525,7 +532,7 @@ fn test_bonding_curve_full_lifecycle_via_transactions() {
     blockchain.process_token_transactions(&block3).expect("Sell should succeed");
 
     let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert!(token.reserve_balance < 10_000_000, "Reserve should decrease after sell");
+    assert!(token.reserve_balance < reserve_before_sell, "Reserve should decrease after sell");
     assert_eq!(token.total_supply, tokens_before_sell - sell_amount, "Supply should decrease by sold amount (burn)");
 
     // Step 4: Buy more to reach threshold
