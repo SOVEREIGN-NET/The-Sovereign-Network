@@ -34,6 +34,28 @@ pub const SUPPLY_SCALE: u128 = 100_000_000;
 /// Combined scale for slope calculations (PRICE_SCALE * SUPPLY_SCALE = 10^16)
 pub const COMBINED_SCALE: u128 = 10_000_000_000_000_000u128;
 
+/// One billion — used as a multiplier for supply band boundaries (e.g. 10B tokens)
+pub const ONE_BILLION_TOKENS: u64 = 1_000_000_000;
+
+/// CBE supply band slopes (Issue #1842), scaled by COMBINED_SCALE
+/// Actual slope_i = BAND_i_SLOPE / COMBINED_SCALE
+pub const BAND_1_SLOPE: u64 = 25_000;   // 2.5e-12
+pub const BAND_2_SLOPE: u64 = 75_000;   // 7.5e-12
+pub const BAND_3_SLOPE: u64 = 150_000;  // 1.5e-11
+pub const BAND_4_SLOPE: u64 = 300_000;  // 3.0e-11
+
+/// CBE Band 1 base price offset scaled by PRICE_SCALE (0.0003133457 SOV/CBE)
+pub const BAND_1_BASE_OFFSET: i64 = 31_335;
+
+/// CBE supply band upper boundaries in billions of tokens (Issue #1842)
+pub const BAND_1_END_BILLIONS: u64 = 10;
+pub const BAND_2_END_BILLIONS: u64 = 30;
+pub const BAND_3_END_BILLIONS: u64 = 60;
+pub const CBE_MAX_SUPPLY_BILLIONS: u64 = 100;
+
+/// Maximum rounding error allowed at band price boundaries (atomic units)
+pub const PRICE_CONTINUITY_TOLERANCE: u128 = 1;
+
 /// Supply band definition for piecewise linear curve
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SupplyBand {
@@ -72,31 +94,9 @@ impl PiecewiseLinearCurve {
     /// Uses adjusted base values to ensure price continuity.
     /// The slopes match the specification exactly.
     pub fn cbe_default() -> Self {
-        let one_billion = 1_000_000_000u64;
-        let token_scale = 100_000_000u64; // 8 decimals, 1 CBE = 10^8 atomic units
+        let token_scale = SUPPLY_SCALE as u64;
 
-        // Calculate slopes in fixed-point
-        // slope_fixed = slope_actual × COMBINED_SCALE
-        // COMBINED_SCALE = 10^16
-        //
-        // Band 1: slope = 2.5e-12
-        // slope_fixed = 2.5e-12 × 10^16 = 25,000
-        //
-        // Band 2: slope = 7.5e-12
-        // slope_fixed = 7.5e-12 × 10^16 = 75,000
-        //
-        // Band 3: slope = 1.5e-11
-        // slope_fixed = 1.5e-11 × 10^16 = 150,000
-        //
-        // Band 4: slope = 3.0e-11
-        // slope_fixed = 3.0e-11 × 10^16 = 300,000
-
-        let slope_1: u64 = 25_000;
-        let slope_2: u64 = 75_000;
-        let slope_3: u64 = 150_000;
-        let slope_4: u64 = 300_000;
-
-        // Calculate bases for continuity
+        // Calculate bases for continuity.
         // Formula: price(S) = base_i + slope_i × S / COMBINED_SCALE
         //
         // For continuity at boundary between band i and i+1:
@@ -106,51 +106,53 @@ impl PiecewiseLinearCurve {
         // Since slope_{i+1} > slope_i (steeper curves in later bands),
         // (slope_i - slope_{i+1}) is negative, so bases decrease.
 
-        let base_1: i64 = 31_335; // 0.0003133457 × 10^8
+        let base_1: i64 = BAND_1_BASE_OFFSET;
 
-        // Band 1 to 2 boundary at 10B tokens = 10^9 × 10^8 = 10^18 atomic units
-        let boundary_1: u128 = (10 * one_billion as u128) * (token_scale as u128);
-        let delta_1 = ((slope_2 as i128 - slope_1 as i128) * boundary_1 as i128) / COMBINED_SCALE as i128;
+        // Band 1→2 boundary at BAND_1_END_BILLIONS × 10^9 × 10^8 atomic units
+        let boundary_1: u128 = (BAND_1_END_BILLIONS as u128 * ONE_BILLION_TOKENS as u128) * token_scale as u128;
+        let delta_1 = ((BAND_2_SLOPE as i128 - BAND_1_SLOPE as i128) * boundary_1 as i128) / COMBINED_SCALE as i128;
         let base_2: i64 = base_1 - delta_1 as i64;
 
-        // Band 2 to 3 boundary at 30B tokens
-        let boundary_2: u128 = (30 * one_billion as u128) * (token_scale as u128);
-        let delta_2 = ((slope_3 as i128 - slope_2 as i128) * boundary_2 as i128) / COMBINED_SCALE as i128;
+        // Band 2→3 boundary at BAND_2_END_BILLIONS
+        let boundary_2: u128 = (BAND_2_END_BILLIONS as u128 * ONE_BILLION_TOKENS as u128) * token_scale as u128;
+        let delta_2 = ((BAND_3_SLOPE as i128 - BAND_2_SLOPE as i128) * boundary_2 as i128) / COMBINED_SCALE as i128;
         let base_3: i64 = base_2 - delta_2 as i64;
 
-        // Band 3 to 4 boundary at 60B tokens
-        let boundary_3: u128 = (60 * one_billion as u128) * (token_scale as u128);
-        let delta_3 = ((slope_4 as i128 - slope_3 as i128) * boundary_3 as i128) / COMBINED_SCALE as i128;
+        // Band 3→4 boundary at BAND_3_END_BILLIONS
+        let boundary_3: u128 = (BAND_3_END_BILLIONS as u128 * ONE_BILLION_TOKENS as u128) * token_scale as u128;
+        let delta_3 = ((BAND_4_SLOPE as i128 - BAND_3_SLOPE as i128) * boundary_3 as i128) / COMBINED_SCALE as i128;
         let base_4: i64 = base_3 - delta_3 as i64;
+
+        let band_end = |billions: u64| billions * ONE_BILLION_TOKENS * token_scale;
 
         Self {
             bands: vec![
                 SupplyBand {
                     start_supply: 0,
-                    end_supply: 10 * one_billion * token_scale,
-                    slope: slope_1,
+                    end_supply: band_end(BAND_1_END_BILLIONS),
+                    slope: BAND_1_SLOPE,
                     base_offset: base_1,
                 },
                 SupplyBand {
-                    start_supply: 10 * one_billion * token_scale,
-                    end_supply: 30 * one_billion * token_scale,
-                    slope: slope_2,
+                    start_supply: band_end(BAND_1_END_BILLIONS),
+                    end_supply: band_end(BAND_2_END_BILLIONS),
+                    slope: BAND_2_SLOPE,
                     base_offset: base_2,
                 },
                 SupplyBand {
-                    start_supply: 30 * one_billion * token_scale,
-                    end_supply: 60 * one_billion * token_scale,
-                    slope: slope_3,
+                    start_supply: band_end(BAND_2_END_BILLIONS),
+                    end_supply: band_end(BAND_3_END_BILLIONS),
+                    slope: BAND_3_SLOPE,
                     base_offset: base_3,
                 },
                 SupplyBand {
-                    start_supply: 60 * one_billion * token_scale,
-                    end_supply: 100 * one_billion * token_scale,
-                    slope: slope_4,
+                    start_supply: band_end(BAND_3_END_BILLIONS),
+                    end_supply: band_end(CBE_MAX_SUPPLY_BILLIONS),
+                    slope: BAND_4_SLOPE,
                     base_offset: base_4,
                 },
             ],
-            max_supply: 100 * one_billion * token_scale,
+            max_supply: band_end(CBE_MAX_SUPPLY_BILLIONS),
         }
     }
 
@@ -208,8 +210,8 @@ impl PiecewiseLinearCurve {
             let slope_curr = (curr_band.slope as i128).saturating_mul(s_curr) / COMBINED_SCALE as i128;
             let price_curr = (curr_band.base_offset as i128) + slope_curr;
 
-            // Allow small rounding error (1 unit)
-            if price_prev.abs_diff(price_curr) > 1 {
+            // Allow small rounding error (PRICE_CONTINUITY_TOLERANCE atomic units)
+            if price_prev.abs_diff(price_curr) > PRICE_CONTINUITY_TOLERANCE {
                 return false;
             }
         }

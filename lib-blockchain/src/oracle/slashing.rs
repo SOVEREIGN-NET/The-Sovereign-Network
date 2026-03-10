@@ -7,6 +7,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Default slash fraction applied to a validator's stake (basis points = 1%)
+pub const DEFAULT_SLASH_FRACTION_BPS: u16 = 100;
+
+/// Basis points denominator (10_000 bps = 100%)
+pub const BASIS_POINTS: u128 = 10_000;
+
 /// Reason for oracle slashing.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum OracleSlashReason {
@@ -70,7 +76,7 @@ pub struct OracleSlashingConfig {
 impl Default for OracleSlashingConfig {
     fn default() -> Self {
         Self {
-            slash_fraction_bps: 100, // 1% default
+            slash_fraction_bps: DEFAULT_SLASH_FRACTION_BPS,
         }
     }
 }
@@ -87,7 +93,7 @@ impl OracleSlashingConfig {
     pub fn calculate_slash(&self, stake: u64) -> u64 {
         (stake as u128)
             .saturating_mul(self.slash_fraction_bps as u128)
-            .saturating_div(10_000) as u64
+            .saturating_div(BASIS_POINTS) as u64
     }
 }
 
@@ -108,7 +114,7 @@ mod tests {
     #[test]
     fn slashing_config_default() {
         let config = OracleSlashingConfig::default();
-        assert_eq!(config.slash_fraction_bps, 100);
+        assert_eq!(config.slash_fraction_bps, DEFAULT_SLASH_FRACTION_BPS);
     }
 
     #[test]
