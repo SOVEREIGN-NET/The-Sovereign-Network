@@ -494,8 +494,12 @@ impl PriceSource {
 pub struct CurveStats {
     /// Current token supply
     pub total_supply: u64,
-    /// Current reserve balance in stablecoin
+    /// Current reserve balance in stablecoin (20% of purchases)
     pub reserve_balance: u64,
+    /// Current treasury balance in stablecoin (80% of purchases)
+    /// Issue #1844: Reserve and Treasury 20/80 Split
+    #[serde(default)]
+    pub treasury_balance: u64,
     /// Current price in stablecoin
     pub current_price: u64,
     /// Time since deployment (seconds)
