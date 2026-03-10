@@ -156,6 +156,7 @@ fn test_cbe_graduation_accepts_price_at_staleness_boundary() {
         lib_blockchain::oracle::FinalizedOraclePrice {
             epoch_id: 10,
             sov_usd_price: 100_000_000,
+            cbe_usd_price: None,
         },
     );
 

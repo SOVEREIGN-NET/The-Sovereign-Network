@@ -346,6 +346,9 @@ pub struct Blockchain {
     /// Oracle protocol v1 consensus state (committee/config/finalized prices).
     #[serde(default)]
     pub oracle_state: crate::oracle::OracleState,
+    /// Unified token pricing state for SOV and CBE tokens (Issue #1819).
+    #[serde(default)]
+    pub token_pricing_state: crate::pricing::TokenPricingState,
     /// On-chain exchange state for SOV/USDC and other trading pairs.
     /// Provides price feeds to the oracle protocol.
     #[serde(default)]
@@ -727,6 +730,7 @@ impl BlockchainV1 {
             treasury_epoch_execution_count: HashMap::new(),
             max_executions_per_epoch: default_max_executions(),
             oracle_state: crate::oracle::OracleState::default(),
+            token_pricing_state: crate::pricing::TokenPricingState::new(),
             exchange_state: crate::exchange::ExchangeState::new(),
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
@@ -1188,6 +1192,7 @@ impl BlockchainStorageV3 {
             treasury_epoch_execution_count: self.treasury_epoch_execution_count,
             max_executions_per_epoch: self.max_executions_per_epoch,
             oracle_state: crate::oracle::OracleState::default(),
+            token_pricing_state: crate::pricing::TokenPricingState::new(),
             exchange_state: crate::exchange::ExchangeState::new(),
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
@@ -1355,6 +1360,7 @@ impl Blockchain {
             treasury_epoch_execution_count: HashMap::new(),
             max_executions_per_epoch: default_max_executions(),
             oracle_state: crate::oracle::OracleState::default(),
+            token_pricing_state: crate::pricing::TokenPricingState::new(),
             exchange_state: crate::exchange::ExchangeState::new(),
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
@@ -1371,7 +1377,213 @@ impl Blockchain {
         blockchain.update_utxo_set(&genesis_block)?;
         blockchain.save_utxo_snapshot(0)?; // Save snapshot for genesis block
         blockchain.ensure_treasury_wallet();
+        blockchain.initialize_cbe_genesis();
         Ok(blockchain)
+    }
+
+    /// Initialize CBE (Community Bonding Experiment) as a built-in bonding curve token.
+    ///
+    /// Uses the document-compliant piecewise linear curve with 4 supply bands.
+    /// This provides proper price discovery as supply grows from 0 to 100B CBE.
+    ///
+    /// Issue #1842: Piecewise Linear Bonding Curve Mathematics
+    fn initialize_cbe_genesis(&mut self) {
+        use crate::contracts::bonding_curve::{BondingCurveToken, CurveType, Threshold, PiecewiseLinearCurve};
+        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+
+        // Generate deterministic CBE token ID (same as CbeToken)
+        let token_id = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            CBE_NAME.hash(&mut hasher);
+            CBE_SYMBOL.hash(&mut hasher);
+            let hash = hasher.finish();
+            let mut id = [0u8; 32];
+            id[..8].copy_from_slice(&hash.to_le_bytes());
+            for i in 8..32 {
+                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
+            }
+            id
+        };
+
+        // Skip if CBE already exists (e.g., loaded from storage)
+        if self.bonding_curve_registry.contains(&token_id) {
+            return;
+        }
+
+        // Create genesis creator key
+        let genesis_creator = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0u8; 32],
+        };
+
+        // Deploy CBE with piecewise linear curve (Issue #1842)
+        // 4-band curve with price starting at ~0.000313 SOV and increasing with supply
+        let curve_type = CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default());
+        let threshold = Threshold::ReserveAmount(69_000_000_000); // $69k in micro-USD
+
+        match BondingCurveToken::deploy(
+            token_id,
+            CBE_NAME.to_string(),
+            CBE_SYMBOL.to_string(),
+            curve_type,
+            threshold,
+            true, // sell_enabled
+            genesis_creator,
+            "did:zhtp:genesis".to_string(),
+            0, // genesis block
+            self.get_genesis_timestamp(),
+        ) {
+            Ok(token) => {
+                if let Err(e) = self.bonding_curve_registry.register(token) {
+                    warn!("Failed to register CBE genesis token: {}", e);
+                } else {
+                    info!("CBE genesis bonding curve token initialized: {}", hex::encode(&token_id[..8]));
+                }
+            }
+            Err(e) => {
+                warn!("Failed to deploy CBE genesis token: {}", e);
+            }
+        }
+    }
+
+    /// Get the genesis block timestamp
+    fn get_genesis_timestamp(&self) -> u64 {
+        self.blocks.first()
+            .map(|b| b.header.timestamp)
+            .unwrap_or(1_700_000_000)
+    }
+
+    // =========================================================================
+    // Unified Pricing System (Issue #1819)
+    // =========================================================================
+
+    /// Update CBE/USD price from oracle (called when oracle finalizes CBE price)
+    ///
+    /// # Arguments
+    /// * `price_8dec` - CBE/USD price in 8-decimal fixed point
+    /// * `epoch` - Oracle epoch number
+    /// * `timestamp` - Current block timestamp (for freshness tracking)
+    pub fn update_cbe_usd_oracle_price(&mut self, price_8dec: u128, epoch: u64, timestamp: u64) {
+        self.token_pricing_state.update_cbe_usd_price(price_8dec, epoch, timestamp);
+
+        if self.token_pricing_state.dynamic_pricing_active {
+            info!(
+                "Unified pricing: Dynamic mode activated - SOV price = ${:.4}",
+                self.token_pricing_state.get_sov_price_8dec() as f64 / 100_000_000.0
+            );
+        }
+    }
+
+    /// Compute and update internal CBE/SOV ratio from bonding curve
+    /// Should be called periodically to keep the ratio current
+    ///
+    /// # Arguments
+    /// * `timestamp` - Current block timestamp (for freshness tracking)
+    pub fn update_cbe_sov_ratio_from_curve(&mut self, timestamp: u64) {
+        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+
+        // Generate CBE token ID
+        let cbe_token_id = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            CBE_NAME.hash(&mut hasher);
+            CBE_SYMBOL.hash(&mut hasher);
+            let hash = hasher.finish();
+            let mut id = [0u8; 32];
+            id[..8].copy_from_slice(&hash.to_le_bytes());
+            for i in 8..32 {
+                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
+            }
+            id
+        };
+
+        // Get CBE token from registry
+        if let Some(cbe_token) = self.bonding_curve_registry.get(&cbe_token_id) {
+            // CBE token current_price() returns SOV-per-CBE in 8-decimal fixed point
+            // This is exactly the cbe_sov_ratio we need (no additional calculation needed)
+            let cbe_sov_ratio_8dec = cbe_token.current_price() as u128;
+            
+            if cbe_sov_ratio_8dec > 0 {
+                self.token_pricing_state.update_cbe_sov_ratio(cbe_sov_ratio_8dec, timestamp);
+            }
+        }
+    }
+
+    /// Get current SOV price information for API
+    pub fn get_sov_price_info(&self) -> crate::pricing::TokenPrice {
+        let price_8dec = self.token_pricing_state.get_sov_price_8dec();
+        let price_cents = crate::pricing::PricingCalculator::to_cents(price_8dec);
+        let components = self.token_pricing_state.get_sov_components();
+        
+        crate::pricing::TokenPrice {
+            token_id: "sov".to_string(),
+            symbol: "SOV".to_string(),
+            price_usd_cents: price_cents,
+            price_mode: self.token_pricing_state.get_sov_pricing_mode(),
+            price_source: self.token_pricing_state.get_sov_price_source(),
+            components,
+            last_updated: self.token_pricing_state.last_updated,
+        }
+    }
+
+    /// Get current CBE price information for API
+    pub fn get_cbe_price_info(&self) -> Option<crate::pricing::CbePriceInfo> {
+        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+        
+        // Generate CBE token ID
+        let cbe_token_id = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            CBE_NAME.hash(&mut hasher);
+            CBE_SYMBOL.hash(&mut hasher);
+            let hash = hasher.finish();
+            let mut id = [0u8; 32];
+            id[..8].copy_from_slice(&hash.to_le_bytes());
+            for i in 8..32 {
+                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
+            }
+            id
+        };
+
+        let cbe_token = self.bonding_curve_registry.get(&cbe_token_id)?;
+        let sov_price_8dec = self.token_pricing_state.get_sov_price_8dec();
+        
+        // Calculate CBE price in USD
+        let (price_cents, components) = self.token_pricing_state.calculate_cbe_price(
+            sov_price_8dec,
+            cbe_token.current_price()
+        );
+
+        let (price_mode, price_source, oracle_confidence) = if self.token_pricing_state.cbe_usd_price.is_some() {
+            (
+                crate::pricing::PricingMode::PostGraduation,
+                crate::pricing::PriceSource::Oracle,
+                Some(0.95), // High confidence when oracle provides price
+            )
+        } else {
+            (
+                crate::pricing::PricingMode::PreGraduation,
+                crate::pricing::PriceSource::BondingCurve,
+                None,
+            )
+        };
+
+        Some(crate::pricing::CbePriceInfo {
+            price_usd_cents: price_cents,
+            price_mode,
+            price_source,
+            phase: cbe_token.phase.to_string(),
+            reserve_usd: cbe_token.reserve_balance,
+            supply: cbe_token.total_supply,
+            components,
+            oracle_confidence,
+            last_updated: self.token_pricing_state.last_updated,
+        })
     }
 
     /// Create a new blockchain with storage manager
@@ -6146,6 +6358,259 @@ impl Blockchain {
                         let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                         if let Err(e) = store_ref.put_token_contract(&token) {
                             warn!("Failed to persist token contract after creation: {}", e);
+                        }
+                    }
+                }
+                // Bonding curve transactions - Issue #1820
+                TransactionType::BondingCurveDeploy => {
+                    let deploy = transaction
+                        .bonding_curve_deploy_data
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("BondingCurveDeploy missing data"))?;
+
+                    // Validate symbol uniqueness across both token_contracts and bonding_curve_registry
+                    let symbol_upper = deploy.symbol.to_uppercase();
+                    for existing in self.token_contracts.values() {
+                        if existing.symbol.to_uppercase() == symbol_upper {
+                            return Err(anyhow::anyhow!(
+                                "Token symbol '{}' already exists in token_contracts",
+                                deploy.symbol
+                            ));
+                        }
+                    }
+                    for existing in self.bonding_curve_registry.get_all() {
+                        if existing.symbol.to_uppercase() == symbol_upper {
+                            return Err(anyhow::anyhow!(
+                                "Token symbol '{}' already exists in bonding_curve_registry",
+                                deploy.symbol
+                            ));
+                        }
+                    }
+
+                    // Build CurveType from deploy data
+                    let curve_type = match deploy.curve_type {
+                        0 => crate::contracts::bonding_curve::CurveType::Linear {
+                            base_price: deploy.base_price,
+                            slope: deploy.curve_param,
+                        },
+                        1 => crate::contracts::bonding_curve::CurveType::Exponential {
+                            base_price: deploy.base_price,
+                            growth_rate_bps: deploy.curve_param,
+                        },
+                        2 => crate::contracts::bonding_curve::CurveType::Sigmoid {
+                            max_price: deploy.base_price,
+                            midpoint_supply: deploy.midpoint_supply.unwrap_or(0),
+                            steepness: deploy.curve_param,
+                        },
+                        3 => crate::contracts::bonding_curve::CurveType::PiecewiseLinear(
+                            crate::contracts::bonding_curve::PiecewiseLinearCurve::cbe_default()
+                        ),
+                        _ => return Err(anyhow::anyhow!("Invalid curve type: {}", deploy.curve_type)),
+                    };
+
+                    // Build Threshold from deploy data
+                    let threshold = match deploy.threshold_type {
+                        0 => crate::contracts::bonding_curve::Threshold::ReserveAmount(deploy.threshold_value),
+                        1 => crate::contracts::bonding_curve::Threshold::SupplyAmount(deploy.threshold_value),
+                        2 => crate::contracts::bonding_curve::Threshold::TimeAndReserve {
+                            min_time_seconds: deploy.threshold_time_seconds.unwrap_or(0),
+                            min_reserve: deploy.threshold_value,
+                        },
+                        3 => crate::contracts::bonding_curve::Threshold::TimeAndSupply {
+                            min_time_seconds: deploy.threshold_time_seconds.unwrap_or(0),
+                            min_supply: deploy.threshold_value,
+                        },
+                        _ => return Err(anyhow::anyhow!("Invalid threshold type: {}", deploy.threshold_type)),
+                    };
+
+                    // Generate deterministic token_id
+                    let token_id_input = format!("{}:{}:{}", deploy.name, deploy.symbol, hex::encode(&deploy.creator));
+                    let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
+
+                    // Check for duplicate token_id
+                    if self.bonding_curve_registry.contains(&token_id) {
+                        return Err(anyhow::anyhow!("Bonding curve token already exists"));
+                    }
+
+                    // Get creator public key from transaction signature
+                    let creator_pk = transaction.signature.public_key.clone();
+
+                    // Get creator DID from identity registry
+                    let creator_did = self
+                        .get_identity_by_public_key(&creator_pk.dilithium_pk)
+                        .map(|id| id.did.clone())
+                        .unwrap_or_default();
+
+                    // Create the bonding curve token
+                    let token = crate::contracts::bonding_curve::BondingCurveToken::deploy(
+                        token_id,
+                        deploy.name.clone(),
+                        deploy.symbol.clone(),
+                        curve_type,
+                        threshold,
+                        deploy.sell_enabled,
+                        creator_pk,
+                        creator_did,
+                        block.height(),
+                        block.header.timestamp,
+                    )
+                    .map_err(|e| anyhow::anyhow!("BondingCurveDeploy failed: {}", e))?;
+
+                    // Register in bonding curve registry
+                    self.bonding_curve_registry
+                        .register(token)
+                        .map_err(|e| anyhow::anyhow!("BondingCurveDeploy registration failed: {}", e))?;
+
+                    // Persist to storage if available
+                    if let Some(store) = &self.store {
+                        if let Some(registered) = self.bonding_curve_registry.get(&token_id) {
+                            let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                            let storage_token_id = crate::storage::TokenId(token_id);
+                            if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, registered) {
+                                warn!("Failed to persist bonding curve token after deploy: {}", e);
+                            }
+                        }
+                    }
+                }
+                TransactionType::BondingCurveBuy => {
+                    let buy = transaction
+                        .bonding_curve_buy_data
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("BondingCurveBuy missing data"))?;
+
+                    if buy.stable_amount == 0 {
+                        return Err(anyhow::anyhow!("BondingCurveBuy amount must be > 0"));
+                    }
+
+                    // Get buyer public key from transaction signature
+                    let buyer_pk = transaction.signature.public_key.clone();
+                    if buyer_pk.key_id != buy.buyer {
+                        return Err(anyhow::anyhow!("BondingCurveBuy buyer key mismatch"));
+                    }
+
+                    // Get mutable reference to token
+                    let token = self
+                        .bonding_curve_registry
+                        .get_mut(&buy.token_id)
+                        .ok_or_else(|| anyhow::anyhow!("Bonding curve token not found"))?;
+
+                    // Execute buy
+                    let (token_amount, _event) = token
+                        .buy(buyer_pk.clone(), buy.stable_amount, block.height(), block.header.timestamp)
+                        .map_err(|e| anyhow::anyhow!("BondingCurveBuy failed: {}", e))?;
+
+                    // Validate slippage protection
+                    if token_amount < buy.min_tokens_out {
+                        return Err(anyhow::anyhow!(
+                            "BondingCurveBuy slippage exceeded: expected at least {}, got {}",
+                            buy.min_tokens_out,
+                            token_amount
+                        ));
+                    }
+
+                    // Persist to storage if available
+                    if let Some(store) = &self.store {
+                        let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                        let storage_token_id = crate::storage::TokenId(buy.token_id);
+                        if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, token) {
+                            warn!("Failed to persist bonding curve token after buy: {}", e);
+                        }
+                    }
+                }
+                TransactionType::BondingCurveSell => {
+                    let sell = transaction
+                        .bonding_curve_sell_data
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("BondingCurveSell missing data"))?;
+
+                    if sell.token_amount == 0 {
+                        return Err(anyhow::anyhow!("BondingCurveSell amount must be > 0"));
+                    }
+
+                    // Get seller public key from transaction signature
+                    let seller_pk = transaction.signature.public_key.clone();
+                    if seller_pk.key_id != sell.seller {
+                        return Err(anyhow::anyhow!("BondingCurveSell seller key mismatch"));
+                    }
+
+                    // Get mutable reference to token
+                    let token = self
+                        .bonding_curve_registry
+                        .get_mut(&sell.token_id)
+                        .ok_or_else(|| anyhow::anyhow!("Bonding curve token not found"))?;
+
+                    // Execute sell
+                    let (stable_amount, _event) = token
+                        .sell(seller_pk.clone(), sell.token_amount, block.height(), block.header.timestamp)
+                        .map_err(|e| anyhow::anyhow!("BondingCurveSell failed: {}", e))?;
+
+                    // Validate slippage protection
+                    if stable_amount < sell.min_stable_out {
+                        return Err(anyhow::anyhow!(
+                            "BondingCurveSell slippage exceeded: expected at least {}, got {}",
+                            sell.min_stable_out,
+                            stable_amount
+                        ));
+                    }
+
+                    // Persist to storage if available
+                    if let Some(store) = &self.store {
+                        let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                        let storage_token_id = crate::storage::TokenId(sell.token_id);
+                        if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, token) {
+                            warn!("Failed to persist bonding curve token after sell: {}", e);
+                        }
+                    }
+                }
+                TransactionType::BondingCurveGraduate => {
+                    let graduate = transaction
+                        .bonding_curve_graduate_data
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("BondingCurveGraduate missing data"))?;
+
+                    // Get graduator public key from transaction signature
+                    let graduator_pk = transaction.signature.public_key.clone();
+                    if graduator_pk.key_id != graduate.graduator {
+                        return Err(anyhow::anyhow!("BondingCurveGraduate graduator key mismatch"));
+                    }
+
+                    // For CBE token, validate oracle graduation gate BEFORE mutable borrow
+                    use crate::contracts::tokens::CBE_SYMBOL;
+                    let is_cbe = self
+                        .bonding_curve_registry
+                        .get(&graduate.token_id)
+                        .map(|t| t.symbol == CBE_SYMBOL && !t.phase.is_graduated())
+                        .unwrap_or(false);
+                    
+                    if is_cbe {
+                        self.validate_cbe_graduation_oracle_gate(graduate.token_id, block.header.timestamp)
+                            .map_err(|e| anyhow::anyhow!("CBE graduation gate check failed: {}", e))?;
+                    }
+
+                    // Get mutable reference to token
+                    let token = self
+                        .bonding_curve_registry
+                        .get_mut(&graduate.token_id)
+                        .ok_or_else(|| anyhow::anyhow!("Bonding curve token not found"))?;
+
+                    // Execute graduation (updates phase to Graduated)
+                    let _event = token
+                        .graduate(block.header.timestamp, block.height())
+                        .map_err(|e| anyhow::anyhow!("BondingCurveGraduate failed: {}", e))?;
+
+                    // Update registry phase
+                    self.bonding_curve_registry
+                        .update_phase(&graduate.token_id, crate::contracts::bonding_curve::Phase::Graduated)
+                        .map_err(|e| anyhow::anyhow!("BondingCurveGraduate phase update failed: {}", e))?;
+
+                    // Persist to storage if available
+                    if let Some(store) = &self.store {
+                        if let Some(updated_token) = self.bonding_curve_registry.get(&graduate.token_id) {
+                            let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
+                            let storage_token_id = crate::storage::TokenId(graduate.token_id);
+                            if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, updated_token) {
+                                warn!("Failed to persist bonding curve token after graduate: {}", e);
+                            }
                         }
                     }
                 }
@@ -12916,6 +13381,7 @@ mod oracle_storage_migration_tests {
             .try_finalize_price(crate::oracle::FinalizedOraclePrice {
                 epoch_id: 1,
                 sov_usd_price: 123_000_000,
+                cbe_usd_price: None,
             });
 
         // Emulate pre-oracle v3 payload (without oracle fields).
@@ -13054,6 +13520,7 @@ impl Blockchain {
                     let attestation = crate::oracle::OraclePriceAttestation {
                         epoch_id: data.epoch_id,
                         sov_usd_price: data.sov_usd_price,
+                        cbe_usd_price: data.cbe_usd_price,
                         timestamp: data.timestamp,
                         validator_pubkey: data.validator_pubkey,
                         signature: data.signature.clone(),
@@ -13142,6 +13609,21 @@ impl Blockchain {
                     admission,
                     crate::oracle::OracleAttestationAdmission::Finalized(_)
                 );
+
+                // Issue #1819: Update token pricing state when CBE price is finalized
+                if let crate::oracle::OracleAttestationAdmission::Finalized(ref price) = admission {
+                    if let Some(cbe_price) = price.cbe_usd_price {
+                        self.token_pricing_state.update_cbe_usd_price(
+                            cbe_price,
+                            price.epoch_id,
+                            block_timestamp,
+                        );
+                        info!(
+                            "💰 Token pricing state updated with CBE/USD price {} from oracle epoch {}",
+                            cbe_price, price.epoch_id
+                        );
+                    }
+                }
 
                 Ok(crate::execution::tx_apply::OracleAttestationOutcome {
                     epoch_id: attestation.epoch_id,
@@ -13818,6 +14300,7 @@ mod cbe_graduation_oracle_gate_tests {
             .try_finalize_price(crate::oracle::FinalizedOraclePrice {
                 epoch_id: 0,
                 sov_usd_price: 100_000_000, // $1.00
+                cbe_usd_price: None,
             });
 
         // Configure oracle to have short staleness window
@@ -13849,6 +14332,7 @@ mod cbe_graduation_oracle_gate_tests {
             .try_finalize_price(crate::oracle::FinalizedOraclePrice {
                 epoch_id: 5,
                 sov_usd_price: 100_000_000, // $1.00
+                cbe_usd_price: None,
             });
 
         blockchain.oracle_state.config.max_price_staleness_epochs = 10;
@@ -13874,6 +14358,7 @@ mod cbe_graduation_oracle_gate_tests {
             .try_finalize_price(crate::oracle::FinalizedOraclePrice {
                 epoch_id: 10,
                 sov_usd_price: 100_000_000,
+                cbe_usd_price: None,
             });
 
         blockchain.oracle_state.config.max_price_staleness_epochs = 10;
@@ -13899,6 +14384,7 @@ mod cbe_graduation_oracle_gate_tests {
             .try_finalize_price(crate::oracle::FinalizedOraclePrice {
                 epoch_id: 10,
                 sov_usd_price: 100_000_000,
+                cbe_usd_price: None,
             });
 
         blockchain.oracle_state.config.max_price_staleness_epochs = 10;

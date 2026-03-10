@@ -12,7 +12,7 @@ use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_blockchain::transaction::{
-    core::{BondingCurveBuyData, BondingCurveDeployData, BondingCurveSellData},
+    core::{BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData, BondingCurveSellData},
     Transaction,
 };
 use lib_crypto::keypair::KeyPair;
@@ -219,6 +219,35 @@ fn build_signed_curve_sell_tx(
     Ok(tx)
 }
 
+fn build_signed_curve_graduate_tx(
+    keypair: &KeyPair,
+    token_id: [u8; 32],
+    pool_id: [u8; 32],
+    sov_seed_amount: u64,
+    token_seed_amount: u64,
+) -> CliResult<Transaction> {
+    let graduate_data = BondingCurveGraduateData {
+        token_id,
+        pool_id,
+        sov_seed_amount,
+        token_seed_amount,
+        graduator: keypair.public_key.key_id,
+        nonce: 0, // Will be set by server
+    };
+
+    let mut tx = Transaction::new_bonding_curve_graduate_with_chain_id(
+        0x03,
+        graduate_data,
+        lib_crypto::Signature::default(),
+        b"curve:graduate:v1".to_vec(),
+    );
+
+    tx.signature = keypair
+        .sign(tx.signing_hash().as_bytes())
+        .map_err(|e| CliError::ConfigError(format!("Failed to sign BondingCurveGraduate tx: {e}")))?;
+    Ok(tx)
+}
+
 // ============================================================================
 // IMPERATIVE SHELL - QUIC calls and output
 // ============================================================================
@@ -267,6 +296,9 @@ pub async fn handle_curve_command_with_output<O: Output>(
         CurveAction::Info { token_id } => handle_info(cli, output, &token_id).await,
         CurveAction::Price { token_id } => handle_price(cli, output, &token_id).await,
         CurveAction::CanGraduate { token_id } => handle_can_graduate(cli, output, &token_id).await,
+        CurveAction::Graduate { token_id, pool_id, sov_seed, token_seed } => {
+            handle_graduate(cli, output, &token_id, &pool_id, sov_seed, token_seed).await
+        }
         CurveAction::Valuation { token_id } => handle_valuation(cli, output, &token_id).await,
         CurveAction::List => handle_list(cli, output).await,
     }
@@ -554,6 +586,69 @@ async fn handle_price<O: Output>(cli: &ZhtpCli, output: &O, token_id: &str) -> C
         } else {
             output.success(&format!("Price: {} USD", price))?;
         }
+    }
+
+    let formatted = format_output(&response_json, &cli.format)?;
+    output.print(&formatted)?;
+
+    Ok(())
+}
+
+/// Handle graduating token to AMM
+async fn handle_graduate<O: Output>(
+    cli: &ZhtpCli,
+    output: &O,
+    token_id: &str,
+    pool_id: &str,
+    sov_seed: u64,
+    token_seed: u64,
+) -> CliResult<()> {
+    output.info(&format!("Graduating token to AMM: {}", token_id))?;
+    output.info(&format!("Pool ID: {}, SOV seed: {}, Token seed: {}", pool_id, sov_seed, token_seed))?;
+    output.info("Signing graduate transaction with local keypair")?;
+
+    let keypair = load_default_keypair()?;
+    let token_id_bytes = parse_token_id(token_id)?;
+    let pool_id_bytes = parse_token_id(pool_id)?;
+
+    let tx = build_signed_curve_graduate_tx(&keypair, token_id_bytes, pool_id_bytes, sov_seed, token_seed)?;
+    let tx_bytes = bincode::serialize(&tx)
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
+    let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
+
+    let client = connect_default(&cli.server).await?;
+
+    let response = client
+        .post_json("/api/v1/curve/graduate", &request_body)
+        .await
+        .map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/curve/graduate".to_string(),
+            status: 0,
+            reason: e.to_string(),
+        })?;
+
+    let response_json: serde_json::Value =
+        ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+            endpoint: "/api/v1/curve/graduate".to_string(),
+            status: 0,
+            reason: format!("Failed to parse response: {}", e),
+        })?;
+
+    if response_json
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        output.success("Token graduated to AMM successfully!")?;
+        if let Some(tx_hash) = response_json.get("tx_hash").and_then(|v| v.as_str()) {
+            output.info(&format!("Transaction hash: {}", tx_hash))?;
+        }
+    } else {
+        let error = response_json
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        output.error(&format!("Failed to graduate token: {}", error))?;
     }
 
     let formatted = format_output(&response_json, &cli.format)?;

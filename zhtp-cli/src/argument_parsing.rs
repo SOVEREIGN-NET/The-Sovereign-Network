@@ -1377,6 +1377,21 @@ pub enum CurveAction {
         #[arg(short, long)]
         token_id: String,
     },
+    /// Graduate token to AMM (requires threshold to be met)
+    Graduate {
+        /// Token ID to graduate
+        #[arg(short, long)]
+        token_id: String,
+        /// AMM Pool ID to create for the graduated token
+        #[arg(short, long)]
+        pool_id: String,
+        /// SOV amount to seed into AMM pool
+        #[arg(long, default_value = "1000000")]
+        sov_seed: u64,
+        /// Token amount to seed into AMM pool
+        #[arg(long, default_value = "1000000")]
+        token_seed: u64,
+    },
     /// Get full valuation for a token
     Valuation {
         /// Token ID

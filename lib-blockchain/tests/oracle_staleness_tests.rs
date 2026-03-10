@@ -19,6 +19,7 @@ fn latest_fresh_price_returns_none_when_stale() {
     state.try_finalize_price(FinalizedOraclePrice {
         epoch_id: 0,
         sov_usd_price: 100_000_000,
+        cbe_usd_price: None,
     });
 
     // At epoch 2, price is still fresh (age = 2)
@@ -37,6 +38,7 @@ fn latest_fresh_price_returns_price_when_fresh() {
     state.try_finalize_price(FinalizedOraclePrice {
         epoch_id: 10,
         sov_usd_price: 150_000_000,
+        cbe_usd_price: None,
     });
 
     // At epoch 12, price is fresh (age = 2 <= 5)
@@ -96,6 +98,7 @@ fn cbe_graduation_blocked_with_stale_price() {
         .try_finalize_price(FinalizedOraclePrice {
             epoch_id: 0,
             sov_usd_price: 100_000_000, // $1.00
+            cbe_usd_price: None,
         });
 
     // Configure short staleness window
@@ -153,6 +156,7 @@ fn cbe_graduation_proceeds_with_fresh_price() {
         .try_finalize_price(FinalizedOraclePrice {
             epoch_id: 8,
             sov_usd_price: 100_000_000,
+            cbe_usd_price: None,
         });
 
     blockchain.oracle_state.config.max_price_staleness_epochs = 5;
@@ -174,6 +178,7 @@ fn staleness_at_exact_boundary() {
     state.try_finalize_price(FinalizedOraclePrice {
         epoch_id: 10,
         sov_usd_price: 100_000_000,
+        cbe_usd_price: None,
     });
 
     // At epoch 13, age = 3, which equals max_staleness (inclusive boundary)
