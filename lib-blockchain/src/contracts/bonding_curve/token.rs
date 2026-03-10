@@ -11,8 +11,12 @@
 
 use super::{
     events::BondingCurveEvent,
-    types::{CurveError, CurveStats, CurveType, Phase, Threshold},
+    types::{CurveError, CurveStats, CurveType, Phase, Threshold, USD_PRICE_SCALE},
 };
+
+/// Token scale: 1 whole token = 10^8 atomic units.
+/// Re-exported here for convenience.
+const TOKEN_SCALE: u64 = 100_000_000;
 use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
 
@@ -71,6 +75,18 @@ pub struct BondingCurveToken {
     /// Adding fields mid-struct corrupts deserialization of existing stored tokens.
     #[serde(default)]
     pub treasury_balance: u64,
+
+    // === Issue #1846: Graduation Tracking ===
+    /// Block height when graduation threshold was first detected as met.
+    /// Used for confirmation period (safety mechanism).
+    #[serde(default)]
+    pub graduation_pending_since_block: Option<u64>,
+    /// Last oracle SOV/USD price used for graduation check (8-decimal fixed-point).
+    #[serde(default)]
+    pub last_oracle_price: Option<u64>,
+    /// Timestamp of last oracle price update.
+    #[serde(default)]
+    pub last_oracle_price_timestamp: Option<u64>,
 }
 
 impl BondingCurveToken {
@@ -132,6 +148,10 @@ impl BondingCurveToken {
             creator_did: Some(creator_did),
             deployed_at_block,
             deployed_at_timestamp,
+            // Issue #1846: Graduation tracking initialized to None
+            graduation_pending_since_block: None,
+            last_oracle_price: None,
+            last_oracle_price_timestamp: None,
         })
     }
 
@@ -317,7 +337,9 @@ impl BondingCurveToken {
         Ok((stable_amount, event))
     }
 
-    /// Check if graduation threshold is met
+    /// Check if graduation threshold is met (for non-USD thresholds).
+    ///
+    /// For USD-based thresholds, use `check_graduation_with_oracle`.
     ///
     /// # Arguments
     /// * `current_timestamp` - Current timestamp for time-based checks
@@ -326,9 +348,87 @@ impl BondingCurveToken {
             return false;
         }
 
+        // For USD-based thresholds, require oracle check
+        if matches!(self.threshold, Threshold::ReserveValueUsd { .. }) {
+            return self.graduation_pending_since_block.is_some();
+        }
+
         let elapsed = current_timestamp.saturating_sub(self.deployed_at_timestamp);
         self.threshold
             .is_met(self.reserve_balance, self.total_supply, elapsed)
+    }
+
+    /// Issue #1846: Check graduation status with oracle price.
+    ///
+    /// This method should be called on every buy transaction to track
+    /// graduation status for USD-based thresholds.
+    ///
+    /// # Arguments
+    /// * `sov_usd_price` - Current SOV/USD oracle price (8-decimal)
+    /// * `price_timestamp` - Timestamp of oracle price
+    /// * `current_block` - Current block height
+    /// * `current_timestamp` - Current timestamp
+    ///
+    /// # Returns
+    /// `true` if graduation threshold is met and all safety checks pass
+    pub fn check_graduation_with_oracle(
+        &mut self,
+        sov_usd_price: u64,
+        price_timestamp: u64,
+        current_block: u64,
+        current_timestamp: u64,
+    ) -> bool {
+        if self.phase != Phase::Curve {
+            return false;
+        }
+
+        let Threshold::ReserveValueUsd {
+            threshold_usd: _,
+            max_price_age_seconds,
+            confirmation_blocks,
+        } = self.threshold else {
+            // Non-USD thresholds use standard can_graduate
+            return self.can_graduate(current_timestamp);
+        };
+
+        // Calculate price age
+        let price_age_seconds = current_timestamp.saturating_sub(price_timestamp);
+
+        // Safety check 1: Oracle price must not be stale
+        if price_age_seconds > max_price_age_seconds {
+            // Price is stale - reset pending status
+            self.graduation_pending_since_block = None;
+            return false;
+        }
+
+        // Check if reserve value meets threshold (ignoring confirmation period for now)
+        // We pass 0 for pending_blocks to check threshold only
+        let threshold_value_met = self.threshold.is_met_with_oracle(
+            self.reserve_balance,
+            sov_usd_price,
+            price_age_seconds,
+            0, // Ignore confirmation period for threshold check
+        );
+
+        if !threshold_value_met {
+            // Threshold not met - reset pending status
+            self.graduation_pending_since_block = None;
+            self.last_oracle_price = None;
+            self.last_oracle_price_timestamp = None;
+            return false;
+        }
+
+        // Threshold is met - update or set pending status
+        if self.graduation_pending_since_block.is_none() {
+            // First time threshold is met - set pending
+            self.graduation_pending_since_block = Some(current_block);
+            self.last_oracle_price = Some(sov_usd_price);
+            self.last_oracle_price_timestamp = Some(price_timestamp);
+        }
+
+        // Check if confirmation period is met
+        let pending_blocks = current_block.saturating_sub(self.graduation_pending_since_block.unwrap_or(current_block));
+        pending_blocks >= confirmation_blocks
     }
 
     /// Graduate the token to the next phase
@@ -352,6 +452,9 @@ impl BondingCurveToken {
         }
 
         self.phase = Phase::Graduated;
+
+        // Clear graduation tracking fields
+        self.graduation_pending_since_block = None;
 
         let event = BondingCurveEvent::Graduated {
             token_id: self.token_id,
@@ -403,6 +506,17 @@ impl BondingCurveToken {
                     ((self.total_supply as u128 * 100) / target as u128) as u8
                 }
             }
+            Threshold::ReserveValueUsd { threshold_usd, .. } => {
+                // For USD thresholds, calculate progress based on last known oracle price
+                if let Some(sov_usd_price) = self.last_oracle_price {
+                    let reserve_value_usd = (self.reserve_balance as u128)
+                        .saturating_mul(sov_usd_price as u128)
+                        .saturating_div(USD_PRICE_SCALE);
+                    ((reserve_value_usd * 100) / threshold_usd as u128) as u8
+                } else {
+                    0
+                }
+            }
             _ => 0, // Complex thresholds simplified
         };
 
@@ -414,6 +528,50 @@ impl BondingCurveToken {
             elapsed_seconds: elapsed,
             graduation_progress_percent: progress.min(100),
             can_graduate: self.can_graduate(current_timestamp),
+        }
+    }
+
+    /// Issue #1846: Calculate reserve value in USD using oracle price.
+    ///
+    /// # Arguments
+    /// * `sov_usd_price` - SOV/USD oracle price (8-decimal fixed-point, where $1.00 = 100_000_000)
+    ///
+    /// # Returns
+    /// Reserve value in USD (whole dollars)
+    ///
+    /// # Calculation
+    /// reserve_value_usd = (reserve_sov * sov_usd_price) / (TOKEN_SCALE * USD_PRICE_SCALE)
+    ///                   = reserve_sov_atomic * sov_usd_price / 10^16
+    pub fn reserve_value_usd(&self, sov_usd_price: u64) -> u64 {
+        // Both reserve_balance and sov_usd_price are 8-decimal
+        // Result needs to be divided by TOKEN_SCALE to get whole SOV, then multiplied by price
+        // Simplified: (reserve * price) / (TOKEN_SCALE * 10^8) but we want whole USD
+        // Actually: reserve_balance is already in micro-SOV, so:
+        // usd_value = (reserve_balance / TOKEN_SCALE) * (sov_usd_price / USD_PRICE_SCALE)
+        //           = (reserve_balance * sov_usd_price) / (TOKEN_SCALE * USD_PRICE_SCALE)
+        // But we want the result in whole USD, so:
+        let reserve_whole_sov = self.reserve_balance / TOKEN_SCALE;
+        ((reserve_whole_sov as u128)
+            .saturating_mul(sov_usd_price as u128)
+            .saturating_div(USD_PRICE_SCALE)) as u64
+    }
+
+    /// Issue #1846: Check if graduation is pending (confirmation period active).
+    pub fn is_graduation_pending(&self) -> bool {
+        self.graduation_pending_since_block.is_some()
+    }
+
+    /// Issue #1846: Get blocks until graduation can proceed (0 if ready).
+    pub fn blocks_until_graduation(&self, current_block: u64) -> u64 {
+        let Threshold::ReserveValueUsd { confirmation_blocks, .. } = self.threshold else {
+            return 0;
+        };
+
+        if let Some(pending_since) = self.graduation_pending_since_block {
+            let pending_blocks = current_block.saturating_sub(pending_since);
+            confirmation_blocks.saturating_sub(pending_blocks)
+        } else {
+            0
         }
     }
 
@@ -1324,5 +1482,379 @@ mod tests {
             matches!(result, Err(CurveError::InsufficientReserve)),
             "Should fail with InsufficientReserve error"
         );
+    }
+
+    // ============================================================================
+    // Issue #1846: Graduation Threshold Detection Tests
+    // ============================================================================
+
+    /// Issue #1846: Test USD-based graduation threshold with oracle.
+    /// Verifies graduation triggers at exactly $269K USD reserve value.
+    #[test]
+    fn test_usd_graduation_threshold_269k() {
+        use crate::contracts::bonding_curve::types::GRADUATION_THRESHOLD_USD;
+
+        let mut token = BondingCurveToken::deploy(
+            [20u8; 32],
+            "USD Threshold Token".to_string(),
+            "USDT".to_string(),
+            CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveValueUsd {
+                threshold_usd: GRADUATION_THRESHOLD_USD, // $269,000
+                max_price_age_seconds: 300,              // 5 minutes
+                confirmation_blocks: 3,                  // 3 blocks
+            },
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        // Oracle price: $1 SOV = 100_000_000 (8-decimal)
+        let sov_usd_price = 100_000_000; // $1.00
+
+        // Calculate SOV needed for $269K USD
+        // reserve_value_usd = (reserve_sov / TOKEN_SCALE) * sov_usd_price / USD_PRICE_SCALE
+        // For $269K at $1 SOV: need 269,000 SOV = 26,900,000,000,000 atomic units
+        let target_reserve_sov = GRADUATION_THRESHOLD_USD * TOKEN_SCALE; // 26,900,000,000,000
+
+        // Verify the math using the actual token method
+        let mut test_token = BondingCurveToken::deploy(
+            [99u8; 32],
+            "Test".to_string(),
+            "TEST".to_string(),
+            CurveType::Linear { base_price: 1, slope: 0 },
+            Threshold::ReserveAmount(1),
+            true,
+            test_pubkey(1),
+            String::new(),
+            1,
+            1,
+        ).unwrap();
+        test_token.reserve_balance = target_reserve_sov;
+        let calculated_usd = test_token.reserve_value_usd(sov_usd_price);
+        assert_eq!(calculated_usd, GRADUATION_THRESHOLD_USD, "Math check failed: got ${}", calculated_usd);
+
+        // Buy tokens to reach just below threshold
+        // With 20/80 split, need 5x the reserve amount in purchases
+        let buyer = test_pubkey(2);
+        let buy_amount = (target_reserve_sov * 5) - 5_000_000_000; // Just below
+        token.buy(buyer.clone(), buy_amount, 101, 1_600_000_100).unwrap();
+
+        // Verify reserve is just below threshold
+        assert!(
+            token.reserve_balance < target_reserve_sov,
+            "Reserve should be below threshold: {} < {}",
+            token.reserve_balance,
+            target_reserve_sov
+        );
+
+        // Check graduation with oracle - should not meet threshold yet
+        let can_graduate = token.check_graduation_with_oracle(
+            sov_usd_price,
+            1_600_000_100, // Price timestamp
+            101,           // Current block
+            1_600_000_100, // Current timestamp
+        );
+        assert!(!can_graduate, "Should not graduate below threshold");
+
+        // Buy more to reach threshold
+        token.buy(buyer.clone(), 10_000_000_000, 102, 1_600_000_200).unwrap();
+        assert!(
+            token.reserve_balance >= target_reserve_sov,
+            "Reserve should be at or above threshold: {} >= {}",
+            token.reserve_balance,
+            target_reserve_sov
+        );
+
+        // First check - should set pending but not graduate yet (confirmation period)
+        let can_graduate = token.check_graduation_with_oracle(
+            sov_usd_price,
+            1_600_000_200,
+            102,
+            1_600_000_200,
+        );
+        assert!(!can_graduate, "Should not graduate immediately (confirmation period)");
+        assert!(token.is_graduation_pending(), "Graduation should be pending");
+
+        // Check at block 105 (3 blocks after pending started)
+        let can_graduate = token.check_graduation_with_oracle(
+            sov_usd_price,
+            1_600_000_500,
+            105,
+            1_600_000_500,
+        );
+        assert!(can_graduate, "Should graduate after confirmation period");
+    }
+
+    /// Issue #1846: Test stale oracle price prevents graduation.
+    /// Safety mechanism: Graduation fails if oracle price is too old.
+    #[test]
+    fn test_usd_graduation_rejects_stale_oracle_price() {
+        use crate::contracts::bonding_curve::types::MAX_ORACLE_PRICE_AGE_SECONDS;
+
+        let mut token = BondingCurveToken::deploy(
+            [21u8; 32],
+            "Stale Price Token".to_string(),
+            "STALE".to_string(),
+            CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveValueUsd {
+                threshold_usd: 100_000,     // $100K for easier testing
+                max_price_age_seconds: 300, // 5 minutes max
+                confirmation_blocks: 1,
+            },
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        // Buy enough to reach threshold: need 100,000 SOV in reserve
+        // At 20% split, need 500,000 SOV purchases = 50,000,000,000,000
+        let buyer = test_pubkey(2);
+        token.buy(buyer.clone(), 50_000_000_000_000, 101, 1_600_000_100).unwrap();
+
+        let sov_usd_price = 100_000_000; // $1.00
+
+        // Price is fresh - should work (confirmation period of 1 block)
+        // First call sets pending
+        let _ = token.check_graduation_with_oracle(
+            sov_usd_price,
+            1_600_000_100,                  // Price timestamp (fresh)
+            102,                            // Current block
+            1_600_000_100, // Fresh timestamp
+        );
+        // Second call at block 103 should graduate
+        let can_graduate = token.check_graduation_with_oracle(
+            sov_usd_price,
+            1_600_000_100 + MAX_ORACLE_PRICE_AGE_SECONDS - 10, // Fresh
+            103,                                               // Next block
+            1_600_000_100 + MAX_ORACLE_PRICE_AGE_SECONDS - 10,
+        );
+        assert!(can_graduate, "Should graduate with fresh price");
+
+        // Reset pending state
+        token.graduation_pending_since_block = None;
+
+        // Price is stale - should fail
+        let can_graduate = token.check_graduation_with_oracle(
+            sov_usd_price,
+            1_600_000_100,                      // Price timestamp (old)
+            104,                                // Current block
+            1_600_000_100 + MAX_ORACLE_PRICE_AGE_SECONDS + 10, // Over max age
+        );
+        assert!(!can_graduate, "Should NOT graduate with stale price");
+    }
+
+    /// Issue #1846: Test confirmation period prevents premature graduation.
+    /// Safety mechanism: Must wait N blocks after threshold detected.
+    #[test]
+    fn test_usd_graduation_confirmation_period() {
+        use crate::contracts::bonding_curve::types::GRADUATION_CONFIRMATION_BLOCKS;
+
+        let mut token = BondingCurveToken::deploy(
+            [22u8; 32],
+            "Confirmation Token".to_string(),
+            "CONF".to_string(),
+            CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveValueUsd {
+                threshold_usd: 100_000,
+                max_price_age_seconds: 300,
+                confirmation_blocks: GRADUATION_CONFIRMATION_BLOCKS, // 3 blocks
+            },
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        // Buy enough to reach threshold: 100,000 SOV reserve = 500,000 SOV purchases
+        let buyer = test_pubkey(2);
+        token.buy(buyer.clone(), 50_000_000_000_000, 101, 1_600_000_100).unwrap();
+
+        let sov_usd_price = 100_000_000; // $1.00
+        let price_timestamp = 1_600_000_100;
+
+        // Block 102 - First detection (pending set)
+        let can_graduate =
+            token.check_graduation_with_oracle(sov_usd_price, price_timestamp, 102, price_timestamp);
+        assert!(!can_graduate, "Should not graduate at first detection");
+        assert!(token.is_graduation_pending(), "Should be pending");
+        assert_eq!(token.blocks_until_graduation(102), 3, "Should need 3 more blocks");
+
+        // Block 103 - 1 block later
+        let can_graduate =
+            token.check_graduation_with_oracle(sov_usd_price, price_timestamp, 103, price_timestamp);
+        assert!(!can_graduate, "Should not graduate after 1 block");
+        assert_eq!(token.blocks_until_graduation(103), 2, "Should need 2 more blocks");
+
+        // Block 104 - 2 blocks later
+        let can_graduate =
+            token.check_graduation_with_oracle(sov_usd_price, price_timestamp, 104, price_timestamp);
+        assert!(!can_graduate, "Should not graduate after 2 blocks");
+        assert_eq!(token.blocks_until_graduation(104), 1, "Should need 1 more block");
+
+        // Block 105 - 3 blocks later (confirmation met)
+        let can_graduate =
+            token.check_graduation_with_oracle(sov_usd_price, price_timestamp, 105, price_timestamp);
+        assert!(can_graduate, "Should graduate after confirmation period");
+        assert_eq!(token.blocks_until_graduation(105), 0, "Should be ready");
+    }
+
+    /// Issue #1846: Test reserve value calculation with different oracle prices.
+    #[test]
+    fn test_reserve_value_usd_calculation() {
+        let token = BondingCurveToken::deploy(
+            [23u8; 32],
+            "Value Calc Token".to_string(),
+            "VAL".to_string(),
+            CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveValueUsd {
+                threshold_usd: 269_000,
+                max_price_age_seconds: 300,
+                confirmation_blocks: 3,
+            },
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        // Test with different oracle prices
+        // reserve_value_usd = (reserve_sov * sov_usd_price) / USD_PRICE_SCALE
+
+        // Empty reserve = $0
+        let value1 = token.reserve_value_usd(100_000_000); // $1.00
+        assert_eq!(value1, 0, "Empty reserve = $0");
+
+        // Buy some tokens first: 10,000 SOV worth at $0.10 = 100,000 SOV tokens
+        // Reserve gets 20% = 20,000 SOV = 2,000,000,000,000 atomic
+        let mut token2 = token;
+        let buyer = test_pubkey(2);
+        token2.buy(buyer, 1_000_000_000_000, 101, 1_600_000_100).unwrap();
+
+        // Check reserve balance
+        let reserve_sov = token2.reserve_balance;
+        assert_eq!(reserve_sov, 200_000_000_000, "Reserve should be 2000 SOV (20% of 10,000)");
+
+        // $1.00 SOV price, 2000 SOV reserve = $2,000
+        let value2 = token2.reserve_value_usd(100_000_000);
+        assert_eq!(value2, 2000, "2000 SOV at $1 = $2,000");
+
+        // $2.00 SOV price, 2000 SOV reserve = $4,000
+        let value3 = token2.reserve_value_usd(200_000_000);
+        assert_eq!(value3, 4000, "2000 SOV at $2 = $4,000");
+
+        // $0.50 SOV price, 2000 SOV reserve = $1,000
+        let value4 = token2.reserve_value_usd(50_000_000);
+        assert_eq!(value4, 1000, "2000 SOV at $0.50 = $1,000");
+    }
+
+    /// Issue #1846: Test graduation clears pending state.
+    #[test]
+    fn test_graduation_clears_pending_state() {
+        let mut token = BondingCurveToken::deploy(
+            [24u8; 32],
+            "Clear Pending Token".to_string(),
+            "CLR".to_string(),
+            CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveValueUsd {
+                threshold_usd: 100_000,
+                max_price_age_seconds: 300,
+                confirmation_blocks: 1,
+            },
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        // Buy enough to reach threshold: 100,000 SOV reserve needed
+        // 20% split: need 500,000 SOV purchases = 50,000,000,000,000
+        let buyer = test_pubkey(2);
+        token.buy(buyer, 50_000_000_000_000, 101, 1_600_000_100).unwrap();
+
+        // Trigger graduation (block 102 sets pending, block 103 graduates)
+        let _ = token.check_graduation_with_oracle(100_000_000, 1_600_000_100, 102, 1_600_000_100);
+        assert!(
+            token.check_graduation_with_oracle(100_000_000, 1_600_000_100, 103, 1_600_000_100),
+            "Should be able to graduate"
+        );
+
+        // Verify pending state exists
+        assert!(token.is_graduation_pending(), "Should be pending");
+        assert!(token.graduation_pending_since_block.is_some(), "Should have pending block");
+
+        // Graduate
+        token.graduate(1_600_000_200, 103).unwrap();
+
+        // Verify pending state is cleared
+        assert!(!token.is_graduation_pending(), "Should not be pending after graduation");
+        assert!(token.graduation_pending_since_block.is_none(), "Pending block should be cleared");
+        assert!(matches!(token.phase, Phase::Graduated), "Should be graduated");
+    }
+
+    /// Issue #1846: Test non-USD threshold still works.
+    #[test]
+    fn test_non_usd_threshold_unchanged() {
+        let mut token = BondingCurveToken::deploy(
+            [25u8; 32],
+            "Non-USD Token".to_string(),
+            "NONUSD".to_string(),
+            CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveAmount(5_000_000_000), // 5000 SOV
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        let buyer = test_pubkey(2);
+
+        // Buy enough to reach threshold (need 25,000 SOV at 20% split)
+        token.buy(buyer.clone(), 20_000_000_000, 101, 1_600_000_100).unwrap();
+        assert!(!token.can_graduate(1_600_000_100), "Should not graduate yet");
+
+        token.buy(buyer, 6_000_000_000, 102, 1_600_000_200).unwrap();
+        assert!(token.can_graduate(1_600_000_200), "Should graduate at reserve threshold");
+
+        // Oracle check should delegate to standard can_graduate for non-USD thresholds
+        let can_graduate = token.check_graduation_with_oracle(
+            100_000_000,   // SOV price
+            1_600_000_200, // Price timestamp
+            103,           // Current block
+            1_600_000_300, // Current timestamp
+        );
+        assert!(can_graduate, "Oracle check should work for non-USD thresholds");
     }
 }
