@@ -16,6 +16,23 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Token scale: 1 whole token = 10^8 atomic units (8 decimals).
+/// Matches `pricing::SUPPLY_SCALE`; defined here to avoid cross-module imports.
+const TOKEN_SCALE: u64 = 100_000_000;
+
+/// Basis points denominator (10_000 bps = 100%)
+const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
+
+/// Maximum iterations for the iterative buy approximation (overflow guard)
+const MAX_BUY_ITERATIONS: u32 = 1_000;
+
+/// Maximum supply-in-whole-tokens fed into growth-rate exponential to prevent overflow
+const MAX_SUPPLY_WHOLE_FOR_GROWTH: u64 = 100;
+
+/// Sigmoid: divisor that produces half-max price at midpoint supply
+/// = 2 × TOKEN_SCALE, derived from: ratio(midpoint) × max_price / (2 × TOKEN_SCALE) = max_price / 2
+const SIGMOID_HALF_MAX_DIVISOR: u128 = 2 * TOKEN_SCALE as u128;
+
 /// Token lifecycle phase
 ///
 /// Explicit state machine for bonding curve → AMM graduation.
@@ -110,7 +127,7 @@ impl CurveType {
             CurveType::Linear { base_price, slope } => {
                 // price = base_price + slope × supply
                 // Note: supply is in atomic units, need to normalize
-                let supply_whole = supply / 100_000_000; // Convert to whole tokens
+                let supply_whole = supply / TOKEN_SCALE; // Convert to whole tokens
                 base_price.saturating_add(slope.saturating_mul(supply_whole))
             }
             CurveType::Exponential {
@@ -120,13 +137,13 @@ impl CurveType {
                 // For small growth rates, use approximation
                 // price = base_price × (1 + rate)^supply
                 // Simplified: linear approximation for small supplies
-                let supply_whole = supply / 100_000_000;
-                let multiplier = 10_000u64.saturating_add(
-                    growth_rate_bps.saturating_mul(supply_whole.min(1000)), // Cap to prevent overflow
+                let supply_whole = supply / TOKEN_SCALE;
+                let multiplier = BASIS_POINTS_DENOMINATOR.saturating_add(
+                    growth_rate_bps.saturating_mul(supply_whole.min(MAX_SUPPLY_WHOLE_FOR_GROWTH)),
                 );
                 (*base_price as u128)
                     .saturating_mul(multiplier as u128)
-                    .saturating_div(10_000) as u64
+                    .saturating_div(BASIS_POINTS_DENOMINATOR as u128) as u64
             }
             CurveType::Sigmoid {
                 max_price,
@@ -139,19 +156,19 @@ impl CurveType {
                 // For supply >> midpoint: price ≈ max_price
                 if supply <= *midpoint_supply {
                     let ratio = (supply as u128)
-                        .saturating_mul(100_000_000)
+                        .saturating_mul(TOKEN_SCALE as u128)
                         .saturating_div(*midpoint_supply as u128);
                     (*max_price as u128)
                         .saturating_mul(ratio)
-                        .saturating_div(2_000_000_00) as u64 // Half max at midpoint
+                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR) as u64
                 } else {
                     let excess = supply.saturating_sub(*midpoint_supply);
-                    let approach_factor = excess.saturating_mul(*steepness).min(100_000_000);
+                    let approach_factor = excess.saturating_mul(*steepness).min(TOKEN_SCALE);
                     let half_max = (*max_price).saturating_div(2);
                     let remaining = (*max_price).saturating_sub(half_max);
                     let additional = (remaining as u128)
                         .saturating_mul(approach_factor as u128)
-                        .saturating_div(100_000_000) as u64;
+                        .saturating_div(TOKEN_SCALE as u128) as u64;
                     half_max.saturating_add(additional)
                 }
             }
@@ -198,27 +215,27 @@ impl CurveType {
                 if *slope == 0 {
                     // Constant price: tokens = stable / base
                     return (stable_amount as u128)
-                        .saturating_mul(100_000_000)
+                        .saturating_mul(TOKEN_SCALE as u128)
                         .saturating_div((*base_price).max(1) as u128)
                         as u64;
                 }
 
-                let supply_whole = current_supply / 100_000_000;
+                let supply_whole = current_supply / TOKEN_SCALE;
                 let mut tokens_out: u64 = 0;
                 let mut remaining_stable = stable_amount;
                 let mut current_price =
                     (*base_price).saturating_add((*slope).saturating_mul(supply_whole));
 
-                // Iterative approximation (max 1000 iterations for safety)
-                for _ in 0..1000 {
+                // Iterative approximation (MAX_BUY_ITERATIONS cap prevents unbounded loops)
+                for _ in 0..MAX_BUY_ITERATIONS {
                     if remaining_stable == 0 || current_price == 0 {
                         break;
                     }
 
-                    // Buy 1 token at a time (in atomic units)
+                    // Buy one atomic-unit chunk at a time
                     let token_chunk = remaining_stable
                         .saturating_div(current_price)
-                        .min(100_000_000);
+                        .min(TOKEN_SCALE);
                     if token_chunk == 0 {
                         break;
                     }
@@ -227,11 +244,11 @@ impl CurveType {
                     remaining_stable = remaining_stable.saturating_sub(
                         (token_chunk as u128)
                             .saturating_mul(current_price as u128)
-                            .saturating_div(100_000_000) as u64,
+                            .saturating_div(TOKEN_SCALE as u128) as u64,
                     );
 
                     // Update price for next iteration
-                    let new_supply_whole = supply_whole.saturating_add(tokens_out / 100_000_000);
+                    let new_supply_whole = supply_whole.saturating_add(tokens_out / TOKEN_SCALE);
                     current_price =
                         (*base_price).saturating_add((*slope).saturating_mul(new_supply_whole));
                 }
@@ -243,15 +260,15 @@ impl CurveType {
                 growth_rate_bps,
             } => {
                 // Approximate: treat as linear with average growth
-                let supply_whole = current_supply / 100_000_000;
+                let supply_whole = current_supply / TOKEN_SCALE;
                 let current_price = (*base_price).saturating_add(
                     (*base_price)
-                        .saturating_mul((*growth_rate_bps).saturating_mul(supply_whole.min(100)))
-                        / 10_000,
+                        .saturating_mul((*growth_rate_bps).saturating_mul(supply_whole.min(MAX_SUPPLY_WHOLE_FOR_GROWTH)))
+                        / BASIS_POINTS_DENOMINATOR,
                 );
 
                 (stable_amount as u128)
-                    .saturating_mul(100_000_000)
+                    .saturating_mul(TOKEN_SCALE as u128)
                     .saturating_div(current_price.max(1) as u128) as u64
             }
             CurveType::Sigmoid {
@@ -262,17 +279,17 @@ impl CurveType {
                 // Approximate based on current price level
                 let current_price = if current_supply <= *midpoint_supply {
                     let ratio = (current_supply as u128)
-                        .saturating_mul(100_000_000)
+                        .saturating_mul(TOKEN_SCALE as u128)
                         .saturating_div(*midpoint_supply as u128);
                     (*max_price as u128)
                         .saturating_mul(ratio)
-                        .saturating_div(2_000_000_00) as u64
+                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR) as u64
                 } else {
                     (*max_price).saturating_div(2)
                 };
 
                 (stable_amount as u128)
-                    .saturating_mul(100_000_000)
+                    .saturating_mul(TOKEN_SCALE as u128)
                     .saturating_div(current_price.max(1) as u128) as u64
             }
         }
@@ -293,8 +310,8 @@ impl CurveType {
             }
             CurveType::Linear { base_price, slope } => {
                 // Area under curve from (supply - tokens) to supply
-                let supply_whole = current_supply / 100_000_000;
-                let tokens_whole = token_amount / 100_000_000;
+                let supply_whole = current_supply / TOKEN_SCALE;
+                let tokens_whole = token_amount / TOKEN_SCALE;
                 let start_supply = supply_whole.saturating_sub(tokens_whole);
 
                 // Integral: base×tokens + slope/2×(supply² - start²)
@@ -312,42 +329,42 @@ impl CurveType {
                 base_price,
                 growth_rate_bps,
             } => {
-                let supply_whole = current_supply / 100_000_000;
-                let tokens_whole = token_amount / 100_000_000;
+                let supply_whole = current_supply / TOKEN_SCALE;
+                let tokens_whole = token_amount / TOKEN_SCALE;
                 let avg_supply = supply_whole.saturating_sub(tokens_whole / 2);
 
                 let avg_price = (*base_price).saturating_add(
-                    (*base_price).saturating_mul((*growth_rate_bps).saturating_mul(avg_supply.min(100)))
-                        / 10_000,
+                    (*base_price).saturating_mul((*growth_rate_bps).saturating_mul(avg_supply.min(MAX_SUPPLY_WHOLE_FOR_GROWTH)))
+                        / BASIS_POINTS_DENOMINATOR,
                 );
 
                 (token_amount as u128)
                     .saturating_mul(avg_price as u128)
-                    .saturating_div(100_000_000) as u64
+                    .saturating_div(TOKEN_SCALE as u128) as u64
             }
             CurveType::Sigmoid {
                 max_price,
                 midpoint_supply,
                 steepness: _,
             } => {
-                let supply_whole = current_supply / 100_000_000;
-                let tokens_whole = token_amount / 100_000_000;
+                let supply_whole = current_supply / TOKEN_SCALE;
+                let tokens_whole = token_amount / TOKEN_SCALE;
                 let avg_supply = supply_whole.saturating_sub(tokens_whole / 2);
 
                 let avg_price = if avg_supply <= *midpoint_supply {
                     let ratio = (avg_supply as u128)
-                        .saturating_mul(100_000_000)
+                        .saturating_mul(TOKEN_SCALE as u128)
                         .saturating_div(*midpoint_supply as u128);
                     (*max_price as u128)
                         .saturating_mul(ratio)
-                        .saturating_div(2_000_000_00) as u64
+                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR) as u64
                 } else {
                     (*max_price).saturating_div(2)
                 };
 
                 (token_amount as u128)
                     .saturating_mul(avg_price as u128)
-                    .saturating_div(100_000_000) as u64
+                    .saturating_div(TOKEN_SCALE as u128) as u64
             }
         }
     }
@@ -401,7 +418,7 @@ impl Threshold {
     pub fn description(&self) -> String {
         match self {
             Threshold::ReserveAmount(r) => format!("Reserve >= ${}", r / 100),
-            Threshold::SupplyAmount(s) => format!("Supply >= {} tokens", s / 100_000_000),
+            Threshold::SupplyAmount(s) => format!("Supply >= {} tokens", s / TOKEN_SCALE),
             Threshold::TimeAndReserve {
                 min_time_seconds,
                 min_reserve,
