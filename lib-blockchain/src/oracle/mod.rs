@@ -1146,6 +1146,10 @@ impl OracleState {
         }
 
         // Check if SOV price has reached threshold (only if not already finalized)
+        let signer_set = epoch_state
+            .price_signers
+            .entry(attestation.sov_usd_price)
+            .or_default();
         if !epoch_state.finalized && signer_set.len() >= threshold {
             epoch_state.finalized = true;
             epoch_state.winning_price = Some(attestation.sov_usd_price);

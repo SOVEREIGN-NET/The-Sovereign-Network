@@ -256,6 +256,9 @@ pub struct Blockchain {
     /// Tracks all bonding curve tokens from deployment through AMM graduation
     #[serde(default)]
     pub bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry,
+    /// CBE corporate equity token with 100B genesis allocation and vesting (Issue #1843)
+    #[serde(default)]
+    pub cbe_token: crate::contracts::tokens::CbeToken,
     /// AMM liquidity pools for graduated bonding curve tokens
     /// Pool ID -> SovSwapPool mapping
     #[serde(default)]
@@ -704,6 +707,7 @@ impl BlockchainV1 {
             executor: None,
             treasury_kernel: None,
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
+            cbe_token: crate::contracts::tokens::CbeToken::new(),
             amm_pools: HashMap::new(),
             governance_phase: crate::dao::GovernancePhase::default(),
             council_members: Vec::new(),
@@ -1161,6 +1165,9 @@ impl BlockchainStorageV3 {
             // Bonding curve registry
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
 
+            // CBE corporate equity token (initialized from storage or genesis)
+            cbe_token: crate::contracts::tokens::CbeToken::new(),
+
             // AMM pools - initialize empty, will be populated from storage
             amm_pools: HashMap::new(),
             // DAO Bootstrap Council
@@ -1334,6 +1341,7 @@ impl Blockchain {
             executor: None,
             treasury_kernel: None,
             bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry::new(),
+            cbe_token: crate::contracts::tokens::CbeToken::new(),
             amm_pools: HashMap::new(),
             governance_phase: crate::dao::GovernancePhase::default(),
             council_members: Vec::new(),
@@ -1384,12 +1392,13 @@ impl Blockchain {
     /// Initialize CBE (Community Bonding Experiment) as a built-in bonding curve token.
     ///
     /// Uses the document-compliant piecewise linear curve with 4 supply bands.
-    /// This provides proper price discovery as supply grows from 0 to 100B CBE.
+    /// Initializes the 100B CBE token allocation with vesting schedules.
     ///
     /// Issue #1842: Piecewise Linear Bonding Curve Mathematics
+    /// Issue #1843: Genesis Allocation - 100B Supply Distribution
     fn initialize_cbe_genesis(&mut self) {
         use crate::contracts::bonding_curve::{BondingCurveToken, CurveType, Threshold, PiecewiseLinearCurve};
-        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL, CbeToken, VestingPool};
 
         // Generate deterministic CBE token ID (same as CbeToken)
         let token_id = {
@@ -1411,6 +1420,9 @@ impl Blockchain {
         if self.bonding_curve_registry.contains(&token_id) {
             return;
         }
+
+        // Initialize CBE corporate equity token with 100B allocation (Issue #1843)
+        self.initialize_cbe_token_genesis();
 
         // Create genesis creator key
         let genesis_creator = PublicKey {
@@ -1447,6 +1459,108 @@ impl Blockchain {
                 warn!("Failed to deploy CBE genesis token: {}", e);
             }
         }
+    }
+
+    /// Initialize CBE corporate equity token with 100B genesis allocation and vesting (Issue #1843)
+    ///
+    /// Allocations:
+    /// - Compensation Pool: 40% (40B) - No vesting
+    /// - Operational Treasury: 30% (30B) - 12-month cliff, 36-month vest
+    /// - Performance Incentives: 20% (20B) - 6-month cliff, 24-month vest
+    /// - Strategic Reserves: 10% (10B) - 12-month cliff, 48-month vest
+    fn initialize_cbe_token_genesis(&mut self) {
+        use crate::contracts::tokens::{CbeToken, VestingPool};
+
+        // Skip if already initialized
+        if self.cbe_token.is_initialized() {
+            return;
+        }
+
+        // Create pool addresses (deterministic based on pool type)
+        let compensation_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x01; 32], // 0x01... compensation pool
+        };
+        let operational_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x02; 32], // 0x02... operational treasury
+        };
+        let performance_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x03; 32], // 0x03... performance incentives
+        };
+        let strategic_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x04; 32], // 0x04... strategic reserves
+        };
+
+        // Initialize the token with 40/30/20/10 distribution
+        if let Err(e) = self.cbe_token.init(
+            &compensation_addr,
+            &operational_addr,
+            &performance_addr,
+            &strategic_addr,
+        ) {
+            warn!("Failed to initialize CBE token: {}", e);
+            return;
+        }
+
+        // Get genesis timestamp for vesting calculations
+        let genesis_timestamp = self.get_genesis_timestamp();
+        let start_block = 0u64;
+
+        // Approximate blocks per month (assuming ~5 second block time = ~518,400 blocks/month)
+        const BLOCKS_PER_MONTH: u64 = 518_400;
+
+        // Add vesting schedules for pools that require vesting
+
+        // Operational Treasury: 12-month cliff, 36-month total vest
+        // Total: 30B CBE
+        if let Err(e) = self.cbe_token.create_vesting(
+            &operational_addr,
+            30_000_000_000, // 30B
+            start_block,
+            36 * BLOCKS_PER_MONTH, // 36 months
+            12 * BLOCKS_PER_MONTH, // 12 month cliff
+            VestingPool::Operational,
+        ) {
+            warn!("Failed to create operational vesting: {}", e);
+        }
+
+        // Performance Incentives: 6-month cliff, 24-month total vest
+        // Total: 20B CBE
+        if let Err(e) = self.cbe_token.create_vesting(
+            &performance_addr,
+            20_000_000_000, // 20B
+            start_block,
+            24 * BLOCKS_PER_MONTH, // 24 months
+            6 * BLOCKS_PER_MONTH,  // 6 month cliff
+            VestingPool::Performance,
+        ) {
+            warn!("Failed to create performance vesting: {}", e);
+        }
+
+        // Strategic Reserves: 12-month cliff, 48-month total vest
+        // Total: 10B CBE
+        if let Err(e) = self.cbe_token.create_vesting(
+            &strategic_addr,
+            10_000_000_000, // 10B
+            start_block,
+            48 * BLOCKS_PER_MONTH, // 48 months
+            12 * BLOCKS_PER_MONTH, // 12 month cliff
+            VestingPool::Strategic,
+        ) {
+            warn!("Failed to create strategic vesting: {}", e);
+        }
+
+        // Compensation Pool: No vesting (immediately available)
+        // Total: 40B CBE - no vesting schedule needed
+
+        info!("CBE token initialized: 100B supply with vesting schedules");
     }
 
     /// Get the genesis block timestamp
@@ -14427,5 +14541,185 @@ mod cbe_graduation_oracle_gate_tests {
             result.is_ok(),
             "Already graduated tokens should skip oracle gate"
         );
+    }
+}
+
+
+#[cfg(test)]
+mod cbe_genesis_allocation_tests {
+    use super::*;
+    use crate::contracts::tokens::{
+        CBE_TOTAL_SUPPLY, CBE_COMPENSATION_POOL, CBE_OPERATIONAL_TREASURY,
+        CBE_PERFORMANCE_INCENTIVES, CBE_STRATEGIC_RESERVES, VestingPool
+    };
+
+    #[test]
+    fn test_cbe_token_initialized_at_genesis() {
+        let blockchain = Blockchain::new().expect("Failed to create blockchain");
+        
+        // CBE token should be initialized
+        assert!(blockchain.cbe_token.is_initialized(), "CBE token should be initialized at genesis");
+    }
+
+    #[test]
+    fn test_cbe_total_supply_is_100b() {
+        let blockchain = Blockchain::new().expect("Failed to create blockchain");
+        
+        assert_eq!(blockchain.cbe_token.total_supply(), CBE_TOTAL_SUPPLY);
+        assert_eq!(blockchain.cbe_token.total_supply(), 100_000_000_000);
+    }
+
+    #[test]
+    fn test_cbe_compensation_pool_allocation() {
+        let blockchain = Blockchain::new().expect("Failed to create blockchain");
+        
+        // Compensation pool address is [0x01; 32]
+        let compensation_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x01; 32],
+        };
+        
+        assert_eq!(blockchain.cbe_token.balance_of(&compensation_addr), CBE_COMPENSATION_POOL);
+        assert_eq!(blockchain.cbe_token.balance_of(&compensation_addr), 40_000_000_000);
+    }
+
+    #[test]
+    fn test_cbe_operational_treasury_allocation() {
+        let blockchain = Blockchain::new().expect("Failed to create blockchain");
+        
+        let operational_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x02; 32],
+        };
+        
+        assert_eq!(blockchain.cbe_token.balance_of(&operational_addr), CBE_OPERATIONAL_TREASURY);
+        assert_eq!(blockchain.cbe_token.balance_of(&operational_addr), 30_000_000_000);
+    }
+
+    #[test]
+    fn test_cbe_performance_incentives_allocation() {
+        let blockchain = Blockchain::new().expect("Failed to create blockchain");
+        
+        let performance_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x03; 32],
+        };
+        
+        assert_eq!(blockchain.cbe_token.balance_of(&performance_addr), CBE_PERFORMANCE_INCENTIVES);
+        assert_eq!(blockchain.cbe_token.balance_of(&performance_addr), 20_000_000_000);
+    }
+
+    #[test]
+    fn test_cbe_strategic_reserves_allocation() {
+        let blockchain = Blockchain::new().expect("Failed to create blockchain");
+        
+        let strategic_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x04; 32],
+        };
+        
+        assert_eq!(blockchain.cbe_token.balance_of(&strategic_addr), CBE_STRATEGIC_RESERVES);
+        assert_eq!(blockchain.cbe_token.balance_of(&strategic_addr), 10_000_000_000);
+    }
+
+    #[test]
+    fn test_cbe_vesting_schedules_created() {
+        let blockchain = Blockchain::new().expect("Failed to create blockchain");
+        
+        // Operational should have vesting
+        let operational_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x02; 32],
+        };
+        let operational_schedules = blockchain.cbe_token.get_vesting_schedules(&operational_addr);
+        assert_eq!(operational_schedules.len(), 1);
+        assert_eq!(operational_schedules[0].pool, VestingPool::Operational);
+        assert_eq!(operational_schedules[0].total_amount, 30_000_000_000);
+        
+        // Performance should have vesting
+        let performance_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x03; 32],
+        };
+        let performance_schedules = blockchain.cbe_token.get_vesting_schedules(&performance_addr);
+        assert_eq!(performance_schedules.len(), 1);
+        assert_eq!(performance_schedules[0].pool, VestingPool::Performance);
+        assert_eq!(performance_schedules[0].total_amount, 20_000_000_000);
+        
+        // Strategic should have vesting
+        let strategic_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x04; 32],
+        };
+        let strategic_schedules = blockchain.cbe_token.get_vesting_schedules(&strategic_addr);
+        assert_eq!(strategic_schedules.len(), 1);
+        assert_eq!(strategic_schedules[0].pool, VestingPool::Strategic);
+        assert_eq!(strategic_schedules[0].total_amount, 10_000_000_000);
+    }
+
+    #[test]
+    fn test_cbe_compensation_no_vesting() {
+        let blockchain = Blockchain::new().expect("Failed to create blockchain");
+        
+        // Compensation pool should NOT have vesting (immediately available)
+        let compensation_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x01; 32],
+        };
+        let compensation_schedules = blockchain.cbe_token.get_vesting_schedules(&compensation_addr);
+        assert_eq!(compensation_schedules.len(), 0, "Compensation pool should have no vesting");
+    }
+
+    #[test]
+    fn test_cbe_bonding_curve_starts_with_zero_supply() {
+        let blockchain = Blockchain::new().expect("Failed to create blockchain");
+        
+        // Find the CBE bonding curve token
+        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let token_id = {
+            let mut hasher = DefaultHasher::new();
+            CBE_NAME.hash(&mut hasher);
+            CBE_SYMBOL.hash(&mut hasher);
+            let hash = hasher.finish();
+            let mut id = [0u8; 32];
+            id[..8].copy_from_slice(&hash.to_le_bytes());
+            for i in 8..32 {
+                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
+            }
+            id
+        };
+        
+        let cbe_curve_token = blockchain.bonding_curve_registry.get(&token_id)
+            .expect("CBE bonding curve token should exist");
+        
+        // Bonding curve should start with 0 circulating supply
+        assert_eq!(cbe_curve_token.total_supply, 0, "CBE bonding curve should start with 0 circulating supply");
+    }
+
+    #[test]
+    fn test_cbe_minting_disabled() {
+        let blockchain = Blockchain::new().expect("Failed to create blockchain");
+        
+        let test_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x99; 32],
+        };
+        
+        // Attempt to mint should fail
+        let result = blockchain.cbe_token.mint(&test_addr, 1000);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Minting is disabled after initialization");
     }
 }
