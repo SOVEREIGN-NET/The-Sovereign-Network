@@ -529,7 +529,8 @@ impl OracleHandler {
                     } else {
                         0.0
                     };
-                    let stats = token.get_stats(block_timestamp);
+                    let current_block = bc.latest_block().map(|b| b.header.height).unwrap_or(0);
+                    let stats = token.get_stats(block_timestamp, current_block);
                     json!({
                         "pair": pair.as_str(),
                         "source": "bonding_curve_model",

@@ -343,14 +343,19 @@ impl BondingCurveToken {
     ///
     /// # Arguments
     /// * `current_timestamp` - Current timestamp for time-based checks
-    pub fn can_graduate(&self, current_timestamp: u64) -> bool {
+    pub fn can_graduate(&self, current_timestamp: u64, current_block: u64) -> bool {
         if self.phase != Phase::Curve {
             return false;
         }
 
-        // For USD-based thresholds, require oracle check
-        if matches!(self.threshold, Threshold::ReserveValueUsd { .. }) {
-            return self.graduation_pending_since_block.is_some();
+        // For USD-based thresholds, require oracle confirmation period to have elapsed
+        if let Threshold::ReserveValueUsd { confirmation_blocks, .. } = self.threshold {
+            return match self.graduation_pending_since_block {
+                Some(pending_since) => {
+                    current_block.saturating_sub(pending_since) >= confirmation_blocks
+                }
+                None => false,
+            };
         }
 
         let elapsed = current_timestamp.saturating_sub(self.deployed_at_timestamp);
@@ -388,7 +393,7 @@ impl BondingCurveToken {
             confirmation_blocks,
         } = self.threshold else {
             // Non-USD thresholds use standard can_graduate
-            return self.can_graduate(current_timestamp);
+            return self.can_graduate(current_timestamp, current_block);
         };
 
         // Calculate price age
@@ -447,19 +452,8 @@ impl BondingCurveToken {
         current_timestamp: u64,
         block_height: u64,
     ) -> Result<BondingCurveEvent, CurveError> {
-        if !self.can_graduate(current_timestamp) {
+        if !self.can_graduate(current_timestamp, block_height) {
             return Err(CurveError::ThresholdNotMet);
-        }
-
-        // For USD thresholds, also verify the confirmation period has elapsed using block height
-        if let Threshold::ReserveValueUsd { confirmation_blocks, .. } = self.threshold {
-            let pending_since = self
-                .graduation_pending_since_block
-                .ok_or(CurveError::ThresholdNotMet)?;
-            let pending_blocks = block_height.saturating_sub(pending_since);
-            if pending_blocks < confirmation_blocks {
-                return Err(CurveError::ThresholdNotMet);
-            }
         }
 
         self.phase = Phase::Graduated;
@@ -500,7 +494,7 @@ impl BondingCurveToken {
     ///
     /// # Arguments
     /// * `current_timestamp` - Current timestamp
-    pub fn get_stats(&self, current_timestamp: u64) -> CurveStats {
+    pub fn get_stats(&self, current_timestamp: u64, current_block: u64) -> CurveStats {
         let elapsed = current_timestamp.saturating_sub(self.deployed_at_timestamp);
 
         // Calculate graduation progress
@@ -523,8 +517,7 @@ impl BondingCurveToken {
                 // For USD thresholds, calculate progress based on last known oracle price.
                 // Multiply first to preserve sub-SOV precision.
                 if let Some(sov_usd_price) = self.last_oracle_price {
-                    let reserve_whole_sov = self.reserve_balance / TOKEN_SCALE;
-                    let reserve_value_usd = (reserve_whole_sov as u128)
+                    let reserve_value_usd = (self.reserve_balance as u128)
                         .saturating_mul(sov_usd_price as u128)
                         .saturating_div(TOKEN_SCALE as u128 * USD_PRICE_SCALE);
                     // Compute percent in u128, clamp to 100 before casting to u8 to prevent wrap
@@ -548,7 +541,7 @@ impl BondingCurveToken {
             current_price: self.current_price(),
             elapsed_seconds: elapsed,
             graduation_progress_percent: progress.min(100),
-            can_graduate: self.can_graduate(current_timestamp),
+            can_graduate: self.can_graduate(current_timestamp, current_block),
         }
     }
 
@@ -561,20 +554,17 @@ impl BondingCurveToken {
     /// Reserve value in USD (whole dollars)
     ///
     /// # Calculation
-    /// reserve_value_usd = (reserve_sov * sov_usd_price) / (TOKEN_SCALE * USD_PRICE_SCALE)
+    /// reserve_value_usd = (reserve_sov_atomic * sov_usd_price) / (TOKEN_SCALE * USD_PRICE_SCALE)
     ///                   = reserve_sov_atomic * sov_usd_price / 10^16
-    pub fn reserve_value_usd(&self, sov_usd_price: u64) -> u64 {
-        // Both reserve_balance and sov_usd_price are 8-decimal
-        // Result needs to be divided by TOKEN_SCALE to get whole SOV, then multiplied by price
-        // Simplified: (reserve * price) / (TOKEN_SCALE * 10^8) but we want whole USD
-        // Actually: reserve_balance is already in micro-SOV, so:
-        // usd_value = (reserve_balance / TOKEN_SCALE) * (sov_usd_price / USD_PRICE_SCALE)
-        //           = (reserve_balance * sov_usd_price) / (TOKEN_SCALE * USD_PRICE_SCALE)
-        // But we want the result in whole USD, so:
-        let reserve_whole_sov = self.reserve_balance / TOKEN_SCALE;
-        ((reserve_whole_sov as u128)
-            .saturating_mul(sov_usd_price as u128)
-            .saturating_div(USD_PRICE_SCALE)) as u64
+    ///
+    /// Returns `Err(CurveError::Overflow)` if intermediate or final values exceed their types.
+    pub fn reserve_value_usd(&self, sov_usd_price: u64) -> Result<u64, CurveError> {
+        let numerator = (self.reserve_balance as u128)
+            .checked_mul(sov_usd_price as u128)
+            .ok_or(CurveError::Overflow)?;
+        let denominator = TOKEN_SCALE as u128 * USD_PRICE_SCALE;
+        let usd_u128 = numerator / denominator;
+        u64::try_from(usd_u128).map_err(|_| CurveError::Overflow)
     }
 
     /// Issue #1846: Check if graduation is pending (confirmation period active).
@@ -773,7 +763,7 @@ mod tests {
 
         // Buy enough to trigger graduation (need 500 total for 100 reserve at 20% split)
         let _ = token.buy(test_pubkey(2), 500, 101, 1_600_000_001).unwrap();
-        assert!(token.can_graduate(1_600_000_001));
+        assert!(token.can_graduate(1_600_000_001, 101));
 
         // Graduate
         let _ = token.graduate(1_600_000_002, 102).unwrap();
@@ -808,13 +798,13 @@ mod tests {
         let _ = token
             .buy(test_pubkey(2), 100_000_000, 101, 1_600_000_001)
             .unwrap();
-        assert!(!token.can_graduate(1_600_000_001));
+        assert!(!token.can_graduate(1_600_000_001, 101));
 
         // Add more to reach threshold (need 5B total purchases for 1B reserve)
         let _ = token
             .buy(test_pubkey(3), 4_900_000_000, 102, 1_600_000_002)
             .unwrap();
-        assert!(token.can_graduate(1_600_000_002));
+        assert!(token.can_graduate(1_600_000_002, 102));
         assert_eq!(token.reserve_balance, 1_000_000_000, "Reserve should be exactly at threshold");
 
         // Graduate
@@ -919,7 +909,7 @@ mod tests {
         assert!(tokens1 > 0);
         assert_eq!(token.reserve_balance, 1_000_000_000, "Reserve gets 20% = $1K");
         assert_eq!(token.treasury_balance, 4_000_000_000, "Treasury gets 80% = $4K");
-        assert!(!token.can_graduate(1_700_000_100)); // Not enough for graduation (need $5K reserve)
+        assert!(!token.can_graduate(1_700_000_100, 101)); // Not enough for graduation (need $5K reserve)
 
         // Buyer 2: $10000 → $2000 more reserve, total $3000
         let (tokens2, _event2) = token
@@ -927,7 +917,7 @@ mod tests {
             .unwrap();
         assert!(tokens2 > 0);
         assert_eq!(token.reserve_balance, 3_000_000_000, "Reserve = $3K");
-        assert!(!token.can_graduate(1_700_000_200)); // Still not graduated (need $5K)
+        assert!(!token.can_graduate(1_700_000_200, 102)); // Still not graduated (need $5K)
 
         // Buyer 3: $12500 → $2500 more reserve, total $5500
         let (tokens3, _event3) = token
@@ -935,7 +925,7 @@ mod tests {
             .unwrap();
         assert!(tokens3 > 0);
         assert_eq!(token.reserve_balance, 5_500_000_000, "Reserve = $5.5K");
-        assert!(token.can_graduate(1_700_000_300), "NOW ready to graduate!");
+        assert!(token.can_graduate(1_700_000_300, 103), "NOW ready to graduate!");
 
         // Verify events
         match event1 {
@@ -987,7 +977,7 @@ mod tests {
         assert!(token.current_price() > 5_000_000); // Price increased due to curve
 
         // Verify stats
-        let stats = token.get_stats(1_700_000_600);
+        let stats = token.get_stats(1_700_000_600, 106);
         assert_eq!(stats.total_supply, token.total_supply);
         assert_eq!(stats.reserve_balance, 5_500_000_000);
         assert_eq!(stats.graduation_progress_percent, 100);
@@ -1558,7 +1548,7 @@ mod tests {
             1,
         ).unwrap();
         test_token.reserve_balance = target_reserve_sov;
-        let calculated_usd = test_token.reserve_value_usd(sov_usd_price);
+        let calculated_usd = test_token.reserve_value_usd(sov_usd_price).unwrap();
         assert_eq!(calculated_usd, GRADUATION_THRESHOLD_USD, "Math check failed: got ${}", calculated_usd);
 
         // Buy tokens to reach just below threshold
@@ -1765,7 +1755,7 @@ mod tests {
         // reserve_value_usd = (reserve_sov * sov_usd_price) / USD_PRICE_SCALE
 
         // Empty reserve = $0
-        let value1 = token.reserve_value_usd(100_000_000); // $1.00
+        let value1 = token.reserve_value_usd(100_000_000).unwrap(); // $1.00
         assert_eq!(value1, 0, "Empty reserve = $0");
 
         // Buy some tokens first: 10,000 SOV worth at $0.10 = 100,000 SOV tokens
@@ -1779,15 +1769,15 @@ mod tests {
         assert_eq!(reserve_sov, 200_000_000_000, "Reserve should be 2000 SOV (20% of 10,000)");
 
         // $1.00 SOV price, 2000 SOV reserve = $2,000
-        let value2 = token2.reserve_value_usd(100_000_000);
+        let value2 = token2.reserve_value_usd(100_000_000).unwrap();
         assert_eq!(value2, 2000, "2000 SOV at $1 = $2,000");
 
         // $2.00 SOV price, 2000 SOV reserve = $4,000
-        let value3 = token2.reserve_value_usd(200_000_000);
+        let value3 = token2.reserve_value_usd(200_000_000).unwrap();
         assert_eq!(value3, 4000, "2000 SOV at $2 = $4,000");
 
         // $0.50 SOV price, 2000 SOV reserve = $1,000
-        let value4 = token2.reserve_value_usd(50_000_000);
+        let value4 = token2.reserve_value_usd(50_000_000).unwrap();
         assert_eq!(value4, 1000, "2000 SOV at $0.50 = $1,000");
     }
 
@@ -1864,10 +1854,10 @@ mod tests {
 
         // Buy enough to reach threshold (need 25,000 SOV at 20% split)
         token.buy(buyer.clone(), 20_000_000_000, 101, 1_600_000_100).unwrap();
-        assert!(!token.can_graduate(1_600_000_100), "Should not graduate yet");
+        assert!(!token.can_graduate(1_600_000_100, 101), "Should not graduate yet");
 
         token.buy(buyer, 6_000_000_000, 102, 1_600_000_200).unwrap();
-        assert!(token.can_graduate(1_600_000_200), "Should graduate at reserve threshold");
+        assert!(token.can_graduate(1_600_000_200, 102), "Should graduate at reserve threshold");
 
         // Oracle check should delegate to standard can_graduate for non-USD thresholds
         let can_graduate = token.check_graduation_with_oracle(
@@ -1877,5 +1867,109 @@ mod tests {
             1_600_000_300, // Current timestamp
         );
         assert!(can_graduate, "Oracle check should work for non-USD thresholds");
+    }
+
+    // ============================================================================
+    // Issue #1846: Staleness and sub-SOV precision tests
+    // ============================================================================
+
+    /// Verifies that `is_met_with_oracle` returns false when `price_age_seconds`
+    /// exceeds `max_price_age_seconds`, regardless of whether the reserve value
+    /// would otherwise satisfy the threshold.
+    #[test]
+    fn test_is_met_with_oracle_stale_price_rejected() {
+        let threshold = Threshold::ReserveValueUsd {
+            threshold_usd: 100_000,   // $100K
+            max_price_age_seconds: 300,
+            confirmation_blocks: 3,
+        };
+
+        // Reserve at exactly $100K worth at $1.00: 100_000 SOV atomic = 10_000_000_000_000
+        let reserve_sov: u64 = 100_000 * TOKEN_SCALE;
+        let sov_usd_price: u64 = 100_000_000; // $1.00 (8-decimal)
+
+        // Fresh price — threshold met
+        assert!(
+            threshold.is_met_with_oracle(reserve_sov, sov_usd_price, 0, 0),
+            "fresh price at exact threshold should be met"
+        );
+
+        // Price age exactly at limit — still fresh
+        assert!(
+            threshold.is_met_with_oracle(reserve_sov, sov_usd_price, 300, 0),
+            "price at max_price_age_seconds boundary should be met"
+        );
+
+        // Price age one second past limit — stale, must be rejected
+        assert!(
+            !threshold.is_met_with_oracle(reserve_sov, sov_usd_price, 301, 0),
+            "price one second past max_price_age_seconds must be rejected (StalePrice)"
+        );
+
+        // Stale price far in the past — also rejected
+        assert!(
+            !threshold.is_met_with_oracle(reserve_sov, sov_usd_price, 86_400, 0),
+            "day-old price must be rejected (StalePrice)"
+        );
+    }
+
+    /// Verifies that the USD-value calculation does not truncate fractional SOV
+    /// before multiplying by the oracle price.
+    ///
+    /// At $1.50 / SOV:
+    ///   exact threshold reserve = ⌈$100_000 × 1e16 / 150_000_000⌉ = 6_666_666_666_667 atomic SOV
+    ///
+    /// The old divide-first formula truncated to 66_666 whole SOV → $99_999, which is
+    /// below the threshold even though the reserve held sufficient atomic units.
+    /// The full-precision formula (multiply first) yields $100_000 exactly.
+    #[test]
+    fn test_is_met_with_oracle_sub_sov_precision_at_boundary() {
+        let threshold = Threshold::ReserveValueUsd {
+            threshold_usd: 100_000,    // $100K
+            max_price_age_seconds: 300,
+            confirmation_blocks: 0,
+        };
+
+        // $1.50 / SOV in 8-decimal fixed-point
+        let sov_usd_price: u64 = 150_000_000;
+
+        // Minimum atomic reserve that meets $100K at $1.50:
+        //   100_000 * 1e16 / 150_000_000 = 6_666_666_666_666.67 → ceil = 6_666_666_666_667
+        let exact_reserve: u64 = 6_666_666_666_667;
+        // One atomic unit less — must NOT meet threshold
+        let below_reserve: u64 = exact_reserve - 1;
+
+        // below_reserve: (6_666_666_666_666 * 150_000_000) / 1e16 = 99_999 → below
+        assert!(
+            !threshold.is_met_with_oracle(below_reserve, sov_usd_price, 0, 0),
+            "reserve one atomic unit below threshold should NOT meet threshold"
+        );
+
+        // exact_reserve: (6_666_666_666_667 * 150_000_000) / 1e16 = 100_000 → meets
+        assert!(
+            threshold.is_met_with_oracle(exact_reserve, sov_usd_price, 0, 0),
+            "reserve at exact atomic boundary should meet threshold (no sub-SOV truncation)"
+        );
+
+        // The old truncating formula would yield the same result for both cases
+        // (both truncate to 66_666 whole SOV → $99_999 → false), demonstrating
+        // that it incorrectly rejected the exact_reserve case.
+        let old_formula_exact = {
+            let whole_sov = exact_reserve / TOKEN_SCALE; // 66_666 (truncated)
+            (whole_sov as u128 * sov_usd_price as u128) / USD_PRICE_SCALE
+        };
+        assert_eq!(
+            old_formula_exact, 99_999,
+            "old divide-first formula truncates 6_666_666_666_667 to 66_666 SOV → $99,999"
+        );
+        // Confirm the new formula gives the correct $100,000
+        let new_formula_exact = {
+            (exact_reserve as u128 * sov_usd_price as u128)
+                / (TOKEN_SCALE as u128 * USD_PRICE_SCALE)
+        };
+        assert_eq!(
+            new_formula_exact, 100_000,
+            "full-precision formula correctly yields $100,000 for the exact atomic boundary"
+        );
     }
 }

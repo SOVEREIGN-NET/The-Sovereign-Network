@@ -469,7 +469,7 @@ impl CurveHandler {
             .map_err(|e| anyhow::anyhow!("Buy failed: {}", e))?;
 
         // Check for automatic graduation
-        let graduated = if token.can_graduate(timestamp) {
+        let graduated = if token.can_graduate(timestamp, block_height) {
             match token.graduate(timestamp, block_height) {
                 Ok(grad_event) => {
                     info!("Token {} auto-graduated", hex::encode(&token_id[..8]));
@@ -568,6 +568,7 @@ impl CurveHandler {
             .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
+        let block_height = self.get_current_block().await?;
         let blockchain = self.blockchain.read().await;
 
         let token = blockchain
@@ -576,7 +577,7 @@ impl CurveHandler {
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         let timestamp = self.get_current_timestamp().await?;
-        let stats = token.get_stats(timestamp);
+        let stats = token.get_stats(timestamp, block_height);
 
         let response = CurveTokenInfoResponse {
             token_id: token_id_hex.to_string(),
@@ -606,6 +607,7 @@ impl CurveHandler {
             .try_into()
             .map_err(|_| anyhow::anyhow!("Token ID must be 32 bytes"))?;
 
+        let block_height = self.get_current_block().await?;
         let blockchain = self.blockchain.read().await;
 
         let token = blockchain
@@ -614,7 +616,7 @@ impl CurveHandler {
             .ok_or_else(|| anyhow::anyhow!("Token not found"))?;
 
         let timestamp = self.get_current_timestamp().await?;
-        let stats = token.get_stats(timestamp);
+        let stats = token.get_stats(timestamp, block_height);
 
         create_json_response(json!({
             "token_id": token_id_hex,
@@ -703,12 +705,13 @@ impl CurveHandler {
 
     /// GET /api/v1/curve/ready-to-graduate - List tokens that can graduate
     async fn handle_ready_to_graduate(&self) -> Result<ZhtpResponse> {
+        let block_height = self.get_current_block().await?;
         let blockchain = self.blockchain.read().await;
         let registry = &blockchain.bonding_curve_registry;
         let timestamp = self.get_current_timestamp().await?;
 
         let tokens: Vec<serde_json::Value> = registry
-            .get_ready_to_graduate(timestamp)
+            .get_ready_to_graduate(timestamp, block_height)
             .iter()
             .map(|t| {
                 json!({
@@ -1266,11 +1269,16 @@ impl ValuationHandler {
             let price_usd = curve_price_sov * srv_usd;
             let price_usd_cents = (price_usd * 10_000.0).round() as u64;
 
-            let (price_mode, price_source) = match token.phase {
-                Phase::Curve => ("pre_graduation", "bonding_curve"),
-                Phase::Graduated => ("pre_graduation", "bonding_curve"),
-                Phase::AMM => ("post_graduation", "amm"),
-            };
+            let (price_mode, price_source, oracle_confidence) =
+                if token.last_oracle_price.is_some() {
+                    // Oracle was the source (price set via check_graduation_with_oracle).
+                    ("post_graduation", "oracle", Some(0.95_f64))
+                } else {
+                    match token.phase {
+                        Phase::Curve | Phase::Graduated => ("pre_graduation", "bonding_curve", None),
+                        Phase::AMM => ("post_graduation", "amm", None),
+                    }
+                };
 
             Ok(json!({
                 "token_id": token_id_hex,
@@ -1286,7 +1294,7 @@ impl ValuationHandler {
                     "curve_price_sov": curve_price_sov,
                     "sov_usd": srv_usd,
                 },
-                "oracle_confidence": null,
+                "oracle_confidence": oracle_confidence,
                 "last_updated": last_updated,
             }))
         } else if let Some(token) = reg_token {

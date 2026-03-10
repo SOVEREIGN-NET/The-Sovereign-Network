@@ -445,7 +445,7 @@ fn test_bonding_curve_graduate_transaction_success() {
     let expected_reserve = buy_amount / RESERVE_SPLIT_DIVISOR;
     let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
     assert_eq!(token.reserve_balance, expected_reserve, "Reserve should be 20% of buy amount");
-    assert!(token.can_graduate(1_700_000_200), "Token should be ready to graduate");
+    assert!(token.can_graduate(1_700_000_200, 0), "Token should be ready to graduate");
 
     // Graduate the token
     let pool_id = [99u8; 32];

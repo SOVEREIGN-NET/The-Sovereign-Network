@@ -496,14 +496,15 @@ impl Threshold {
             return false;
         }
 
-        // Calculate reserve value in USD:
-        // 1. Convert reserve from atomic to whole SOV: reserve_sov / TOKEN_SCALE
-        // 2. Multiply by price: whole_sov * sov_usd_price
-        // 3. Divide by USD_PRICE_SCALE to get whole USD
-        let reserve_whole_sov = reserve_sov / TOKEN_SCALE;
-        let reserve_value_usd = (reserve_whole_sov as u128)
+        // Calculate reserve value in USD using full-precision arithmetic:
+        //   reserve_value_usd = (reserve_sov_atomic * sov_usd_price) / (TOKEN_SCALE * USD_PRICE_SCALE)
+        //
+        // Multiply first to preserve fractional SOV — dividing reserve_sov by TOKEN_SCALE first
+        // would truncate up to (TOKEN_SCALE - 1) atomic units (~0.99 SOV) before applying the
+        // price, causing off-by-one threshold decisions near the graduation boundary.
+        let reserve_value_usd = (reserve_sov as u128)
             .saturating_mul(sov_usd_price as u128)
-            .saturating_div(USD_PRICE_SCALE);
+            .saturating_div(TOKEN_SCALE as u128 * USD_PRICE_SCALE);
 
         // Check if threshold is met
         reserve_value_usd >= *threshold_usd as u128
