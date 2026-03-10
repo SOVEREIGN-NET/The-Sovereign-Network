@@ -30,7 +30,7 @@ pub use amm_pool::{
     create_amm_pool_for_graduated_token,
     AmmPoolCreationResult,
     // Issue #1848: AMM pool creation constants
-    GRADUATED_POOL_FEE_BPS, LP_TOKEN_LOCK_ADDRESS, MINIMUM_AMM_LIQUIDITY, PRICE_SCALE,
+    GRADUATED_POOL_FEE_BPS, MINIMUM_AMM_LIQUIDITY,
 };
 pub use event_indexer::SledEventIndexer;
 pub use events::{BondingCurveEvent, EventIndexer, InMemoryEventIndexer, ReserveUpdateReason};
