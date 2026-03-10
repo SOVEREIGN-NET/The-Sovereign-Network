@@ -65,6 +65,7 @@ fn test_validate_cbe_graduation_oracle_gate_uses_latest_fresh_price() {
         .try_finalize_price(FinalizedOraclePrice {
             epoch_id: old_epoch,
             sov_usd_price: 100_000_000, // $1.00
+            cbe_usd_price: None,
         });
 
     // Try to graduate at a timestamp where the price is fresh
@@ -123,6 +124,7 @@ fn test_cbe_graduation_accepts_fresh_price() {
         .try_finalize_price(FinalizedOraclePrice {
             epoch_id: epoch,
             sov_usd_price: 100_000_000, // $1.00
+            cbe_usd_price: None,
         });
 
     // Try to graduate with fresh price
@@ -147,6 +149,7 @@ fn test_cbe_graduation_rejects_reserve_below_threshold() {
         .try_finalize_price(FinalizedOraclePrice {
             epoch_id: epoch,
             sov_usd_price: 100_000_000,
+            cbe_usd_price: None,
         });
 
     // Try to graduate with insufficient reserve

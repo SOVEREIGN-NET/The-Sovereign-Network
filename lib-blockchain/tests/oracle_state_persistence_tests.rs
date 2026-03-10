@@ -9,6 +9,7 @@ fn oracle_state_round_trip_persists_finalized_prices() {
         .try_finalize_price(FinalizedOraclePrice {
             epoch_id: 7,
             sov_usd_price: 218_000_000,
+            cbe_usd_price: None,
         });
 
     let tmp = tempfile::tempdir().expect("tempdir");

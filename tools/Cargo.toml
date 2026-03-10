@@ -7,10 +7,6 @@ edition = "2021"
 name = "identity_e2e_sim"
 path = "identity_e2e_sim.rs"
 
-[[bin]]
-name = "remove_token"
-path = "remove_token.rs"
-
 [dependencies]
 lib-identity = { path = "../lib-identity" }
 lib-protocols = { path = "../lib-protocols" }

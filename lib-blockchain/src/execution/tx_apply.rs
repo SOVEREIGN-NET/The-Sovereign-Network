@@ -955,6 +955,7 @@ where
     let attestation = crate::oracle::OraclePriceAttestation {
         epoch_id: data.epoch_id,
         sov_usd_price: data.sov_usd_price,
+        cbe_usd_price: data.cbe_usd_price,
         timestamp: data.timestamp,
         validator_pubkey: data.validator_pubkey,
         signature: data.signature.clone(),
