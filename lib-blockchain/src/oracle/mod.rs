@@ -15,6 +15,19 @@ pub const ORACLE_PRICE_SCALE: u128 = 100_000_000;
 /// Domain separator for oracle attestation signatures.
 pub const ORACLE_ATTESTATION_DOMAIN: &str = "SOVN_ORACLE_V1";
 
+/// Minimum allowed oracle epoch duration (seconds)
+pub const MIN_EPOCH_DURATION_SECS: u64 = 60;
+/// Maximum allowed oracle epoch duration (seconds = 24 hours)
+pub const MAX_EPOCH_DURATION_SECS: u64 = 86_400;
+/// Minimum required source age (seconds) — validators need time to fetch prices
+pub const MIN_SOURCE_AGE_SECS: u64 = 10;
+/// Maximum allowed deviation between attested price and median (basis points = 100%)
+pub const MAX_DEVIATION_BPS: u32 = 10_000;
+/// Maximum allowed price staleness (epochs)
+pub const MAX_PRICE_STALENESS_EPOCHS: u64 = 100;
+/// Basis points scale (10_000 bps = 100%)
+pub const BASIS_POINTS_SCALE: u128 = 10_000;
+
 /// Canonical payload covered by oracle attestation signatures.
 /// Issue #1819: Extended with CBE/USD price for unified token pricing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -248,16 +261,16 @@ impl OracleConfig {
     /// Returns `Ok(())` if valid, `Err(OracleConfigError)` otherwise.
     pub fn validate(&self) -> Result<(), OracleConfigError> {
         // Individual bounds
-        if self.epoch_duration_secs < 60 {
+        if self.epoch_duration_secs < MIN_EPOCH_DURATION_SECS {
             return Err(OracleConfigError::InvalidField {
                 field: "epoch_duration_secs".to_string(),
-                message: "must be >= 60 seconds".to_string(),
+                message: format!("must be >= {} seconds", MIN_EPOCH_DURATION_SECS),
             });
         }
-        if self.epoch_duration_secs > 86_400 {
+        if self.epoch_duration_secs > MAX_EPOCH_DURATION_SECS {
             return Err(OracleConfigError::InvalidField {
                 field: "epoch_duration_secs".to_string(),
-                message: "must be <= 86400 seconds (24h)".to_string(),
+                message: format!("must be <= {} seconds (24h)", MAX_EPOCH_DURATION_SECS),
             });
         }
 
@@ -267,10 +280,10 @@ impl OracleConfig {
                 message: "must be > 0".to_string(),
             });
         }
-        if self.max_source_age_secs < 10 {
+        if self.max_source_age_secs < MIN_SOURCE_AGE_SECS {
             return Err(OracleConfigError::InvalidField {
                 field: "max_source_age_secs".to_string(),
-                message: "must be >= 10 to give validators time to fetch prices".to_string(),
+                message: format!("must be >= {} to give validators time to fetch prices", MIN_SOURCE_AGE_SECS),
             });
         }
 
@@ -280,11 +293,10 @@ impl OracleConfig {
                 message: "must be > 0 (0 would reject all multi-source prices)".to_string(),
             });
         }
-        if self.max_deviation_bps > 10_000 {
+        if self.max_deviation_bps > MAX_DEVIATION_BPS {
             return Err(OracleConfigError::InvalidField {
                 field: "max_deviation_bps".to_string(),
-                message: "must be <= 10000 (100%) — higher values defeat price aggregation"
-                    .to_string(),
+                message: format!("must be <= {} (100%) — higher values defeat price aggregation", MAX_DEVIATION_BPS),
             });
         }
 
@@ -294,10 +306,10 @@ impl OracleConfig {
                 message: "must be >= 1".to_string(),
             });
         }
-        if self.max_price_staleness_epochs > 100 {
+        if self.max_price_staleness_epochs > MAX_PRICE_STALENESS_EPOCHS {
             return Err(OracleConfigError::InvalidField {
                 field: "max_price_staleness_epochs".to_string(),
-                message: "must be <= 100".to_string(),
+                message: format!("must be <= {}", MAX_PRICE_STALENESS_EPOCHS),
             });
         }
 
@@ -1062,7 +1074,7 @@ impl OracleState {
         let median = Self::calculate_median(&existing_prices);
         let attested_price = attestation.sov_usd_price;
 
-        // Calculate deviation in basis points: |price - median| * 10000 / median
+        // Calculate deviation in basis points: |price - median| * BASIS_POINTS_SCALE / median
         // Use saturating conversion to handle overflow safely.
         let deviation_bps = if median > 0 {
             let diff = if attested_price > median {
@@ -1070,7 +1082,7 @@ impl OracleState {
             } else {
                 median - attested_price
             };
-            let deviation_raw = (diff as u128).saturating_mul(10_000) / median;
+            let deviation_raw = (diff as u128).saturating_mul(BASIS_POINTS_SCALE) / median;
             u32::try_from(deviation_raw).unwrap_or(u32::MAX)
         } else {
             0
