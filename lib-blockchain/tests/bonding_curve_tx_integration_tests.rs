@@ -354,21 +354,25 @@ fn test_bonding_curve_sell_transaction_success() {
     blockchain.process_token_transactions(&block2).expect("Buy should succeed");
 
     let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    let tokens_owned = token.total_supply - 100_000_000; // Subtract creator tokens (1 SOV worth)
-    
+    // deploy() initializes total_supply to 0; all minted tokens come from buys
+    let initial_supply = token.total_supply;
+    let initial_reserve = token.reserve_balance;
+    let initial_treasury = token.treasury_balance;
+
     // Issue #1845: Due to 20/80 split, reserve only has 20% of SOV
     // Must sell small portion to stay within reserve limits
-    let sell_amount = tokens_owned / 20; // Sell only 5% of tokens
+    let sell_amount = initial_supply / 20; // Sell only 5% of tokens
     let sell_tx = create_sell_transaction(&seller, token_id, sell_amount, 0, 0);
     let block3 = make_test_block(3, 1_700_000_200, vec![sell_tx]);
-    
+
     let result = blockchain.process_token_transactions(&block3);
     assert!(result.is_ok(), "Sell transaction should succeed: {:?}", result);
 
-    // Verify token state updated
+    // Verify exact deltas: supply burns by sold amount, reserve decreases, treasury unchanged
     let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert!(token.reserve_balance < 20_000_000, "Reserve should decrease after sell");
-    assert!(token.total_supply < tokens_owned + 100_000_000, "Supply should decrease after sell (burn)");
+    assert_eq!(token.total_supply, initial_supply - sell_amount, "Supply should decrease by exact sell amount (burn)");
+    assert!(token.reserve_balance < initial_reserve, "Reserve should decrease after sell");
+    assert_eq!(token.treasury_balance, initial_treasury, "Treasury should be unaffected by sell");
 }
 
 #[test]
@@ -511,12 +515,11 @@ fn test_bonding_curve_full_lifecycle_via_transactions() {
     assert_eq!(token.reserve_balance, 10_000_000, "Reserve should be 20% of 50 SOV");
     assert_eq!(token.treasury_balance, 40_000_000, "Treasury should be 80% of 50 SOV");
     let tokens_before_sell = token.total_supply;
-    let creator_tokens = 1_000_000; // 1 SOV worth of tokens minted to creator at deploy
-    let buyer_tokens = tokens_before_sell - creator_tokens;
+    // deploy() initializes total_supply to 0; all tokens come from buys
 
     // Step 3: Sell a small portion
     // Issue #1845: Due to 20/80 split, can only sell ~20% of tokens before reserve depleted
-    let sell_amount = buyer_tokens / 20; // Sell 5% of buyer's tokens
+    let sell_amount = tokens_before_sell / 20; // Sell 5% of tokens
     let sell_tx = create_sell_transaction(&buyer, token_id, sell_amount, 0, 0);
     let block3 = make_test_block(3, 1_700_000_200, vec![sell_tx]);
     blockchain.process_token_transactions(&block3).expect("Sell should succeed");

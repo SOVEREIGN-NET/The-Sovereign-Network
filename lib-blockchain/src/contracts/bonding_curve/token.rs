@@ -1006,7 +1006,7 @@ mod tests {
         assert!(matches!(token.phase, Phase::Curve), "Should still be in curve phase after buy");
 
         // Graduate the token manually
-        token.graduate(102, 1_600_000_200).unwrap();
+        token.graduate(1_600_000_200, 102).unwrap();
         assert!(matches!(token.phase, Phase::Graduated), "Should be graduated after calling graduate()");
 
         // Try to sell after graduation - should fail with InvalidPhase
@@ -1093,7 +1093,6 @@ mod tests {
             .unwrap();
 
         let initial_supply = token.total_supply;
-        let creator_tokens = initial_supply - tokens_bought; // Tokens minted to creator
 
         // Sell tokens in small portions that reserve can cover
         // Reserve is 200 SOV. At $0.001/token, we can sell up to 200,000 tokens.
@@ -1122,8 +1121,6 @@ mod tests {
             total_sold,
             "All sold tokens should be burned (supply decrease = amount sold)"
         );
-        // Creator tokens should still exist
-        assert!(token.total_supply >= creator_tokens, "Creator tokens should remain");
     }
 
     /// Issue #1845: Test sell returns SOV from reserve only (not treasury)
@@ -1180,13 +1177,13 @@ mod tests {
         assert!(sov_received > 0, "Should receive positive SOV amount");
     }
 
-    /// Issue #1845: Test sell at piecewise curve boundaries
-    /// Verifies sell works correctly across different pricing bands
+    /// Issue #1845: Test sell with piecewise linear curve within a single band
+    /// Verifies sell works correctly with a piecewise linear curve (CBE default).
     ///
     /// NOTE: Due to 20/80 split, reserve only has 20% of SOV paid.
     /// Must sell small amounts to stay within reserve limits.
     #[test]
-    fn test_sell_at_piecewise_boundaries() {
+    fn test_sell_with_piecewise_linear_curve_single_band() {
         use crate::contracts::bonding_curve::pricing::PiecewiseLinearCurve;
 
         let mut token = BondingCurveToken::deploy(
@@ -1313,5 +1310,9 @@ mod tests {
         // Try to sell more than bought (also exceeds reserve, so fails)
         let result = token.sell(buyer, tokens_bought + 1_000_000_000, 102, 1_600_000_200);
         assert!(result.is_err(), "Selling more than owned should fail");
+        assert!(
+            matches!(result, Err(CurveError::InsufficientReserve)),
+            "Should fail with InsufficientReserve error"
+        );
     }
 }
