@@ -451,10 +451,23 @@ impl BondingCurveToken {
             return Err(CurveError::ThresholdNotMet);
         }
 
+        // For USD thresholds, also verify the confirmation period has elapsed using block height
+        if let Threshold::ReserveValueUsd { confirmation_blocks, .. } = self.threshold {
+            let pending_since = self
+                .graduation_pending_since_block
+                .ok_or(CurveError::ThresholdNotMet)?;
+            let pending_blocks = block_height.saturating_sub(pending_since);
+            if pending_blocks < confirmation_blocks {
+                return Err(CurveError::ThresholdNotMet);
+            }
+        }
+
         self.phase = Phase::Graduated;
 
         // Clear graduation tracking fields
         self.graduation_pending_since_block = None;
+        self.last_oracle_price = None;
+        self.last_oracle_price_timestamp = None;
 
         let event = BondingCurveEvent::Graduated {
             token_id: self.token_id,
@@ -509,7 +522,8 @@ impl BondingCurveToken {
             Threshold::ReserveValueUsd { threshold_usd, .. } => {
                 // For USD thresholds, calculate progress based on last known oracle price
                 if let Some(sov_usd_price) = self.last_oracle_price {
-                    let reserve_value_usd = (self.reserve_balance as u128)
+                    let reserve_whole_sov = self.reserve_balance / TOKEN_SCALE;
+                    let reserve_value_usd = (reserve_whole_sov as u128)
                         .saturating_mul(sov_usd_price as u128)
                         .saturating_div(USD_PRICE_SCALE);
                     ((reserve_value_usd * 100) / threshold_usd as u128) as u8
