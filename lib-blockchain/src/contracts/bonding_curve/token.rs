@@ -895,4 +895,423 @@ mod tests {
         assert!(sell_result.is_err());
         assert!(matches!(sell_result, Err(CurveError::InvalidParameters(_))));
     }
+
+    /// Issue #1845: Test sell with PiecewiseLinear curve type
+    /// Verifies sell functionality works with document-compliant piecewise linear curve
+    /// 
+    /// NOTE: Due to the 20/80 split (Issue #1844), the reserve only has 20% of SOV paid.
+    /// The bonding curve pricing means tokens may be worth more than 20% of purchase price,
+    /// so we must sell only a small portion to stay within reserve limits.
+    #[test]
+    fn test_sell_tokens_with_piecewise_linear_curve() {
+        use crate::contracts::bonding_curve::pricing::PiecewiseLinearCurve;
+
+        let mut token = BondingCurveToken::deploy(
+            [7u8; 32],
+            "Piecewise Sell Token".to_string(),
+            "PSELL".to_string(),
+            CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
+            Threshold::ReserveAmount(10_000_000_000_000), // High threshold
+            true,                                         // Sell ENABLED
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        let buyer = test_pubkey(2);
+
+        // Buy tokens with PiecewiseLinear curve
+        let buy_amount = 100_000_000_000; // 1000 SOV
+        let (tokens_bought, _) = token
+            .buy(buyer.clone(), buy_amount, 101, 1_600_000_100)
+            .unwrap();
+
+        // Verify initial state after buy
+        assert!(tokens_bought > 0, "Should receive tokens");
+        assert_eq!(token.reserve_balance, buy_amount / 5, "Reserve should be 20% of buy amount");
+        assert_eq!(token.treasury_balance, buy_amount * 4 / 5, "Treasury should be 80% of buy amount");
+
+        // IMPORTANT: Due to 20/80 split, we can only sell a small % of tokens.
+        // The reserve only has 20% of SOV, but tokens are priced at current market rate.
+        // We sell just 5% of purchased tokens to ensure reserve can cover.
+        let tokens_to_sell = tokens_bought / 20;
+        let initial_supply = token.total_supply;
+        let initial_reserve = token.reserve_balance;
+
+        let (sov_received, sell_event) = token
+            .sell(buyer.clone(), tokens_to_sell, 102, 1_600_000_200)
+            .unwrap();
+
+        // Verify sell behavior per Issue #1845:
+        // 1. Tokens are burned (supply decreases)
+        assert_eq!(token.total_supply, initial_supply - tokens_to_sell, "Supply should decrease after sell (burn)");
+        // 2. Reserve decreases (SOV returned from reserve only)
+        assert_eq!(token.reserve_balance, initial_reserve - sov_received, "Reserve should decrease by returned SOV");
+        // 3. Treasury unchanged (no SOV from treasury)
+        assert_eq!(token.treasury_balance, buy_amount * 4 / 5, "Treasury should remain unchanged after sell");
+        // 4. Verify SOV received is reasonable (not zero, less than reserve)
+        assert!(sov_received > 0, "Should receive some SOV");
+        assert!(sov_received < initial_reserve, "Should receive less than reserve balance");
+
+        // Verify event
+        match sell_event {
+            BondingCurveEvent::TokenSold {
+                seller,
+                token_amount,
+                stable_amount,
+                ..
+            } => {
+                assert_eq!(seller, buyer.key_id);
+                assert_eq!(token_amount, tokens_to_sell);
+                assert_eq!(stable_amount, sov_received);
+            }
+            _ => panic!("Expected TokenSold event"),
+        }
+    }
+
+    /// Issue #1845: Test sell fails after graduation
+    /// Verifies sell is disabled once token graduates from curve phase
+    #[test]
+    fn test_sell_fails_after_graduation() {
+        // Use Linear curve with known pricing for predictable test
+        let mut token = BondingCurveToken::deploy(
+            [8u8; 32],
+            "Graduated Token".to_string(),
+            "GRAD".to_string(),
+            CurveType::Linear {
+                base_price: 1_000_000, // $0.01 per token for easier calculation
+                slope: 0,
+            },
+            Threshold::ReserveAmount(500_000_000), // 5 SOV threshold
+            true,                                  // Sell ENABLED
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        let buyer = test_pubkey(2);
+
+        // Buy tokens - with 20/80 split, need 25 SOV to put 5 SOV in reserve (for graduation)
+        // With $0.01 per token, 25 SOV buys 2500 tokens
+        let (tokens_bought, _) = token
+            .buy(buyer.clone(), 25_000_000_000, 101, 1_600_000_100)
+            .unwrap();
+
+        // Verify still in curve phase (buy doesn't auto-graduate)
+        assert_eq!(token.reserve_balance, 5_000_000_000, "Reserve should be 5 SOV");
+        assert!(matches!(token.phase, Phase::Curve), "Should still be in curve phase after buy");
+
+        // Graduate the token manually
+        token.graduate(102, 1_600_000_200).unwrap();
+        assert!(matches!(token.phase, Phase::Graduated), "Should be graduated after calling graduate()");
+
+        // Try to sell after graduation - should fail with InvalidPhase
+        // Note: Even though reserve has 5 SOV and tokens are worth $0.01 each,
+        // sell is not allowed in Graduated phase - tokens must be traded on AMM
+        let sell_result = token.sell(buyer, tokens_bought, 103, 1_600_000_300);
+        assert!(sell_result.is_err(), "Sell should fail after graduation");
+        assert!(
+            matches!(sell_result, Err(CurveError::InvalidPhase { .. })),
+            "Should fail with InvalidPhase error"
+        );
+    }
+
+    /// Issue #1845: Test sell fails with insufficient reserve
+    /// Verifies sell fails when there's not enough SOV in reserve to pay seller
+    #[test]
+    fn test_sell_fails_with_insufficient_reserve() {
+        let mut token = BondingCurveToken::deploy(
+            [9u8; 32],
+            "Low Reserve Token".to_string(),
+            "LOWRES".to_string(),
+            CurveType::Linear {
+                base_price: 1_000_000, // $0.01 (low price)
+                slope: 0,
+            },
+            Threshold::ReserveAmount(10_000_000_000_000), // Very high threshold
+            true,                                         // Sell ENABLED
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        let buyer = test_pubkey(2);
+
+        // Buy tokens - small amount
+        let (tokens_bought, _) = token
+            .buy(buyer.clone(), 100_000_000, 101, 1_600_000_100)
+            .unwrap();
+
+        // Reserve is only 20% of buy = 20 SOV cents
+        assert_eq!(token.reserve_balance, 20_000_000);
+
+        // Try to sell all tokens - should fail because reserve can't cover
+        // The sell value would exceed reserve (20 cents reserve, but trying to sell ~$1 worth)
+        let sell_result = token.sell(buyer, tokens_bought, 102, 1_600_000_200);
+        assert!(sell_result.is_err(), "Sell should fail with insufficient reserve");
+        assert!(
+            matches!(sell_result, Err(CurveError::InsufficientReserve)),
+            "Should fail with InsufficientReserve error"
+        );
+    }
+
+    /// Issue #1845: Test complete burn on sell (100% burn)
+    /// Verifies that sold tokens are fully burned (supply decreases by exact amount)
+    /// 
+    /// NOTE: Due to 20/80 split, we can only sell ~20% of tokens back before reserve is depleted.
+    #[test]
+    fn test_sell_100_percent_burn() {
+        let mut token = BondingCurveToken::deploy(
+            [10u8; 32],
+            "Burn Test Token".to_string(),
+            "BURN".to_string(),
+            CurveType::Linear {
+                base_price: 100_000, // $0.001 for large token amounts
+                slope: 0,
+            },
+            Threshold::ReserveAmount(10_000_000_000_000),
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        let buyer = test_pubkey(2);
+
+        // Buy tokens with large amount so reserve can cover sells
+        let buy_amount = 100_000_000_000; // 1000 SOV
+        let (tokens_bought, _) = token
+            .buy(buyer.clone(), buy_amount, 101, 1_600_000_100)
+            .unwrap();
+
+        let initial_supply = token.total_supply;
+        let creator_tokens = initial_supply - tokens_bought; // Tokens minted to creator
+
+        // Sell tokens in small portions that reserve can cover
+        // Reserve is 200 SOV. At $0.001/token, we can sell up to 200,000 tokens.
+        // We sell in small chunks to test burn behavior.
+        let sell_portion = tokens_bought / 50; // Small 2% chunks
+        let mut total_sold: u64 = 0;
+        for i in 0..5 {
+            let remaining_reserve = token.reserve_balance;
+            let current_price = token.current_price();
+            // Calculate max tokens we can sell with remaining reserve
+            let max_tokens = (remaining_reserve as u128 * 100_000_000 / current_price.max(1) as u128) as u64;
+            if max_tokens == 0 {
+                break;
+            }
+            let to_sell = sell_portion.min(max_tokens);
+            
+            let _ = token
+                .sell(buyer.clone(), to_sell, 102 + i as u64, 1_600_000_200 + i as u64 * 100)
+                .unwrap();
+            total_sold += to_sell;
+        }
+
+        // Verify 100% burn - supply should decrease by total amount sold
+        assert_eq!(
+            initial_supply - token.total_supply,
+            total_sold,
+            "All sold tokens should be burned (supply decrease = amount sold)"
+        );
+        // Creator tokens should still exist
+        assert!(token.total_supply >= creator_tokens, "Creator tokens should remain");
+    }
+
+    /// Issue #1845: Test sell returns SOV from reserve only (not treasury)
+    /// Verifies sell only draws from reserve pool, not treasury
+    ///
+    /// NOTE: Due to 20/80 split, reserve only has 20% of SOV paid.
+    #[test]
+    fn test_sell_returns_sov_from_reserve_only() {
+        let mut token = BondingCurveToken::deploy(
+            [11u8; 32],
+            "Reserve Test Token".to_string(),
+            "RES".to_string(),
+            CurveType::Linear {
+                base_price: 100_000, // $0.001
+                slope: 0,
+            },
+            Threshold::ReserveAmount(10_000_000_000_000),
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        let buyer = test_pubkey(2);
+
+        // Buy with large amount so reserve can cover sells
+        let buy_amount = 100_000_000_000; // 1000 SOV
+        let (tokens_bought, _) = token
+            .buy(buyer.clone(), buy_amount, 101, 1_600_000_100)
+            .unwrap();
+
+        let initial_reserve = token.reserve_balance;
+        let initial_treasury = token.treasury_balance;
+
+        // Sell a small portion of tokens (must be small enough for reserve to cover)
+        // With 20% in reserve, we can sell at most ~20% of tokens (at constant price)
+        let tokens_to_sell = tokens_bought / 25; // Sell 4% - well within reserve limits
+        let (sov_received, _) = token
+            .sell(buyer, tokens_to_sell, 102, 1_600_000_200)
+            .unwrap();
+
+        // Verify: SOV comes ONLY from reserve
+        assert_eq!(
+            token.reserve_balance,
+            initial_reserve - sov_received,
+            "Reserve should decrease by returned SOV"
+        );
+        assert_eq!(
+            token.treasury_balance, initial_treasury,
+            "Treasury should NOT decrease after sell"
+        );
+        assert!(sov_received > 0, "Should receive positive SOV amount");
+    }
+
+    /// Issue #1845: Test sell at piecewise curve boundaries
+    /// Verifies sell works correctly across different pricing bands
+    ///
+    /// NOTE: Due to 20/80 split, reserve only has 20% of SOV paid.
+    /// Must sell small amounts to stay within reserve limits.
+    #[test]
+    fn test_sell_at_piecewise_boundaries() {
+        use crate::contracts::bonding_curve::pricing::PiecewiseLinearCurve;
+
+        let mut token = BondingCurveToken::deploy(
+            [12u8; 32],
+            "Boundary Sell Token".to_string(),
+            "BSELL".to_string(),
+            CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
+            Threshold::ReserveAmount(100_000_000_000_000), // Very high threshold
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        let buyer = test_pubkey(2);
+
+        // Buy tokens with large amount
+        let buy_amount = 100_000_000_000; // 1000 SOV
+        let (tokens_bought, _) = token
+            .buy(buyer.clone(), buy_amount, 101, 1_600_000_100)
+            .unwrap();
+
+        // Verify we're in a valid band
+        if let CurveType::PiecewiseLinear(ref curve) = token.curve_type {
+            let band = curve.band_index_for_supply(token.total_supply);
+            assert_eq!(band, 1, "Should be in band 1 with moderate buy amount");
+        }
+
+        let initial_supply = token.total_supply;
+        let initial_reserve = token.reserve_balance;
+
+        // Sell a small portion to ensure reserve can cover (5% of purchased tokens)
+        let tokens_to_sell = tokens_bought / 20;
+        let (sov_received, _) = token
+            .sell(buyer.clone(), tokens_to_sell, 102, 1_600_000_200)
+            .unwrap();
+
+        // Verify proper burn and reserve decrease
+        assert_eq!(
+            token.total_supply,
+            initial_supply - tokens_to_sell,
+            "Supply should decrease by sold amount (burn)"
+        );
+        assert_eq!(
+            token.reserve_balance,
+            initial_reserve - sov_received,
+            "Reserve should decrease by returned SOV"
+        );
+        assert!(sov_received > 0, "Should receive positive SOV");
+
+        // Can sell more if reserve allows
+        let remaining_owned = tokens_bought - tokens_to_sell;
+        let tokens_to_sell_2 = remaining_owned / 25; // Another 4%
+        let (sov_received_2, _) = token
+            .sell(buyer, tokens_to_sell_2, 103, 1_600_000_300)
+            .unwrap();
+
+        assert!(sov_received_2 > 0, "Should receive SOV from second sell");
+    }
+
+    /// Issue #1845: Test sell with zero amount fails
+    #[test]
+    fn test_sell_zero_amount_fails() {
+        let mut token = BondingCurveToken::deploy(
+            [13u8; 32],
+            "Zero Sell Token".to_string(),
+            "ZSELL".to_string(),
+            CurveType::Linear {
+                base_price: 10_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveAmount(10_000_000_000),
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        let buyer = test_pubkey(2);
+
+        // Buy some tokens first
+        token.buy(buyer.clone(), 1_000_000_000, 101, 1_600_000_100).unwrap();
+
+        // Try to sell zero tokens
+        let result = token.sell(buyer, 0, 102, 1_600_000_200);
+        assert!(result.is_err(), "Selling zero should fail");
+        assert!(
+            matches!(result, Err(CurveError::ZeroAmount)),
+            "Should fail with ZeroAmount"
+        );
+    }
+
+    /// Issue #1845: Test sell with excessive amount fails
+    #[test]
+    fn test_sell_excessive_amount_fails() {
+        let mut token = BondingCurveToken::deploy(
+            [14u8; 32],
+            "Excessive Sell Token".to_string(),
+            "ESELL".to_string(),
+            CurveType::Linear {
+                base_price: 10_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveAmount(10_000_000_000),
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        let buyer = test_pubkey(2);
+
+        // Buy some tokens
+        let (tokens_bought, _) = token
+            .buy(buyer.clone(), 1_000_000_000, 101, 1_600_000_100)
+            .unwrap();
+
+        // Try to sell more than bought (also exceeds reserve, so fails)
+        let result = token.sell(buyer, tokens_bought + 1_000_000_000, 102, 1_600_000_200);
+        assert!(result.is_err(), "Selling more than owned should fail");
+    }
 }
