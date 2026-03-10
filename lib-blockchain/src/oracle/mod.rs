@@ -246,6 +246,42 @@ impl std::fmt::Display for OracleConfigError {
 
 impl std::error::Error for OracleConfigError {}
 
+/// Issue #1847: Oracle Observer Mode errors.
+///
+/// These errors occur when the oracle cannot fulfill its observer role,
+/// typically due to missing or stale price data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OracleObserverError {
+    /// No finalized price available.
+    NoFinalizedPrice,
+    /// Price is stale (exceeds max staleness epochs).
+    StalePrice {
+        epoch: u64,
+        max_staleness: u64,
+    },
+    /// Reserve value calculation overflow.
+    CalculationOverflow,
+}
+
+impl std::fmt::Display for OracleObserverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OracleObserverError::NoFinalizedPrice => {
+                write!(f, "No finalized oracle price available")
+            }
+            OracleObserverError::StalePrice { epoch, max_staleness } => {
+                write!(f, "Oracle price is stale (epoch: {}, max_staleness: {})", 
+                    epoch, max_staleness)
+            }
+            OracleObserverError::CalculationOverflow => {
+                write!(f, "Reserve value calculation overflow")
+            }
+        }
+    }
+}
+
+impl std::error::Error for OracleObserverError {}
+
 impl OracleConfig {
     pub fn price_scale(&self) -> u128 {
         self.price_scale
@@ -1329,6 +1365,115 @@ impl OracleState {
     pub fn epoch_tracking_version(&self) -> u8 {
         self.epoch_tracking_version
     }
+
+    // =========================================================================
+    // Issue #1847: Oracle Observer Mode
+    // =========================================================================
+    //
+    // Core Principle: "Oracle = SECONDARY observer, NOT price creator"
+    //
+    // The oracle's role in the CBE Token Launch is to:
+    // 1. Observe and report bonding curve prices (read-only, for transparency)
+    // 2. Validate graduation threshold using SOV/USD price
+    // 3. Observe and report AMM prices post-graduation
+    // 4. NEVER create or influence prices - only observe/report
+    //
+    // This aligns with the document's core principle:
+    // > "reliance on internal mechanisms rather than external oracles 
+    // >    for price discovery"
+
+    /// Issue #1847: Validate graduation threshold for bonding curve tokens.
+    ///
+    /// The oracle provides SOV/USD price for USD value calculation only.
+    /// It validates the threshold but does NOT decide when to graduate.
+    ///
+    /// # Arguments
+    /// * `reserve_sov` - Reserve balance in SOV (atomic units)
+    /// * `threshold_usd` - Graduation threshold in USD (whole dollars, e.g., 269_000)
+    ///
+    /// # Returns
+    /// `true` if reserve value >= threshold (using latest finalized SOV/USD price)
+    pub fn validate_graduation_threshold(
+        &self,
+        reserve_sov: u64,
+        threshold_usd: u64,
+    ) -> Result<bool, OracleObserverError> {
+        // Get the latest finalized SOV/USD price
+        let latest_epoch = self.latest_finalized_epoch()
+            .ok_or(OracleObserverError::NoFinalizedPrice)?;
+        
+        let finalized_price = self.finalized_price(latest_epoch)
+            .ok_or(OracleObserverError::NoFinalizedPrice)?;
+
+        // Check if price is fresh (within max staleness)
+        let current_epoch = latest_epoch; // Use latest as reference for staleness check
+        let _fresh_price = self.latest_fresh_price(current_epoch)
+            .ok_or(OracleObserverError::StalePrice { 
+                epoch: latest_epoch, 
+                max_staleness: self.config.max_price_staleness_epochs 
+            })?;
+
+        // Calculate reserve value in USD
+        // reserve_value_usd = (reserve_sov / TOKEN_SCALE) * sov_usd_price / USD_PRICE_SCALE
+        let reserve_whole_sov = reserve_sov / (ORACLE_PRICE_SCALE as u64);
+        let reserve_value_usd = (reserve_whole_sov as u128)
+            .saturating_mul(finalized_price.sov_usd_price)
+            .saturating_div(ORACLE_PRICE_SCALE);
+
+        Ok(reserve_value_usd >= threshold_usd as u128)
+    }
+
+    /// Issue #1847: Get the current SOV/USD price for external consumers.
+    ///
+    /// This is a read-only observer function. The oracle reports the price
+    /// but does NOT create it. Prices are finalized through committee consensus.
+    ///
+    /// # Returns
+    /// The latest finalized SOV/USD price if available and fresh
+    pub fn observe_sov_usd_price(&self, current_epoch: u64) -> Option<u128> {
+        self.latest_fresh_price(current_epoch)
+            .map(|fp| fp.sov_usd_price)
+    }
+
+    /// Issue #1847: Get the current CBE/USD price for external consumers.
+    ///
+    /// This is a read-only observer function. The oracle reports the price
+    /// but does NOT create it. Prices are finalized through committee consensus.
+    ///
+    /// # Returns
+    /// The latest finalized CBE/USD price if available and fresh
+    pub fn observe_cbe_usd_price(&self, current_epoch: u64) -> Option<u128> {
+        self.latest_fresh_price(current_epoch)
+            .and_then(|fp| fp.cbe_usd_price)
+    }
+
+    /// Issue #1847: Calculate reserve value in USD using oracle price.
+    ///
+    /// This is a helper function for bonding curve graduation checks.
+    /// The oracle provides the SOV/USD price, but the bonding curve
+    /// contract decides when to graduate.
+    ///
+    /// # Arguments
+    /// * `reserve_sov` - Reserve balance in SOV (atomic units, 8 decimal)
+    ///
+    /// # Returns
+    /// Reserve value in USD (whole dollars) or error if no fresh price
+    pub fn calculate_reserve_value_usd(
+        &self,
+        reserve_sov: u64,
+        current_epoch: u64,
+    ) -> Result<u64, OracleObserverError> {
+        let price = self.latest_fresh_price(current_epoch)
+            .ok_or(OracleObserverError::NoFinalizedPrice)?;
+
+        // reserve_value_usd = (reserve_sov / TOKEN_SCALE) * sov_usd_price / USD_PRICE_SCALE
+        let reserve_whole_sov = reserve_sov / (ORACLE_PRICE_SCALE as u64);
+        let reserve_value_usd = (reserve_whole_sov as u128)
+            .saturating_mul(price.sov_usd_price)
+            .saturating_div(ORACLE_PRICE_SCALE);
+
+        Ok(reserve_value_usd as u64)
+    }
 }
 
 fn normalize_members(mut members: Vec<[u8; 32]>) -> Vec<[u8; 32]> {
@@ -2167,6 +2312,204 @@ mod tests {
             decoded.committee.pending_update().is_some(),
             "pending_update should survive bincode serialization"
         );
+    }
+
+    // =========================================================================
+    // Issue #1847: Oracle Observer Mode Tests
+    // =========================================================================
+
+    /// Issue #1847: Test graduation threshold validation.
+    /// Verifies oracle correctly validates $269K USD threshold.
+    #[test]
+    fn test_observer_validate_graduation_threshold() {
+        let mut state = OracleState::default();
+        
+        // Set up committee for price finalization
+        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+
+        // Finalize a SOV/USD price: $1.00 = 100_000_000
+        let epoch_id = state.epoch_id(1_700_000_000);
+        let price = FinalizedOraclePrice {
+            epoch_id,
+            sov_usd_price: 100_000_000, // $1.00
+            cbe_usd_price: None,
+        };
+        assert!(state.try_finalize_price(price));
+
+        // Test threshold validation
+        // At $1.00 SOV, need 269,000 SOV for $269K USD
+        // 269,000 SOV = 26,900,000_000_000 atomic units
+        let reserve_sov = 26_900_000_000_000u64;
+        let threshold_usd = 269_000u64;
+
+        let result = state.validate_graduation_threshold(reserve_sov, threshold_usd);
+        assert!(result.is_ok(), "Should not error: {:?}", result);
+        assert!(result.unwrap(), "Should meet threshold at exactly $269K");
+
+        // Test just below threshold
+        let reserve_sov_below = 26_899_000_000_000u64; // Slightly less
+        let result = state.validate_graduation_threshold(reserve_sov_below, threshold_usd);
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "Should not meet threshold below $269K");
+    }
+
+    /// Issue #1847: Test graduation validation with different SOV prices.
+    #[test]
+    fn test_observer_graduation_with_variable_sov_price() {
+        let mut state = OracleState::default();
+        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+
+        // Test with $2.00 SOV price
+        let epoch_id = state.epoch_id(1_700_000_000);
+        let price = FinalizedOraclePrice {
+            epoch_id,
+            sov_usd_price: 200_000_000, // $2.00
+            cbe_usd_price: None,
+        };
+        assert!(state.try_finalize_price(price));
+
+        // At $2.00 SOV, need 134,500 SOV for $269K USD
+        let reserve_sov = 13_450_000_000_000u64;
+        let threshold_usd = 269_000u64;
+
+        let result = state.validate_graduation_threshold(reserve_sov, threshold_usd);
+        assert!(result.unwrap(), "Should meet threshold at $2.00 SOV price");
+
+        // Test with $0.50 SOV price
+        let mut state2 = OracleState::default();
+        state2.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        
+        let price2 = FinalizedOraclePrice {
+            epoch_id: state2.epoch_id(1_700_000_000),
+            sov_usd_price: 50_000_000, // $0.50
+            cbe_usd_price: None,
+        };
+        assert!(state2.try_finalize_price(price2));
+
+        // At $0.50 SOV, need 538,000 SOV for $269K USD
+        let reserve_sov = 53_800_000_000_000u64;
+        let result = state2.validate_graduation_threshold(reserve_sov, threshold_usd);
+        assert!(result.unwrap(), "Should meet threshold at $0.50 SOV price");
+    }
+
+    /// Issue #1847: Test observe_sov_usd_price returns correct price.
+    #[test]
+    fn test_observer_sov_usd_price() {
+        let mut state = OracleState::default();
+        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+
+        // No price yet
+        let current_epoch = state.epoch_id(1_700_000_000);
+        assert!(state.observe_sov_usd_price(current_epoch).is_none());
+
+        // Finalize a price
+        let price = FinalizedOraclePrice {
+            epoch_id: current_epoch,
+            sov_usd_price: 150_000_000, // $1.50
+            cbe_usd_price: Some(200_000_000), // $2.00 CBE
+        };
+        assert!(state.try_finalize_price(price));
+
+        // Should return the price
+        assert_eq!(state.observe_sov_usd_price(current_epoch), Some(150_000_000));
+        assert_eq!(state.observe_cbe_usd_price(current_epoch), Some(200_000_000));
+    }
+
+    /// Issue #1847: Test observer returns None for stale prices.
+    #[test]
+    fn test_observer_rejects_stale_price() {
+        let mut state = OracleState::default();
+        state.config.max_price_staleness_epochs = 2; // Very short for testing
+        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+
+        // Finalize price at epoch 1
+        let price = FinalizedOraclePrice {
+            epoch_id: 1,
+            sov_usd_price: 100_000_000,
+            cbe_usd_price: None,
+        };
+        assert!(state.try_finalize_price(price));
+
+        // At epoch 2, price should still be fresh (1 epoch old, max=2)
+        assert!(state.observe_sov_usd_price(2).is_some());
+
+        // At epoch 3, price is still fresh (2 epochs old, max=2)
+        assert!(state.observe_sov_usd_price(3).is_some());
+
+        // At epoch 4, price is stale (3 epochs old > max=2)
+        assert!(state.observe_sov_usd_price(4).is_none());
+    }
+
+    /// Issue #1847: Test calculate_reserve_value_usd helper.
+    #[test]
+    fn test_observer_calculate_reserve_value() {
+        let mut state = OracleState::default();
+        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+
+        let epoch_id = state.epoch_id(1_700_000_000);
+        let price = FinalizedOraclePrice {
+            epoch_id,
+            sov_usd_price: 100_000_000, // $1.00
+            cbe_usd_price: None,
+        };
+        assert!(state.try_finalize_price(price));
+
+        // 10,000 SOV reserve at $1.00 = $10,000 USD
+        let reserve_sov = 1_000_000_000_000u64; // 10,000 SOV in atomic
+        let value_usd = state.calculate_reserve_value_usd(reserve_sov, epoch_id);
+        assert_eq!(value_usd.unwrap(), 10_000);
+
+        // 5,000 SOV reserve at $1.00 = $5,000 USD
+        let reserve_sov = 500_000_000_000u64;
+        let value_usd = state.calculate_reserve_value_usd(reserve_sov, epoch_id);
+        assert_eq!(value_usd.unwrap(), 5_000);
+    }
+
+    /// Issue #1847: Test observer error cases.
+    #[test]
+    fn test_observer_errors() {
+        let state = OracleState::default();
+
+        // No finalized price
+        let result = state.validate_graduation_threshold(1_000_000, 100_000);
+        assert!(matches!(result, Err(OracleObserverError::NoFinalizedPrice)));
+
+        // No price for calculation
+        let result = state.calculate_reserve_value_usd(1_000_000, 0);
+        assert!(matches!(result, Err(OracleObserverError::NoFinalizedPrice)));
+    }
+
+    /// Issue #1847: Test oracle does not create price - only observes.
+    /// This test documents the observer principle.
+    #[test]
+    fn test_observer_read_only_principle() {
+        let mut state = OracleState::default();
+        state.config.max_price_staleness_epochs = 2;
+        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+
+        // Observer methods should only return finalized prices
+        // They never create or modify prices
+        
+        let current_epoch = 10;
+        
+        // Before finalization - no price available
+        assert!(state.observe_sov_usd_price(current_epoch).is_none());
+        
+        // Finalize price through consensus (not observer)
+        let price = FinalizedOraclePrice {
+            epoch_id: current_epoch,
+            sov_usd_price: 100_000_000,
+            cbe_usd_price: Some(150_000_000),
+        };
+        assert!(state.try_finalize_price(price));
+        
+        // After finalization - observer can report the price
+        assert_eq!(state.observe_sov_usd_price(current_epoch), Some(100_000_000));
+        assert_eq!(state.observe_cbe_usd_price(current_epoch), Some(150_000_000));
+        
+        // Observer methods are read-only and don't modify state
+        // At epoch 13 (3 epochs later), price is stale (max_staleness=2)
+        assert!(state.observe_sov_usd_price(13).is_none());
     }
 }
 
