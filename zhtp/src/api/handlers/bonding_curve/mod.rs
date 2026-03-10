@@ -534,8 +534,6 @@ impl CurveHandler {
 
     /// POST /api/v1/curve/graduate - Graduate bonding curve token to AMM
     async fn handle_graduate(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        use crate::contracts::sov_swap::SovSwapPool;
-
         #[derive(serde::Deserialize)]
         struct GraduateRequest {
             signed_tx: String,
