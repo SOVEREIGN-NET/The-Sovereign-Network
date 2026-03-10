@@ -23,6 +23,32 @@ const TOKEN_SCALE: u64 = 100_000_000;
 /// Basis points denominator (10_000 bps = 100%)
 const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
 
+// ============================================================================
+// Issue #1846: Graduation Threshold Constants
+// ============================================================================
+
+/// Graduation threshold in USD (whole dollars).
+/// 
+/// Per CBE Token Launch specification: $269,000 USD reserve value triggers graduation.
+/// This constant ensures the threshold is defined in one place and used consistently.
+pub const GRADUATION_THRESHOLD_USD: u64 = 269_000;
+
+/// Maximum acceptable age for oracle price data (in seconds).
+/// 
+/// Safety mechanism: If oracle price is older than this, graduation cannot proceed.
+/// Prevents manipulation using stale price data.
+pub const MAX_ORACLE_PRICE_AGE_SECONDS: u64 = 300; // 5 minutes
+
+/// Required confirmation period before graduation (in blocks).
+/// 
+/// Safety mechanism: Graduation must be pending for this many blocks before execution.
+/// Allows time for validators to detect and challenge invalid graduation attempts.
+pub const GRADUATION_CONFIRMATION_BLOCKS: u64 = 3;
+
+/// Price scale for fixed-point arithmetic (8 decimals).
+/// Used for USD value calculations with SOV/USD oracle price.
+pub const USD_PRICE_SCALE: u128 = 100_000_000;
+
 /// Maximum iterations for the iterative buy approximation (overflow guard)
 const MAX_BUY_ITERATIONS: u32 = 1_000;
 
@@ -390,6 +416,18 @@ pub enum Threshold {
         min_time_seconds: u64,
         min_supply: u64,
     },
+    /// Issue #1846: Reserve value in USD using oracle price.
+    /// 
+    /// Graduation triggers when `reserve_sov * sov_usd_price >= threshold_usd`.
+    /// Requires oracle price data that is not stale (within MAX_ORACLE_PRICE_AGE_SECONDS).
+    ReserveValueUsd {
+        /// Minimum reserve value in USD (whole dollars, e.g., 269_000 for $269K)
+        threshold_usd: u64,
+        /// Maximum age of oracle price (seconds) - safety mechanism
+        max_price_age_seconds: u64,
+        /// Required confirmation blocks - safety mechanism
+        confirmation_blocks: u64,
+    },
 }
 
 impl Threshold {
@@ -411,7 +449,64 @@ impl Threshold {
                 min_time_seconds,
                 min_supply,
             } => elapsed_seconds >= *min_time_seconds && supply >= *min_supply,
+            Threshold::ReserveValueUsd { .. } => {
+                // USD-based check requires oracle price - use `is_met_with_oracle`
+                false
+            }
         }
+    }
+
+    /// Issue #1846: Check if USD-based graduation threshold is met.
+    ///
+    /// Calculates reserve value in USD using oracle SOV/USD price.
+    /// Includes safety checks for stale price data.
+    ///
+    /// # Arguments
+    /// * `reserve_sov` - Current reserve balance in SOV (atomic units)
+    /// * `sov_usd_price` - Oracle SOV/USD price (8-decimal fixed-point)
+    /// * `price_age_seconds` - Age of oracle price (seconds)
+    /// * `pending_blocks` - Number of blocks graduation has been pending (0 to skip confirmation check)
+    ///
+    /// # Returns
+    /// `true` if threshold is met and all safety checks pass
+    pub fn is_met_with_oracle(
+        &self,
+        reserve_sov: u64,
+        sov_usd_price: u64,
+        price_age_seconds: u64,
+        pending_blocks: u64,
+    ) -> bool {
+        let Threshold::ReserveValueUsd {
+            threshold_usd,
+            max_price_age_seconds,
+            confirmation_blocks,
+        } = self else {
+            // Non-USD thresholds use standard is_met
+            return false;
+        };
+
+        // Safety check 1: Oracle price must not be stale
+        if price_age_seconds > *max_price_age_seconds {
+            return false;
+        }
+
+        // Safety check 2: Confirmation period (only if pending_blocks > 0 or we're checking specifically)
+        // Note: When pending_blocks is 0, we skip this check to allow checking threshold value only
+        if pending_blocks > 0 && pending_blocks < *confirmation_blocks {
+            return false;
+        }
+
+        // Calculate reserve value in USD:
+        // 1. Convert reserve from atomic to whole SOV: reserve_sov / TOKEN_SCALE
+        // 2. Multiply by price: whole_sov * sov_usd_price
+        // 3. Divide by USD_PRICE_SCALE to get whole USD
+        let reserve_whole_sov = reserve_sov / TOKEN_SCALE;
+        let reserve_value_usd = (reserve_whole_sov as u128)
+            .saturating_mul(sov_usd_price as u128)
+            .saturating_div(USD_PRICE_SCALE);
+
+        // Check if threshold is met
+        reserve_value_usd >= *threshold_usd as u128
     }
 
     /// Get human-readable description
@@ -435,6 +530,22 @@ impl Threshold {
                 min_time_seconds,
                 min_supply / 100_000_000
             ),
+            Threshold::ReserveValueUsd {
+                threshold_usd,
+                max_price_age_seconds,
+                confirmation_blocks,
+            } => format!(
+                "Reserve Value >= ${} USD (max_price_age: {}s, confirmation: {} blocks)",
+                threshold_usd, max_price_age_seconds, confirmation_blocks
+            ),
+        }
+    }
+
+    /// Get the USD threshold value (if applicable)
+    pub fn threshold_usd(&self) -> Option<u64> {
+        match self {
+            Threshold::ReserveValueUsd { threshold_usd, .. } => Some(*threshold_usd),
+            _ => None,
         }
     }
 }

@@ -14386,6 +14386,10 @@ mod cbe_graduation_oracle_gate_tests {
             creator_did: None,
             deployed_at_block: 1,
             deployed_at_timestamp: 1,
+            // Issue #1846: Graduation tracking
+            graduation_pending_since_block: None,
+            last_oracle_price: None,
+            last_oracle_price_timestamp: None,
         }
     }
 

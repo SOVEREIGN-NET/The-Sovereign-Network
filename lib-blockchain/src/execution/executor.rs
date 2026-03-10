@@ -1698,6 +1698,10 @@ impl BlockExecutor {
             creator_did: Some(creator_did),
             deployed_at_block: block_height,
             deployed_at_timestamp: block_timestamp,
+            // Issue #1846: Graduation tracking initialized to None
+            graduation_pending_since_block: None,
+            last_oracle_price: None,
+            last_oracle_price_timestamp: None,
         };
 
         // Store the token
@@ -3774,6 +3778,10 @@ mod tests {
             creator_did: None,
             deployed_at_block: 0,
             deployed_at_timestamp: 12345,
+            // Issue #1846: Graduation tracking
+            graduation_pending_since_block: None,
+            last_oracle_price: None,
+            last_oracle_price_timestamp: None,
         };
 
         let result = tx_apply::apply_bonding_curve_deploy(&mutator, &token_id, &token, "TT");
@@ -3822,6 +3830,10 @@ mod tests {
             threshold: Threshold::ReserveAmount(1_000_000),
             sell_enabled: false,
             amm_pool_id: None,
+            // Issue #1846: Graduation tracking
+            graduation_pending_since_block: None,
+            last_oracle_price: None,
+            last_oracle_price_timestamp: None,
             creator: lib_crypto::PublicKey {
                 dilithium_pk: vec![],
                 kyber_pk: vec![],
