@@ -6399,6 +6399,9 @@ impl Blockchain {
                             midpoint_supply: deploy.midpoint_supply.unwrap_or(0),
                             steepness: deploy.curve_param,
                         },
+                        3 => crate::contracts::bonding_curve::CurveType::PiecewiseLinear(
+                            crate::contracts::bonding_curve::PiecewiseLinearCurve::cbe_default()
+                        ),
                         _ => return Err(anyhow::anyhow!("Invalid curve type: {}", deploy.curve_type)),
                     };
 

@@ -1097,7 +1097,7 @@ impl OracleState {
         signer_set.insert(attestation.validator_pubkey);
         
         // Track CBE price if provided (Issue #1819)
-        let cbe_finalized = if let Some(cbe_price) = attestation.cbe_usd_price {
+        let _cbe_finalized = if let Some(cbe_price) = attestation.cbe_usd_price {
             epoch_state
                 .signer_cbe_prices
                 .insert(attestation.validator_pubkey, cbe_price);
@@ -1106,7 +1106,7 @@ impl OracleState {
                 .entry(cbe_price)
                 .or_default();
             cbe_signer_set.insert(attestation.validator_pubkey);
-            
+
             // Check if CBE price has reached threshold
             if epoch_state.winning_cbe_price.is_none() && cbe_signer_set.len() >= threshold {
                 epoch_state.winning_cbe_price = Some(cbe_price);

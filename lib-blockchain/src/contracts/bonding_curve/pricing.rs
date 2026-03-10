@@ -8,9 +8,9 @@
 //! price(S) = m_i × S + b_i
 //! ```
 //! Where:
-//! - S = circulating supply in whole tokens (NOT atomic units)
-//! - m_i = slope for supply band i (in SOV per CBE per token)
-//! - b_i = base offset for supply band i (in SOV per CBE at S=0)
+//! - S = circulating supply in atomic units (8 decimals, 1 token = 10^8 units)
+//! - m_i = slope for supply band i (scaled by COMBINED_SCALE = 10^16)
+//! - b_i = base offset for supply band i (scaled by PRICE_SCALE = 10^8)
 //!
 //! # Supply Bands (from specification)
 //! | Band | Supply Range      | Slope      | Base          |
