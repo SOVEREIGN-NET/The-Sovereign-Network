@@ -40,10 +40,6 @@ pub struct BondingCurveToken {
     pub total_supply: u64,
     /// Reserve balance in stablecoin (20% of purchases - backs bonding curve)
     pub reserve_balance: u64,
-    /// Treasury balance in stablecoin (80% of purchases - protocol operations)
-    /// Issue #1844: Reserve and Treasury 20/80 Split
-    #[serde(default)]
-    pub treasury_balance: u64,
     /// Curve pricing formula
     pub curve_type: CurveType,
     /// Graduation threshold
@@ -65,6 +61,12 @@ pub struct BondingCurveToken {
     pub deployed_at_block: u64,
     /// Timestamp at deployment
     pub deployed_at_timestamp: u64,
+    /// Treasury balance in stablecoin (80% of purchases - protocol operations)
+    /// Issue #1844: Reserve and Treasury 20/80 Split
+    /// NOTE: Field is at end of struct intentionally — bincode is positional.
+    /// Adding fields mid-struct corrupts deserialization of existing stored tokens.
+    #[serde(default)]
+    pub treasury_balance: u64,
 }
 
 impl BondingCurveToken {
@@ -235,8 +237,8 @@ impl BondingCurveToken {
         let token_amount = self.calculate_buy(stable_amount)?;
 
         // Issue #1844: Split purchase 20% reserve / 80% treasury
-        let to_reserve = (stable_amount * 2000) / 10000;  // 20%
-        let to_treasury = stable_amount - to_reserve;     // 80%
+        let to_reserve = stable_amount / 5;           // 20% - overflow-safe
+        let to_treasury = stable_amount - to_reserve; // 80%
 
         // Update state
         self.reserve_balance = self
@@ -555,12 +557,10 @@ mod tests {
             "Total should equal sum of purchases"
         );
         
-        // Verify split ratio is exactly 20/80
+        // Verify split ratio is exactly 20/80 using integer arithmetic
         let total = token.reserve_balance + token.treasury_balance;
-        let reserve_pct = (token.reserve_balance as f64 / total as f64) * 100.0;
-        let treasury_pct = (token.treasury_balance as f64 / total as f64) * 100.0;
-        assert!((reserve_pct - 20.0).abs() < 0.01, "Reserve should be ~20%");
-        assert!((treasury_pct - 80.0).abs() < 0.01, "Treasury should be ~80%");
+        assert_eq!(token.reserve_balance * 10000 / total, 2000, "Reserve should be exactly 20%");
+        assert_eq!(token.treasury_balance * 10000 / total, 8000, "Treasury should be exactly 80%");
     }
 
     #[test]

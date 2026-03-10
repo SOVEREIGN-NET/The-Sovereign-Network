@@ -36,6 +36,7 @@ fn create_test_cbe_token(token_id: [u8; 32], reserve_micro_usd: u64) -> BondingC
         creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
+        treasury_balance: 0,
     }
 }
 
