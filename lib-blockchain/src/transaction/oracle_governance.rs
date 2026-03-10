@@ -9,12 +9,17 @@ use serde::{Deserialize, Serialize};
 ///
 /// Validator submits a signed price attestation for the current epoch.
 /// The signature is verified during block execution.
+/// Issue #1819: Extended with CBE/USD price for unified token pricing.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OracleAttestationData {
     /// Epoch being attested to (must match current block epoch).
     pub epoch_id: u64,
     /// SOV/USD price in fixed-point (8 decimal places, 1e8 = $1.00).
     pub sov_usd_price: u128,
+    /// Issue #1819: CBE/USD price for unified pricing (8-decimal precision).
+    /// None if validator doesn't provide CBE price (backward compatible).
+    #[serde(default)]
+    pub cbe_usd_price: Option<u128>,
     /// Unix timestamp when attestation was created.
     pub timestamp: u64,
     /// Validator's key_id (blake3 of consensus public key).

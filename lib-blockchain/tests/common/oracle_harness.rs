@@ -158,6 +158,7 @@ impl OracleTestHarness {
         let mut attestation = OraclePriceAttestation {
             epoch_id,
             sov_usd_price: price,
+            cbe_usd_price: None,
             timestamp,
             validator_pubkey: validator.key_id,
             signature: Vec::new(),
@@ -187,6 +188,7 @@ impl OracleTestHarness {
         let mut attestation = OraclePriceAttestation {
             epoch_id,
             sov_usd_price: price,
+            cbe_usd_price: None,
             timestamp,
             validator_pubkey: validator.key_id,
             signature: Vec::new(),
