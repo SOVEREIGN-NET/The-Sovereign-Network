@@ -532,6 +532,36 @@ impl CurveHandler {
         }))
     }
 
+    /// POST /api/v1/curve/graduate - Graduate bonding curve token to AMM
+    async fn handle_graduate(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
+        use crate::contracts::sov_swap::SovSwapPool;
+
+        #[derive(serde::Deserialize)]
+        struct GraduateRequest {
+            signed_tx: String,
+        }
+
+        let req: GraduateRequest = serde_json::from_slice(&request.body)
+            .map_err(|_| anyhow::anyhow!("Invalid request body"))?;
+
+        // Parse and validate signed transaction
+        let tx_bytes = hex::decode(&req.signed_tx)
+            .map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
+        
+        // For now, return success - actual implementation would:
+        // 1. Verify transaction signature
+        // 2. Find token in bonding_curve_registry
+        // 3. Call token.graduate() if threshold met
+        // 4. Create AMM pool and seed with reserve + tokens
+        // 5. Update token phase to AMM
+        
+        create_json_response(json!({
+            "success": true,
+            "message": "Graduate endpoint ready - implementation pending",
+            "tx_status": "pending_implementation"
+        }))
+    }
+
     /// GET /api/v1/curve/{id} - Get curve token info
     async fn handle_get_token(&self, token_id_hex: &str) -> Result<ZhtpResponse> {
         let token_id =
@@ -751,6 +781,8 @@ impl ZhtpRequestHandler for CurveHandler {
             (ZhtpMethod::Post, "/api/v1/curve/buy") => self.handle_buy(request).await,
             // POST /api/v1/curve/sell
             (ZhtpMethod::Post, "/api/v1/curve/sell") => self.handle_sell(request).await,
+            // POST /api/v1/curve/graduate
+            (ZhtpMethod::Post, "/api/v1/curve/graduate") => self.handle_graduate(request).await,
             // GET /api/v1/curve/list
             (ZhtpMethod::Get, "/api/v1/curve/list") => self.handle_list().await,
             // GET /api/v1/curve/ready-to-graduate
