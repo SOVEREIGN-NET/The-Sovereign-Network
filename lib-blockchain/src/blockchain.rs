@@ -14374,6 +14374,7 @@ mod cbe_graduation_oracle_gate_tests {
             phase: Phase::Curve,
             total_supply: 1_000_000_000,
             reserve_balance: reserve_micro_usd,
+            treasury_balance: 0,
             curve_type: crate::contracts::bonding_curve::CurveType::Linear {
                 base_price: 1,
                 slope: 1,

@@ -39,6 +39,7 @@ fn create_test_cbe_token(reserve_micro_usd: u64) -> BondingCurveToken {
         creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
+        treasury_balance: 0,
     }
 }
 
