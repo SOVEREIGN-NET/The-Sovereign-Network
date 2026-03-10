@@ -1685,6 +1685,7 @@ impl BlockExecutor {
             phase: Phase::Curve,
             total_supply: 0,
             reserve_balance: 0,
+            treasury_balance: 0,
             curve_type,
             threshold,
             sell_enabled: data.sell_enabled,
@@ -3757,6 +3758,7 @@ mod tests {
             phase: Phase::Curve,
             total_supply: 0,
             reserve_balance: 0,
+            treasury_balance: 0,
             curve_type: CurveType::Linear {
                 base_price: 1000,
                 slope: 10,
@@ -3812,6 +3814,7 @@ mod tests {
             phase: Phase::Curve,
             total_supply: 0,
             reserve_balance: 0,
+            treasury_balance: 0,
             curve_type: CurveType::Linear {
                 base_price: 1000,
                 slope: 10,
