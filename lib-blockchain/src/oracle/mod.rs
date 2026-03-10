@@ -1145,8 +1145,15 @@ impl OracleState {
             }
         }
 
-        // Check if SOV price has reached threshold (only if not already finalized)
-        if !epoch_state.finalized && signer_set.len() >= threshold {
+        // Check if SOV price has reached threshold (only if not already finalized).
+        // Use get() instead of entry().or_default() to avoid inserting empty sets
+        // for late attestations that arrive after finalization.
+        if !epoch_state.finalized
+            && epoch_state
+                .price_signers
+                .get(&attestation.sov_usd_price)
+                .map_or(false, |s| s.len() >= threshold)
+        {
             epoch_state.finalized = true;
             epoch_state.winning_price = Some(attestation.sov_usd_price);
 
