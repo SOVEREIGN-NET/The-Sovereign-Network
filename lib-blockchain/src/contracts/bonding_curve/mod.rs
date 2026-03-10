@@ -32,6 +32,9 @@ pub use registry::{BondingCurveRegistry, RegistryStats};
 pub use token::{BondingCurveToken, RESERVE_SPLIT_DIVISOR};
 pub use types::{
     ConfidenceLevel, CurveError, CurveStats, CurveType, Phase, PriceSource, Threshold, Valuation,
+    // Issue #1846: Graduation threshold constants
+    GRADUATION_CONFIRMATION_BLOCKS, GRADUATION_THRESHOLD_USD, MAX_ORACLE_PRICE_AGE_SECONDS,
+    USD_PRICE_SCALE,
 };
 
 /// Default token decimals
