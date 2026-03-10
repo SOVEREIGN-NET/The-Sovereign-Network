@@ -1416,13 +1416,16 @@ impl Blockchain {
             id
         };
 
+        // Initialize CBE corporate equity token with 100B allocation (Issue #1843)
+        // Must run before the bonding curve registry guard so that cbe_token is
+        // initialized independently — e.g. if an older serialized state already
+        // has the bonding-curve entry but deserialized cbe_token as #[serde(default)].
+        self.initialize_cbe_token_genesis();
+
         // Skip if CBE already exists (e.g., loaded from storage)
         if self.bonding_curve_registry.contains(&token_id) {
             return;
         }
-
-        // Initialize CBE corporate equity token with 100B allocation (Issue #1843)
-        self.initialize_cbe_token_genesis();
 
         // Create genesis creator key
         let genesis_creator = PublicKey {

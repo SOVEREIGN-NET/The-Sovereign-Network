@@ -782,6 +782,30 @@ impl TransactionValidator {
             }
         }
 
+        // Bind key_id to the actual public key bytes to prevent address spoofing.
+        // Without this check an attacker can submit their real dilithium_pk (so the
+        // signature verifies) while setting key_id to an arbitrary pool address,
+        // which would give them access to that pool's token balance.
+        let pk = &transaction.signature.public_key;
+        let expected_key_id = if pk.kyber_pk.is_empty() {
+            // PublicKey::new() path: key_id = blake3(dilithium_pk)
+            lib_crypto::hashing::hash_blake3(&public_key_bytes)
+        } else {
+            // KeyPair::generate() path: key_id = blake3(dilithium_pk || kyber_pk)
+            lib_crypto::hashing::hash_blake3_multiple(&[
+                public_key_bytes.as_slice(),
+                pk.kyber_pk.as_slice(),
+            ])
+        };
+        if pk.key_id != expected_key_id {
+            tracing::warn!(
+                "key_id binding check failed: claimed {:?} expected {:?}",
+                hex::encode(&pk.key_id[..8]),
+                hex::encode(&expected_key_id[..8])
+            );
+            return Err(ValidationError::InvalidSignature);
+        }
+
         // Verify signature algorithm is supported
         match transaction.signature.algorithm {
             SignatureAlgorithm::Dilithium2 | SignatureAlgorithm::Dilithium5 => {
