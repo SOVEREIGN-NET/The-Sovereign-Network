@@ -891,6 +891,9 @@ impl OracleState {
     }
 
     /// Admission precheck (non-mutating) used by both gossip admission and block execution.
+    ///
+    /// Issue #1819: CBE/USD can be collected even after SOV/USD finalization,
+    /// as long as the SOV price matches the winning SOV price.
     pub fn precheck_attestation<R>(
         &self,
         attestation: &OraclePriceAttestation,
@@ -907,8 +910,14 @@ impl OracleState {
             });
         }
 
+        // Check if epoch is already finalized on SOV price
         if let Some(finalized) = self.finalized_prices.get(&current_epoch) {
             if finalized.sov_usd_price == attestation.sov_usd_price {
+                // SOV price matches - allow CBE price submission even after finalization
+                // This enables CBE finalization to complete after SOV finalization
+                if attestation.cbe_usd_price.is_some() {
+                    return Ok(OracleAttestationAdmission::Accepted);
+                }
                 return Ok(OracleAttestationAdmission::IgnoredAfterFinalization {
                     epoch_id: current_epoch,
                     price: finalized.sov_usd_price,
@@ -926,6 +935,10 @@ impl OracleState {
             if state.finalized {
                 if let Some(winning) = state.winning_price {
                     if winning == attestation.sov_usd_price {
+                        // SOV finalized but allow CBE submission
+                        if attestation.cbe_usd_price.is_some() {
+                            return Ok(OracleAttestationAdmission::Accepted);
+                        }
                         return Ok(OracleAttestationAdmission::IgnoredAfterFinalization {
                             epoch_id: current_epoch,
                             price: winning,
@@ -949,9 +962,23 @@ impl OracleState {
             }
         }
 
+        // Check for duplicate SOV price submission (but allow CBE-only updates)
         if let Some(state) = epoch_state {
             if let Some(existing_price) = state.signer_prices.get(&attestation.validator_pubkey) {
                 if *existing_price == attestation.sov_usd_price {
+                    // Same SOV price - check if this is a CBE-only update
+                    if attestation.cbe_usd_price.is_some() {
+                        // Allow CBE submission even if SOV already submitted
+                        // Check if this validator already submitted CBE price
+                        if let Some(existing_cbe) = state.signer_cbe_prices.get(&attestation.validator_pubkey) {
+                            if *existing_cbe == attestation.cbe_usd_price.unwrap() {
+                                return Ok(OracleAttestationAdmission::IgnoredDuplicateSigner(
+                                    attestation.validator_pubkey,
+                                ));
+                            }
+                        }
+                        return Ok(OracleAttestationAdmission::Accepted);
+                    }
                     return Ok(OracleAttestationAdmission::IgnoredDuplicateSigner(
                         attestation.validator_pubkey,
                     ));
@@ -1086,18 +1113,22 @@ impl OracleState {
 
         let epoch_state = self.epoch_state.entry(current_epoch).or_default();
         
-        // Track SOV price
-        epoch_state
-            .signer_prices
-            .insert(attestation.validator_pubkey, attestation.sov_usd_price);
-        let signer_set = epoch_state
-            .price_signers
-            .entry(attestation.sov_usd_price)
-            .or_default();
-        signer_set.insert(attestation.validator_pubkey);
-        
+        // Track SOV price (only if not already finalized)
+        if !epoch_state.finalized {
+            epoch_state
+                .signer_prices
+                .insert(attestation.validator_pubkey, attestation.sov_usd_price);
+            let signer_set = epoch_state
+                .price_signers
+                .entry(attestation.sov_usd_price)
+                .or_default();
+            signer_set.insert(attestation.validator_pubkey);
+        }
+
         // Track CBE price if provided (Issue #1819)
-        let _cbe_finalized = if let Some(cbe_price) = attestation.cbe_usd_price {
+        // CBE can be collected even after SOV finalization
+        let mut _cbe_finalized = false;
+        if let Some(cbe_price) = attestation.cbe_usd_price {
             epoch_state
                 .signer_cbe_prices
                 .insert(attestation.validator_pubkey, cbe_price);
@@ -1110,15 +1141,11 @@ impl OracleState {
             // Check if CBE price has reached threshold
             if epoch_state.winning_cbe_price.is_none() && cbe_signer_set.len() >= threshold {
                 epoch_state.winning_cbe_price = Some(cbe_price);
-                true
-            } else {
-                false
+                _cbe_finalized = true;
             }
-        } else {
-            false
-        };
+        }
 
-        // Check if SOV price has reached threshold
+        // Check if SOV price has reached threshold (only if not already finalized)
         if !epoch_state.finalized && signer_set.len() >= threshold {
             epoch_state.finalized = true;
             epoch_state.winning_price = Some(attestation.sov_usd_price);
@@ -1143,6 +1170,16 @@ impl OracleState {
             }
 
             return Ok(OracleAttestationAdmission::Finalized(finalized));
+        }
+
+        // If SOV is already finalized but CBE just reached threshold, emit CBE finalization
+        if epoch_state.finalized && _cbe_finalized {
+            // CBE finalized after SOV - update the finalized price record
+            if let Some(finalized) = self.finalized_prices.get_mut(&current_epoch) {
+                if let Some(cbe_price) = epoch_state.winning_cbe_price {
+                    finalized.cbe_usd_price = Some(cbe_price);
+                }
+            }
         }
 
         Ok(OracleAttestationAdmission::Accepted)
