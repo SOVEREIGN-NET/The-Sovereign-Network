@@ -520,13 +520,19 @@ impl BondingCurveToken {
                 }
             }
             Threshold::ReserveValueUsd { threshold_usd, .. } => {
-                // For USD thresholds, calculate progress based on last known oracle price
+                // For USD thresholds, calculate progress based on last known oracle price.
+                // Multiply first to preserve sub-SOV precision.
                 if let Some(sov_usd_price) = self.last_oracle_price {
-                    let reserve_whole_sov = self.reserve_balance / TOKEN_SCALE;
-                    let reserve_value_usd = (reserve_whole_sov as u128)
+                    let reserve_value_usd = (self.reserve_balance as u128)
                         .saturating_mul(sov_usd_price as u128)
-                        .saturating_div(USD_PRICE_SCALE);
-                    ((reserve_value_usd * 100) / threshold_usd as u128) as u8
+                        .saturating_div(TOKEN_SCALE as u128 * USD_PRICE_SCALE);
+                    // Compute percent in u128, clamp to 100 before casting to u8 to prevent wrap
+                    let percent = if threshold_usd == 0 {
+                        100u128
+                    } else {
+                        (reserve_value_usd.saturating_mul(100)) / threshold_usd as u128
+                    };
+                    percent.min(100) as u8
                 } else {
                     0
                 }
