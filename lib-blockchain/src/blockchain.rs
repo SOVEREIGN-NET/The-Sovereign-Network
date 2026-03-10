@@ -1516,8 +1516,9 @@ impl Blockchain {
         let genesis_timestamp = self.get_genesis_timestamp();
         let start_block = 0u64;
 
-        // Approximate blocks per month (assuming ~5 second block time = ~518,400 blocks/month)
-        const BLOCKS_PER_MONTH: u64 = 518_400;
+        // Blocks per month derived from the canonical target block time (10 s/block)
+        const SECONDS_PER_MONTH: u64 = 30 * 24 * 60 * 60; // 2_592_000
+        const BLOCKS_PER_MONTH: u64 = SECONDS_PER_MONTH / crate::TARGET_BLOCK_TIME; // 259_200
 
         // Add vesting schedules for pools that require vesting
 
