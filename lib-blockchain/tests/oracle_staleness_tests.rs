@@ -89,6 +89,9 @@ fn cbe_graduation_blocked_with_stale_price() {
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
         treasury_balance: 0,
+        graduation_pending_since_block: None,
+        last_oracle_price: None,
+        last_oracle_price_timestamp: None,
     };
 
     blockchain.bonding_curve_registry.register(token).unwrap();
@@ -148,6 +151,9 @@ fn cbe_graduation_proceeds_with_fresh_price() {
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
         treasury_balance: 0,
+        graduation_pending_since_block: None,
+        last_oracle_price: None,
+        last_oracle_price_timestamp: None,
     };
 
     blockchain.bonding_curve_registry.register(token).unwrap();
