@@ -1,12 +1,22 @@
-//! Unified Token Pricing System
+//! Issue #1852: Simplified Token Pricing System (Document-Compliant)
 //!
-//! Implements Issue #1819: Unified Token Pricing System (SOV + CBE)
-//! with Pre/Post-Graduation Modes.
+//! Refactored from Issue #1819 to make bonding curve PRIMARY and oracle SECONDARY.
 //!
-//! Key Concepts:
-//! - SOV price transitions from FIXED (SRV) to DYNAMIC (CBE_USD / CBE_SOV)
-//! - CBE price starts as curve-based, switches to oracle when available
-//! - Graduation ($269K reserve) only enables external CBE trading, not price calculation
+//! Key Principle:
+//! > "reliance on internal mechanisms rather than external oracles for price discovery"
+//!
+//! Architecture:
+//! ```
+//! Bonding Curve (CBE/SOV) → Market Price → Oracle Observes
+//! Bonding Curve = PRIMARY price source
+//! Oracle = SECONDARY observer (graduation threshold validation only)
+//! ```
+//!
+//! Changes from #1819:
+//! - Removed oracle-derived SOV pricing (CBE/USD ÷ CBE/SOV)
+//! - Removed dynamic pricing mode
+//! - Simplified TokenPricingState to observer role
+//! - Bonding curve is sole price source during Phase 1
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -17,26 +27,26 @@ pub const PRICE_SCALE: u128 = 100_000_000;
 /// Genesis/fallback SRV value in 8-decimal precision
 pub const GENESIS_SRV_8DEC: u64 = 2_180_000; // $0.0218
 
-/// Pricing mode for a token
+/// Pricing phase for CBE token
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum PricingMode {
-    /// Fixed price (e.g., SOV using SRV before oracle provides CBE/USD)
-    Fixed,
-    /// Dynamic price derived from other signals (e.g., SOV = CBE_USD / CBE_SOV)
-    Dynamic,
-    /// Pre-graduation bonding curve pricing
-    PreGraduation,
-    /// Post-graduation oracle pricing
-    PostGraduation,
+pub enum PricingPhase {
+    /// Phase 1: Bonding curve is sole price source
+    Curve,
+    /// Phase 2: AMM is price source (post-graduation)
+    AMM,
 }
 
-impl std::fmt::Display for PricingMode {
+impl Default for PricingPhase {
+    fn default() -> Self {
+        PricingPhase::Curve
+    }
+}
+
+impl std::fmt::Display for PricingPhase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PricingMode::Fixed => write!(f, "fixed"),
-            PricingMode::Dynamic => write!(f, "dynamic"),
-            PricingMode::PreGraduation => write!(f, "pre_graduation"),
-            PricingMode::PostGraduation => write!(f, "post_graduation"),
+            PricingPhase::Curve => write!(f, "curve"),
+            PricingPhase::AMM => write!(f, "amm"),
         }
     }
 }
@@ -44,14 +54,14 @@ impl std::fmt::Display for PricingMode {
 /// Price source indicator
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PriceSource {
-    /// SRV (System Reference Value)
+    /// SRV (System Reference Value) for SOV
     Srv,
-    /// Bonding curve calculation
+    /// Bonding curve calculation (PRIMARY for CBE)
     BondingCurve,
-    /// External oracle
+    /// AMM pool price (post-graduation)
+    AMM,
+    /// Oracle observation (SECONDARY, read-only)
     Oracle,
-    /// Derived from other prices
-    Derived,
 }
 
 impl std::fmt::Display for PriceSource {
@@ -59,29 +69,10 @@ impl std::fmt::Display for PriceSource {
         match self {
             PriceSource::Srv => write!(f, "srv"),
             PriceSource::BondingCurve => write!(f, "bonding_curve"),
+            PriceSource::AMM => write!(f, "amm"),
             PriceSource::Oracle => write!(f, "oracle"),
-            PriceSource::Derived => write!(f, "derived"),
         }
     }
-}
-
-/// Token price information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenPrice {
-    /// Token ID
-    pub token_id: String,
-    /// Token symbol
-    pub symbol: String,
-    /// Price in USD (cents for API compatibility)
-    pub price_usd_cents: u64,
-    /// Pricing mode
-    pub price_mode: PricingMode,
-    /// Source of the price
-    pub price_source: PriceSource,
-    /// Component prices used in calculation
-    pub components: PriceComponents,
-    /// Unix timestamp of last update
-    pub last_updated: u64,
 }
 
 /// Component prices for transparent calculation
@@ -90,10 +81,10 @@ pub struct PriceComponents {
     /// SRV value (for SOV fixed pricing)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub srv: Option<f64>,
-    /// CBE/USD price from oracle (external)
+    /// CBE/USD price from oracle (deprecated - Issue #1852)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cbe_usd: Option<f64>,
-    /// CBE/SOV ratio from bonding curve (internal)
+    /// CBE/SOV ratio from bonding curve
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cbe_sov: Option<f64>,
     /// Curve price in SOV for CBE tokens
@@ -104,7 +95,80 @@ pub struct PriceComponents {
     pub sov_usd: Option<f64>,
 }
 
-/// CBE-specific price information
+/// Token price information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenPrice {
+    /// Token ID
+    pub token_id: String,
+    /// Token symbol
+    pub symbol: String,
+    /// Price in USD cents
+    pub price_usd_cents: u64,
+    /// Pricing phase
+    pub pricing_phase: PricingPhase,
+    /// Pricing mode (Issue #1852: deprecated, use pricing_phase)
+    pub price_mode: PricingMode,
+    /// Source of the price
+    pub price_source: PriceSource,
+    /// Component prices
+    pub components: PriceComponents,
+    /// Unix timestamp of last update
+    pub last_updated: u64,
+}
+
+/// Issue #1852: Simplified pricing state (observer role only)
+///
+/// The oracle only observes and validates - it does NOT create prices.
+/// Bonding curve is the sole price source for CBE.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TokenPricingState {
+    /// Current CBE price observed from bonding curve (8-decimal precision)
+    /// This is OBSERVED, not set by oracle
+    pub observed_curve_price: Option<u128>,
+    /// Current pricing phase
+    pub phase: PricingPhase,
+    /// Timestamp of last update
+    pub last_updated: u64,
+    /// Price history (token_id -> [(timestamp, price)])
+    #[serde(default)]
+    pub price_history: HashMap<String, Vec<(u64, u64)>>,
+    
+    // Legacy fields for backward compatibility (Issue #1852 transition)
+    /// Deprecated: CBE/USD from oracle (now observer-only)
+    #[serde(default)]
+    pub cbe_usd_price: Option<u128>,
+    /// Deprecated: CBE/SOV ratio (use bonding curve directly)
+    #[serde(default)]
+    pub cbe_sov_ratio: Option<u128>,
+    /// Deprecated: Dynamic pricing flag (always false now)
+    #[serde(default)]
+    pub dynamic_pricing_active: bool,
+    /// Deprecated: Last SOV price (use SRV directly)
+    #[serde(default = "default_srv")]
+    pub last_sov_price_8dec: u128,
+}
+
+fn default_srv() -> u128 {
+    GENESIS_SRV_8DEC as u128
+}
+
+// Issue #1852: Deprecated types kept for backward compatibility during transition
+
+/// Deprecated: Use PricingPhase instead
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PricingMode {
+    /// Fixed price (SRV)
+    Fixed,
+    /// Dynamic price (deprecated - no longer used)
+    #[deprecated(since = "Issue #1852", note = "Bonding curve is PRIMARY, oracle is observer-only")]
+    Dynamic,
+    /// Pre-graduation bonding curve pricing
+    PreGraduation,
+    /// Post-graduation pricing
+    PostGraduation,
+}
+
+/// CBE price info (Issue #1852: oracle is observer-only)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CbePriceInfo {
     /// Current price in USD (cents)
@@ -115,140 +179,54 @@ pub struct CbePriceInfo {
     pub price_source: PriceSource,
     /// Current phase
     pub phase: String,
-    /// Reserve in USD (micro-USD for precision)
+    /// Reserve in USD
     pub reserve_usd: u64,
     /// Total supply
     pub supply: u64,
     /// Component prices
     pub components: PriceComponents,
-    /// Oracle confidence (0-1, None if not from oracle)
+    /// Deprecated: always None (oracle is observer-only)
     pub oracle_confidence: Option<f64>,
     /// Last update timestamp
     pub last_updated: u64,
 }
 
-/// Unified pricing state for all tokens
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TokenPricingState {
-    /// Current CBE/USD price from oracle (8-decimal precision)
-    pub cbe_usd_price: Option<u128>,
-    /// Internal CBE/SOV ratio from bonding curve (8-decimal precision)
-    pub cbe_sov_ratio: Option<u128>,
-    /// Epoch when CBE/USD was last updated
-    pub cbe_price_epoch: Option<u64>,
-    /// Whether dynamic pricing is active (both signals available)
-    pub dynamic_pricing_active: bool,
-    /// Last SOV price calculation (8-decimal precision)
-    pub last_sov_price_8dec: u128,
-    /// Timestamp of last update
-    pub last_updated: u64,
-    /// Price history (token_id -> [(timestamp, price)])
-    #[serde(default)]
-    pub price_history: HashMap<String, Vec<(u64, u64)>>,
-}
-
 impl TokenPricingState {
-    /// Create new pricing state with genesis values
+    /// Create new pricing state
     pub fn new() -> Self {
         Self {
-            cbe_usd_price: None,
-            cbe_sov_ratio: None,
-            cbe_price_epoch: None,
-            dynamic_pricing_active: false,
-            last_sov_price_8dec: GENESIS_SRV_8DEC as u128,
+            observed_curve_price: None,
+            phase: PricingPhase::Curve,
             last_updated: 0,
             price_history: HashMap::new(),
+            // Legacy fields for backward compatibility
+            cbe_usd_price: None,
+            cbe_sov_ratio: None,
+            dynamic_pricing_active: false,
+            last_sov_price_8dec: GENESIS_SRV_8DEC as u128,
         }
     }
 
-    /// Update CBE/USD price from oracle
-    pub fn update_cbe_usd_price(&mut self, price_8dec: u128, epoch: u64, timestamp: u64) {
-        self.cbe_usd_price = Some(price_8dec);
-        self.cbe_price_epoch = Some(epoch);
+    /// Update observed curve price (from bonding curve, NOT oracle)
+    pub fn observe_curve_price(&mut self, price_8dec: u128, timestamp: u64) {
+        self.observed_curve_price = Some(price_8dec);
         self.last_updated = timestamp;
-        self.check_dynamic_pricing_ready();
     }
 
-    /// Update internal CBE/SOV ratio from bonding curve
-    pub fn update_cbe_sov_ratio(&mut self, ratio_8dec: u128, timestamp: u64) {
-        self.cbe_sov_ratio = Some(ratio_8dec);
+    /// Transition to AMM phase (post-graduation)
+    pub fn transition_to_amm(&mut self, timestamp: u64) {
+        self.phase = PricingPhase::AMM;
         self.last_updated = timestamp;
-        self.check_dynamic_pricing_ready();
     }
 
-    /// Check if both signals are available for dynamic pricing
-    fn check_dynamic_pricing_ready(&mut self) {
-        self.dynamic_pricing_active = self.cbe_usd_price.is_some() && self.cbe_sov_ratio.is_some();
-        
-        if self.dynamic_pricing_active {
-            // Calculate dynamic SOV price: CBE_USD / CBE_SOV
-            if let (Some(cbe_usd), Some(cbe_sov)) = (self.cbe_usd_price, self.cbe_sov_ratio) {
-                if cbe_sov > 0 {
-                    // SOV/USD = CBE_USD / CBE_SOV
-                    self.last_sov_price_8dec = (cbe_usd * PRICE_SCALE) / cbe_sov;
-                }
-            }
-        }
+    /// Get current observed price
+    pub fn get_observed_price(&self) -> Option<u128> {
+        self.observed_curve_price
     }
 
-    /// Get current SOV price in 8-decimal precision
-    pub fn get_sov_price_8dec(&self) -> u128 {
-        if self.dynamic_pricing_active {
-            self.last_sov_price_8dec
-        } else {
-            GENESIS_SRV_8DEC as u128
-        }
-    }
-
-    /// Get SOV price components
-    pub fn get_sov_components(&self) -> PriceComponents {
-        let srv = GENESIS_SRV_8DEC as f64 / PRICE_SCALE as f64;
-        
-        PriceComponents {
-            srv: Some(srv),
-            cbe_usd: self.cbe_usd_price.map(|p| p as f64 / PRICE_SCALE as f64),
-            cbe_sov: self.cbe_sov_ratio.map(|r| r as f64 / PRICE_SCALE as f64),
-            curve_price_sov: None,
-            sov_usd: None,
-        }
-    }
-
-    /// Get current SOV pricing mode
-    pub fn get_sov_pricing_mode(&self) -> PricingMode {
-        if self.dynamic_pricing_active {
-            PricingMode::Dynamic
-        } else {
-            PricingMode::Fixed
-        }
-    }
-
-    /// Get current SOV price source
-    pub fn get_sov_price_source(&self) -> PriceSource {
-        if self.dynamic_pricing_active {
-            PriceSource::Derived
-        } else {
-            PriceSource::Srv
-        }
-    }
-
-    /// Calculate CBE price components
-    pub fn calculate_cbe_price(&self, sov_price_8dec: u128, curve_price_sov: u64) -> (u64, PriceComponents) {
-        let sov_usd = sov_price_8dec as f64 / PRICE_SCALE as f64;
-        let curve_sov = curve_price_sov as f64 / PRICE_SCALE as f64;
-        
-        // CBE/USD = CBE/SOV * SOV/USD
-        let cbe_usd = curve_sov * sov_usd;
-        let cbe_usd_cents = (cbe_usd * 100.0) as u64;
-
-        let components = PriceComponents {
-            srv: None,
-            cbe_usd: self.cbe_usd_price.map(|p| p as f64 / PRICE_SCALE as f64),
-            cbe_sov: self.cbe_sov_ratio.map(|r| r as f64 / PRICE_SCALE as f64),
-            curve_price_sov: Some(curve_sov),
-            sov_usd: Some(sov_usd),
-        };
-
-        (cbe_usd_cents, components)
+    /// Get current pricing phase
+    pub fn get_phase(&self) -> PricingPhase {
+        self.phase
     }
 
     /// Record price in history
@@ -261,29 +239,86 @@ impl TokenPricingState {
             history.remove(0);
         }
     }
+
+    /// Get price history for a token
+    pub fn get_price_history(&self, token_id: &str) -> Vec<(u64, u64)> {
+        self.price_history.get(token_id).cloned().unwrap_or_default()
+    }
+
+    // Issue #1852: Legacy methods for backward compatibility
+
+    /// Deprecated: Get SOV price in 8-decimal (always returns SRV now)
+    pub fn get_sov_price_8dec(&self) -> u128 {
+        GENESIS_SRV_8DEC as u128
+    }
+
+    /// Deprecated: Get SOV pricing mode (always Fixed now)
+    pub fn get_sov_pricing_mode(&self) -> PricingMode {
+        PricingMode::Fixed
+    }
+
+    /// Deprecated: Get SOV price source (always Srv now)
+    pub fn get_sov_price_source(&self) -> PriceSource {
+        PriceSource::Srv
+    }
+
+    /// Deprecated: Calculate CBE price components
+    pub fn calculate_cbe_price(&self, _sov_price_8dec: u128, curve_price_sov: u64) -> (u64, PriceComponents) {
+        let curve_sov = curve_price_sov as f64 / PRICE_SCALE as f64;
+        let sov_usd = GENESIS_SRV_8DEC as f64 / PRICE_SCALE as f64;
+        
+        // CBE/USD = CBE/SOV * SOV/USD
+        let cbe_usd = curve_sov * sov_usd;
+        // Encode in 4-decimal USD units to match stable API schema (price_usd_cents = price_usd * 10_000)
+        let cbe_usd_cents = (cbe_usd * 10_000.0).round() as u64;
+
+        let components = PriceComponents {
+            srv: Some(sov_usd),
+            cbe_usd: None, // Issue #1852: oracle is observer-only
+            cbe_sov: None,
+            curve_price_sov: Some(curve_sov),
+            sov_usd: Some(sov_usd),
+        };
+
+        (cbe_usd_cents, components)
+    }
+
+    /// Deprecated: Update CBE/USD price from oracle (Issue #1852: oracle is observer-only)
+    /// This method is kept for backward compatibility but does not affect pricing.
+    pub fn update_cbe_usd_price(&mut self, price_8dec: u128, _epoch: u64, timestamp: u64) {
+        self.cbe_usd_price = Some(price_8dec);
+        self.last_updated = timestamp;
+        // Issue #1852: No longer affects dynamic pricing
+    }
+
+    /// Deprecated: Update CBE/SOV ratio (use bonding curve directly instead)
+    pub fn update_cbe_sov_ratio(&mut self, ratio_8dec: u128, timestamp: u64) {
+        self.cbe_sov_ratio = Some(ratio_8dec);
+        self.last_updated = timestamp;
+        // Issue #1852: No longer affects dynamic pricing
+    }
+
+    /// Deprecated: Get SOV price components
+    pub fn get_sov_components(&self) -> PriceComponents {
+        let srv = GENESIS_SRV_8DEC as f64 / PRICE_SCALE as f64;
+        
+        PriceComponents {
+            srv: Some(srv),
+            cbe_usd: None, // Issue #1852: oracle is observer-only
+            cbe_sov: None,
+            curve_price_sov: None,
+            sov_usd: None,
+        }
+    }
 }
 
-/// Pricing calculator for unified price computations
+/// Issue #1852: Simplified pricing calculator
+///
+/// Removed: calculate_sov_price() using CBE/USD ÷ CBE/SOV
+/// Reason: Bonding curve is PRIMARY, oracle is observer-only
 pub struct PricingCalculator;
 
 impl PricingCalculator {
-    /// Calculate SOV price given CBE/USD and CBE/SOV
-    /// 
-    /// Formula: SOV/USD = CBE/USD ÷ CBE/SOV
-    /// 
-    /// Example:
-    /// - CBE/USD = $3 (from oracle)
-    /// - CBE/SOV = 60 (from curve)
-    /// - SOV/USD = 3 / 60 = $0.05
-    pub fn calculate_sov_price(cbe_usd_8dec: u128, cbe_sov_8dec: u128) -> Option<u128> {
-        if cbe_sov_8dec == 0 {
-            return None;
-        }
-        // SOV/USD = CBE/USD / CBE/SOV
-        // Result in 8-decimal precision
-        Some((cbe_usd_8dec * PRICE_SCALE) / cbe_sov_8dec)
-    }
-
     /// Calculate CBE/USD price given CBE/SOV and SOV/USD
     ///
     /// Formula: CBE/USD = CBE/SOV × SOV/USD
@@ -292,14 +327,16 @@ impl PricingCalculator {
         (cbe_sov_8dec * sov_usd_8dec) / PRICE_SCALE
     }
 
-    /// Convert 8-decimal price to cents
+    /// Convert 8-decimal price to 4-decimal USD units (price_usd_cents = price_usd * 10_000)
+    /// 1 unit = $0.0001. Example: 2_180_000 (=$0.0218) → 218
     pub fn to_cents(price_8dec: u128) -> u64 {
-        ((price_8dec * 100) / PRICE_SCALE) as u64
+        ((price_8dec * 10_000) / PRICE_SCALE) as u64
     }
 
-    /// Convert cents to 8-decimal price
+    /// Convert 4-decimal USD units to 8-decimal price
+    /// Example: 218 (=$0.0218) → 2_180_000
     pub fn from_cents(cents: u64) -> u128 {
-        (cents as u128 * PRICE_SCALE) / 100
+        (cents as u128 * PRICE_SCALE) / 10_000
     }
 }
 
@@ -308,17 +345,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_calculate_sov_price() {
-        // Example from spec:
-        // CBE/USD = $3 = 3 * 100_000_000 = 300_000_000
-        // CBE/SOV = 60 = 60 * 100_000_000 = 6_000_000_000
-        // SOV/USD = 3 / 60 = $0.05 = 5_000_000
+    fn test_pricing_state_observer_role() {
+        let mut state = TokenPricingState::new();
         
-        let cbe_usd = 300_000_000u128; // $3
-        let cbe_sov = 6_000_000_000u128; // 60 SOV per CBE
+        // Initially no observed price
+        assert!(state.observed_curve_price.is_none());
+        assert_eq!(state.phase, PricingPhase::Curve);
         
-        let sov_price = PricingCalculator::calculate_sov_price(cbe_usd, cbe_sov);
-        assert_eq!(sov_price, Some(5_000_000)); // $0.05
+        // Observe curve price (from bonding curve, not oracle)
+        state.observe_curve_price(31_334_570, 1_700_000_000);
+        assert_eq!(state.observed_curve_price, Some(31_334_570));
+        
+        // Phase transition
+        state.transition_to_amm(1_700_000_100);
+        assert_eq!(state.phase, PricingPhase::AMM);
     }
 
     #[test]
@@ -326,7 +366,7 @@ mod tests {
         // CBE/SOV = 60, SOV/USD = $0.05
         // CBE/USD = 60 * 0.05 = $3
         
-        let cbe_sov = 6_000_000_000u128; // 60
+        let cbe_sov = 60u128 * PRICE_SCALE; // 60
         let sov_usd = 5_000_000u128; // $0.05
         
         let cbe_usd = PricingCalculator::calculate_cbe_usd(cbe_sov, sov_usd);
@@ -335,43 +375,51 @@ mod tests {
 
     #[test]
     fn test_conversions() {
-        // $0.0218 = 2.18 cents
-        let cents = 218u64;
+        // price_usd_cents uses 4-decimal units: 1 unit = $0.0001
+        // Example: $0.0218 → 218 units (0.0218 * 10_000 = 218)
+        // 8-decimal representation: 0.0218 * 100_000_000 = 2_180_000
+        //
+        // from_cents formula: cents * PRICE_SCALE / 10_000
+        // 218 * 100_000_000 / 10_000 = 2_180_000
+        let cents = 218u64; // $0.0218 in 4-decimal units
         let price_8dec = PricingCalculator::from_cents(cents);
         assert_eq!(price_8dec, 2_180_000);
-        
-        // Round trip
+
+        // Round trip: to_cents formula: (price_8dec * 10_000) / PRICE_SCALE
+        // (2_180_000 * 10_000) / 100_000_000 = 218
         let back_to_cents = PricingCalculator::to_cents(price_8dec);
         assert_eq!(back_to_cents, cents);
     }
 
     #[test]
-    fn test_pricing_state_fixed_mode() {
-        let state = TokenPricingState::new();
-        
-        // Initially in fixed mode (no oracle data)
-        assert!(!state.dynamic_pricing_active);
-        assert_eq!(state.get_sov_pricing_mode(), PricingMode::Fixed);
-        assert_eq!(state.get_sov_price_source(), PriceSource::Srv);
-        assert_eq!(state.get_sov_price_8dec(), GENESIS_SRV_8DEC as u128);
-    }
-
-    #[test]
-    fn test_pricing_state_dynamic_mode() {
+    fn test_price_history() {
         let mut state = TokenPricingState::new();
         
-        // Provide both signals
-        // CBE/USD = $3
-        state.update_cbe_usd_price(300_000_000, 10, 1_700_000_000);
-        assert!(!state.dynamic_pricing_active); // Still need CBE/SOV
+        // Record some prices
+        state.record_price("CBE", 1_700_000_000, 300); // $3.00
+        state.record_price("CBE", 1_700_000_100, 310); // $3.10
+        state.record_price("CBE", 1_700_000_200, 305); // $3.05
         
-        // CBE/SOV = 60
-        state.update_cbe_sov_ratio(6_000_000_000, 1_700_000_000);
-        assert!(state.dynamic_pricing_active);
-        assert_eq!(state.get_sov_pricing_mode(), PricingMode::Dynamic);
-        assert_eq!(state.get_sov_price_source(), PriceSource::Derived);
+        let history = state.get_price_history("CBE");
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[0], (1_700_000_000, 300));
+        assert_eq!(history[2], (1_700_000_200, 305));
+    }
+
+    /// Issue #1852: Verify oracle is observer-only
+    #[test]
+    fn test_oracle_observer_only() {
+        let state = TokenPricingState::new();
         
-        // SOV price should be $0.05 = 5_000_000
-        assert_eq!(state.get_sov_price_8dec(), 5_000_000);
+        // Oracle does not set prices - only observes.
+        // update_cbe_usd_price() and dynamic_pricing_active still exist as deprecated
+        // backward-compatibility stubs but do not affect computed prices.
+        // The only active price path is observe_curve_price() from the bonding curve.
+        assert!(state.observed_curve_price.is_none());
+        assert!(!state.dynamic_pricing_active); // deprecated field, always false
+        // Calling the deprecated update method must not change observed_curve_price
+        let mut state_mut = state;
+        state_mut.update_cbe_usd_price(999_000_000, 1, 1_700_000_000);
+        assert!(state_mut.observed_curve_price.is_none(), "oracle update must not set observed price");
     }
 }
