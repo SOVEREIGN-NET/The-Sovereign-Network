@@ -3110,7 +3110,7 @@ impl Blockchain {
     }
 
     /// Generate recursive proof for a single block
-    async fn generate_proof_for_block(&mut self, block: &Block) -> Result<()> {
+    pub async fn generate_proof_for_block(&mut self, block: &Block) -> Result<()> {
         // Get or initialize proof aggregator
         let aggregator_arc = self.get_proof_aggregator().await?;
         let mut aggregator = aggregator_arc.write().await;

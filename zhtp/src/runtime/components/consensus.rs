@@ -884,8 +884,11 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
             committed_block.transactions.len()
         );
 
-        // Add block to blockchain
-        match blockchain.add_block_with_proof(committed_block.clone()).await {
+        // Add block to blockchain — use add_block (not add_block_with_proof) so the
+        // write lock is released before ZK proof generation and DHT indexing, preventing
+        // a deadlock where the proposer's get_pending_transactions() blocks on blockchain.read()
+        // while the write lock is held during slow ZK proof work.
+        match blockchain.add_block(committed_block.clone()).await {
             Ok(()) => {
                 info!(
                     "✅ BFT BLOCK COMMITTED! Height: {}, Hash: {:?}, Transactions: {}",
@@ -898,7 +901,6 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                 let block_hash =
                     lib_blockchain::types::Hash::new(committed_block.hash().as_array());
                 let proposer_id = proposal.proposer.to_string();
-                // Convert lib_crypto::Hash to lib_blockchain::Hash
                 let prev_hash_bytes: [u8; 32] = match proposal.previous_hash.as_bytes().try_into() {
                     Ok(bytes) => bytes,
                     Err(_) => {
@@ -921,7 +923,7 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                     block_hash,
                     proposer_id,
                     prev_hash,
-                    0, // 0 = unknown; replace with actual count from consensus when available
+                    0,
                 );
                 info!(
                     "📍 Stored consensus checkpoint for height {}",
@@ -950,11 +952,35 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                     info!("💾 Blockchain persisted via store after BFT commit");
                 }
 
-                // Index in DHT
-                if let Err(e) =
-                    crate::runtime::dht_indexing::index_block_in_dht(&committed_block).await
+                // Release the write lock before doing ZK proof generation and DHT indexing.
+                // These are non-critical background operations that must not block consensus.
+                drop(blockchain);
+
+                // ZK proof generation (background — edge node sync falls back to headers if absent)
                 {
-                    warn!("DHT indexing failed for BFT block: {}", e);
+                    let bc_arc = blockchain_arc.clone();
+                    let block_for_proof = committed_block.clone();
+                    tokio::spawn(async move {
+                        let mut bc = bc_arc.write().await;
+                        if let Err(e) = bc.generate_proof_for_block(&block_for_proof).await {
+                            warn!(
+                                "Failed to generate recursive proof for block {}: {} — edge node sync falls back to headers",
+                                block_for_proof.height(), e
+                            );
+                        }
+                    });
+                }
+
+                // DHT indexing (background)
+                {
+                    let block_for_dht = committed_block.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) =
+                            crate::runtime::dht_indexing::index_block_in_dht(&block_for_dht).await
+                        {
+                            warn!("DHT indexing failed for BFT block: {}", e);
+                        }
+                    });
                 }
 
                 Ok(())
@@ -1025,20 +1051,23 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
             .map(|b| b.hash())
             .unwrap_or_default();
         let next_height = blockchain.height.saturating_add(1);
-        let difficulty = blockchain.difficulty.clone();
         drop(blockchain);
+
+        // Use the environment mining config (Bootstrap on dev = instant mining, Mainnet = full PoW).
+        // This must match what add_block's PoW validation expects — both use get_mining_config_from_env().
+        // Do NOT use mine_block() which hardcodes MiningConfig::testnet() (no instant mining),
+        // as the blockchain difficulty may have been adjusted far above what testnet can mine quickly.
+        let mining_config = lib_blockchain::types::mining::get_mining_config_from_env();
 
         let block = lib_blockchain::block::creation::create_block(
             pending.clone(),
             previous_hash,
             next_height,
-            difficulty,
+            mining_config.difficulty,
         )
         .map_err(|e| format!("Block creation failed: {}", e))?;
 
-        // Mine the block so that it satisfies the configured difficulty target
-        // before it is proposed to the BFT consensus layer.
-        let mined_block = lib_blockchain::block::creation::mine_block(block, u64::MAX)
+        let mined_block = lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)
             .map_err(|e| format!("Block mining failed: {}", e))?;
 
         let tx_data = bincode::serialize(&mined_block)
