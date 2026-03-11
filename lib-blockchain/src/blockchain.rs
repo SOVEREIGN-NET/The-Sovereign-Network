@@ -1437,7 +1437,8 @@ impl Blockchain {
         // Deploy CBE with piecewise linear curve (Issue #1842)
         // 4-band curve with price starting at ~0.000313 SOV and increasing with supply
         let curve_type = CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default());
-        let threshold = Threshold::ReserveAmount(69_000_000_000); // $69k in micro-USD
+        // ReserveAmount is expressed in 6-decimal atomic units; 2_745_966_000 = 2_745.966 tokens.
+        let threshold = Threshold::ReserveAmount(2_745_966_000);
 
         match BondingCurveToken::deploy(
             token_id,
