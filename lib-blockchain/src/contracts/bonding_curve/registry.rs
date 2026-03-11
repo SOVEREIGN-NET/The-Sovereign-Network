@@ -126,11 +126,11 @@ impl BondingCurveRegistry {
     }
 
     /// Get tokens that can graduate (curve phase + threshold met)
-    pub fn get_ready_to_graduate(&self, current_timestamp: u64) -> Vec<&BondingCurveToken> {
+    pub fn get_ready_to_graduate(&self, current_timestamp: u64, current_block: u64) -> Vec<&BondingCurveToken> {
         self.curve_tokens
             .iter()
             .filter_map(|id| self.tokens.get(id))
-            .filter(|token| token.can_graduate(current_timestamp))
+            .filter(|token| token.can_graduate(current_timestamp, current_block))
             .collect()
     }
 

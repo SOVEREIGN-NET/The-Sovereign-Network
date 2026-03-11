@@ -286,7 +286,7 @@ mod tests {
         token.buy(buyer, 30_000_000_000, 101, 1_600_000_100).unwrap();
 
         // Graduate the token
-        assert!(token.can_graduate(1_600_000_200));
+        assert!(token.can_graduate(1_600_000_200, 102));
         token.graduate(1_600_000_200, 102).unwrap();
         assert_eq!(token.phase, Phase::Graduated);
 
