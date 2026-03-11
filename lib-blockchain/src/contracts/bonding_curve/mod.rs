@@ -45,7 +45,7 @@ pub use event_indexer::SledEventIndexer;
 pub use events::{BondingCurveEvent, EventIndexer, InMemoryEventIndexer, ReserveUpdateReason};
 pub use pricing::PiecewiseLinearCurve;
 pub use registry::{BondingCurveRegistry, RegistryStats};
-pub use token::{BondingCurveToken, RESERVE_SPLIT_DIVISOR};
+pub use token::{BondingCurveToken, RESERVE_SPLIT_DENOMINATOR, RESERVE_SPLIT_NUMERATOR};
 pub use types::{
     ConfidenceLevel, CurveError, CurveStats, CurveType, Phase, PriceSource, Threshold, Valuation,
     // Issue #1846: Graduation threshold constants
