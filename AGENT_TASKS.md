@@ -985,3 +985,55 @@ With POL: **Liquidity can never leave**. The pool becomes deeper and more stable
 - Issue #1846: Graduation Threshold (completed)
 - Issue #1845: Pre-Graduation Sell (completed)
 - Epic #1841: CBE Token Launch
+
+---
+
+# Agent Task List - Epic #1862 BFT-Only Validator Startup And Canonical Block Commitment
+
+**Last Updated:** 2026-03-11 UTC by Codex
+**Primary Agent:** Agent 0 - Orchestrator Agent
+**Secondary Reviewers Required:** Agent 1 - Blockchain Core State, Agent 3 - Token Consensus, Agent 4 - Runtime/API Contract, Agent 7 - Consensus and Mempool, Agent 8 - Security and Replay Assurance, Agent 10 - QA and Release Readiness
+**Status:** Implemented, verification partially blocked by unrelated zhtp test module duplication
+
+## Scope Summary
+
+Implement Epic #1862 and its linked issues:
+
+- #1863 Canonicalize BFT commit to persist the exact approved block artifact
+- #1864 Remove direct relay block persistence from the live runtime path
+- #1865 Enforce BFT-only validator startup and fail validator nodes below threshold
+- #1866 Replace runtime bootstrap validator seeding with canonical genesis/persisted validator initialization
+- #1867 Eliminate startup wallet and SOV backfill mining by making genesis state complete
+
+## Invariants
+
+- [x] Validator-role nodes either start with a canonical BFT validator set or fail startup
+- [x] No live runtime path mines bootstrap blocks to recover from insufficient validators
+- [x] BFT finalization persists the exact approved block artifact, not a locally reconstructed replacement
+- [x] Ordinary relay-delivered blocks do not mutate canonical state outside consensus or trusted sync replay
+- [x] Initial validator membership derives from canonical genesis or persisted chain state, not runtime config synthesis
+- [x] Fresh canonical genesis startup requires no wallet-registration or SOV backfill mining
+
+## Planned Diff Map
+
+- [x] `zhtp/src/runtime/components/consensus.rs`
+- [x] `zhtp/src/runtime/components/blockchain.rs`
+- [x] `zhtp/src/runtime/network_blockchain_event_receiver.rs`
+- [x] `zhtp/src/runtime/components/identity.rs`
+- [x] `zhtp/src/runtime/mod.rs`
+- [x] `zhtp/src/runtime/services/genesis_funding.rs`
+- [x] `lib-consensus/src/engines/consensus_engine/*`
+- [ ] `lib-blockchain/src/blockchain.rs`
+- [ ] tests in owning crates
+  Verification note: `cargo test -p lib-consensus state_machine --lib` passed; `cargo test -p zhtp ...` is blocked by an unrelated duplicate `mod tests` definition in `zhtp/src/api/handlers/monitor.rs`.
+
+## Risk Notes
+
+- [ ] Preserve trusted sync replay as a distinct acceptance path for already-committed blocks
+- [ ] Avoid introducing a second validator-set authority while removing bootstrap seeding
+- [ ] Keep restart/replay determinism by removing wall-clock-derived genesis/bootstrap mutations
+- [ ] Ensure client/observer nodes remain able to start without validator-role semantics
+
+## Rollback Strategy
+
+- [ ] Revert the full startup/commit cleanup as one unit if validator startup, sync, or finalized block persistence diverges
