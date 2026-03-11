@@ -356,6 +356,11 @@ pub struct Blockchain {
     /// Provides price feeds to the oracle protocol.
     #[serde(default)]
     pub exchange_state: crate::exchange::ExchangeState,
+    /// On-ramp trade log: fiat->CBE purchases attested by gateway + oracle committee.
+    /// Source of CBE/USD VWAP for oracle Mode B SOV/USD derivation.
+    /// Spec: CBE/SOV/USD Pricing Model v1.0 §4
+    #[serde(default)]
+    pub onramp_state: crate::onramp::OnRampState,
     /// Oracle slashing events log.
     #[serde(default)]
     pub oracle_slash_events: Vec<crate::oracle::OracleSlashEvent>,
@@ -736,6 +741,7 @@ impl BlockchainV1 {
             oracle_state: crate::oracle::OracleState::default(),
             token_pricing_state: crate::pricing::TokenPricingState::new(),
             exchange_state: crate::exchange::ExchangeState::new(),
+            onramp_state: crate::onramp::OnRampState::new(),
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
@@ -1201,6 +1207,7 @@ impl BlockchainStorageV3 {
             oracle_state: crate::oracle::OracleState::default(),
             token_pricing_state: crate::pricing::TokenPricingState::new(),
             exchange_state: crate::exchange::ExchangeState::new(),
+            onramp_state: crate::onramp::OnRampState::new(),
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
@@ -1225,6 +1232,8 @@ struct BlockchainStorageV4 {
     #[serde(default)]
     pub exchange_state: crate::exchange::ExchangeState,
     #[serde(default)]
+    pub onramp_state: crate::onramp::OnRampState,
+    #[serde(default)]
     pub oracle_slash_events: Vec<crate::oracle::OracleSlashEvent>,
     #[serde(default)]
     pub oracle_slashing_config: crate::oracle::OracleSlashingConfig,
@@ -1240,6 +1249,7 @@ impl BlockchainStorageV4 {
             v3: BlockchainStorageV3::from_blockchain(bc),
             oracle_state: bc.oracle_state.clone(),
             exchange_state: bc.exchange_state.clone(),
+            onramp_state: bc.onramp_state.clone(),
             oracle_slash_events: bc.oracle_slash_events.clone(),
             oracle_slashing_config: bc.oracle_slashing_config.clone(),
             oracle_banned_validators: bc.oracle_banned_validators.clone(),
@@ -1253,6 +1263,7 @@ impl BlockchainStorageV4 {
         // The correct value is set at the end of this function from self.last_oracle_epoch_processed.
         blockchain.oracle_state = self.oracle_state;
         blockchain.exchange_state = self.exchange_state;
+        blockchain.onramp_state = self.onramp_state;
         blockchain.oracle_slash_events = self.oracle_slash_events;
         blockchain.oracle_slashing_config = self.oracle_slashing_config;
         blockchain.oracle_banned_validators = self.oracle_banned_validators;
@@ -1370,6 +1381,7 @@ impl Blockchain {
             oracle_state: crate::oracle::OracleState::default(),
             token_pricing_state: crate::pricing::TokenPricingState::new(),
             exchange_state: crate::exchange::ExchangeState::new(),
+            onramp_state: crate::onramp::OnRampState::new(),
             oracle_slash_events: Vec::new(),
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),

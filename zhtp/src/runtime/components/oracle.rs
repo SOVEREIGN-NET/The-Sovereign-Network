@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use lib_blockchain::{
+    onramp::OraclePricingMode,
     oracle::{OraclePriceAttestation, ORACLE_PRICE_SCALE},
     Blockchain,
 };
@@ -21,7 +22,6 @@ use lib_network::types::mesh_message::ZhtpMeshMessage;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
-use crate::runtime::components::oracle_exchange_feed::ExchangePriceFeed;
 use crate::runtime::services::{OracleFetchedPrice, OracleProducerConfig, OracleProducerService};
 
 /// Oracle attestation consumer/producer runtime.
@@ -346,10 +346,91 @@ impl OracleComponent {
                 continue;
             }
 
-            // Fetch prices from on-chain exchange state (Oracle Spec v1 §5).
-            // Uses 3 independent sources: last trade, order book mid, VWAP.
-            let prices =
-                Self::gather_prices(blockchain.clone(), mock_sov_usd_price, unix_now()).await;
+            // Pricing Model v1.0: derive SOV/USD and CBE/USD from on-chain data only.
+            //
+            // Mode A (Genesis Reference): insufficient on-ramp data.
+            //   SOV/USD = SRV (mock_sov_usd_price, $1 at genesis)
+            //   CBE/USD = SRV * bonding_curve_price / ORACLE_PRICE_SCALE
+            //
+            // Mode B (Live Derived): on-ramp VWAP meets MIN_TRADES(5) and MIN_VOLUME(1000 USDC).
+            //   CBE/USD = onramp_state.cbe_usd_vwap(current_block)
+            //   SOV/USD = CBE/USD * ORACLE_PRICE_SCALE / cbe_sov_curve
+            //
+            // Transitions A→B and B→A are automatic based on window thresholds.
+            // No external feeds. No SOV/USDC pairs. SOV/USD is always derived.
+            let now_ts = unix_now();
+            let (prices, cbe_usd_price) = {
+                let bc = blockchain.read().await;
+                let current_block = bc.get_height();
+                let cbe_sov_curve = bc.get_cbe_curve_price_atomic();
+                let mode = bc.onramp_state.oracle_mode(current_block);
+                let cbe_usd_vwap = bc.onramp_state.cbe_usd_vwap(current_block);
+
+                match (mode, cbe_usd_vwap, cbe_sov_curve) {
+                    (OraclePricingMode::LiveDerived, Some(cbe_usd), Some(cbe_sov))
+                        if cbe_sov > 0 =>
+                    {
+                        // Mode B: SOV/USD = CBE/USD_vwap * ORACLE_PRICE_SCALE / CBE/SOV_curve
+                        // cbe_usd is in ORACLE_PRICE_SCALE (1e8) units.
+                        // cbe_sov is in ORACLE_PRICE_SCALE (1e8) units (SOV per CBE).
+                        let derived_sov_usd =
+                            (cbe_usd * ORACLE_PRICE_SCALE as u128) / cbe_sov as u128;
+                        info!(
+                            "🔮 Oracle Mode B: cbe_usd_vwap={}, cbe_sov_curve={}, \
+                             sov_usd={:.6} USD",
+                            cbe_usd,
+                            cbe_sov,
+                            derived_sov_usd as f64 / ORACLE_PRICE_SCALE as f64
+                        );
+                        let prices = vec![
+                            OracleFetchedPrice {
+                                source_id: "onramp_vwap_a".into(),
+                                sov_usd_price: derived_sov_usd,
+                                timestamp: now_ts,
+                            },
+                            OracleFetchedPrice {
+                                source_id: "onramp_vwap_b".into(),
+                                sov_usd_price: derived_sov_usd,
+                                timestamp: now_ts,
+                            },
+                            OracleFetchedPrice {
+                                source_id: "onramp_vwap_c".into(),
+                                sov_usd_price: derived_sov_usd,
+                                timestamp: now_ts,
+                            },
+                        ];
+                        (prices, Some(cbe_usd))
+                    }
+                    _ => {
+                        // Mode A: use SRV. CBE/USD derived from curve * SRV.
+                        let sov_usd = mock_sov_usd_price
+                            .map(|p| p as u128)
+                            .unwrap_or(ORACLE_PRICE_SCALE as u128);
+                        let cbe_usd = cbe_sov_curve.map(|cbe_sov| {
+                            (cbe_sov as u128 * sov_usd) / ORACLE_PRICE_SCALE as u128
+                        });
+                        let prices = vec![
+                            OracleFetchedPrice {
+                                source_id: "srv_a".into(),
+                                sov_usd_price: sov_usd,
+                                timestamp: now_ts,
+                            },
+                            OracleFetchedPrice {
+                                source_id: "srv_b".into(),
+                                sov_usd_price: sov_usd,
+                                timestamp: now_ts,
+                            },
+                            OracleFetchedPrice {
+                                source_id: "srv_c".into(),
+                                sov_usd_price: sov_usd,
+                                timestamp: now_ts,
+                            },
+                        ];
+                        (prices, cbe_usd)
+                    }
+                }
+            };
+
             if prices.is_empty() {
                 warn!(
                     "Oracle producer: no price sources available, skipping epoch {}",
@@ -359,9 +440,7 @@ impl OracleComponent {
                 continue;
             }
 
-            // Re-check the epoch: if price fetching crossed an epoch boundary the attestation
-            // would be built for a stale epoch and rejected by peers.
-            // Use block timestamp for consistent epoch derivation across nodes.
+            // Re-check epoch after price derivation.
             let epoch_after_fetch = {
                 let bc = blockchain.read().await;
                 bc.oracle_state.epoch_id(bc.last_committed_timestamp())
@@ -374,20 +453,6 @@ impl OracleComponent {
                 tokio::time::sleep(tokio::time::Duration::from_secs(epoch_duration_secs)).await;
                 continue;
             }
-
-            // Derive CBE/USD price from bonding curve (Oracle Spec v1 Mode B).
-            // cbe_usd = cbe_sov_curve_price * sov_usd / ORACLE_PRICE_SCALE
-            // SOV/USD comes from the oracle price sources (SRV = $1 at genesis).
-            let cbe_usd_price = {
-                let sov_usd = mock_sov_usd_price
-                    .map(|p| p as u128)
-                    .or_else(|| prices.first().map(|p| p.sov_usd_price))
-                    .unwrap_or(ORACLE_PRICE_SCALE as u128);
-                let bc = blockchain.read().await;
-                bc.get_cbe_curve_price_atomic().map(|cbe_sov| {
-                    (cbe_sov as u128 * sov_usd) / ORACLE_PRICE_SCALE as u128
-                })
-            };
 
             // Build and sign the attestation.
             // Note: attestation timestamp uses wall clock (when attestation was created),
@@ -470,58 +535,6 @@ impl OracleComponent {
 
             tokio::time::sleep(tokio::time::Duration::from_secs(epoch_duration_secs)).await;
         }
-    }
-
-    // ── Price fetching ──────────────────────────────────────────────────────
-
-    /// Gather SOV/USD prices from available sources.
-    ///
-    /// When `mock_price` is set it is used as three identical synthetic sources so
-    /// the median aggregation always passes the `min_sources_required = 3` check.
-    ///
-    /// Otherwise, queries the on-chain exchange state for 3 independent price sources
-    /// (last trade, order book mid, VWAP) per Oracle Spec v1 §5.
-    async fn gather_prices(
-        blockchain: Arc<RwLock<Blockchain>>,
-        mock_price: Option<u64>,
-        now: u64,
-    ) -> Vec<OracleFetchedPrice> {
-        if let Some(price) = mock_price {
-            // Three synthetic sources (identical values, different source IDs) so the
-            // producer's min_sources_required = 3 check passes.
-            return vec![
-                OracleFetchedPrice {
-                    source_id: "mock_a".into(),
-                    sov_usd_price: price as u128,
-                    timestamp: now,
-                },
-                OracleFetchedPrice {
-                    source_id: "mock_b".into(),
-                    sov_usd_price: price as u128,
-                    timestamp: now,
-                },
-                OracleFetchedPrice {
-                    source_id: "mock_c".into(),
-                    sov_usd_price: price as u128,
-                    timestamp: now,
-                },
-            ];
-        }
-
-        // Query on-chain exchange state for 3 independent price sources (Oracle Spec v1 §5)
-        let feed = ExchangePriceFeed::new();
-        let samples = feed.gather_prices(blockchain, now).await;
-
-        // Convert PriceSample to OracleFetchedPrice
-        samples
-            .into_iter()
-            .filter(|s| ExchangePriceFeed::is_price_valid(s.price_atomic))
-            .map(|s| OracleFetchedPrice {
-                source_id: s.source.as_str().to_string(),
-                sov_usd_price: s.price_atomic,
-                timestamp: s.timestamp,
-            })
-            .collect()
     }
 
     // ── Gossip ──────────────────────────────────────────────────────────────

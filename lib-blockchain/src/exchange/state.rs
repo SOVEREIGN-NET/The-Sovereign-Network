@@ -24,6 +24,15 @@ impl TradingPair {
     pub fn sov_usdc() -> Self {
         Self::new("SOV", "USDC")
     }
+
+    /// The CBE/USD on-ramp pair.
+    ///
+    /// Populated by on-ramp gateway transactions where users buy CBE with USD/stablecoin.
+    /// Used by the oracle for Mode B SOV/USD derivation:
+    ///   P_SOV/USD = P_CBE/USD_onramp_vwap / P_CBE/SOV_curve
+    pub fn cbe_usd() -> Self {
+        Self::new("CBE", "USD")
+    }
 }
 
 /// Last trade price information.
@@ -139,6 +148,40 @@ impl ExchangeState {
         // Calculate mid price with checked arithmetic
         let sum = best_bid.checked_add(best_ask)?;
         Some(sum / 2)
+    }
+
+    /// Last trade price for CBE/USD on-ramp transactions.
+    ///
+    /// Returns `None` until the first on-ramp transaction is recorded.
+    pub fn last_trade_price_cbe_usd(&self) -> Option<LastTradePrice> {
+        self.last_trade_prices
+            .get(&TradingPair::cbe_usd())
+            .copied()
+    }
+
+    /// Volume-weighted average price for CBE/USD on-ramp trades in [since_ts, until_ts].
+    ///
+    /// Returns `None` until on-ramp transactions are recorded.
+    /// This is the primary input for oracle Mode B SOV/USD derivation.
+    pub fn vwap_cbe_usd(&self, since_ts: u64, until_ts: u64) -> Option<u128> {
+        let pair = TradingPair::cbe_usd();
+        let history = self.trade_history.get(&pair)?;
+
+        let mut total_volume: u128 = 0;
+        let mut volume_x_price: u128 = 0;
+
+        for (timestamp, price, volume) in history {
+            if *timestamp >= since_ts && *timestamp <= until_ts {
+                total_volume = total_volume.checked_add(*volume)?;
+                volume_x_price = volume_x_price.checked_add(volume.checked_mul(*price)?)?;
+            }
+        }
+
+        if total_volume == 0 {
+            return None;
+        }
+
+        Some(volume_x_price / total_volume)
     }
 
     /// Volume-weighted average price for SOV/USDC trades in [since_ts, until_ts].
