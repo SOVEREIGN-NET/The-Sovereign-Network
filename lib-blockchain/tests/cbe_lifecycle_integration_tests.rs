@@ -418,51 +418,58 @@ fn test_phase_transition_atomicity() {
     // Initially in Curve phase
     assert_eq!(token.phase, Phase::Curve, "Initial phase should be Curve");
 
-    // Build up enough reserve to graduate
+    // Build up enough reserve to graduate, driving the oracle each block
     let buyer = test_pubkey(0x04);
     // Buy with very large amounts to build reserve quickly
+    let mut last_price = 0u64;
+    let mut last_block = 0u64;
     for i in 0..100 {
-        let _ = token.buy(buyer.clone(), 100_000_000_00u64, 2 + i as u64, 1_600_000_100 + i as u64 * 10);
-        if token.can_graduate(1_600_000_100 + i as u64 * 10, 2 + i as u64) {
-            break;
-        }
+        let block = 2 + i as u64;
+        let price = 1_600_000_100 + i as u64 * 10;
+        last_block = block;
+        last_price = price;
+
+        let _ = token.buy(buyer.clone(), 100_000_000_00u64, block, price);
+        // Update oracle-driven graduation state for this block
+        let _ = token.check_graduation_with_oracle(price, block);
     }
 
-    // Skip actual graduation test if threshold not met (tested elsewhere)
-    if token.can_graduate(1_600_000_200, 100) {
-        // Execute graduation
-        let result = token.graduate(1_600_000_200, 100);
-        assert!(result.is_ok(), "Graduation should succeed: {:?}", result);
+    // After driving the oracle for multiple blocks, the token should be eligible to graduate
+    assert!(
+        token.can_graduate(last_price, last_block),
+        "Token should be eligible to graduate after sufficient reserve buildup and oracle confirmations"
+    );
 
-        // Verify phase transitioned to Graduated
-        assert_eq!(
-            token.phase, Phase::Graduated,
-            "Phase should be Graduated after graduation"
-        );
+    // Execute graduation
+    let result = token.graduate(last_price, last_block);
+    assert!(result.is_ok(), "Graduation should succeed: {:?}", result);
 
-        // Verify cannot buy in Graduated phase
-        let buyer2 = test_pubkey(0x05);
-        let buy_result = token.buy(buyer2, 1_000_000_00, 101, 1_600_000_200);
-        assert!(
-            buy_result.is_err(),
-            "Should not be able to buy in Graduated phase"
-        );
+    // Verify phase transitioned to Graduated
+    assert_eq!(
+        token.phase, Phase::Graduated,
+        "Phase should be Graduated after graduation"
+    );
 
-        // Verify cannot sell in Graduated phase
-        let seller = test_pubkey(0x06);
-        let sell_result = token.sell(seller, 1_000_000_00, 101, 1_600_000_200);
-        assert!(
-            sell_result.is_err(),
-            "Should not be able to sell in Graduated phase"
-        );
+    // Verify cannot buy in Graduated phase
+    let buyer2 = test_pubkey(0x05);
+    let buy_result = token.buy(buyer2, 1_000_000_00, last_block + 1, last_price);
+    assert!(
+        buy_result.is_err(),
+        "Should not be able to buy in Graduated phase"
+    );
 
-        println!("✓ Phase transition atomicity verified");
-        println!("  Initial: Curve");
-        println!("  After graduation: Graduated");
-        println!("  Trading disabled: ✓");
-    } else {
-        println!("⚠ Skipping graduation test (threshold not reached in this test)");
-    }
+    // Verify cannot sell in Graduated phase
+    let seller = test_pubkey(0x06);
+    let sell_result = token.sell(seller, 1_000_000_00, last_block + 1, last_price);
+    assert!(
+        sell_result.is_err(),
+        "Should not be able to sell in Graduated phase"
+    );
+
+    println!("✓ Phase transition atomicity verified");
+    println!("  Initial: Curve");
+    println!("  After graduation: Graduated");
+    println!("  Trading disabled: ✓");
 }
 
 // ============================================================================
