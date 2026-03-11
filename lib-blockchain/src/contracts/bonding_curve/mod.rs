@@ -17,6 +17,7 @@
 //! - `types`: State machine types, pricing formulas, thresholds
 //! - `events`: Event types for indexing
 
+pub mod amm_pool;
 pub mod event_indexer;
 pub mod events;
 pub mod pricing;
@@ -25,6 +26,12 @@ pub mod token;
 pub mod types;
 
 // Re-export core types
+pub use amm_pool::{
+    create_amm_pool_for_graduated_token,
+    AmmPoolCreationResult,
+    // Issue #1848: AMM pool creation constants
+    GRADUATED_POOL_FEE_BPS, MINIMUM_AMM_LIQUIDITY,
+};
 pub use event_indexer::SledEventIndexer;
 pub use events::{BondingCurveEvent, EventIndexer, InMemoryEventIndexer, ReserveUpdateReason};
 pub use pricing::PiecewiseLinearCurve;
