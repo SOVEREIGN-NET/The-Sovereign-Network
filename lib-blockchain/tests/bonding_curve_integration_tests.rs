@@ -106,7 +106,7 @@ fn test_bonding_curve_full_lifecycle() {
     assert_eq!(token_ref.total_supply, expected_tokens);
 
     // Test 4: Check graduation eligibility (should not be ready yet)
-    assert!(!token_ref.can_graduate(1_600_000_100));
+    assert!(!token_ref.can_graduate(1_600_000_100, 0));
 
     // Simulate more buys to reach threshold
     {
@@ -120,7 +120,7 @@ fn test_bonding_curve_full_lifecycle() {
 
     let token_ref = blockchain.bonding_curve_registry.get(&token_id).unwrap();
     assert!(
-        token_ref.can_graduate(1_600_000_100),
+        token_ref.can_graduate(1_600_000_100, 0),
         "Should be ready to graduate"
     );
 
@@ -486,10 +486,10 @@ fn test_graduation_thresholds() {
     .unwrap();
 
     token1.reserve_balance = 9_999_999; // Just under threshold
-    assert!(!token1.can_graduate(base_time + 100));
+    assert!(!token1.can_graduate(base_time + 100, 0));
 
     token1.reserve_balance = 10_000_000; // At threshold
-    assert!(token1.can_graduate(base_time + 100));
+    assert!(token1.can_graduate(base_time + 100, 0));
 
     // Test SupplyAmount threshold
     let mut token2 = BondingCurveToken::deploy(
@@ -510,10 +510,10 @@ fn test_graduation_thresholds() {
     .unwrap();
 
     token2.total_supply = 999_999; // Just under threshold
-    assert!(!token2.can_graduate(base_time + 100));
+    assert!(!token2.can_graduate(base_time + 100, 0));
 
     token2.total_supply = 1_000_000; // At threshold
-    assert!(token2.can_graduate(base_time + 100));
+    assert!(token2.can_graduate(base_time + 100, 0));
 
     // Test TimeAndReserve threshold
     let mut token3 = BondingCurveToken::deploy(
@@ -538,10 +538,10 @@ fn test_graduation_thresholds() {
 
     token3.reserve_balance = 5_000_000; // Reserve met
                                         // Time not met
-    assert!(!token3.can_graduate(base_time + 100)); // Only 100 seconds passed
+    assert!(!token3.can_graduate(base_time + 100, 0)); // Only 100 seconds passed
 
     // Both met
-    assert!(token3.can_graduate(base_time + 3600)); // 1 hour passed
+    assert!(token3.can_graduate(base_time + 3600, 0)); // 1 hour passed
 
     println!("✅ Graduation thresholds test passed!");
 }

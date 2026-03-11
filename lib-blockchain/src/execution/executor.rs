@@ -1631,7 +1631,7 @@ impl BlockExecutor {
         // Create the bonding curve token
         use crate::contracts::bonding_curve::{
             types::{CurveType, Phase, Threshold},
-            BondingCurveToken,
+            BondingCurveToken, PiecewiseLinearCurve,
         };
 
         // Convert u8 curve type to CurveType
@@ -1649,6 +1649,7 @@ impl BlockExecutor {
                 midpoint_supply: data.midpoint_supply.unwrap_or(1_000_000_000_000_000),
                 steepness: data.curve_param,
             },
+            3 => CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             _ => {
                 return Err(TxApplyError::InvalidType(format!(
                     "Invalid curve type: {}",
