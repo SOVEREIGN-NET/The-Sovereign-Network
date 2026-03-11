@@ -153,11 +153,16 @@ impl AutoGraduationService {
             .unwrap_or_default()
             .as_secs();
 
+        let current_block = blockchain_guard
+            .latest_block()
+            .map(|b| b.header.height)
+            .unwrap_or(0);
+
         // Get tokens ready to graduate
         let tokens_to_graduate: Vec<([u8; 32], String)> = {
             let registry = &blockchain_guard.bonding_curve_registry;
             registry
-                .get_ready_to_graduate(current_timestamp)
+                .get_ready_to_graduate(current_timestamp, current_block)
                 .into_iter()
                 .map(|token| (token.token_id, token.symbol.clone()))
                 .collect()
@@ -184,6 +189,7 @@ impl AutoGraduationService {
                 &symbol,
                 config,
                 current_timestamp,
+                current_block,
             )
             .await
             {
@@ -210,6 +216,7 @@ impl AutoGraduationService {
         symbol: &str,
         config: &AutoGraduationConfig,
         current_timestamp: u64,
+        current_block: u64,
     ) -> Result<[u8; 32]> {
         info!(
             "Graduating token '{}' ({})...",
@@ -229,7 +236,7 @@ impl AutoGraduationService {
             }
 
             // Double-check graduation eligibility
-            if !token.can_graduate(current_timestamp) {
+            if !token.can_graduate(current_timestamp, current_block) {
                 return Err(anyhow::anyhow!("Token not eligible for graduation"));
             }
 
@@ -331,10 +338,15 @@ impl AutoGraduationService {
             .unwrap_or_default()
             .as_secs();
 
+        let current_block = blockchain_guard
+            .latest_block()
+            .map(|b| b.header.height)
+            .unwrap_or(0);
+
         let tokens_to_graduate: Vec<([u8; 32], String)> = {
             let registry = &blockchain_guard.bonding_curve_registry;
             registry
-                .get_ready_to_graduate(current_timestamp)
+                .get_ready_to_graduate(current_timestamp, current_block)
                 .into_iter()
                 .map(|token| (token.token_id, token.symbol.clone()))
                 .collect()

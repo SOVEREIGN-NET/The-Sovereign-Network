@@ -961,9 +961,22 @@ impl OracleState {
         // Check if epoch is already finalized on SOV price
         if let Some(finalized) = self.finalized_prices.get(&current_epoch) {
             if finalized.sov_usd_price == attestation.sov_usd_price {
-                // SOV price matches - allow CBE price submission even after finalization
-                // This enables CBE finalization to complete after SOV finalization
+                // SOV price matches - allow CBE price submission even after finalization.
+                // Still validate committee membership, signature, and CBE-specific duplicate
+                // signer to prevent non-committee nodes from contributing to CBE threshold.
                 if attestation.cbe_usd_price.is_some() {
+                    let cbe_seen_signers: BTreeSet<[u8; 32]> = self
+                        .epoch_state
+                        .get(&current_epoch)
+                        .map(|s| s.signer_cbe_prices.keys().copied().collect())
+                        .unwrap_or_default();
+                    self.validate_attestation(
+                        attestation,
+                        current_epoch,
+                        &cbe_seen_signers,
+                        &resolve_signing_pubkey,
+                    )
+                    .map_err(OracleAttestationAdmissionError::Validation)?;
                     return Ok(OracleAttestationAdmission::Accepted);
                 }
                 return Ok(OracleAttestationAdmission::IgnoredAfterFinalization {
@@ -983,8 +996,20 @@ impl OracleState {
             if state.finalized {
                 if let Some(winning) = state.winning_price {
                     if winning == attestation.sov_usd_price {
-                        // SOV finalized but allow CBE submission
+                        // SOV finalized but allow CBE submission; validate fully.
                         if attestation.cbe_usd_price.is_some() {
+                            let cbe_seen_signers: BTreeSet<[u8; 32]> = state
+                                .signer_cbe_prices
+                                .keys()
+                                .copied()
+                                .collect();
+                            self.validate_attestation(
+                                attestation,
+                                current_epoch,
+                                &cbe_seen_signers,
+                                &resolve_signing_pubkey,
+                            )
+                            .map_err(OracleAttestationAdmissionError::Validation)?;
                             return Ok(OracleAttestationAdmission::Accepted);
                         }
                         return Ok(OracleAttestationAdmission::IgnoredAfterFinalization {
