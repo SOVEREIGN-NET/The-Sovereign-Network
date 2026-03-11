@@ -16,10 +16,12 @@
 //! - `BondingCurveRegistry`: Index of all curve tokens
 //! - `types`: State machine types, pricing formulas, thresholds
 //! - `events`: Event types for indexing
+//! - `pol_pool`: Issue #1849 - Protocol-Owned Liquidity pool
 
 pub mod amm_pool;
 pub mod event_indexer;
 pub mod events;
+pub mod pol_pool;
 pub mod pricing;
 pub mod registry;
 pub mod token;
@@ -27,10 +29,17 @@ pub mod types;
 
 // Re-export core types
 pub use amm_pool::{
+    AmmPool,
     create_amm_pool_for_graduated_token,
+    create_pol_pool_for_graduated_token,
     AmmPoolCreationResult,
     // Issue #1848: AMM pool creation constants
     GRADUATED_POOL_FEE_BPS, MINIMUM_AMM_LIQUIDITY,
+};
+// Issue #1849: Re-export POL pool
+pub use pol_pool::{
+    PolPool, PolPoolError, BASIS_POINTS_DENOMINATOR, POL_FEE_BPS,
+    POL_MINIMUM_INITIAL_LIQUIDITY,
 };
 pub use event_indexer::SledEventIndexer;
 pub use events::{BondingCurveEvent, EventIndexer, InMemoryEventIndexer, ReserveUpdateReason};
