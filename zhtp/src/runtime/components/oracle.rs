@@ -377,7 +377,7 @@ impl OracleComponent {
 
             // Derive CBE/USD price from bonding curve (Oracle Spec v1 Mode B).
             // cbe_usd = cbe_sov_curve_price * sov_usd / ORACLE_PRICE_SCALE
-            // Since sov_usd = $1 (ORACLE_PRICE_SCALE), cbe_usd = cbe_sov_curve_price.
+            // SOV/USD comes from the oracle price sources (SRV = $1 at genesis).
             let cbe_usd_price = {
                 let sov_usd = mock_sov_usd_price
                     .map(|p| p as u128)
