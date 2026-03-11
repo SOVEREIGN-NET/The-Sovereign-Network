@@ -607,8 +607,10 @@ pub enum PriceSource {
     /// Bonding curve pricing
     BondingCurve,
     /// AMM spot price
+    #[allow(non_camel_case_types)]
     AMM_Spot,
     /// AMM TWAP price
+    #[allow(non_camel_case_types)]
     AMM_TWAP,
 }
 
