@@ -2138,9 +2138,7 @@ impl BlockExecutor {
             TransactionType::OracleAttestation => Ok(TxOutcome::LegacySystem),
 
             // Coinbase is routed through apply_coinbase_with_fees, never here.
-            TransactionType::Coinbase => Err(TxApplyError::InvalidType(
-                "Coinbase must not be routed through apply_transaction".to_string(),
-            )),
+            // (Handled above; this duplicate arm was removed — see the Coinbase arm near the top of this match.)
             _ => Err(TxApplyError::UnsupportedType(format!(
                 "{:?}",
                 tx.transaction_type
