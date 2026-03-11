@@ -384,16 +384,22 @@ fn test_graduation_threshold_269k_usd() {
     // Test with oracle price
     let sov_usd_price = 5_000_000u64; // $0.05 SOV/USD (8 decimals)
 
-    // Calculate how much SOV reserve needed for $269K
-    // Reserve USD = reserve_sov * sov_usd_price / PRICE_SCALE
-    // $269K = reserve_sov * $0.05 / 1.0
-    // reserve_sov = $269K / $0.05 = 5,380,000 SOV
-    let target_reserve_sov = ((GRADUATION_THRESHOLD_USD as u128 * PRICE_SCALE) / sov_usd_price as u128) as u64;
+    // Calculate how much SOV reserve (in atomic units) is needed for $269K
+    // Reserve USD = reserve_sov_atoms * sov_usd_price / PRICE_SCALE
+    // $269K = reserve_sov_atoms * $0.05 / 1.0
+    // reserve_sov_whole = $269K / $0.05 = 5,380,000 SOV
+    // reserve_sov_atoms = reserve_sov_whole * 1e8
+    const SOV_DECIMALS: u128 = 100_000_000;
+    let target_reserve_sov = (((GRADUATION_THRESHOLD_USD as u128 * PRICE_SCALE)
+        / sov_usd_price as u128)
+        * SOV_DECIMALS) as u64;
 
     println!("✓ Graduation threshold verified: ${} USD", GRADUATION_THRESHOLD_USD);
-    println!("  At SOV price ${:.4}, need {} SOV reserve to graduate",
-        sov_usd_price as f64 / 100_000_000.0,
-        target_reserve_sov as f64 / 100_000_000.0);
+    println!(
+        "  At SOV price ${:.4}, need {} SOV reserve to graduate",
+        sov_usd_price as f64 / SOV_DECIMALS as f64,
+        target_reserve_sov as f64 / SOV_DECIMALS as f64
+    );
 
     // Verify target calculation is correct
     assert!(target_reserve_sov > 0, "Target reserve should be positive");
