@@ -1,168 +1,171 @@
-//! Integration tests for Issue #1819: Unified Token Pricing System
+//! Issue #1852: Updated Integration Tests for Simplified Pricing System
 //!
-//! Tests the unified pricing system for SOV and CBE tokens,
-//! including pre/post-graduation modes and oracle-derived pricing.
+//! Refactored from Issue #1819 to make bonding curve PRIMARY and oracle SECONDARY.
+//!
+//! Key Principle:
+//! > "reliance on internal mechanisms rather than external oracles for price discovery"
+//!
+//! Architecture:
+//! ```
+//! Bonding Curve (CBE/SOV) → Market Price → Oracle Observes
+//! Bonding Curve = PRIMARY price source
+//! Oracle = SECONDARY observer
+//! ```
 
 use lib_blockchain::{
-    oracle::{FinalizedOraclePrice, OracleState},
-    pricing::{PricingMode, TokenPricingState, PRICE_SCALE},
-    Blockchain,
+    pricing::{PricingPhase, TokenPricingState, PRICE_SCALE, GENESIS_SRV_8DEC},
 };
 
-/// Test that TokenPricingState initializes with correct defaults
+/// Issue #1852: Test that TokenPricingState initializes with correct defaults
 #[test]
 fn token_pricing_state_initializes_correctly() {
     let state = TokenPricingState::new();
 
-    assert!(state.cbe_usd_price.is_none());
-    assert!(state.cbe_sov_ratio.is_none());
-    assert!(!state.dynamic_pricing_active);
-    assert_eq!(state.last_sov_price_8dec, 2_180_000); // GENESIS_SRV_8DEC
+    // Issue #1852: No dynamic pricing, bonding curve is PRIMARY
+    assert!(state.observed_curve_price.is_none());
+    assert_eq!(state.phase, PricingPhase::Curve);
+    assert!(!state.dynamic_pricing_active); // Always false now
+    assert_eq!(state.last_sov_price_8dec, GENESIS_SRV_8DEC as u128);
 }
 
-/// Test that CBE/USD price update enables dynamic pricing when both signals available
+/// Issue #1852: Test curve price observation (bonding curve is PRIMARY)
 #[test]
-fn dynamic_pricing_activates_with_both_signals() {
+fn curve_price_observation_works() {
     let mut state = TokenPricingState::new();
 
-    // Initially no dynamic pricing
-    assert!(!state.dynamic_pricing_active);
-    assert_eq!(state.get_sov_pricing_mode(), PricingMode::Fixed);
+    // Initially no observed price
+    assert!(state.observed_curve_price.is_none());
+    assert_eq!(state.get_phase(), PricingPhase::Curve);
 
-    // Update CBE/SOV ratio first (from bonding curve)
-    state.update_cbe_sov_ratio(60 * PRICE_SCALE, 1000);
-    assert!(!state.dynamic_pricing_active); // Still need CBE/USD
+    // Observe price from bonding curve (NOT from oracle)
+    let curve_price = 31_334_570u128; // ~0.000313 SOV per CBE
+    state.observe_curve_price(curve_price, 1000);
 
-    // Update CBE/USD price (from oracle)
-    state.update_cbe_usd_price(3 * PRICE_SCALE, 1, 1000);
-    assert!(state.dynamic_pricing_active);
-    assert_eq!(state.get_sov_pricing_mode(), PricingMode::Dynamic);
-
-    // Verify SOV price calculation: CBE_USD / CBE_SOV = 3 / 60 = 0.05
-    let expected_sov_price = (3 * PRICE_SCALE * PRICE_SCALE) / (60 * PRICE_SCALE);
-    assert_eq!(state.last_sov_price_8dec, expected_sov_price);
+    // Price is now observed
+    assert_eq!(state.observed_curve_price, Some(curve_price));
+    assert_eq!(state.get_observed_price(), Some(curve_price));
 }
 
-/// Test SOV price calculation formula
+/// Issue #1852: Test phase transition to AMM
 #[test]
-fn sov_price_calculation_is_correct() {
-    use lib_blockchain::pricing::PricingCalculator;
-
-    // Example: CBE/USD = $3, CBE/SOV = 60
-    // SOV/USD = 3 / 60 = $0.05
-    let cbe_usd = 3 * PRICE_SCALE;
-    let cbe_sov = 60 * PRICE_SCALE;
-    let sov_price = PricingCalculator::calculate_sov_price(cbe_usd, cbe_sov).unwrap();
-
-    // $0.05 in 8-decimal precision
-    let expected = 5_000_000; // 0.05 * 100_000_000
-    assert_eq!(sov_price, expected);
-}
-
-/// Test that oracle finalization updates token pricing state
-#[test]
-fn oracle_finalization_updates_pricing_state() {
-    let mut blockchain = Blockchain::default();
-
-    // Initially no CBE price
-    assert!(blockchain.token_pricing_state.cbe_usd_price.is_none());
-
-    // Finalize an oracle price with CBE/USD
-    let cbe_price = 3 * PRICE_SCALE; // $3.00
-    blockchain
-        .oracle_state
-        .try_finalize_price(FinalizedOraclePrice {
-            epoch_id: 1,
-            sov_usd_price: 5 * PRICE_SCALE, // $5.00 SOV
-            cbe_usd_price: Some(cbe_price),
-        });
-
-    // Apply the attestation through the blockchain (simulated)
-    // In production, this happens via apply_oracle_attestation
-    // For this test, we manually update the pricing state
-    blockchain
-        .token_pricing_state
-        .update_cbe_usd_price(cbe_price, 1, 1000);
-
-    // Verify pricing state was updated
-    assert_eq!(blockchain.token_pricing_state.cbe_usd_price, Some(cbe_price));
-    assert_eq!(blockchain.token_pricing_state.cbe_price_epoch, Some(1));
-}
-
-/// Test price components are correctly populated
-#[test]
-fn price_components_are_correct() {
+fn phase_transition_to_amm() {
     let mut state = TokenPricingState::new();
 
-    // Set up both price signals
-    state.update_cbe_usd_price(3 * PRICE_SCALE, 1, 1000);
-    state.update_cbe_sov_ratio(60 * PRICE_SCALE, 1000);
+    assert_eq!(state.get_phase(), PricingPhase::Curve);
 
-    let components = state.get_sov_components();
+    // Transition to AMM phase (post-graduation)
+    state.transition_to_amm(2000);
 
-    // SRV should always be present as fallback
-    assert!(components.srv.is_some());
-
-    // CBE/USD and CBE/SOV should be present
-    assert!(components.cbe_usd.is_some());
-    assert!(components.cbe_sov.is_some());
-
-    // Verify the values
-    assert_eq!(components.cbe_usd.unwrap(), 3.0);
-    assert_eq!(components.cbe_sov.unwrap(), 60.0);
+    assert_eq!(state.get_phase(), PricingPhase::AMM);
 }
 
-/// Test CBE price calculation with SOV price
+/// Issue #1852: Test CBE/USD calculation (CBE/SOV × SOV/USD)
 #[test]
-fn cbe_price_calculation_with_sov() {
+fn cbe_usd_calculation_is_correct() {
     use lib_blockchain::pricing::PricingCalculator;
 
-    // If SOV/USD = $5 and CBE/SOV = 60
-    // Then CBE/USD = 60 * 5 = $300
-    let cbe_sov = 60 * PRICE_SCALE;
-    let sov_usd = 5 * PRICE_SCALE;
+    // CBE/SOV = 0.000313, SOV/USD = $0.0218
+    // CBE/USD = 0.000313 * 0.0218 = $0.00000682
+    let cbe_sov = 31_334_570u128; // 0.0003133457 SOV per CBE
+    let sov_usd = 2_180_000u128;  // $0.0218 SOV/USD
+
     let cbe_usd = PricingCalculator::calculate_cbe_usd(cbe_sov, sov_usd);
 
-    // $300 in 8-decimal precision
-    let expected = 300 * PRICE_SCALE;
+    // Verify calculation: (31,334,570 * 2,180,000) / 100,000,000
+    let expected = (cbe_sov * sov_usd) / PRICE_SCALE;
     assert_eq!(cbe_usd, expected);
 }
 
-/// Test pricing mode transitions
+/// Issue #1852: Test price conversions
 #[test]
-fn pricing_mode_transitions_correctly() {
-    let mut state = TokenPricingState::new();
+fn price_conversions_work() {
+    use lib_blockchain::pricing::PricingCalculator;
 
-    // Start in Fixed mode
-    assert_eq!(state.get_sov_pricing_mode(), PricingMode::Fixed);
-    assert_eq!(state.get_sov_price_source(), lib_blockchain::pricing::PriceSource::Srv);
+    // $0.0218 = 2.18 cents (in 4-decimal precision: 21800)
+    // 2.18 cents = $0.0218
+    // In 8-decimal: 2_180_000 (0.0218 * 100_000_000)
+    //
+    // from_cents formula: cents * PRICE_SCALE / 100
+    // 218 * 100_000_000 / 100 = 218_000_000
+    let cents = 218u64; // 2.18 cents = $0.0218
+    let price_8dec = PricingCalculator::from_cents(cents);
+    // 218 * 100_000_000 / 100 = 218_000_000 (8-decimal precision)
+    assert_eq!(price_8dec, 218_000_000);
 
-    // Add CBE/SOV ratio only - still fixed
-    state.update_cbe_sov_ratio(60 * PRICE_SCALE, 1000);
-    assert_eq!(state.get_sov_pricing_mode(), PricingMode::Fixed);
-
-    // Add CBE/USD - now dynamic
-    state.update_cbe_usd_price(3 * PRICE_SCALE, 1, 1000);
-    assert_eq!(state.get_sov_pricing_mode(), PricingMode::Dynamic);
-    assert_eq!(state.get_sov_price_source(), lib_blockchain::pricing::PriceSource::Derived);
+    // Round trip: to_cents formula: (price_8dec * 100) / PRICE_SCALE
+    // (218_000_000 * 100) / 100_000_000 = 218
+    let back_to_cents = PricingCalculator::to_cents(price_8dec);
+    assert_eq!(back_to_cents, cents);
 }
 
-/// Test price history recording
+/// Issue #1852: Test price history recording
 #[test]
-fn price_history_is_recorded() {
+fn price_history_recording_works() {
     let mut state = TokenPricingState::new();
 
     // Record some prices
-    state.record_price("sov", 1000, 218); // $0.0218
-    state.record_price("sov", 2000, 500); // $0.05
-    state.record_price("cbe", 1000, 300); // $3.00
+    state.record_price("CBE", 1_700_000_000, 300); // $3.00
+    state.record_price("CBE", 1_700_000_100, 310); // $3.10
+    state.record_price("CBE", 1_700_000_200, 305); // $3.05
 
-    let sov_history = state.price_history.get("sov").unwrap();
-    assert_eq!(sov_history.len(), 2);
-    assert_eq!(sov_history[0], (1000, 218));
-    assert_eq!(sov_history[1], (2000, 500));
+    let history = state.get_price_history("CBE");
+    assert_eq!(history.len(), 3);
+    assert_eq!(history[0], (1_700_000_000, 300));
+    assert_eq!(history[2], (1_700_000_200, 305));
+}
 
-    let cbe_history = state.price_history.get("cbe").unwrap();
-    assert_eq!(cbe_history.len(), 1);
-    assert_eq!(cbe_history[0], (1000, 300));
+/// Issue #1852: Verify oracle is observer-only (does not set prices)
+#[test]
+fn oracle_is_observer_only() {
+    let mut state = TokenPricingState::new();
+
+    // Oracle can provide CBE/USD (for observation/validation)
+    let cbe_usd = 3 * PRICE_SCALE; // $3.00
+    state.update_cbe_usd_price(cbe_usd, 1, 1000);
+
+    // But this does NOT affect pricing
+    // - No dynamic pricing mode
+    // - SOV price still from SRV
+    // - Bonding curve remains PRIMARY
+
+    assert!(!state.dynamic_pricing_active);
+    assert_eq!(state.get_sov_price_8dec(), GENESIS_SRV_8DEC as u128);
+
+    // Price observation still comes from bonding curve
+    assert!(state.observed_curve_price.is_none());
+}
+
+/// Issue #1852: Test that legacy methods still work (backward compatibility)
+#[test]
+fn legacy_methods_backward_compatible() {
+    let mut state = TokenPricingState::new();
+
+    // These methods exist for backward compatibility but don't affect pricing
+    state.update_cbe_usd_price(3 * PRICE_SCALE, 1, 1000);
+    state.update_cbe_sov_ratio(60 * PRICE_SCALE, 1000);
+
+    // Pricing is still fixed (SRV-based)
+    assert_eq!(state.get_sov_pricing_mode(), lib_blockchain::pricing::PricingMode::Fixed);
+    assert_eq!(state.get_sov_price_source(), lib_blockchain::pricing::PriceSource::Srv);
+
+    // Components exist but don't include oracle-derived values
+    let components = state.get_sov_components();
+    assert!(components.srv.is_some());
+    assert!(components.cbe_usd.is_none()); // Issue #1852: oracle is observer-only
+}
+
+/// Issue #1852: Document the architecture principle
+#[test]
+fn architecture_principle_documented() {
+    // This test documents the core principle:
+    // "reliance on internal mechanisms rather than external oracles for price discovery"
+    //
+    // The bonding curve IS the internal mechanism.
+    // The oracle only validates graduation thresholds and provides transparency.
+
+    println!("Issue #1852 Architecture:");
+    println!("  Bonding Curve = PRIMARY price source");
+    println!("  Oracle = SECONDARY observer (read-only)");
+    println!("  SOV price = SRV (fixed, not derived from oracle)");
+    println!("  CBE price = Bonding curve (internal mechanism)");
 }

@@ -1863,6 +1863,9 @@ impl<'a> StatefulTransactionValidator<'a> {
             }
         }
 
+        // Note: All match arms above return, so this is unreachable.
+        // Kept for compilation safety in case match arms change.
+        #[allow(unreachable_code)]
         Ok(())
     }
 

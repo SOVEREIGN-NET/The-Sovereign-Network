@@ -1214,11 +1214,14 @@ impl ValuationHandler {
         (price_usd, price_usd_cents)
     }
 
-    /// Build stable SOV price response (Phase 1: SRV; Phase 2: oracle-derived).
+    /// Build stable SOV price response (Issue #1852: SRV only, no oracle-derived pricing).
+    /// 
+    /// The bonding curve is PRIMARY for CBE pricing. Oracle is observer-only.
+    /// SOV price comes from SRV (System Reference Value) only.
     async fn build_sov_price_response(&self) -> Result<serde_json::Value> {
         let blockchain = self.blockchain.read().await;
 
-        // Phase 1: SRV from treasury kernel.
+        // Issue #1852: SOV price from SRV only (no oracle-derived dynamic pricing)
         let srv_atomic = if let Some(kernel) = blockchain.treasury_kernel.as_ref() {
             kernel.srv_state().current_srv
         } else {
@@ -1228,53 +1231,25 @@ impl ValuationHandler {
 
         let last_updated = blockchain.last_committed_timestamp();
 
-        // Phase 2: check oracle for CBE-derived SOV price.
-        let block_ts = last_updated;
-        let current_epoch = blockchain.oracle_state.epoch_id(block_ts);
-        let oracle_price = blockchain.oracle_state.latest_finalized_price_at_or_before(current_epoch);
-
-        let (price_usd, price_usd_cents, price_mode, price_source, components) = if let Some(fp) = oracle_price {
-            // Oracle finalized price is SOV/USD directly.
-            let (oracle_usd, oracle_cents) = Self::atomic_to_price(fp.sov_usd_price as u64);
-            (
-                oracle_usd,
-                oracle_cents,
-                "dynamic",
-                "oracle",
-                json!({
-                    "srv": srv_usd,
-                    "oracle_price": oracle_usd,
-                    "cbe_usd": null,
-                    "cbe_sov": null,
-                }),
-            )
-        } else {
-            (
-                srv_usd,
-                srv_cents,
-                "fixed",
-                "srv",
-                json!({
-                    "srv": srv_usd,
-                    "cbe_usd": null,
-                    "cbe_sov": null,
-                }),
-            )
-        };
-
+        // Issue #1852: Simplified response - no dynamic/oracle_derived components
+        // Bonding curve is PRIMARY, oracle is observer-only
         Ok(json!({
             "token_id": "sov",
             "symbol": "SOV",
-            "price_usd": price_usd,
-            "price_usd_cents": price_usd_cents,
-            "price_mode": price_mode,
-            "price_source": price_source,
-            "components": components,
+            "price_usd": srv_usd,
+            "price_usd_cents": srv_cents,
+            "price_mode": "srv",  // Issue #1852: Always SRV, no dynamic mode
+            "price_source": "srv",
+            "components": {
+                "srv": srv_usd,
+            },
             "last_updated": last_updated,
         }))
     }
 
-    /// Build stable token price response for a bonding curve or regular token.
+    /// Issue #1852: Build token price response (bonding curve is PRIMARY, oracle is observer-only).
+    /// 
+    /// Price always comes from bonding curve - oracle does not set prices.
     fn build_token_price_response(
         token_id_hex: &str,
         bc_token: Option<&BondingCurveToken>,
@@ -1288,16 +1263,11 @@ impl ValuationHandler {
             let price_usd = curve_price_sov * srv_usd;
             let price_usd_cents = (price_usd * 10_000.0).round() as u64;
 
-            let (price_mode, price_source, oracle_confidence) = match token.phase {
-                Phase::Curve => ("pre_graduation", "bonding_curve", None),
-                Phase::Graduated => {
-                    if token.last_oracle_price.is_some() {
-                        ("post_graduation", "oracle", Some(0.95_f64))
-                    } else {
-                        ("post_graduation", "bonding_curve", None)
-                    }
-                }
-                Phase::AMM => ("post_graduation", "amm", None),
+            // Issue #1852: Bonding curve is PRIMARY source, oracle is observer-only
+            let (price_mode, price_source) = match token.phase {
+                Phase::Curve => ("curve", "bonding_curve"),
+                Phase::Graduated => ("graduated", "bonding_curve"),
+                Phase::AMM => ("amm", "amm"),
             };
 
             Ok(json!({
@@ -1305,8 +1275,8 @@ impl ValuationHandler {
                 "symbol": token.symbol,
                 "price_usd": price_usd,
                 "price_usd_cents": price_usd_cents,
-                "price_mode": price_mode,
-                "price_source": price_source,
+                "price_mode": price_mode,      // Issue #1852: curve/graduated/amm (no dynamic)
+                "price_source": price_source,  // Issue #1852: always curve/amm (never oracle)
                 "phase": format!("{:?}", token.phase),
                 "reserve_usd": token.reserve_balance as f64 / 100_000_000.0 * srv_usd,
                 "supply": token.total_supply,
@@ -1314,7 +1284,7 @@ impl ValuationHandler {
                     "curve_price_sov": curve_price_sov,
                     "sov_usd": srv_usd,
                 },
-                "oracle_confidence": oracle_confidence,
+                // Issue #1852: Removed oracle_confidence (oracle is observer-only)
                 "last_updated": last_updated,
             }))
         } else if let Some(token) = reg_token {

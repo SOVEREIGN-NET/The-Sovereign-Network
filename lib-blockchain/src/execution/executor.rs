@@ -1894,6 +1894,9 @@ impl BlockExecutor {
     ) -> Result<TxOutcome, TxApplyError> {
         let tx_hash = hash_transaction(tx);
 
+        // All TransactionType variants are explicitly handled.
+        // The catch-all arm is kept for safety against future variant additions.
+        #[allow(unreachable_patterns)]
         match tx.transaction_type {
             TransactionType::Transfer => {
                 let outcome = tx_apply::apply_native_transfer(mutator, tx, &tx_hash, block_height)?;
@@ -2141,6 +2144,9 @@ impl BlockExecutor {
             TransactionType::Coinbase => Err(TxApplyError::InvalidType(
                 "Coinbase must not be routed through apply_transaction".to_string(),
             )),
+            // All TransactionType variants are explicitly handled above.
+            // This arm is kept for safety against future variant additions.
+            #[allow(unreachable_patterns)]
             _ => Err(TxApplyError::UnsupportedType(format!(
                 "{:?}",
                 tx.transaction_type

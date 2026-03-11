@@ -1398,7 +1398,7 @@ impl Blockchain {
     /// Issue #1843: Genesis Allocation - 100B Supply Distribution
     fn initialize_cbe_genesis(&mut self) {
         use crate::contracts::bonding_curve::{BondingCurveToken, CurveType, Threshold, PiecewiseLinearCurve};
-        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL, CbeToken, VestingPool};
+        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
 
         // Generate deterministic CBE token ID (same as CbeToken)
         let token_id = {
@@ -1472,7 +1472,7 @@ impl Blockchain {
     /// - Performance Incentives: 20% (20B) - 6-month cliff, 24-month vest
     /// - Strategic Reserves: 10% (10B) - 12-month cliff, 48-month vest
     fn initialize_cbe_token_genesis(&mut self) {
-        use crate::contracts::tokens::{CbeToken, VestingPool};
+        use crate::contracts::tokens::VestingPool;
 
         // Skip if already initialized
         if self.cbe_token.is_initialized() {
@@ -1513,7 +1513,7 @@ impl Blockchain {
         }
 
         // Get genesis timestamp for vesting calculations
-        let genesis_timestamp = self.get_genesis_timestamp();
+        let _genesis_timestamp = self.get_genesis_timestamp();
         let start_block = 0u64;
 
         // Blocks per month derived from the canonical target block time (10 s/block)
@@ -1641,6 +1641,7 @@ impl Blockchain {
             token_id: "sov".to_string(),
             symbol: "SOV".to_string(),
             price_usd_cents: price_cents,
+            pricing_phase: crate::pricing::PricingPhase::Curve, // Issue #1852
             price_mode: self.token_pricing_state.get_sov_pricing_mode(),
             price_source: self.token_pricing_state.get_sov_price_source(),
             components,
