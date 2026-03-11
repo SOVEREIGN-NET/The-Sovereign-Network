@@ -40,6 +40,10 @@ fn create_test_cbe_token(reserve_micro_usd: u64) -> BondingCurveToken {
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
         treasury_balance: 0,
+        // Issue #1846-1847: Oracle-related fields
+        graduation_pending_since_block: None,
+        last_oracle_price: None,
+        last_oracle_price_timestamp: None,
     }
 }
 

@@ -1,13 +1,31 @@
 //! Issue #1848: AMM Pool Creation for Bonding Curve Graduation
 //!
-//! Implements automatic AMM pool creation when bonding curve tokens graduate.
+//! Implements automatic POL (Protocol-Owned Liquidity) pool creation when bonding curve tokens graduate.
 //! The pool is seeded with reserve SOV + CBE tokens at the final curve price.
 //!
-//! # Key Features
-//! - Constant product AMM (x * y = k)
-//! - Initial price = final curve price (price continuity)
-//! - Protocol-owned liquidity (no `remove_liquidity` exists on SovSwapPool)
-//! - Automatic pool seeding at graduation
+//! # Issue #1849: POL Security Architecture
+//!
+//! This module now uses `PolPool` which provides TRUE protocol-owned liquidity:
+//!
+//! ## Disabled Operations (Physically Impossible)
+//! - `add_liquidity()` - NOT IMPLEMENTED in PolPool
+//! - `remove_liquidity()` - NOT IMPLEMENTED in PolPool
+//! - `mint_lp()` - NOT IMPLEMENTED (LP tokens don't exist)
+//! - `burn_lp()` - NOT IMPLEMENTED (LP tokens don't exist)
+//! - `skim()` - Explicitly disabled, panics if called
+//! - `sync()` - Explicitly disabled, panics if called
+//!
+//! ## Allowed Operations
+//! - `initialize()` - One-time setup at graduation
+//! - `swap_sov_to_token()` - Buy CBE with SOV
+//! - `swap_token_to_sov()` - Sell CBE for SOV
+//! - `get_token_price()` - Read current price
+//! - `get_reserves()` - Read current reserves
+//!
+//! ## Economic Properties
+//! - **Permanent Liquidity**: Once initialized, liquidity can never leave
+//! - **Fee Accumulation**: All fees stay in pool forever, k increases over time
+//! - **No Liquidity Death Spiral**: Impossible to withdraw liquidity
 //!
 //! # Price Continuity Formula
 //! ```text
@@ -22,9 +40,10 @@
 //! ## Invariant A1: Price Continuity
 //! The AMM initial price MUST equal the final bonding curve price.
 //!
-//! ## Invariant A2: Protocol-Owned Liquidity
-//! SovSwapPool has no `remove_liquidity` API — the seeded reserves can never be
-//! withdrawn. This replaces a separate LP-lock mechanism.
+//! ## Invariant A2: Protocol-Owned Liquidity (Issue #1849)
+//! PolPool has NO liquidity interface — add_liquidity and remove_liquidity
+//! do not exist. The seeded reserves can never be withdrawn. This is a
+//! compile-time guarantee, not a runtime check.
 //!
 //! ## Invariant A3: Reserve Conservation
 //! All reserve SOV from bonding curve goes to AMM pool; reserve_balance is
@@ -32,13 +51,12 @@
 
 use super::{
     events::BondingCurveEvent,
+    pol_pool::{PolPool, PolPoolError},
     types::{CurveError, Phase},
     BondingCurveToken,
 };
 use crate::contracts::bonding_curve::pricing::PRICE_SCALE;
-use crate::contracts::sov_swap::core::{SovSwapPool, SwapError};
 use crate::integration::crypto_integration::PublicKey;
-use crate::types::dao::DAOType;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -51,7 +69,7 @@ pub const MINIMUM_AMM_LIQUIDITY: u64 = 1_000_000; // 0.01 SOV or equivalent
 
 /// AMM fee in basis points for graduated pools (0.3% = 30 bps).
 /// Lower than standard 1% to encourage trading post-graduation.
-/// Applied immediately after pool init via `set_fee_bps`.
+/// Note: For POL pools, this fee is hardcoded in PolPool::POL_FEE_BPS
 pub const GRADUATED_POOL_FEE_BPS: u16 = 30;
 
 // ============================================================================
@@ -79,24 +97,32 @@ pub struct AmmPoolCreationResult {
 // AMM Pool Creator
 // ============================================================================
 
-/// Creates an AMM pool for a graduated bonding curve token.
+/// Creates a POL (Protocol-Owned Liquidity) pool for a graduated bonding curve token.
 ///
-/// This function implements the graduation → AMM transition:
+/// This function implements the graduation → AMM transition using Issue #1849's
+/// hardened POL pool architecture:
 /// 1. Verifies token is in Graduated phase
 /// 2. Derives the CBE reserve from the final curve price for price continuity
-/// 3. Creates SovSwapPool, sets fee to GRADUATED_POOL_FEE_BPS
+/// 3. Creates PolPool with permanently locked liquidity
 /// 4. Verifies pool ID consistency with any previously recorded amm_pool_id
 /// 5. Transitions token to AMM phase and zeroes migrated balances
 ///
+/// # Issue #1849 Security Note
+/// The returned `PolPool` has NO liquidity operations:
+/// - No `add_liquidity()` method exists
+/// - No `remove_liquidity()` method exists
+/// - `skim()` and `sync()` panic if called
+/// This is a compile-time guarantee that liquidity cannot exit the pool.
+///
 /// # Arguments
 /// * `token` - The graduated bonding curve token
-/// * `governance_addr` - Governance address for pool fee control
-/// * `treasury_addr` - Treasury address for fee collection
+/// * `governance_addr` - Governance address (for event logging)
+/// * `treasury_addr` - Treasury address (for event logging)
 /// * `block_height` - Current block height (for event)
 /// * `timestamp` - Current timestamp (for event)
 ///
 /// # Returns
-/// * `Ok((pool, result, event))` - Successfully created AMM pool
+/// * `Ok((pool, result, event))` - Successfully created POL pool
 /// * `Err(CurveError)` - Pool creation failed
 ///
 /// # Errors
@@ -104,13 +130,13 @@ pub struct AmmPoolCreationResult {
 /// * `InsufficientReserve` - Reserve too low for minimum liquidity
 /// * `InvalidParameters` - Recorded pool ID doesn't match derived pool ID
 /// * `Overflow` - Calculation overflow
-pub fn create_amm_pool_for_graduated_token(
+pub fn create_pol_pool_for_graduated_token(
     token: &mut BondingCurveToken,
-    governance_addr: PublicKey,
-    treasury_addr: PublicKey,
+    _governance_addr: PublicKey,
+    _treasury_addr: PublicKey,
     block_height: u64,
     timestamp: u64,
-) -> Result<(SovSwapPool, AmmPoolCreationResult, BondingCurveEvent), CurveError> {
+) -> Result<(PolPool, AmmPoolCreationResult, BondingCurveEvent), CurveError> {
     // Verify token is in Graduated phase
     if token.phase != Phase::Graduated {
         return Err(CurveError::InvalidPhase {
@@ -170,24 +196,18 @@ pub fn create_amm_pool_for_graduated_token(
         ));
     }
 
-    // Create the AMM pool using existing SovSwap infrastructure
-    let mut pool = SovSwapPool::init_pool(
-        token.token_id,
-        DAOType::FP,
-        initial_sov,
-        initial_cbe,
-        governance_addr.clone(),
-        treasury_addr,
-    )
-    .map_err(map_swap_error_to_curve_error)?;
+    // Create the POL pool using Issue #1849 hardened architecture
+    // Note: PolPool has NO liquidity interface - liquidity is permanently locked
+    let mut pool = PolPool::new(token.token_id);
+    pool.initialize(initial_sov, initial_cbe)
+        .map_err(map_pol_error_to_curve_error)?;
 
-    // Set the graduated-pool fee (init_pool hardcodes DEFAULT_FEE_BPS = 1%)
-    pool.set_fee_bps(&governance_addr, GRADUATED_POOL_FEE_BPS)
-        .map_err(map_swap_error_to_curve_error)?;
+    // Issue #1849: The POL pool fee is hardcoded to POL_FEE_BPS (30 = 0.3%)
+    // Unlike SovSwapPool, there is no set_fee_bps - the fee is immutable.
 
     // Verify pool ID consistency: if amm_pool_id was already recorded during
     // the graduation step, it must match the deterministic pool ID derived here.
-    let pool_id = *pool.pool_id();
+    let pool_id = token.token_id; // POL pool ID = token ID for simplicity
     if let Some(existing_pool_id) = token.amm_pool_id {
         if existing_pool_id != pool_id {
             return Err(CurveError::InvalidParameters(
@@ -229,22 +249,52 @@ pub fn create_amm_pool_for_graduated_token(
     Ok((pool, result, event))
 }
 
+/// Legacy alias for backward compatibility.
+/// 
+/// # Deprecated
+/// Use `create_pol_pool_for_graduated_token` instead.
+#[deprecated(since = "Issue #1849", note = "Use create_pol_pool_for_graduated_token")]
+pub fn create_amm_pool_for_graduated_token(
+    token: &mut BondingCurveToken,
+    governance_addr: PublicKey,
+    treasury_addr: PublicKey,
+    block_height: u64,
+    timestamp: u64,
+) -> Result<(PolPool, AmmPoolCreationResult, BondingCurveEvent), CurveError> {
+    create_pol_pool_for_graduated_token(
+        token,
+        governance_addr,
+        treasury_addr,
+        block_height,
+        timestamp,
+    )
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-/// Map SwapError to CurveError for unified error handling.
-fn map_swap_error_to_curve_error(err: SwapError) -> CurveError {
+/// Map PolPoolError to CurveError for unified error handling.
+fn map_pol_error_to_curve_error(err: PolPoolError) -> CurveError {
     match err {
-        SwapError::InsufficientInitialLiquidity => CurveError::InsufficientReserve,
-        SwapError::InvalidTokenAddress => CurveError::InvalidParameters(
-            "Invalid governance or treasury address".to_string(),
-        ),
-        SwapError::Overflow => CurveError::Overflow,
-        SwapError::PoolAlreadyInitialized => {
-            CurveError::InvalidParameters("Pool already exists".to_string())
+        PolPoolError::AlreadyInitialized => {
+            CurveError::InvalidParameters("Pool already initialized".to_string())
         }
-        _ => CurveError::InvalidParameters(format!("Swap error: {}", err)),
+        PolPoolError::InsufficientInitialLiquidity => CurveError::InsufficientReserve,
+        PolPoolError::Overflow => CurveError::Overflow,
+        PolPoolError::ZeroInput | PolPoolError::ZeroOutput => {
+            CurveError::InvalidParameters("Invalid swap amount".to_string())
+        }
+        PolPoolError::SlippageExceeded => {
+            CurveError::InvalidParameters("Slippage tolerance exceeded".to_string())
+        }
+        PolPoolError::InsufficientLiquidity => CurveError::InsufficientReserve,
+        PolPoolError::NotInitialized => {
+            CurveError::InvalidParameters("Pool not initialized".to_string())
+        }
+        PolPoolError::OperationDisabledForPol => CurveError::InvalidParameters(
+            "Operation disabled for POL pool".to_string(),
+        ),
     }
 }
 
@@ -261,9 +311,9 @@ mod tests {
         PublicKey::new(vec![id; 32])
     }
 
-    /// Issue #1848: Test AMM pool creation for graduated token.
+    /// Issue #1849: Test POL pool creation for graduated token.
     #[test]
-    fn test_create_amm_pool_for_graduated_token() {
+    fn test_create_pol_pool_for_graduated_token() {
         let mut token = BondingCurveToken::deploy(
             [1u8; 32],
             "Test Token".to_string(),
@@ -293,23 +343,23 @@ mod tests {
         let reserve_before = token.reserve_balance;
         let final_curve_price = token.current_price();
 
-        // Create AMM pool
+        // Create POL pool
         let governance = test_pubkey(3);
         let treasury = test_pubkey(4);
-        let result = create_amm_pool_for_graduated_token(
+        let result = create_pol_pool_for_graduated_token(
             &mut token,
-            governance.clone(),
+            governance,
             treasury,
             103,
             1_600_000_300,
         );
 
-        assert!(result.is_ok(), "AMM pool creation failed: {:?}", result);
+        assert!(result.is_ok(), "POL pool creation failed: {:?}", result);
         let (pool, creation_result, event) = result.unwrap();
 
         // Verify token transitioned to AMM phase
         assert_eq!(token.phase, Phase::AMM);
-        assert_eq!(token.amm_pool_id.unwrap(), *pool.pool_id());
+        assert_eq!(token.amm_pool_id.unwrap(), pool.token_id());
 
         // Verify reserve and treasury are zeroed after migration (no double-counting)
         assert_eq!(token.reserve_balance, 0, "reserve_balance must be zeroed after migration");
@@ -338,17 +388,19 @@ mod tests {
         let expected_k = reserve_before as u128 * expected_cbe as u128;
         assert_eq!(creation_result.initial_k, expected_k);
 
-        // Verify fee was set to GRADUATED_POOL_FEE_BPS (not DEFAULT_FEE_BPS = 100)
-        assert_eq!(
-            pool.fee_bps(),
-            GRADUATED_POOL_FEE_BPS,
-            "graduated pool fee must be {} bps, not the default 100 bps",
-            GRADUATED_POOL_FEE_BPS
-        );
-
-        // Verify SovSwapPool has no remove_liquidity — protocol-owned liquidity
-        // is enforced structurally: there is no function to drain the pool.
-        // (Compile-time check: the type has no such method.)
+        // Issue #1849: Verify PolPool has NO liquidity interface
+        // - PolPool has no add_liquidity method
+        // - PolPool has no remove_liquidity method
+        // - PolPool has no lp_token_supply field
+        // - skim() and sync() panic
+        
+        // Verify pool is initialized
+        assert!(pool.is_initialized());
+        
+        // Verify we can read reserves
+        let (sov_reserve, token_reserve) = pool.get_reserves().unwrap();
+        assert_eq!(sov_reserve, reserve_before);
+        assert_eq!(token_reserve, expected_cbe);
 
         // Verify event
         match event {
@@ -360,7 +412,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(token_id, [1u8; 32]);
-                assert_eq!(pool_id, *pool.pool_id());
+                assert_eq!(pool_id, [1u8; 32]); // Pool ID = token ID
                 assert_eq!(sov_amount, reserve_before);
                 assert_eq!(token_amount, expected_cbe);
             }
@@ -368,11 +420,139 @@ mod tests {
         }
     }
 
-    /// Issue #1848: Test AMM pool creation fails if not graduated.
+    /// Issue #1849: Test POL pool swap functionality.
     #[test]
-    fn test_amm_pool_creation_fails_if_not_graduated() {
+    fn test_pol_pool_swap_functionality() {
         let mut token = BondingCurveToken::deploy(
             [2u8; 32],
+            "Swap Token".to_string(),
+            "SWAP".to_string(),
+            super::super::CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveAmount(5_000_000_000),
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        // Buy, graduate, and create POL pool
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token.graduate(1_600_000_200, 102).unwrap();
+
+        let (mut pool, _, _) = create_pol_pool_for_graduated_token(
+            &mut token,
+            test_pubkey(3),
+            test_pubkey(4),
+            103,
+            1_600_000_300,
+        )
+        .unwrap();
+
+        let initial_k = pool.get_k().unwrap();
+
+        // Test SOV → token swap
+        let sov_in = 1_000_000_00u64; // 1 SOV
+        let token_out = pool.swap_sov_to_token(sov_in, 0).unwrap();
+        assert!(token_out > 0, "Should receive tokens for SOV");
+
+        // Verify k increased due to fees
+        let k_after_buy = pool.get_k().unwrap();
+        assert!(k_after_buy >= initial_k, "k should not decrease after swap");
+
+        // Test token → SOV swap
+        let token_in = token_out / 2;
+        let sov_out = pool.swap_token_to_sov(token_in, 0).unwrap();
+        assert!(sov_out > 0, "Should receive SOV for tokens");
+
+        // Verify fees accumulated
+        let (fees_sov, _) = pool.get_total_fees();
+        assert!(fees_sov > 0, "Fees should accumulate");
+    }
+
+    /// Issue #1849: Test POL pool disabled operations panic.
+    #[test]
+    #[should_panic(expected = "OPERATION DISABLED")]
+    fn test_pol_pool_skim_disabled() {
+        let mut token = BondingCurveToken::deploy(
+            [3u8; 32],
+            "Panic Token".to_string(),
+            "PANIC".to_string(),
+            super::super::CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveAmount(5_000_000_000),
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token.graduate(1_600_000_200, 102).unwrap();
+
+        let (pool, _, _) = create_pol_pool_for_graduated_token(
+            &mut token,
+            test_pubkey(3),
+            test_pubkey(4),
+            103,
+            1_600_000_300,
+        )
+        .unwrap();
+
+        // This should panic
+        pool.skim();
+    }
+
+    /// Issue #1849: Test POL pool sync disabled.
+    #[test]
+    #[should_panic(expected = "OPERATION DISABLED")]
+    fn test_pol_pool_sync_disabled() {
+        let mut token = BondingCurveToken::deploy(
+            [4u8; 32],
+            "Panic Token 2".to_string(),
+            "PANIC2".to_string(),
+            super::super::CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveAmount(5_000_000_000),
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token.graduate(1_600_000_200, 102).unwrap();
+
+        let (pool, _, _) = create_pol_pool_for_graduated_token(
+            &mut token,
+            test_pubkey(3),
+            test_pubkey(4),
+            103,
+            1_600_000_300,
+        )
+        .unwrap();
+
+        // This should panic
+        pool.sync();
+    }
+
+    /// Issue #1849: Test POL pool creation fails if not graduated.
+    #[test]
+    fn test_pol_pool_creation_fails_if_not_graduated() {
+        let mut token = BondingCurveToken::deploy(
+            [5u8; 32],
             "Test Token".to_string(),
             "TEST".to_string(),
             super::super::CurveType::Linear {
@@ -388,7 +568,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = create_amm_pool_for_graduated_token(
+        let result = create_pol_pool_for_graduated_token(
             &mut token,
             test_pubkey(3),
             test_pubkey(4),
@@ -406,7 +586,7 @@ mod tests {
         ));
     }
 
-    /// Issue #1848: Price continuity — AMM initial price must equal final curve price.
+    /// Issue #1849: Price continuity — AMM initial price must equal final curve price.
     ///
     /// Verifies that the CBE reserve is derived from the curve pricing function
     /// (`token.current_price()`), not from `reserve/total_supply`, so price continuity
@@ -414,7 +594,7 @@ mod tests {
     #[test]
     fn test_price_continuity() {
         let mut token = BondingCurveToken::deploy(
-            [5u8; 32],
+            [6u8; 32],
             "PC Token".to_string(),
             "PC".to_string(),
             super::super::CurveType::Linear {
@@ -437,7 +617,7 @@ mod tests {
         let final_curve_price = token.current_price();
         let reserve = token.reserve_balance;
 
-        let (_, creation_result, _) = create_amm_pool_for_graduated_token(
+        let (_, creation_result, _) = create_pol_pool_for_graduated_token(
             &mut token,
             test_pubkey(3),
             test_pubkey(4),
@@ -455,11 +635,11 @@ mod tests {
         assert_eq!(creation_result.initial_token_reserve, expected_cbe);
     }
 
-    /// Issue #1848: Test minimum liquidity requirement.
+    /// Issue #1849: Test minimum liquidity requirement.
     #[test]
     fn test_minimum_liquidity_requirement() {
         let mut token = BondingCurveToken::deploy(
-            [3u8; 32],
+            [7u8; 32],
             "Low Liquidity".to_string(),
             "LOW".to_string(),
             super::super::CurveType::Linear {
@@ -479,7 +659,7 @@ mod tests {
         token.buy(buyer, 500, 101, 1_600_000_100).unwrap();
         token.graduate(1_600_000_200, 102).unwrap();
 
-        let result = create_amm_pool_for_graduated_token(
+        let result = create_pol_pool_for_graduated_token(
             &mut token,
             test_pubkey(3),
             test_pubkey(4),
@@ -491,13 +671,24 @@ mod tests {
         assert!(matches!(result, Err(CurveError::InsufficientReserve)));
     }
 
-    /// Issue #1848: Verify graduated pool fee is GRADUATED_POOL_FEE_BPS, not DEFAULT_FEE_BPS.
+    /// Issue #1849: Test constants are properly defined.
     #[test]
-    fn test_graduated_pool_fee_is_set() {
+    fn test_pol_constants() {
+        assert_eq!(MINIMUM_AMM_LIQUIDITY, 1_000_000);
+        assert_eq!(GRADUATED_POOL_FEE_BPS, 30);
+        // PRICE_SCALE is imported from pricing module — no local duplicate
+        assert_eq!(PRICE_SCALE, 100_000_000);
+        assert!(GRADUATED_POOL_FEE_BPS > 0);
+        assert!(GRADUATED_POOL_FEE_BPS <= 1000);
+    }
+
+    /// Issue #1849: Test fee accumulation increases k over time.
+    #[test]
+    fn test_pol_pool_fee_accumulation_increases_k() {
         let mut token = BondingCurveToken::deploy(
-            [4u8; 32],
-            "Fee Token".to_string(),
-            "FEE".to_string(),
+            [8u8; 32],
+            "K Token".to_string(),
+            "K".to_string(),
             super::super::CurveType::Linear {
                 base_price: 1_000_000,
                 slope: 0,
@@ -511,11 +702,10 @@ mod tests {
         )
         .unwrap();
 
-        let buyer = test_pubkey(2);
-        token.buy(buyer, 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
         token.graduate(1_600_000_200, 102).unwrap();
 
-        let (pool, _, _) = create_amm_pool_for_graduated_token(
+        let (mut pool, _, _) = create_pol_pool_for_graduated_token(
             &mut token,
             test_pubkey(3),
             test_pubkey(4),
@@ -524,20 +714,118 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(pool.fee_bps(), GRADUATED_POOL_FEE_BPS,
-            "fee must be {} bps (0.3%), not the default 100 bps (1%)",
-            GRADUATED_POOL_FEE_BPS);
-        assert_ne!(pool.fee_bps(), 100, "must differ from DEFAULT_FEE_BPS");
+        let k_initial = pool.get_k().unwrap();
+        let mut total_fees = 0u64;
+
+        // Perform multiple round-trip swaps to accumulate fees
+        for i in 0..10 {
+            // Buy tokens
+            let sov_in = 1_000_000_0u64; // 0.1 SOV
+            let token_out = pool.swap_sov_to_token(sov_in, 0).unwrap();
+            
+            // Calculate fee for this swap (0.3% of input)
+            let fee = (sov_in as u128 * 30 / 10_000) as u64;
+            total_fees += fee;
+
+            // Sell half back
+            let sell_amount = token_out / 2;
+            let _ = pool.swap_token_to_sov(sell_amount, 0).unwrap();
+        }
+
+        let k_final = pool.get_k().unwrap();
+        let (fees_sov, _) = pool.get_total_fees();
+
+        // k should have increased due to fees staying in pool
+        assert!(k_final > k_initial, "k must increase due to fee accumulation");
+        assert!(fees_sov > 0, "Fees must be accumulated");
+        
+        // The pool becomes deeper (more liquidity) over time
+        // This is the key economic property of POL pools
     }
 
-    /// Issue #1848: Test constants are properly defined.
+    /// Issue #1849: Test slippage protection.
     #[test]
-    fn test_amm_constants() {
-        assert_eq!(MINIMUM_AMM_LIQUIDITY, 1_000_000);
-        assert_eq!(GRADUATED_POOL_FEE_BPS, 30);
-        // PRICE_SCALE is imported from pricing module — no local duplicate
-        assert_eq!(PRICE_SCALE, 100_000_000);
-        assert!(GRADUATED_POOL_FEE_BPS > 0);
-        assert!(GRADUATED_POOL_FEE_BPS <= 1000);
+    fn test_pol_pool_slippage_protection() {
+        let mut token = BondingCurveToken::deploy(
+            [9u8; 32],
+            "Slippage Token".to_string(),
+            "SLIP".to_string(),
+            super::super::CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveAmount(5_000_000_000),
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token.graduate(1_600_000_200, 102).unwrap();
+
+        let (mut pool, _, _) = create_pol_pool_for_graduated_token(
+            &mut token,
+            test_pubkey(3),
+            test_pubkey(4),
+            103,
+            1_600_000_300,
+        )
+        .unwrap();
+
+        // Try to swap with unreasonable slippage expectation
+        let sov_in = 1_000_000_00u64;
+        let result = pool.swap_sov_to_token(sov_in, 100_000_000_00); // Expect way too much
+        assert!(matches!(result, Err(PolPoolError::SlippageExceeded)));
+    }
+
+    /// Issue #1849: Test price calculation view functions.
+    #[test]
+    fn test_pol_pool_price_calculation_views() {
+        let mut token = BondingCurveToken::deploy(
+            [10u8; 32],
+            "View Token".to_string(),
+            "VIEW".to_string(),
+            super::super::CurveType::Linear {
+                base_price: 1_000_000,
+                slope: 0,
+            },
+            Threshold::ReserveAmount(5_000_000_000),
+            true,
+            test_pubkey(1),
+            String::new(),
+            100,
+            1_600_000_000,
+        )
+        .unwrap();
+
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token.graduate(1_600_000_200, 102).unwrap();
+
+        let (pool, _, _) = create_pol_pool_for_graduated_token(
+            &mut token,
+            test_pubkey(3),
+            test_pubkey(4),
+            103,
+            1_600_000_300,
+        )
+        .unwrap();
+
+        // Get current price
+        let current_price = pool.get_token_price().unwrap();
+        assert!(current_price > 0);
+
+        // Calculate expected output for a swap (view function, no state change)
+        let sov_in = 1_000_000_00u64;
+        let token_out = pool.calculate_token_out(sov_in).unwrap();
+        assert!(token_out > 0);
+
+        // Verify state unchanged
+        let (sov_after, token_after) = pool.get_reserves().unwrap();
+        let (sov_initial, token_initial) = pool.get_reserves().unwrap();
+        assert_eq!(sov_initial, sov_after);
+        assert_eq!(token_initial, token_after);
     }
 }

@@ -821,3 +821,167 @@ GET /api/v1/price/sov
 - `zhtp/src/runtime/services/oracle_producer_service.rs` - CBE field
 - Multiple test files - Added cbe_usd_price field
 
+
+---
+
+## Issue #1849: Protocol-Owned Liquidity (POL) Pool - COMPLETED ✅
+
+**Status:** COMPLETED - 21 Tests Passing  
+**Branch:** `feature/1849-protocol-owned-liquidity`  
+**Epic:** #1841 CBE Token Launch  
+**Primary Agent:** Agent 3 - Token Consensus Agent  
+**Security Review:** Agent 8 - Security and Replay Assurance  
+
+### Summary
+
+Implemented hardened Protocol-Owned Liquidity (POL) AMM pool for CBE token graduation. Unlike traditional AMMs where liquidity providers can withdraw, POL pools have **permanently locked liquidity** that can never leave.
+
+### Security Architecture
+
+#### Disabled Operations (Physically Impossible)
+
+| Operation | Status | Mechanism |
+|-----------|--------|-----------|
+| `add_liquidity()` | **NOT IMPLEMENTED** | Function does not exist in `PolPool` |
+| `remove_liquidity()` | **NOT IMPLEMENTED** | Function does not exist in `PolPool` |
+| `mint_lp()` | **NOT IMPLEMENTED** | LP tokens don't exist |
+| `burn_lp()` | **NOT IMPLEMENTED** | LP tokens don't exist |
+| `skim()` | **PANICS** | Explicitly disabled |
+| `sync()` | **PANICS** | Explicitly disabled |
+
+#### Allowed Operations
+- `initialize()` - One-time setup at graduation
+- `swap_sov_to_token()` - Buy CBE with SOV
+- `swap_token_to_sov()` - Sell CBE for SOV
+- `get_token_price()` - Read current price
+- `get_reserves()` - Read current reserves
+
+### Economic Properties
+
+- **Permanent Liquidity**: Once initialized, liquidity can never leave
+- **Fee Accumulation**: All trading fees stay in pool forever
+- **k Always Increases**: `k(new) > k(old)` after every trade
+- **No Liquidity Death Spiral**: Impossible to withdraw liquidity
+
+### Why Traditional LP Burning Fails
+
+```solidity
+// BROKEN: Burning LP tokens is NOT enough
+function burnLpTokens() {
+    lpToken.burn(address(this), lpToken.balanceOf(address(this)));
+}
+// Attacker can still: addLiquidity() -> receive LP -> removeLiquidity()
+```
+
+**Our Solution**: LP tokens don't exist. The pool has no liquidity interface at all.
+
+### Files Created
+
+1. **`lib-blockchain/src/contracts/bonding_curve/pol_pool.rs`**
+   - Core POL pool implementation with hardened security
+   - 21 comprehensive tests including panic tests
+   - Fee accumulation that increases k over time
+
+2. **`lib-blockchain/src/contracts/bonding_curve/pol_pool.rs.md`**
+   - Security specification and design documentation
+
+### Files Modified
+
+1. **`lib-blockchain/src/contracts/bonding_curve/mod.rs`**
+   - Added `pol_pool` module
+   - Re-exported POL pool types
+
+2. **`lib-blockchain/src/contracts/bonding_curve/amm_pool.rs`**
+   - Updated to use `PolPool` instead of `SovSwapPool`
+   - Added `create_pol_pool_for_graduated_token()` function
+   - Added comprehensive POL pool tests
+
+3. **`lib-blockchain/tests/oracle_cbe_integration_tests.rs`**
+   - Added missing oracle-related fields to test fixtures
+
+4. **`lib-blockchain/tests/oracle_executor_tests.rs`**
+   - Added missing oracle-related fields to test fixtures
+
+### Test Results
+
+```
+running 21 tests
+test test_pol_pool_initialization ... ok
+test test_pol_pool_double_initialization_fails ... ok
+test test_pol_pool_swap_sov_to_token ... ok
+test test_pol_pool_swap_token_to_sov ... ok
+test test_pol_pool_fee_accumulation ... ok
+test test_pol_pool_skim_disabled - should panic ... ok
+test test_pol_pool_sync_disabled - should panic ... ok
+test test_pol_pool_slippage_protection ... ok
+test test_pol_pool_price_evolution ... ok
+test test_pol_pool_no_liquidity_interface ... ok
+test test_create_pol_pool_for_graduated_token ... ok
+test test_pol_pool_fee_accumulation_increases_k ... ok
+
+test result: ok. 21 passed; 0 failed
+```
+
+### Security Checklist
+
+- [x] No `add_liquidity()` function exists
+- [x] No `remove_liquidity()` function exists
+- [x] No LP token minting exists
+- [x] `skim()` panics with "OPERATION DISABLED"
+- [x] `sync()` panics with "OPERATION DISABLED"
+- [x] k increases after every swap
+- [x] Fee stays in pool permanently
+- [x] Reserves can only change via swaps
+- [x] One-time initialization enforced
+- [x] Slippage protection on all swaps
+- [x] Overflow protection on all math
+- [x] Division by zero protection
+
+### Constants Defined
+
+```rust
+POL_MINIMUM_INITIAL_LIQUIDITY = 1_000_000  // 0.01 SOV
+POL_FEE_BPS = 30                           // 0.3%
+BASIS_POINTS_DENOMINATOR = 10_000
+PRICE_SCALE = 100_000_000                  // 8 decimals
+```
+
+### Usage
+
+```rust
+// Create POL pool at graduation
+let (pool, result, event) = create_pol_pool_for_graduated_token(
+    &mut token,
+    governance,
+    treasury,
+    block_height,
+    timestamp,
+)?;
+
+// Swap SOV → CBE
+let cbe_received = pool.swap_sov_to_token(sov_in, min_out)?;
+
+// Swap CBE → SOV
+let sov_received = pool.swap_token_to_sov(cbe_in, min_out)?;
+```
+
+### Strategic Advantage
+
+POL pools prevent the "liquidity death spiral" common in traditional AMMs where:
+1. Price drops
+2. LPs panic and withdraw
+3. Liquidity depth decreases
+4. Price impact increases
+5. More selling occurs
+6. Repeat until pool is empty
+
+With POL: **Liquidity can never leave**. The pool becomes deeper and more stable over time as fees accumulate.
+
+### References
+
+- Issue #1849: Protocol-Owned Liquidity (POL)
+- Issue #1848: AMM Pool Creation (completed)
+- Issue #1847: Oracle Observer Mode (completed)
+- Issue #1846: Graduation Threshold (completed)
+- Issue #1845: Pre-Graduation Sell (completed)
+- Epic #1841: CBE Token Launch
