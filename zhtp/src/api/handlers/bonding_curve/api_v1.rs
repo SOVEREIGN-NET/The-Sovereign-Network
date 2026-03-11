@@ -31,10 +31,8 @@ use tracing::{info, warn};
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 
-use lib_blockchain::contracts::bonding_curve::{
-    BondingCurveToken, CurveType, Phase, PiecewiseLinearCurve,
-};
-use lib_blockchain::contracts::bonding_curve::pol_pool::PolPool;
+use lib_blockchain::contracts::bonding_curve::{BondingCurveToken, Phase, PiecewiseLinearCurve};
+use lib_blockchain::contracts::bonding_curve::token::RESERVE_SPLIT_DIVISOR;
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::Blockchain;
 
@@ -249,43 +247,25 @@ impl BondingCurveApiHandler {
 
     /// Get supply band configuration
     async fn handle_bands(&self) -> Result<ZhtpResponse> {
-        // CBE uses PiecewiseLinear curve with 4 bands
-        let bands = vec![
-            SupplyBand {
-                band_number: 1,
-                min_supply: 0,
-                max_supply: 10_000_000_000_00, // 10B
-                base_price: 3_133_457, // Initial price
-                slope: 1, // From CBE spec
-            },
-            SupplyBand {
-                band_number: 2,
-                min_supply: 10_000_000_000_00,
-                max_supply: 30_000_000_000_00, // 30B
-                base_price: 10_000_000,
-                slope: 2,
-            },
-            SupplyBand {
-                band_number: 3,
-                min_supply: 30_000_000_000_00,
-                max_supply: 60_000_000_000_00, // 60B
-                base_price: 50_000_000,
-                slope: 5,
-            },
-            SupplyBand {
-                band_number: 4,
-                min_supply: 60_000_000_000_00,
-                max_supply: 100_000_000_000_00, // 100B
-                base_price: 200_000_000,
-                slope: 10,
-            },
-        ];
-        
+        let curve = PiecewiseLinearCurve::cbe_default();
+        let bands = curve
+            .bands
+            .iter()
+            .enumerate()
+            .map(|(idx, band)| SupplyBand {
+                band_number: (idx + 1) as u32,
+                min_supply: band.start_supply,
+                max_supply: band.end_supply,
+                base_price: band.base_offset.max(0) as u64,
+                slope: band.slope,
+            })
+            .collect();
+
         let response = BandsResponse {
             curve_type: "PiecewiseLinear".to_string(),
             bands,
         };
-        
+
         create_json_response(serde_json::to_value(response)?)
     }
 
@@ -316,26 +296,29 @@ impl BondingCurveApiHandler {
             ));
         }
 
-        // Calculate 20/80 split
-        let to_reserve = req.sov_amount / 5; // 20%
-        let to_treasury = req.sov_amount - to_reserve; // 80%
+        // Calculate 20/80 split using the canonical constant
+        let to_reserve = req.sov_amount / RESERVE_SPLIT_DIVISOR;
+        let to_treasury = req.sov_amount - to_reserve;
 
-        // Calculate CBE output using curve math
-        // This is a simplified calculation - in production would use actual curve formula
-        let current_price = cbe_token.current_price() as f64 / 100_000_000.0;
-        let sov_decimal = req.sov_amount as f64 / 100_000_000.0;
-        
-        // CBE output = SOV / price
-        let cbe_output_decimal = sov_decimal / current_price;
-        let cbe_output = (cbe_output_decimal * 100_000_000.0) as u64;
+        // Calculate CBE output using the contract's integer math
+        let cbe_output = match cbe_token.calculate_buy(req.sov_amount) {
+            Ok(amount) => amount,
+            Err(e) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Unable to quote buy: {}", e),
+                ));
+            }
+        };
 
+        let price_8dec = cbe_token.current_price();
         let response = QuoteBuyResponse {
             sov_input: req.sov_amount,
             cbe_output,
             to_reserve,
             to_treasury,
-            price: current_price,
-            price_8dec: cbe_token.current_price(),
+            price: price_8dec as f64 / 100_000_000.0,
+            price_8dec,
         };
 
         create_json_response(serde_json::to_value(response)?)
@@ -376,27 +359,23 @@ impl BondingCurveApiHandler {
             ));
         }
 
-        // Calculate SOV output using curve math
-        let current_price = cbe_token.current_price() as f64 / 100_000_000.0;
-        let cbe_decimal = req.cbe_amount as f64 / 100_000_000.0;
-        
-        // SOV output = CBE * price
-        let sov_output_decimal = cbe_decimal * current_price;
-        let sov_output = (sov_output_decimal * 100_000_000.0) as u64;
+        // Calculate SOV output using the contract's integer math (also checks reserve)
+        let sov_output = match cbe_token.calculate_sell(req.cbe_amount) {
+            Ok(amount) => amount,
+            Err(e) => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Unable to quote sell: {}", e),
+                ));
+            }
+        };
 
-        // Check reserve has enough
-        if sov_output > cbe_token.reserve_balance {
-            return Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                "Insufficient reserve for this sell amount".to_string(),
-            ));
-        }
-
+        let price_8dec = cbe_token.current_price();
         let response = QuoteSellResponse {
             cbe_input: req.cbe_amount,
             sov_output,
-            price: current_price,
-            price_8dec: cbe_token.current_price(),
+            price: price_8dec as f64 / 100_000_000.0,
+            price_8dec,
         };
 
         create_json_response(serde_json::to_value(response)?)
@@ -454,9 +433,24 @@ impl BondingCurveApiHandler {
             .buy(buyer, req.sov_amount, block_height, timestamp)
             .map_err(|e| anyhow::anyhow!("Buy failed: {}", e))?;
 
-        // Check graduation with oracle
+        // Enforce slippage protection
+        if let Some(min_out) = req.min_cbe_out {
+            if cbe_amount < min_out {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Slippage: received {} CBE but minimum is {}", cbe_amount, min_out),
+                ));
+            }
+        }
+
+        // Check graduation with oracle; if ready, graduate immediately
         if let Some((sov_usd_price, price_ts)) = oracle_price_data {
-            token.check_graduation_with_oracle(sov_usd_price, price_ts, block_height, timestamp);
+            let can_graduate = token.check_graduation_with_oracle(sov_usd_price, price_ts, block_height, timestamp);
+            if can_graduate {
+                if let Err(e) = token.graduate(timestamp, block_height) {
+                    warn!("Graduation check passed but graduate() failed: {}", e);
+                }
+            }
         }
 
         drop(blockchain);
@@ -509,6 +503,16 @@ impl BondingCurveApiHandler {
         let (sov_amount, _event) = token
             .sell(seller, req.cbe_amount, block_height, timestamp)
             .map_err(|e| anyhow::anyhow!("Sell failed: {}", e))?;
+
+        // Enforce slippage protection
+        if let Some(min_out) = req.min_sov_out {
+            if sov_amount < min_out {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    format!("Slippage: received {} SOV but minimum is {}", sov_amount, min_out),
+                ));
+            }
+        }
 
         drop(blockchain);
 
@@ -637,12 +641,8 @@ impl BondingCurveApiHandler {
 
     /// Get current supply band for CBE
     fn get_current_band(&self, supply: u64) -> u32 {
-        match supply {
-            s if s < 10_000_000_000_00 => 1,
-            s if s < 30_000_000_000_00 => 2,
-            s if s < 60_000_000_000_00 => 3,
-            _ => 4,
-        }
+        let curve = PiecewiseLinearCurve::cbe_default();
+        u32::try_from(curve.band_index_for_supply(supply) + 1).unwrap_or(u32::MAX)
     }
 
     /// Get requester public key from authenticated request
