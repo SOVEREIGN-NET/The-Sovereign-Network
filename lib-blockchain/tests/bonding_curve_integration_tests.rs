@@ -158,7 +158,7 @@ fn test_bonding_curve_full_lifecycle() {
     .expect("Failed to create AMM pool");
 
     let pool_id = *pool.pool_id();
-    blockchain.amm_pools.insert(pool_id, pool);
+    blockchain.amm_pools.insert(pool_id, pool.into());
 
     // Update token to AMM phase
     blockchain

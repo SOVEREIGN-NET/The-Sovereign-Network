@@ -23,10 +23,9 @@ use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
-use lib_blockchain::contracts::bonding_curve::Phase;
-use lib_blockchain::contracts::sov_swap::SovSwapPool;
+use lib_blockchain::contracts::bonding_curve::pol_pool::derive_pool_id;
+use lib_blockchain::contracts::bonding_curve::{create_pol_pool_for_graduated_token, Phase};
 use lib_blockchain::integration::crypto_integration::PublicKey;
-use lib_blockchain::types::dao::DAOType;
 use lib_blockchain::Blockchain;
 
 /// Configuration for auto-graduation service
@@ -225,7 +224,7 @@ impl AutoGraduationService {
         );
 
         // Get token details before graduation
-        let (reserve_balance, total_supply) = {
+        {
             let token = blockchain
                 .bonding_curve_registry
                 .get(token_id)
@@ -239,8 +238,6 @@ impl AutoGraduationService {
             if !token.can_graduate(current_timestamp, current_block) {
                 return Err(anyhow::anyhow!("Token not eligible for graduation"));
             }
-
-            (token.reserve_balance, token.total_supply)
         };
 
         // Transition token to Graduated phase
@@ -249,7 +246,7 @@ impl AutoGraduationService {
             .update_phase(token_id, Phase::Graduated)?;
 
         // Generate pool ID deterministically
-        let pool_id = Self::derive_pool_id(token_id);
+        let pool_id = derive_pool_id(token_id);
 
         // Update token with pool ID
         {
@@ -259,11 +256,6 @@ impl AutoGraduationService {
                 .ok_or_else(|| anyhow::anyhow!("Token not found after phase update"))?;
             token.amm_pool_id = Some(pool_id);
         }
-
-        // Create AMM pool with seed liquidity
-        // Seed liquidity is based on the token's reserve balance
-        let seed_sov = reserve_balance.max(config.min_seed_liquidity_sov);
-        let seed_tokens = total_supply.max(config.min_seed_liquidity_token);
 
         // Use provided governance/treasury or create defaults
         let governance = config
@@ -275,47 +267,34 @@ impl AutoGraduationService {
             .clone()
             .unwrap_or_else(|| Self::default_treasury_address());
 
-        // Create the pool
-        let pool = SovSwapPool::init_pool(
-            *token_id,
-            DAOType::FP, // Default to FP for graduated tokens
-            seed_sov,
-            seed_tokens,
-            governance,
-            treasury,
-        )?;
+        // Create the canonical POL pool using the same deterministic pool-id scheme
+        // already recorded on the token during graduation.
+        let (pool, creation_result, _) = {
+            let token = blockchain
+                .bonding_curve_registry
+                .get_mut(token_id)
+                .ok_or_else(|| anyhow::anyhow!("Token not found after pool-id update"))?;
+            create_pol_pool_for_graduated_token(
+                token,
+                governance,
+                treasury,
+                current_block,
+                current_timestamp,
+            )?
+        };
 
         // Store pool in blockchain
-        blockchain.amm_pools.insert(pool_id, pool);
-
-        // Transition to AMM phase
-        blockchain
-            .bonding_curve_registry
-            .update_phase(token_id, Phase::AMM)?;
+        blockchain.amm_pools.insert(pool_id, pool.into());
 
         info!(
             "Token '{}' graduated: pool_id={}, seed_sov={}, seed_tokens={}",
             symbol,
             hex::encode(&pool_id[..8]),
-            seed_sov,
-            seed_tokens
+            creation_result.initial_sov_reserve,
+            creation_result.initial_token_reserve
         );
 
         Ok(pool_id)
-    }
-
-    /// Derive deterministic pool ID from token ID
-    fn derive_pool_id(token_id: &[u8; 32]) -> [u8; 32] {
-        use blake3::Hasher;
-
-        let mut hasher = Hasher::new();
-        hasher.update(b"SOV_SWAP_POOL_V1");
-        hasher.update(token_id);
-
-        let hash = hasher.finalize();
-        let mut pool_id = [0u8; 32];
-        pool_id.copy_from_slice(hash.as_bytes());
-        pool_id
     }
 
     /// Default governance address for created pools

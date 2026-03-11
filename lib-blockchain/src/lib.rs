@@ -88,6 +88,8 @@ pub use blockchain::{
     Blockchain, BlockchainBroadcastMessage, BlockchainImport, ConsensusCheckpoint,
     EconomicsTransaction, ValidatorInfo, ADMISSION_SOURCE_BOOTSTRAP_GENESIS,
 };
+#[cfg(feature = "contracts")]
+pub use contracts::AmmPool;
 
 // Mempool module
 pub use mempool::{Mempool, MempoolError, MempoolStats};

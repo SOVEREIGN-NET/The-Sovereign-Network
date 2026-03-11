@@ -120,6 +120,8 @@ pub use sov_swap::{
     SwapDirection, SwapError, SwapResult,
 };
 #[cfg(feature = "contracts")]
+pub use bonding_curve::AmmPool;
+#[cfg(feature = "contracts")]
 pub use staking::{
     GlobalStakingGuardrails, LaunchedDao, PendingDao, SovDaoStaking, StakingPosition,
 };
