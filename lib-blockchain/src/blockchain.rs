@@ -1632,6 +1632,26 @@ impl Blockchain {
         }
     }
 
+    /// Get the CBE bonding curve's current marginal price in SOV atomic units per whole CBE token.
+    ///
+    /// Returns `None` if the CBE token is not initialized or has no supply.
+    /// Price is in 8-decimal fixed-point (same scale as ORACLE_PRICE_SCALE).
+    pub fn get_cbe_curve_price_atomic(&self) -> Option<u64> {
+        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        CBE_NAME.hash(&mut hasher);
+        CBE_SYMBOL.hash(&mut hasher);
+        let hash = hasher.finish();
+        let mut id = [0u8; 32];
+        id[..8].copy_from_slice(&hash.to_le_bytes());
+        for i in 8..32 {
+            id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
+        }
+        self.bonding_curve_registry.get(&id).map(|t| t.current_price())
+    }
+
     /// Get current SOV price information for API
     pub fn get_sov_price_info(&self) -> crate::pricing::TokenPrice {
         let price_8dec = self.token_pricing_state.get_sov_price_8dec();

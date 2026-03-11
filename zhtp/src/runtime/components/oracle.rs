@@ -375,6 +375,20 @@ impl OracleComponent {
                 continue;
             }
 
+            // Derive CBE/USD price from bonding curve (Oracle Spec v1 Mode B).
+            // cbe_usd = cbe_sov_curve_price * sov_usd / ORACLE_PRICE_SCALE
+            // Since sov_usd = $1 (ORACLE_PRICE_SCALE), cbe_usd = cbe_sov_curve_price.
+            let cbe_usd_price = {
+                let sov_usd = mock_sov_usd_price
+                    .map(|p| p as u128)
+                    .or_else(|| prices.first().map(|p| p.sov_usd_price))
+                    .unwrap_or(ORACLE_PRICE_SCALE as u128);
+                let bc = blockchain.read().await;
+                bc.get_cbe_curve_price_atomic().map(|cbe_sov| {
+                    (cbe_sov as u128 * sov_usd) / ORACLE_PRICE_SCALE as u128
+                })
+            };
+
             // Build and sign the attestation.
             // Note: attestation timestamp uses wall clock (when attestation was created),
             // while epoch_id uses block timestamp (per Oracle Spec v1 §4.1).
@@ -385,6 +399,7 @@ impl OracleComponent {
                 &committee_members,
                 &keypair,
                 prices,
+                cbe_usd_price,
             ) {
                 Ok(Some(attestation)) => {
                     info!(

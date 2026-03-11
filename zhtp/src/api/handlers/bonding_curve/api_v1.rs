@@ -32,7 +32,7 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 
 use lib_blockchain::contracts::bonding_curve::{BondingCurveToken, Phase, PiecewiseLinearCurve};
-use lib_blockchain::contracts::bonding_curve::token::RESERVE_SPLIT_DIVISOR;
+use lib_blockchain::contracts::bonding_curve::token::{RESERVE_SPLIT_NUMERATOR, RESERVE_SPLIT_DENOMINATOR};
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::Blockchain;
 
@@ -297,7 +297,7 @@ impl BondingCurveApiHandler {
         }
 
         // Calculate 20/80 split using the canonical constant
-        let to_reserve = req.sov_amount / RESERVE_SPLIT_DIVISOR;
+        let to_reserve = req.sov_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
         let to_treasury = req.sov_amount - to_reserve;
 
         // Calculate CBE output using the contract's integer math
