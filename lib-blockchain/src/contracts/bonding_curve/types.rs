@@ -46,8 +46,8 @@ pub const MAX_ORACLE_PRICE_AGE_SECONDS: u64 = 300; // 5 minutes
 pub const GRADUATION_CONFIRMATION_BLOCKS: u64 = 3;
 
 /// Price scale for fixed-point arithmetic (8 decimals).
-/// Used for USD value calculations with SOV/USD oracle price.
-pub const USD_PRICE_SCALE: u128 = 100_000_000;
+/// Re-exported from oracle to keep both modules in sync.
+pub use crate::oracle::ORACLE_PRICE_SCALE as USD_PRICE_SCALE;
 
 /// Maximum iterations for the iterative buy approximation (overflow guard)
 const MAX_BUY_ITERATIONS: u32 = 1_000;
@@ -502,9 +502,14 @@ impl Threshold {
         // Multiply first to preserve fractional SOV — dividing reserve_sov by TOKEN_SCALE first
         // would truncate up to (TOKEN_SCALE - 1) atomic units (~0.99 SOV) before applying the
         // price, causing off-by-one threshold decisions near the graduation boundary.
-        let reserve_value_usd = (reserve_sov as u128)
-            .saturating_mul(sov_usd_price as u128)
-            .saturating_div(TOKEN_SCALE as u128 * USD_PRICE_SCALE);
+        //
+        // Use checked arithmetic: on overflow, conservatively treat threshold as not met.
+        let numerator = match (reserve_sov as u128).checked_mul(sov_usd_price as u128) {
+            Some(v) => v,
+            None => return false,
+        };
+        let denominator = TOKEN_SCALE as u128 * USD_PRICE_SCALE;
+        let reserve_value_usd = numerator / denominator;
 
         // Check if threshold is met
         reserve_value_usd >= *threshold_usd as u128

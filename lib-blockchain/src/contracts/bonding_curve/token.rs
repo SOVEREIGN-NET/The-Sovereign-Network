@@ -11,7 +11,7 @@
 
 use super::{
     events::BondingCurveEvent,
-    types::{CurveError, CurveStats, CurveType, Phase, Threshold, USD_PRICE_SCALE},
+    types::{CurveError, CurveStats, CurveType, Phase, Threshold, MAX_ORACLE_PRICE_AGE_SECONDS, USD_PRICE_SCALE},
 };
 
 /// Token scale: 1 whole token = 10^8 atomic units.
@@ -348,11 +348,33 @@ impl BondingCurveToken {
             return false;
         }
 
-        // For USD-based thresholds, require oracle confirmation period to have elapsed
-        if let Threshold::ReserveValueUsd { confirmation_blocks, .. } = self.threshold {
+        // For USD-based thresholds, require:
+        //   1. A fresh oracle price (not stale)
+        //   2. Reserve value still above threshold (sells may have reduced it)
+        //   3. Confirmation period elapsed
+        if let Threshold::ReserveValueUsd { .. } = self.threshold {
+            // Require a non-stale oracle price
+            let (price, price_ts) = match (self.last_oracle_price, self.last_oracle_price_timestamp) {
+                (Some(p), Some(ts)) => (p, ts),
+                _ => return false,
+            };
+            let price_age = current_timestamp.saturating_sub(price_ts);
+            if price_age > MAX_ORACLE_PRICE_AGE_SECONDS {
+                return false;
+            }
+            // Require threshold still met at current reserve (price_age=0 and pending_blocks=0
+            // to skip the staleness/confirmation sub-checks — we handle those ourselves above)
+            if !self.threshold.is_met_with_oracle(self.reserve_balance, price, 0, 0) {
+                return false;
+            }
+            // Require confirmation period elapsed
             return match self.graduation_pending_since_block {
                 Some(pending_since) => {
-                    current_block.saturating_sub(pending_since) >= confirmation_blocks
+                    if let Threshold::ReserveValueUsd { confirmation_blocks, .. } = self.threshold {
+                        current_block.saturating_sub(pending_since) >= confirmation_blocks
+                    } else {
+                        false
+                    }
                 }
                 None => false,
             };

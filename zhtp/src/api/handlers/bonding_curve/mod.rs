@@ -458,6 +458,19 @@ impl CurveHandler {
 
         let mut blockchain = self.blockchain.write().await;
 
+        // Fetch latest oracle price before mutably borrowing the token.
+        // Used by check_graduation_with_oracle for USD-threshold tokens.
+        let current_epoch = blockchain.oracle_state.epoch_id(timestamp);
+        let epoch_duration = blockchain.oracle_state.config.epoch_duration_secs;
+        let oracle_price_data = blockchain
+            .oracle_state
+            .latest_finalized_price_at_or_before(current_epoch)
+            .map(|fp| {
+                // Approximate price timestamp as the end of the epoch it was finalized in.
+                let price_ts = (fp.epoch_id + 1).saturating_mul(epoch_duration);
+                (fp.sov_usd_price as u64, price_ts)
+            });
+
         let token = blockchain
             .bonding_curve_registry
             .get_mut(&token_id)
@@ -467,6 +480,12 @@ impl CurveHandler {
         let (token_amount, _event) = token
             .buy(buyer, buy_req.stable_amount, block_height, timestamp)
             .map_err(|e| anyhow::anyhow!("Buy failed: {}", e))?;
+
+        // For USD-threshold tokens, update graduation state with the latest oracle price.
+        // This sets graduation_pending_since_block when threshold is first met.
+        if let Some((sov_usd_price, price_ts)) = oracle_price_data {
+            token.check_graduation_with_oracle(sov_usd_price, price_ts, block_height, timestamp);
+        }
 
         // Check for automatic graduation
         let graduated = if token.can_graduate(timestamp, block_height) {
@@ -1269,16 +1288,17 @@ impl ValuationHandler {
             let price_usd = curve_price_sov * srv_usd;
             let price_usd_cents = (price_usd * 10_000.0).round() as u64;
 
-            let (price_mode, price_source, oracle_confidence) =
-                if token.last_oracle_price.is_some() {
-                    // Oracle was the source (price set via check_graduation_with_oracle).
-                    ("post_graduation", "oracle", Some(0.95_f64))
-                } else {
-                    match token.phase {
-                        Phase::Curve | Phase::Graduated => ("pre_graduation", "bonding_curve", None),
-                        Phase::AMM => ("post_graduation", "amm", None),
+            let (price_mode, price_source, oracle_confidence) = match token.phase {
+                Phase::Curve => ("pre_graduation", "bonding_curve", None),
+                Phase::Graduated => {
+                    if token.last_oracle_price.is_some() {
+                        ("post_graduation", "oracle", Some(0.95_f64))
+                    } else {
+                        ("post_graduation", "bonding_curve", None)
                     }
-                };
+                }
+                Phase::AMM => ("post_graduation", "amm", None),
+            };
 
             Ok(json!({
                 "token_id": token_id_hex,
