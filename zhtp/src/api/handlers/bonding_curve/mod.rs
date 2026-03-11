@@ -4,6 +4,7 @@
 //! - CurveHandler → ERC-20 style primitives + bonding curve lifecycle
 //! - SwapHandler → AMM operations (post-graduation)
 //! - ValuationHandler → Read-only price aggregation
+//! - BondingCurveApiHandler → Issue #1850 REST API endpoints
 //!
 //! # Architecture
 //! ```text
@@ -17,7 +18,12 @@
 //!      │
 //!      ▼ (Price queries)
 //! ValuationHandler ──► Unified price endpoint with confidence
+//!      │
+//!      ▼ (Issue #1850)
+//! BondingCurveApiHandler ──► /api/v1/bonding-curve/* endpoints
 //! ```
+
+pub mod api_v1;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
