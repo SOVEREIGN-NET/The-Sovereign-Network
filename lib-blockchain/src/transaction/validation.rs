@@ -1863,10 +1863,8 @@ impl<'a> StatefulTransactionValidator<'a> {
             }
         }
 
-        // Note: All match arms above return, so this is unreachable.
-        // Kept for compilation safety in case match arms change.
-        #[allow(unreachable_code)]
-        Ok(())
+        // All match arms above return — reaching here is a logic error.
+        unreachable!("validate_sender_registration: unhandled transaction type")
     }
 
     /// Validate UBI claim transaction with state context (Week 7)

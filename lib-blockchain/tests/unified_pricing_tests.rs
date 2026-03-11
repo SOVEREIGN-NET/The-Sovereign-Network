@@ -81,19 +81,18 @@ fn cbe_usd_calculation_is_correct() {
 fn price_conversions_work() {
     use lib_blockchain::pricing::PricingCalculator;
 
-    // $0.0218 = 2.18 cents (in 4-decimal precision: 21800)
-    // 2.18 cents = $0.0218
-    // In 8-decimal: 2_180_000 (0.0218 * 100_000_000)
+    // price_usd_cents uses 4-decimal units: 1 unit = $0.0001
+    // Example: $0.0218 → 218 units (0.0218 * 10_000 = 218)
+    // 8-decimal representation: 0.0218 * 100_000_000 = 2_180_000
     //
-    // from_cents formula: cents * PRICE_SCALE / 100
-    // 218 * 100_000_000 / 100 = 218_000_000
-    let cents = 218u64; // 2.18 cents = $0.0218
+    // from_cents formula: cents * PRICE_SCALE / 10_000
+    // 218 * 100_000_000 / 10_000 = 2_180_000
+    let cents = 218u64; // $0.0218 in 4-decimal units (1 unit = $0.0001)
     let price_8dec = PricingCalculator::from_cents(cents);
-    // 218 * 100_000_000 / 100 = 218_000_000 (8-decimal precision)
-    assert_eq!(price_8dec, 218_000_000);
+    assert_eq!(price_8dec, 2_180_000); // 8-decimal representation of $0.0218
 
-    // Round trip: to_cents formula: (price_8dec * 100) / PRICE_SCALE
-    // (218_000_000 * 100) / 100_000_000 = 218
+    // Round trip: to_cents formula: (price_8dec * 10_000) / PRICE_SCALE
+    // (2_180_000 * 10_000) / 100_000_000 = 218
     let back_to_cents = PricingCalculator::to_cents(price_8dec);
     assert_eq!(back_to_cents, cents);
 }

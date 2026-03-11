@@ -269,7 +269,8 @@ impl TokenPricingState {
         
         // CBE/USD = CBE/SOV * SOV/USD
         let cbe_usd = curve_sov * sov_usd;
-        let cbe_usd_cents = (cbe_usd * 100.0) as u64;
+        // Encode in 4-decimal USD units to match stable API schema (price_usd_cents = price_usd * 10_000)
+        let cbe_usd_cents = (cbe_usd * 10_000.0).round() as u64;
 
         let components = PriceComponents {
             srv: Some(sov_usd),
@@ -326,14 +327,16 @@ impl PricingCalculator {
         (cbe_sov_8dec * sov_usd_8dec) / PRICE_SCALE
     }
 
-    /// Convert 8-decimal price to cents
+    /// Convert 8-decimal price to 4-decimal USD units (price_usd_cents = price_usd * 10_000)
+    /// 1 unit = $0.0001. Example: 2_180_000 (=$0.0218) → 218
     pub fn to_cents(price_8dec: u128) -> u64 {
-        ((price_8dec * 100) / PRICE_SCALE) as u64
+        ((price_8dec * 10_000) / PRICE_SCALE) as u64
     }
 
-    /// Convert cents to 8-decimal price
+    /// Convert 4-decimal USD units to 8-decimal price
+    /// Example: 218 (=$0.0218) → 2_180_000
     pub fn from_cents(cents: u64) -> u128 {
-        (cents as u128 * PRICE_SCALE) / 100
+        (cents as u128 * PRICE_SCALE) / 10_000
     }
 }
 
@@ -372,15 +375,18 @@ mod tests {
 
     #[test]
     fn test_conversions() {
-        // $0.0218 = 2.18 cents
-        // from_cents formula: cents * PRICE_SCALE / 100
-        // 218 * 100_000_000 / 100 = 218_000_000 (8-decimal precision)
-        let cents = 218u64;
+        // price_usd_cents uses 4-decimal units: 1 unit = $0.0001
+        // Example: $0.0218 → 218 units (0.0218 * 10_000 = 218)
+        // 8-decimal representation: 0.0218 * 100_000_000 = 2_180_000
+        //
+        // from_cents formula: cents * PRICE_SCALE / 10_000
+        // 218 * 100_000_000 / 10_000 = 2_180_000
+        let cents = 218u64; // $0.0218 in 4-decimal units
         let price_8dec = PricingCalculator::from_cents(cents);
-        assert_eq!(price_8dec, 218_000_000);
-        
-        // Round trip: to_cents formula: (price_8dec * 100) / PRICE_SCALE
-        // (218_000_000 * 100) / 100_000_000 = 218
+        assert_eq!(price_8dec, 2_180_000);
+
+        // Round trip: to_cents formula: (price_8dec * 10_000) / PRICE_SCALE
+        // (2_180_000 * 10_000) / 100_000_000 = 218
         let back_to_cents = PricingCalculator::to_cents(price_8dec);
         assert_eq!(back_to_cents, cents);
     }
@@ -405,19 +411,15 @@ mod tests {
     fn test_oracle_observer_only() {
         let state = TokenPricingState::new();
         
-        // Oracle does not set prices - only observes
-        // This is enforced by the architecture:
-        // - No update_cbe_usd_price() method (removed)
-        // - No dynamic_pricing_active flag (removed)
-        // - Only observe_curve_price() exists
-        
+        // Oracle does not set prices - only observes.
+        // update_cbe_usd_price() and dynamic_pricing_active still exist as deprecated
+        // backward-compatibility stubs but do not affect computed prices.
+        // The only active price path is observe_curve_price() from the bonding curve.
         assert!(state.observed_curve_price.is_none());
-        
-        // Price must come from bonding curve observation
-        // This test documents the architectural constraint
-        println!("✓ Oracle observer-only architecture verified");
-        println!("  - No oracle price setting methods");
-        println!("  - Only curve observation exists");
-        println!("  - Bonding curve is PRIMARY");
+        assert!(!state.dynamic_pricing_active); // deprecated field, always false
+        // Calling the deprecated update method must not change observed_curve_price
+        let mut state_mut = state;
+        state_mut.update_cbe_usd_price(999_000_000, 1, 1_700_000_000);
+        assert!(state_mut.observed_curve_price.is_none(), "oracle update must not set observed price");
     }
 }
