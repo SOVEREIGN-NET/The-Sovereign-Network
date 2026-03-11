@@ -260,9 +260,9 @@ pub struct Blockchain {
     #[serde(default)]
     pub cbe_token: crate::contracts::tokens::CbeToken,
     /// AMM liquidity pools for graduated bonding curve tokens
-    /// Pool ID -> SovSwapPool mapping
+    /// Pool ID -> persisted AMM pool mapping
     #[serde(default)]
-    pub amm_pools: HashMap<[u8; 32], crate::contracts::sov_swap::SovSwapPool>,
+    pub amm_pools: HashMap<[u8; 32], crate::contracts::bonding_curve::AmmPool>,
     // =========================================================================
     // DAO Bootstrap Council (dao-1)
     // =========================================================================
@@ -882,7 +882,7 @@ struct BlockchainStorageV3 {
 
     /// AMM liquidity pools for graduated bonding curve tokens
     #[serde(default)]
-    pub amm_pools: HashMap<[u8; 32], crate::contracts::sov_swap::SovSwapPool>,
+    pub amm_pools: HashMap<[u8; 32], crate::contracts::bonding_curve::AmmPool>,
 
     // =========================================================================
     // DAO Bootstrap Council (dao-1) — append-only, always #[serde(default)]

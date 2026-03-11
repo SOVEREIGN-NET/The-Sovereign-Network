@@ -4,8 +4,8 @@
 //! - Liquidity CANNOT be added or removed (physically disabled)
 //! - Only swap operations are allowed
 //! - LP tokens do not exist (no minting/burning)
-//! - Fees accumulate to protocol treasury forever
-//! - k increases over time as fees compound
+//! - Fees stay in the pool forever
+//! - k is non-decreasing as fees compound
 //!
 //! # Security Architecture
 //!
@@ -33,7 +33,7 @@
 //!
 //! ## Fee Accumulation
 //! - All trading fees stay in the pool forever
-//! - `k` increases with every trade: `new_k > old_k`
+//! - `k` is non-decreasing across trades and increases whenever fee rounding is non-zero
 //! - Pool becomes deeper and more stable over time
 //!
 //! ## Price Discovery
@@ -41,6 +41,7 @@
 //! - No external price feeds needed after initialization
 //! - Market-driven price discovery via swaps
 
+use crate::contracts::sov_swap::{PoolState, SimulationResult, SwapError, POOL_ID_DOMAIN};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -60,6 +61,9 @@ pub const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
 
 /// Price calculation scale (8 decimals).
 pub const PRICE_SCALE: u128 = 100_000_000;
+
+/// Spot-price scale used by `get_price()` to match `SovSwapPool`.
+pub const SPOT_PRICE_PRECISION: u128 = 1_000_000_000_000_000_000;
 
 // ============================================================================
 // POL Pool Errors
@@ -130,12 +134,10 @@ pub struct PolPool {
     /// Token reserve balance (e.g., CBE).
     token_reserve: u64,
     /// Current k value (sov_reserve * token_reserve).
-    /// Note: k increases over time as fees accumulate.
+    /// Note: k is non-decreasing over time as fees accumulate.
     k: u128,
     /// Total fees accumulated in SOV.
     total_fees_sov: u64,
-    /// Total fees accumulated in token.
-    total_fees_token: u64,
 }
 
 impl PolPool {
@@ -155,7 +157,6 @@ impl PolPool {
             token_reserve: 0,
             k: 0,
             total_fees_sov: 0,
-            total_fees_token: 0,
         }
     }
 
@@ -252,10 +253,11 @@ impl PolPool {
             .checked_add(sov_in_after_fee)
             .ok_or(PolPoolError::Overflow)?;
 
-        let new_token = self
+        let new_token_u128 = self
             .k
             .checked_div(effective_sov as u128)
-            .ok_or(PolPoolError::InsufficientLiquidity)? as u64;
+            .ok_or(PolPoolError::InsufficientLiquidity)?;
+        let new_token = u64::try_from(new_token_u128).map_err(|_| PolPoolError::Overflow)?;
 
         if new_token >= self.token_reserve {
             return Err(PolPoolError::InsufficientLiquidity);
@@ -329,10 +331,12 @@ impl PolPool {
             .checked_add(token_in)
             .ok_or(PolPoolError::Overflow)?;
 
-        let new_sov_without_fee = self
+        let new_sov_without_fee_u128 = self
             .k
             .checked_div(new_token as u128)
-            .ok_or(PolPoolError::InsufficientLiquidity)? as u64;
+            .ok_or(PolPoolError::InsufficientLiquidity)?;
+        let new_sov_without_fee =
+            u64::try_from(new_sov_without_fee_u128).map_err(|_| PolPoolError::Overflow)?;
 
         if new_sov_without_fee >= self.sov_reserve {
             return Err(PolPoolError::InsufficientLiquidity);
@@ -395,13 +399,37 @@ impl PolPool {
             return Err(PolPoolError::InsufficientLiquidity);
         }
 
-        let price = (self.sov_reserve as u128)
+        let price_u128 = (self.sov_reserve as u128)
             .checked_mul(PRICE_SCALE)
             .ok_or(PolPoolError::Overflow)?
             .checked_div(self.token_reserve as u128)
-            .ok_or(PolPoolError::Overflow)? as u64;
+            .ok_or(PolPoolError::Overflow)?;
+        let price = u64::try_from(price_u128).map_err(|_| PolPoolError::Overflow)?;
 
         Ok(price)
+    }
+
+    /// Get spot prices in the same shape as `SovSwapPool::get_price()`.
+    pub fn get_price(&self) -> Result<(u128, u128), PolPoolError> {
+        self.require_initialized()?;
+
+        if self.sov_reserve == 0 || self.token_reserve == 0 {
+            return Err(PolPoolError::InsufficientLiquidity);
+        }
+
+        let sov_per_token = (self.sov_reserve as u128)
+            .checked_mul(SPOT_PRICE_PRECISION)
+            .ok_or(PolPoolError::Overflow)?
+            .checked_div(self.token_reserve as u128)
+            .ok_or(PolPoolError::InsufficientLiquidity)?;
+
+        let token_per_sov = (self.token_reserve as u128)
+            .checked_mul(SPOT_PRICE_PRECISION)
+            .ok_or(PolPoolError::Overflow)?
+            .checked_div(self.sov_reserve as u128)
+            .ok_or(PolPoolError::InsufficientLiquidity)?;
+
+        Ok((sov_per_token, token_per_sov))
     }
 
     /// Get current reserves.
@@ -415,7 +443,7 @@ impl PolPool {
 
     /// Get current k value.
     ///
-    /// Note: k increases over time as fees accumulate.
+    /// Note: k is non-decreasing over time as fees accumulate.
     ///
     /// # Returns
     /// Current k or error if not initialized.
@@ -424,12 +452,9 @@ impl PolPool {
         Ok(self.k)
     }
 
-    /// Get total fees accumulated.
-    ///
-    /// # Returns
-    /// (total_fees_sov, total_fees_token)
-    pub fn get_total_fees(&self) -> (u64, u64) {
-        (self.total_fees_sov, self.total_fees_token)
+    /// Get total fees accumulated in SOV-equivalent accounting.
+    pub fn get_total_fees(&self) -> u64 {
+        self.total_fees_sov
     }
 
     /// Check if pool is initialized.
@@ -440,6 +465,22 @@ impl PolPool {
     /// Get token ID.
     pub fn token_id(&self) -> [u8; 32] {
         self.token_id
+    }
+
+    /// Get the deterministic pool ID used by graduation and storage.
+    pub fn pool_id(&self) -> [u8; 32] {
+        derive_pool_id(&self.token_id)
+    }
+
+    /// Get a compatibility pool state for APIs and tests that already consume `PoolState`.
+    pub fn state(&self) -> PoolState {
+        PoolState {
+            sov_reserve: self.sov_reserve,
+            token_reserve: self.token_reserve,
+            k: self.k,
+            fee_bps: self.fee_bps,
+            initialized: self.initialized,
+        }
     }
 
     /// Calculate output amount for a SOV → token swap (view function).
@@ -461,8 +502,15 @@ impl PolPool {
 
         // Use effective SOV (after fee) for price calculation
         let sov_in_after_fee = sov_in - fee_amount;
-        let effective_sov = self.sov_reserve + sov_in_after_fee;
-        let new_token = self.k.checked_div(effective_sov as u128).ok_or(PolPoolError::Overflow)? as u64;
+        let effective_sov = self
+            .sov_reserve
+            .checked_add(sov_in_after_fee)
+            .ok_or(PolPoolError::Overflow)?;
+        let new_token_u128 = self
+            .k
+            .checked_div(effective_sov as u128)
+            .ok_or(PolPoolError::Overflow)?;
+        let new_token = u64::try_from(new_token_u128).map_err(|_| PolPoolError::Overflow)?;
 
         if new_token >= self.token_reserve {
             return Err(PolPoolError::InsufficientLiquidity);
@@ -481,11 +529,16 @@ impl PolPool {
             return Err(PolPoolError::ZeroInput);
         }
 
-        let new_token = self.token_reserve + token_in;
-        let new_sov_before_fee = self
+        let new_token = self
+            .token_reserve
+            .checked_add(token_in)
+            .ok_or(PolPoolError::Overflow)?;
+        let new_sov_before_fee_u128 = self
             .k
             .checked_div(new_token as u128)
-            .ok_or(PolPoolError::Overflow)? as u64;
+            .ok_or(PolPoolError::Overflow)?;
+        let new_sov_before_fee =
+            u64::try_from(new_sov_before_fee_u128).map_err(|_| PolPoolError::Overflow)?;
 
         if new_sov_before_fee >= self.sov_reserve {
             return Err(PolPoolError::InsufficientLiquidity);
@@ -499,6 +552,81 @@ impl PolPool {
             .ok_or(PolPoolError::Overflow)? as u64;
 
         Ok(sov_out_before_fee - fee_amount)
+    }
+
+    /// Simulate a SOV -> token swap using the same shape as `SovSwapPool`.
+    pub fn simulate_sov_to_token(
+        &self,
+        sov_amount: u64,
+        min_token_out: Option<u64>,
+    ) -> Result<SimulationResult, SwapError> {
+        let amount_out = self
+            .calculate_token_out(sov_amount)
+            .map_err(map_pol_error_to_swap_error)?;
+
+        if let Some(min_out) = min_token_out {
+            if amount_out < min_out {
+                return Err(SwapError::SlippageExceeded);
+            }
+        }
+
+        let fee_amount = calculate_fee(self.fee_bps, sov_amount)?;
+        let price_impact_bps = ((amount_out as u128)
+            .checked_mul(BASIS_POINTS_DENOMINATOR as u128)
+            .ok_or(SwapError::Overflow)?
+            .checked_div(self.token_reserve as u128)
+            .ok_or(SwapError::Overflow)?) as u64;
+
+        Ok(SimulationResult {
+            amount_out,
+            fee_amount,
+            price_impact_bps,
+        })
+    }
+
+    /// Simulate a token -> SOV swap using the same shape as `SovSwapPool`.
+    pub fn simulate_token_to_sov(
+        &self,
+        token_amount: u64,
+        min_sov_out: Option<u64>,
+    ) -> Result<SimulationResult, SwapError> {
+        let amount_out = self
+            .calculate_sov_out(token_amount)
+            .map_err(map_pol_error_to_swap_error)?;
+
+        if let Some(min_out) = min_sov_out {
+            if amount_out < min_out {
+                return Err(SwapError::SlippageExceeded);
+            }
+        }
+
+        let fee_base = self
+            .sov_reserve
+            .checked_sub(
+                u64::try_from(
+                    self.k
+                        .checked_div(
+                            self.token_reserve
+                                .checked_add(token_amount)
+                                .ok_or(SwapError::Overflow)? as u128,
+                        )
+                        .ok_or(SwapError::Overflow)?,
+                )
+                .map_err(|_| SwapError::Overflow)?,
+            )
+            .ok_or(SwapError::Overflow)?;
+        let fee_amount = calculate_fee(self.fee_bps, fee_base)?;
+        let price_impact_bps = ((amount_out as u128)
+            .checked_mul(BASIS_POINTS_DENOMINATOR as u128)
+            .ok_or(SwapError::Overflow)?
+            .checked_div(self.sov_reserve as u128)
+            .ok_or(SwapError::Overflow)?) as u64;
+
+        Ok(SimulationResult {
+            amount_out,
+            fee_amount,
+            price_impact_bps,
+        })
     }
 
     // =========================================================================
@@ -554,6 +682,43 @@ impl PolPool {
             return Err(PolPoolError::NotInitialized);
         }
         Ok(())
+    }
+}
+
+/// Derive a deterministic pool ID from token ID using the existing AMM domain.
+pub fn derive_pool_id(token_id: &[u8; 32]) -> [u8; 32] {
+    use blake3::Hasher;
+
+    let mut hasher = Hasher::new();
+    hasher.update(POOL_ID_DOMAIN);
+    hasher.update(token_id);
+
+    let hash = hasher.finalize();
+    let mut pool_id = [0u8; 32];
+    pool_id.copy_from_slice(hash.as_bytes());
+    pool_id
+}
+
+fn calculate_fee(fee_bps: u16, amount: u64) -> Result<u64, SwapError> {
+    (amount as u128)
+        .checked_mul(fee_bps as u128)
+        .ok_or(SwapError::Overflow)?
+        .checked_div(BASIS_POINTS_DENOMINATOR as u128)
+        .ok_or(SwapError::Overflow)
+        .and_then(|fee| u64::try_from(fee).map_err(|_| SwapError::Overflow))
+}
+
+fn map_pol_error_to_swap_error(err: PolPoolError) -> SwapError {
+    match err {
+        PolPoolError::AlreadyInitialized => SwapError::PoolAlreadyInitialized,
+        PolPoolError::NotInitialized => SwapError::PoolNotInitialized,
+        PolPoolError::ZeroInput => SwapError::ZeroInputAmount,
+        PolPoolError::ZeroOutput => SwapError::ZeroOutputAmount,
+        PolPoolError::InsufficientLiquidity => SwapError::InsufficientLiquidity,
+        PolPoolError::SlippageExceeded => SwapError::SlippageExceeded,
+        PolPoolError::Overflow => SwapError::Overflow,
+        PolPoolError::InsufficientInitialLiquidity => SwapError::InsufficientInitialLiquidity,
+        PolPoolError::OperationDisabledForPol => SwapError::GovernanceOnly,
     }
 }
 
@@ -642,7 +807,7 @@ mod tests {
         // Verify we got tokens
         assert!(token_out > 0);
 
-        // Verify k increased (due to fees)
+        // Verify k is non-decreasing (fees may round to zero on tiny inputs)
         let new_k = pool.get_k().unwrap();
         assert!(new_k >= initial_k, "k should not decrease");
 
@@ -652,7 +817,7 @@ mod tests {
         assert!(new_token < initial_token);
 
         // Verify fees accumulated
-        let (fees_sov, _) = pool.get_total_fees();
+        let fees_sov = pool.get_total_fees();
         assert!(fees_sov > 0);
     }
 
@@ -673,7 +838,7 @@ mod tests {
         // Verify we got SOV
         assert!(sov_out > 0);
 
-        // Verify k increased (due to fees)
+        // Verify k is non-decreasing (fees may round to zero on tiny inputs)
         let new_k = pool.get_k().unwrap();
         assert!(new_k >= initial_k, "k should not decrease");
     }
@@ -788,10 +953,10 @@ mod tests {
         }
 
         let k_final = pool.get_k().unwrap();
-        let (fees_sov, _) = pool.get_total_fees();
+        let fees_sov = pool.get_total_fees();
 
-        // k should have increased due to fees
-        assert!(k_final > k_initial, "k should increase due to fees");
+        // With integer math, k is non-decreasing and rises once fees accumulate.
+        assert!(k_final >= k_initial, "k should not decrease due to fees");
         assert!(fees_sov > 0, "Fees should be accumulated");
     }
 

@@ -79,7 +79,7 @@ After SOV→token swap:
   new_token = k / (sov_reserve + effective_input)
   sov_reserve = sov_reserve + sov_in  // Full amount stays!
   token_reserve = new_token
-  k_new = sov_reserve * token_reserve > k
+  k_new = sov_reserve * token_reserve >= k
 
 After token→SOV swap:
   new_sov = k / (token_reserve + token_in)
@@ -88,12 +88,13 @@ After token→SOV swap:
   sov_out = sov_out_before_fee - fee
   sov_reserve = new_sov + fee  // Fee stays!
   token_reserve = token_reserve + token_in
-  k_new = sov_reserve * token_reserve > k
+  k_new = sov_reserve * token_reserve >= k
 ```
 
-### Key Property: k Always Increases
+### Key Property: k Is Non-Decreasing
 
-With every trade, fees remain in the pool, increasing `k`. This means:
+With every trade, fees remain in the pool, so `k` is non-decreasing and
+increases whenever fee rounding is non-zero. This means:
 - Pool becomes **deeper over time**
 - Price impact **decreases over time**
 - **Liquidity death spiral is impossible**
@@ -118,7 +119,7 @@ test_pol_pool_initialization           // One-time init
 test_pol_pool_double_initialization_fails  // Cannot re-init
 test_pol_pool_swap_sov_to_token        // Buy works
 test_pol_pool_swap_token_to_sov        // Sell works
-test_pol_pool_fee_accumulation         // k increases
+test_pol_pool_fee_accumulation         // k is non-decreasing
 test_pol_pool_skim_disabled            // Panics as expected
 test_pol_pool_sync_disabled            // Panics as expected
 test_pol_pool_slippage_protection      // MEV protection
@@ -131,7 +132,7 @@ test_pol_pool_no_liquidity_interface   // No add/remove liquidity
 All 21 POL pool tests pass, including:
 - ✅ `skim()` panics with "OPERATION DISABLED"
 - ✅ `sync()` panics with "OPERATION DISABLED"
-- ✅ k increases after every swap
+- ✅ k is non-decreasing after swaps
 - ✅ No liquidity functions exist
 
 ## Integration
@@ -187,7 +188,7 @@ let sov_received = pool.swap_token_to_sov(
 - [x] No LP token minting exists
 - [x] `skim()` panics
 - [x] `sync()` panics
-- [x] k increases with every trade
+- [x] k is non-decreasing with every trade
 - [x] Fee stays in pool permanently
 - [x] Reserves can only change via swaps
 - [x] One-time initialization
