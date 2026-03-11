@@ -37,8 +37,9 @@ impl OracleComponent {
     /// - Spawns a **producer task** that periodically fetches prices, builds a
     ///   signed attestation, gossips it, and processes it locally.
     ///
-    /// `mock_sov_usd_price`: testnet override (atomic units, ORACLE_PRICE_SCALE 1e8).
-    ///   Pass `None` to use real exchange price feeds.
+    /// `mock_sov_usd_price`: Mode A SRV override (atomic units, ORACLE_PRICE_SCALE 1e8).
+    ///   Pass `None` to default to $1.00 SRV. Mode B activates automatically from on-ramp
+    ///   VWAP once MIN_TRADES=5 and MIN_VOLUME=1,000 USDC thresholds are met.
     pub async fn start(
         blockchain: Arc<RwLock<Blockchain>>,
         validator_keypair: KeyPair,
@@ -373,8 +374,9 @@ impl OracleComponent {
                         // Mode B: SOV/USD = CBE/USD_vwap * ORACLE_PRICE_SCALE / CBE/SOV_curve
                         // cbe_usd is in ORACLE_PRICE_SCALE (1e8) units.
                         // cbe_sov is in ORACLE_PRICE_SCALE (1e8) units (SOV per CBE).
-                        let derived_sov_usd =
-                            (cbe_usd * ORACLE_PRICE_SCALE as u128) / cbe_sov as u128;
+                        let derived_sov_usd = cbe_usd
+                            .saturating_mul(ORACLE_PRICE_SCALE as u128)
+                            / cbe_sov as u128;
                         info!(
                             "🔮 Oracle Mode B: cbe_usd_vwap={}, cbe_sov_curve={}, \
                              sov_usd={:.6} USD",

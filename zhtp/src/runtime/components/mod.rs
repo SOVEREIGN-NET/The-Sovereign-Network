@@ -7,7 +7,6 @@ pub mod economics;
 pub mod identity;
 pub mod network;
 pub mod oracle;
-pub mod oracle_exchange_feed;
 pub mod protocols;
 pub mod storage;
 pub mod zk;

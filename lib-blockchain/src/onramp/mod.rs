@@ -71,7 +71,7 @@ impl OnRampState {
     /// or `None` if the window does not meet MIN_TRADES or MIN_VOLUME thresholds.
     ///
     /// Formula (spec §4.2):
-    ///   CBE/USD = SUM(usdc_amount_i * SCALE) / SUM(cbe_amount_i / 10^10)
+    ///   CBE/USD = SUM(usdc_amount_i * 1e20) / SUM(cbe_amount_i)
     ///
     /// Precision: all arithmetic in u128. Multiply before divide.
     /// USDC has 6 decimals, CBE has 18 decimals, output is in ORACLE_PRICE_SCALE (1e8).
