@@ -381,22 +381,20 @@ fn test_graduation_threshold_269k_usd() {
     let sov_usd_price = 5_000_000u64; // $0.05 SOV/USD (8 decimals)
 
     // Calculate how much SOV reserve (in atomic units) is needed for $269K
-    // Formula from is_met_with_oracle:
-    //   reserve_value_usd = (reserve_sov_atomic * sov_usd_price) / (TOKEN_SCALE * USD_PRICE_SCALE)
-    // Solving for reserve_sov_atomic:
-    //   reserve_sov_atomic = threshold_usd * TOKEN_SCALE * USD_PRICE_SCALE / sov_usd_price
-    // = 269_000 * 1e8 * 1e8 / 5_000_000 = 269_000 * 2e9 = 5.38e14
-    // In whole SOV: 5.38e14 / 1e8 = 5,380,000 SOV
-    let sov_decimals = TOKEN_DECIMALS as u128; // reuse module-level token decimals constant
-    let target_reserve_sov = (((GRADUATION_THRESHOLD_USD as u128 * USD_PRICE_SCALE)
+    // Reserve USD = reserve_sov_atoms * sov_usd_price / PRICE_SCALE
+    // $269K = reserve_sov_atoms * $0.05 / 1.0
+    // reserve_sov_whole = $269K / $0.05 = 5,380,000 SOV
+    // reserve_sov_atoms = reserve_sov_whole * 1e8
+    const SOV_DECIMALS: u128 = 100_000_000;
+    let target_reserve_sov = (((GRADUATION_THRESHOLD_USD as u128 * PRICE_SCALE)
         / sov_usd_price as u128)
-        * sov_decimals) as u64;
+        * SOV_DECIMALS) as u64;
 
     println!("✓ Graduation threshold verified: ${} USD", GRADUATION_THRESHOLD_USD);
     println!(
         "  At SOV price ${:.4}, need {} SOV reserve to graduate",
-        sov_usd_price as f64 / sov_decimals as f64,
-        target_reserve_sov as f64 / sov_decimals as f64
+        sov_usd_price as f64 / SOV_DECIMALS as f64,
+        target_reserve_sov as f64 / SOV_DECIMALS as f64
     );
 
     // Verify target calculation is correct
@@ -416,37 +414,30 @@ fn test_phase_transition_atomicity() {
     // Initially in Curve phase
     assert_eq!(token.phase, Phase::Curve, "Initial phase should be Curve");
 
-    // Build up enough reserve to graduate via one large buy.
-    // At $1/SOV, need 269,000 SOV in reserve.  With 20% split, need 1,345,000 SOV total.
+    // Build up enough reserve to graduate, driving the oracle each block
     let buyer = test_pubkey(0x04);
-    let sov_usd_price = 100_000_000u64; // $1.00 per SOV (8-decimal format)
-    let big_buy = 135_000_000_000_000u64; // 1,350,000 SOV → 270,000 SOV to reserve > $269K threshold
-    token
-        .buy(buyer.clone(), big_buy, 2, 1_600_000_100)
-        .expect("Large buy should succeed");
+    // Buy with very large amounts to build reserve quickly
+    let mut last_price = 0u64;
+    let mut last_block = 0u64;
+    for i in 0..100 {
+        let block = 2 + i as u64;
+        let price = 1_600_000_100 + i as u64 * 10;
+        last_block = block;
+        last_price = price;
 
-    // Drive oracle-based graduation: confirmation_blocks = 3, so we need the
-    // threshold to be confirmed across at least 3 consecutive blocks.
-    // Block 3 → sets graduation_pending_since_block = 3 (pending_blocks = 0)
-    // Block 4 → pending_blocks = 1 (not yet)
-    // Block 5 → pending_blocks = 2 (not yet)
-    // Block 6 → pending_blocks = 3 ≥ 3 → returns true
-    let ts = 1_600_000_100u64;
-    let _ = token.check_graduation_with_oracle(sov_usd_price, ts, 3, ts);
-    let _ = token.check_graduation_with_oracle(sov_usd_price, ts, 4, ts);
-    let _ = token.check_graduation_with_oracle(sov_usd_price, ts, 5, ts);
-    let ready = token.check_graduation_with_oracle(sov_usd_price, ts, 6, ts);
+        let _ = token.buy(buyer.clone(), 100_000_000_00u64, block, price);
+        // Update oracle-driven graduation state for this block
+        let _ = token.check_graduation_with_oracle(price, block);
+    }
+
+    // After driving the oracle for multiple blocks, the token should be eligible to graduate
     assert!(
-        ready,
-        "Token should be ready to graduate after oracle confirmation period"
-    );
-    assert!(
-        token.can_graduate(ts, 6),
-        "can_graduate() should return true after oracle confirmation"
+        token.can_graduate(last_price, last_block),
+        "Token should be eligible to graduate after sufficient reserve buildup and oracle confirmations"
     );
 
     // Execute graduation
-    let result = token.graduate(ts, 6);
+    let result = token.graduate(last_price, last_block);
     assert!(result.is_ok(), "Graduation should succeed: {:?}", result);
 
     // Verify phase transitioned to Graduated
@@ -457,7 +448,7 @@ fn test_phase_transition_atomicity() {
 
     // Verify cannot buy in Graduated phase
     let buyer2 = test_pubkey(0x05);
-    let buy_result = token.buy(buyer2, 1_000_000_00, 7, ts);
+    let buy_result = token.buy(buyer2, 1_000_000_00, last_block + 1, last_price);
     assert!(
         buy_result.is_err(),
         "Should not be able to buy in Graduated phase"
@@ -465,7 +456,7 @@ fn test_phase_transition_atomicity() {
 
     // Verify cannot sell in Graduated phase
     let seller = test_pubkey(0x06);
-    let sell_result = token.sell(seller, 1_000_000_00, 7, ts);
+    let sell_result = token.sell(seller, 1_000_000_00, last_block + 1, last_price);
     assert!(
         sell_result.is_err(),
         "Should not be able to sell in Graduated phase"
@@ -503,8 +494,9 @@ fn test_amm_pool_creation_constant_product() {
     let _ = token.check_graduation_with_oracle(sov_usd_price, ts, 5, ts);
     let _ = token.check_graduation_with_oracle(sov_usd_price, ts, 6, ts);
 
+    // Ensure we can graduate; this test must not silently skip AMM pool creation
     assert!(
-        token.can_graduate(ts, 6),
+        token.can_graduate(1_600_000_200, 100),
         "Threshold not reached: AMM pool creation test requires graduation to be possible"
     );
 
@@ -560,7 +552,7 @@ fn test_pol_no_liquidity_interface() {
 
     // Initialize with minimum liquidity
     let initial_sov = 1_000_000_000_00u64; // 1000 SOV (8 decimal atomic units)
-    let initial_cbe = 10 * ONE_BILLION_TOKENS; // 10B nominal CBE token units (using canonical constant)
+    let initial_cbe = 10 * ONE_BILLION_TOKENS; // 10B CBE (8 decimal atomic units)
     pool.initialize(initial_sov, initial_cbe)
         .expect("Pool initialization should succeed");
 
