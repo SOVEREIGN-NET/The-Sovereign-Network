@@ -1131,11 +1131,19 @@ mod tests {
 
         // Verify initial state after buy
         assert!(tokens_bought > 0, "Should receive tokens");
-        assert_eq!(token.reserve_balance, buy_amount * 2 / 5, "Reserve should be 40% of buy amount");
-        assert_eq!(token.treasury_balance, buy_amount * 3 / 5, "Treasury should be 60% of buy amount");
+        assert_eq!(
+            token.reserve_balance,
+            buy_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR,
+            "Reserve should be 40% of buy amount"
+        );
+        assert_eq!(
+            token.treasury_balance,
+            buy_amount * (RESERVE_SPLIT_DENOMINATOR - RESERVE_SPLIT_NUMERATOR) / RESERVE_SPLIT_DENOMINATOR,
+            "Treasury should be 60% of buy amount"
+        );
 
-        // IMPORTANT: Due to 20/80 split, we can only sell a small % of tokens.
-        // The reserve only has 20% of SOV, but tokens are priced at current market rate.
+        // IMPORTANT: Due to 40/60 split, we can only sell a small % of tokens.
+        // The reserve only has 40% of SOV, but tokens are priced at current market rate.
         // We sell just 5% of purchased tokens to ensure reserve can cover.
         let tokens_to_sell = tokens_bought / 20;
         let initial_supply = token.total_supply;
