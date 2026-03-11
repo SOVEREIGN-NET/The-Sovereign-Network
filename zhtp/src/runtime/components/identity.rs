@@ -164,11 +164,7 @@ impl Component for IdentityComponent {
             }
         }
 
-        if let Err(e) =
-            run_post_bootstrap_sov_backfill(self.can_mine, self.is_bootstrap_leader).await
-        {
-            info!("⚠️ SOV backfill skipped (non-fatal): {}", e);
-        }
+        info!("🪙 Startup SOV backfill disabled; canonical genesis/state must already be complete");
 
         if !genesis_ids.is_empty() {
             info!(

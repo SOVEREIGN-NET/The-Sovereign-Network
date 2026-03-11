@@ -10,7 +10,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use lib_network::blockchain_sync::BlockchainEventReceiver;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::blockchain_provider::get_global_blockchain;
 
@@ -64,25 +64,12 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
 
         let block_hash = hex::encode(&block.header.hash().as_bytes()[..8]);
         info!(
-            "⛓️ Applying network block {} (hash {}) from mesh peer",
+            "⛓️ Received relay block {} (hash {}) from mesh peer; relay blocks are proposal-only until BFT commit",
             height, block_hash
         );
 
-        let mut bc = blockchain.write().await;
-        match bc.add_block_from_network_with_persistence(block).await {
-            Ok(()) => {
-                info!(
-                    "✅ Network block {} applied, chain height now {}",
-                    height,
-                    bc.get_height()
-                );
-                Ok(())
-            }
-            Err(e) => {
-                warn!("❌ Failed to apply network block {}: {}", height, e);
-                Ok(())
-            }
-        }
+        crate::runtime::blockchain_provider::trigger_global_catchup(local_height);
+        Ok(())
     }
 
     async fn on_transaction_received(

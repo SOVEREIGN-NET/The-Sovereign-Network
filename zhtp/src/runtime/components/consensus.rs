@@ -381,6 +381,7 @@ fn is_target_validator_peer(
 }
 
 /// Adapter to make blockchain ValidatorInfo compatible with consensus ValidatorInfo trait
+#[derive(Clone)]
 pub struct BlockchainValidatorAdapter(pub lib_blockchain::ValidatorInfo);
 
 impl lib_consensus::validators::ValidatorInfo for BlockchainValidatorAdapter {
@@ -855,73 +856,47 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
             return Ok(());
         }
 
-        // Deserialize transactions from proposal block_data
-        let transactions: Vec<lib_blockchain::Transaction> = if proposal.block_data.is_empty() {
-            Vec::new()
-        } else {
-            // Try to deserialize as Vec<Transaction>
-            match bincode::deserialize(&proposal.block_data) {
-                Ok(txs) => txs,
-                Err(e) => {
-                    warn!(
-                        "Failed to deserialize block_data as transactions: {} - treating as empty block",
-                        e
-                    );
-                    Vec::new()
-                }
-            }
-        };
+        let committed_block: lib_blockchain::Block = bincode::deserialize(&proposal.block_data)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize finalized block artifact: {}", e))?;
+
+        if committed_block.header.height != proposal.height {
+            return Err(anyhow::anyhow!(
+                "Finalized block artifact height mismatch: proposal={}, block={}",
+                proposal.height,
+                committed_block.header.height
+            )
+            .into());
+        }
+
+        if committed_block.header.previous_block_hash.as_array()
+            != proposal.previous_hash.as_array()
+        {
+            return Err(anyhow::anyhow!(
+                "Finalized block artifact previous_hash mismatch at height {}",
+                proposal.height
+            )
+            .into());
+        }
 
         info!(
-            "🔨 BFT consensus committing block at height {} with {} transactions",
+            "🔨 BFT consensus committing canonical block artifact at height {} with {} transactions",
             proposal.height,
-            transactions.len()
+            committed_block.transactions.len()
         );
-
-        // Get previous block hash
-        let previous_hash = blockchain
-            .latest_block()
-            .map(|b| b.hash())
-            .unwrap_or_default();
-
-        // Get mining config for difficulty
-        let mining_config = lib_blockchain::types::get_mining_config_from_env();
-        let block_difficulty = mining_config.difficulty.clone();
-
-        // Create block from the transactions
-        let block = lib_blockchain::block::creation::create_block(
-            transactions,
-            previous_hash,
-            proposal.height,
-            block_difficulty,
-        )?;
-
-        // Mine the block (quick in dev mode due to low difficulty)
-        info!(
-            "⛏️ Mining BFT-finalized block at height {} with {} profile...",
-            proposal.height,
-            if mining_config.allow_instant_mining {
-                "Bootstrap"
-            } else {
-                "Standard"
-            }
-        );
-        let mined_block =
-            lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
-        info!("✓ BFT block mined with nonce: {}", mined_block.header.nonce);
 
         // Add block to blockchain
-        match blockchain.add_block_with_proof(mined_block.clone()).await {
+        match blockchain.add_block_with_proof(committed_block.clone()).await {
             Ok(()) => {
                 info!(
                     "✅ BFT BLOCK COMMITTED! Height: {}, Hash: {:?}, Transactions: {}",
                     blockchain.height,
-                    mined_block.hash(),
-                    mined_block.transactions.len()
+                    committed_block.hash(),
+                    committed_block.transactions.len()
                 );
 
                 // Store consensus checkpoint for this committed block
-                let block_hash = lib_blockchain::types::Hash::new(mined_block.hash().as_array());
+                let block_hash =
+                    lib_blockchain::types::Hash::new(committed_block.hash().as_array());
                 let proposer_id = proposal.proposer.to_string();
                 // Convert lib_crypto::Hash to lib_blockchain::Hash
                 let prev_hash_bytes: [u8; 32] = match proposal.previous_hash.as_bytes().try_into() {
@@ -976,7 +951,8 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                 }
 
                 // Index in DHT
-                if let Err(e) = crate::runtime::dht_indexing::index_block_in_dht(&mined_block).await
+                if let Err(e) =
+                    crate::runtime::dht_indexing::index_block_in_dht(&committed_block).await
                 {
                     warn!("DHT indexing failed for BFT block: {}", e);
                 }
@@ -1043,18 +1019,29 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
         drop(slot);
 
         let blockchain = blockchain_arc.read().await;
-        let pending = &blockchain.pending_transactions;
+        let pending = blockchain.pending_transactions.clone();
+        let previous_hash = blockchain
+            .latest_block()
+            .map(|b| b.hash())
+            .unwrap_or_default();
+        let next_height = blockchain.height.saturating_add(1);
+        let difficulty = blockchain.difficulty.clone();
+        drop(blockchain);
 
-        if pending.is_empty() {
-            return Ok(Vec::new());
-        }
+        let block = lib_blockchain::block::creation::create_block(
+            pending.clone(),
+            previous_hash,
+            next_height,
+            difficulty,
+        )
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
-        // Serialize pending transactions
-        let tx_data = bincode::serialize(pending)
+        let tx_data = bincode::serialize(&block)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
         info!(
-            "📦 Providing {} pending transactions ({} bytes) to consensus",
+            "📦 Providing canonical proposal block at height {} with {} transaction(s) ({} bytes) to consensus",
+            next_height,
             pending.len(),
             tx_data.len()
         );
@@ -1633,11 +1620,6 @@ impl Component for ConsensusComponent {
             *self.node_role
         );
 
-        // Pre-seed ValidatorManager from bootstrap_validators config.
-        // This enables proposer rotation before on-chain ValidatorRegistration txs are mined,
-        // preventing simultaneous mining / fork races on startup.
-        self.seed_from_bootstrap_validators().await;
-
         let mut config = ConsensusConfig::default();
 
         // Keep this node's consensus parameters aligned with zhtp configuration.
@@ -1708,86 +1690,58 @@ impl Component for ConsensusComponent {
         let vp_keypair = local_validator_keypair.clone();
         let vp_identity = local_validator_id.clone();
 
-        // Seed bootstrap validators directly into the consensus engine so it enters BFT mode
-        // immediately on startup without waiting for on-chain ValidatorRegistration txs.
-        // CRITICAL: This must happen before the engine is spawned into the consensus loop.
-        // Previously, validators were only seeded into self.validator_manager (a separate object),
-        // so the running consensus engine never received them and stayed in Bootstrap mode forever.
-        if !self.bootstrap_validators.is_empty() {
-            // Build bootstrap adapters. For the local validator, supply the actual
-            // Dilithium2 public key so that ConsensusEngine::set_validator_keypair()
-            // can match it against the registered consensus_key. For remote peers,
-            // use bootstrap TOML `consensus_key` when provided.
-            let bootstrap_adapters: Vec<BootstrapValidatorAdapter> = self
-                .bootstrap_validators
-                .iter()
-                .map(|bv| {
-                    let adapter_id = {
-                        let hex = bv
-                            .identity_id
-                            .strip_prefix("did:zhtp:")
-                            .unwrap_or(&bv.identity_id);
-                        if let Ok(bytes) = hex::decode(hex) {
-                            if bytes.len() >= 32 {
-                                lib_crypto::Hash::from_bytes(&bytes[..32])
-                            } else {
-                                lib_crypto::Hash(lib_crypto::hash_blake3(bv.identity_id.as_bytes()))
-                            }
-                        } else {
-                            lib_crypto::Hash(lib_crypto::hash_blake3(bv.identity_id.as_bytes()))
-                        }
-                    };
-                    let actual_consensus_key = if adapter_id == local_validator_id {
-                        // This entry represents the local node — use the real key.
-                        Some(local_validator_keypair.public_key.dilithium_pk.clone())
-                    } else {
-                        decode_bootstrap_consensus_key(&bv.consensus_key)
-                    };
-                    BootstrapValidatorAdapter {
-                        identity_id: bv.identity_id.clone(),
-                        stake: bv.stake.max(1),
-                        storage_provided: bv.storage_provided,
-                        commission_rate: (bv.commission_rate.min(100)) as u8,
-                        actual_consensus_key,
-                    }
-                })
-                .collect();
-            match consensus_engine.sync_validators_from_list(bootstrap_adapters) {
-                Ok((added, skipped)) => {
-                    info!(
-                        "🌱 Seeded {} bootstrap validator(s) into consensus engine ({} added, {} skipped)",
-                        self.bootstrap_validators.len(), added, skipped
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to seed consensus engine with bootstrap validators: {}",
-                        e
-                    );
-                }
-            }
+        *self.local_validator_identity.write().await = Some(local_validator_id.clone());
+        *self.local_validator_keypair.write().await = Some(local_validator_keypair.clone());
 
-            // Set local validator identity and keypair now that the validator set is populated.
-            // set_validator_keypair() requires the identity to already be in the validator set,
-            // so this must come AFTER sync_validators_from_list().
-            if self.node_role.can_validate() {
-                match consensus_engine.set_local_validator_identity(local_validator_id.clone()) {
-                    Ok(()) => {
-                        info!("🔑 Local validator identity set on consensus engine");
-                        match consensus_engine
-                            .set_validator_keypair(local_validator_keypair.clone())
-                        {
-                            Ok(()) => info!("🔑 Validator keypair set on consensus engine"),
-                            Err(e) => warn!("Could not set validator keypair on engine: {}", e),
-                        }
-                    }
-                    Err(e) => warn!("Could not set local validator identity on engine: {}", e),
-                }
+        let active_validators: Vec<lib_blockchain::ValidatorInfo> = {
+            let blockchain_opt = self.blockchain.read().await;
+            let blockchain = blockchain_opt
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Blockchain not set for consensus startup"))?
+                .clone();
+            drop(blockchain_opt);
+
+            let bc = blockchain.read().await;
+            bc.get_active_validators()
+                .into_iter()
+                .map(|v| v.clone())
+                .collect()
+        };
+
+        if active_validators.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Validator startup requires a canonical validator set in blockchain state"
+            ));
+        }
+
+        let validator_adapters: Vec<BlockchainValidatorAdapter> = active_validators
+            .iter()
+            .cloned()
+            .map(BlockchainValidatorAdapter)
+            .collect();
+        {
+            let mut validator_manager = self.validator_manager.write().await;
+            validator_manager
+                .sync_from_validator_list(validator_adapters.clone())
+                .context("Failed to sync validator manager from blockchain state")?;
+            if matches!(self.environment, crate::config::Environment::Mainnet)
+                && !validator_manager.has_sufficient_validators()
+            {
+                return Err(anyhow::anyhow!(
+                    "Mainnet validator startup requires at least 4 active validators in canonical blockchain state"
+                ));
             }
         }
 
-        *self.local_validator_identity.write().await = Some(local_validator_id);
-        *self.local_validator_keypair.write().await = Some(local_validator_keypair);
+        consensus_engine
+            .sync_validators_from_list(validator_adapters)
+            .map_err(|e| anyhow::anyhow!("Consensus engine validator sync failed: {}", e))?;
+        consensus_engine
+            .set_local_validator_identity(local_validator_id.clone())
+            .map_err(|e| anyhow::anyhow!("Failed to set local validator identity: {}", e))?;
+        consensus_engine
+            .set_validator_keypair(local_validator_keypair.clone())
+            .map_err(|e| anyhow::anyhow!("Failed to set validator keypair: {}", e))?;
 
         // Wire ValidatorProtocol as security middleware between network and consensus engine
         //

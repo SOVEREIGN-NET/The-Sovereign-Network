@@ -458,8 +458,6 @@ impl BlockchainComponent {
         node_role: Arc<NodeRole>,
         bootstrap_mining_authority: bool,
     ) {
-        // CRITICAL: Enforce runtime guard - only FullValidator nodes should run mining loop
-        // This replaces debug_assert to catch issues in release builds
         if !node_role.can_mine() {
             error!(
                 "CRITICAL BUG: Non-mining node {:?} entered mining loop - config/component initialization bug",
@@ -467,231 +465,20 @@ impl BlockchainComponent {
             );
             return;
         }
-
-        info!("⛏️ Mining loop started - waiting 2 seconds for consensus to wire...");
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        info!("⛏️ Starting mining checks every 30 seconds");
-
-        let mut interval = tokio::time::interval(Duration::from_secs(30));
-        let mut block_counter = 1u64;
-        let mut last_bft_mode_log = std::time::Instant::now();
-
+        let _ = (
+            blockchain,
+            validator_manager_arc,
+            node_identity_arc,
+            env_for_persist,
+            bootstrap_mining_authority,
+        );
+        info!(
+            "⛏️ Direct runtime mining disabled; validator block production must come from BFT finalization only"
+        );
+        let mut interval = tokio::time::interval(Duration::from_secs(120));
         loop {
-            debug!("⏰ Mining loop tick #{}", block_counter);
             interval.tick().await;
-
-            match crate::runtime::blockchain_provider::get_global_blockchain().await {
-                Ok(shared_blockchain) => {
-                    let blockchain_guard = shared_blockchain.read().await;
-                    let pending_count = blockchain_guard.pending_transactions.len();
-                    let current_height = blockchain_guard.height;
-
-                    // Check validator count for mode switching
-                    let validator_count = blockchain_guard.get_active_validators().len();
-                    let bft_mode_active = validator_count >= Self::MIN_BFT_VALIDATORS;
-
-                    if bft_mode_active {
-                        // BFT MODE: Mining loop is disabled, BFT consensus drives blocks
-                        // Only log periodically to avoid spam
-                        if last_bft_mode_log.elapsed() >= Duration::from_secs(120) {
-                            info!(
-                                "🛡️ BFT MODE ACTIVE: {} validators registered (min: {})",
-                                validator_count,
-                                Self::MIN_BFT_VALIDATORS
-                            );
-                            info!(
-                                "   Mining loop disabled - block production driven by BFT consensus"
-                            );
-                            info!(
-                                "   Height: {}, Pending: {}, UTXOs: {}",
-                                current_height,
-                                pending_count,
-                                blockchain_guard.utxo_set.len()
-                            );
-                            last_bft_mode_log = std::time::Instant::now();
-                        }
-
-                        // Don't mine - BFT consensus engine handles block production
-                        // The ConsensusBlockCommitter callback commits finalized blocks
-                        drop(blockchain_guard);
-                        continue;
-                    }
-
-                    // BOOTSTRAP MODE: only bootstrap authority may mine.
-                    if !bootstrap_mining_authority {
-                        debug!(
-                            "⛏️ BOOTSTRAP MODE: mining disabled on non-authority validator (height={}, pending={})",
-                            current_height, pending_count
-                        );
-                        drop(blockchain_guard);
-                        continue;
-                    }
-
-                    // BOOTSTRAP MODE: authority node may mine
-                    info!(
-                        "⛏️ BOOTSTRAP MODE: {} validators (need ≥{} for BFT)",
-                        validator_count,
-                        Self::MIN_BFT_VALIDATORS
-                    );
-                    info!(
-                        "Mining check #{} - Height: {}, Pending: {}, UTXOs: {}, Identities: {}",
-                        block_counter,
-                        current_height,
-                        pending_count,
-                        blockchain_guard.utxo_set.len(),
-                        blockchain_guard.identity_registry.len()
-                    );
-
-                    if pending_count > 0 {
-                        let validator_manager_opt = validator_manager_arc.read().await.clone();
-                        let node_identity_opt = node_identity_arc.read().await.clone();
-
-                        let should_mine = if let (Some(vm), Some(node_id)) =
-                            (validator_manager_opt, node_identity_opt)
-                        {
-                            let vm_guard = vm.read().await;
-                            let active_validators = vm_guard.get_active_validators();
-
-                            if active_validators.is_empty() {
-                                warn!("⛏️ No validators in ValidatorManager");
-                                true
-                            } else {
-                                let next_height = current_height + 1;
-                                // Bootstrap proposer selection must be canonical across nodes.
-                                // Use fixed round 0 so local retry counters cannot diverge proposer choice.
-                                if let Some(proposer) = vm_guard.select_proposer(next_height, 0) {
-                                    let node_id_hex = hex::encode(node_id.as_bytes());
-                                    let mut is_proposer = false;
-
-                                    // Direct check: node identity bytes == proposer identity.
-                                    // Validators are registered by node DID, so proposer.identity
-                                    // is Hash(node_did_bytes). node_id.as_bytes() is the same
-                                    // 32-byte slice. This is the primary matching path.
-                                    let node_hash =
-                                        lib_crypto::Hash::from_bytes(node_id.as_bytes());
-                                    if node_hash == proposer.identity {
-                                        is_proposer = true;
-                                    }
-
-                                    // Fallback: look up via user identity → controlled_nodes.
-                                    // Handles cases where validator identity_id is the user DID.
-                                    if !is_proposer {
-                                        for (did_string, identity_data) in
-                                            blockchain_guard.identity_registry.iter()
-                                        {
-                                            if identity_data.controlled_nodes.contains(&node_id_hex)
-                                            {
-                                                if let Some(identity_hex) =
-                                                    did_string.strip_prefix("did:zhtp:")
-                                                {
-                                                    if let Ok(identity_bytes) =
-                                                        hex::decode(identity_hex)
-                                                    {
-                                                        if identity_bytes.len() >= 32 {
-                                                            let user_identity_hash =
-                                                                lib_crypto::Hash::from_bytes(
-                                                                    &identity_bytes[..32],
-                                                                );
-                                                            if user_identity_hash
-                                                                == proposer.identity
-                                                            {
-                                                                is_proposer = true;
-                                                                break;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if is_proposer {
-                                        info!("⛏️ BOOTSTRAP: This node selected as proposer");
-                                    } else {
-                                        info!("⛏️ BOOTSTRAP: Waiting for our turn");
-                                    }
-                                    is_proposer
-                                } else {
-                                    true
-                                }
-                            }
-                        } else {
-                            warn!("⛏️ Mining without consensus coordination");
-                            true
-                        };
-
-                        if should_mine {
-                            drop(blockchain_guard);
-                            let mut blockchain_guard = shared_blockchain.write().await;
-                            match Self::mine_real_block(&mut *blockchain_guard).await {
-                                Ok(()) => {
-                                    info!(
-                                        "⛏️ Bootstrap block #{} mined successfully!",
-                                        block_counter
-                                    );
-                                    block_counter += 1;
-
-                                    // Auto-persist blockchain after mining (legacy mode only)
-                                    if blockchain_guard.get_store().is_none() {
-                                        blockchain_guard.increment_persist_counter();
-                                        const PERSIST_INTERVAL: u64 = 1; // Save every block
-                                        if blockchain_guard.should_auto_persist(PERSIST_INTERVAL) {
-                                            // Use environment-specific path
-                                            let persist_path_str =
-                                                env_for_persist.blockchain_data_path();
-                                            let persist_path =
-                                                std::path::Path::new(&persist_path_str);
-                                            #[allow(deprecated)]
-                                            match blockchain_guard.save_to_file(persist_path) {
-                                                Ok(()) => {
-                                                    blockchain_guard.mark_persisted();
-                                                    info!("💾 Blockchain auto-persisted to disk");
-                                                }
-                                                Err(e) => {
-                                                    warn!(
-                                                        "⚠️ Failed to auto-persist blockchain: {}",
-                                                        e
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        info!("💾 Blockchain persisted via store after mining");
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("Failed to mine block #{}: {}", block_counter, e);
-                                }
-                            }
-                        }
-                    } else {
-                        debug!("No pending transactions");
-                    }
-                }
-                Err(_) => {
-                    // CRITICAL GUARD: Check node role again before using fallback path
-                    // This prevents edge nodes or observers from mining even if global provider fails
-                    if !node_role.can_mine() || !bootstrap_mining_authority {
-                        error!(
-                            "CRITICAL BUG: node {:?} without bootstrap mining authority tried to use fallback mining path",
-                            *node_role,
-                        );
-                        // Skip mining on this iteration to avoid producing invalid blocks
-                    } else if let Some(ref mut local_blockchain) = blockchain.write().await.as_mut()
-                    {
-                        let pending_count = local_blockchain.pending_transactions.len();
-                        if pending_count > 0 {
-                            match Self::mine_real_block(local_blockchain).await {
-                                Ok(()) => {
-                                    info!("Block mined (local fallback)!");
-                                    block_counter += 1;
-                                }
-                                Err(e) => debug!("Mining failed: {}", e),
-                            }
-                        }
-                    }
-                }
-            }
+            debug!("⛏️ Mining loop heartbeat: direct mining remains disabled");
         }
     }
 
