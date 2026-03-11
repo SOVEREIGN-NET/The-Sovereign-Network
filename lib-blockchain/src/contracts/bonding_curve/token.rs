@@ -20,9 +20,9 @@ const TOKEN_SCALE: u64 = 100_000_000;
 use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
 
-/// Issue #1844: Reserve/treasury split divisor.
-/// Reserve receives 1/RESERVE_SPLIT_DIVISOR (20%) of each buy; treasury receives the rest (80%).
-pub const RESERVE_SPLIT_DIVISOR: u64 = 5;
+/// Issue #1844: Reserve/treasury split — 40% reserve / 60% treasury.
+pub const RESERVE_SPLIT_NUMERATOR: u64 = 2;
+pub const RESERVE_SPLIT_DENOMINATOR: u64 = 5;
 
 /// Bonding Curve Token
 ///
@@ -260,8 +260,8 @@ impl BondingCurveToken {
     ) -> Result<(u64, BondingCurveEvent), CurveError> {
         let token_amount = self.calculate_buy(stable_amount)?;
 
-        // Issue #1844: Split purchase 20% reserve / 80% treasury
-        let to_reserve = stable_amount / RESERVE_SPLIT_DIVISOR;
+        // Issue #1844: Split purchase 40% reserve / 60% treasury
+        let to_reserve = stable_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
         let to_treasury = stable_amount - to_reserve;
 
         // Update state
@@ -699,11 +699,11 @@ mod tests {
         assert_eq!(tokens, 1_000_000_000); // 10 tokens
         assert_eq!(token.total_supply, tokens);
 
-        // Issue #1844: Verify 20/80 split
-        let expected_reserve = buy_amount / RESERVE_SPLIT_DIVISOR;
+        // Issue #1844: Verify 40/60 split
+        let expected_reserve = buy_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
         let expected_treasury = buy_amount - expected_reserve;
-        assert_eq!(token.reserve_balance, expected_reserve, "Reserve should get 20%");
-        assert_eq!(token.treasury_balance, expected_treasury, "Treasury should get 80%");
+        assert_eq!(token.reserve_balance, expected_reserve, "Reserve should get 40%");
+        assert_eq!(token.treasury_balance, expected_treasury, "Treasury should get 60%");
 
         match event {
             BondingCurveEvent::TokenPurchased { stable_amount, .. } => {
@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_buy_reserve_treasury_split_1844() {
-        // Issue #1844: Test the 20/80 reserve/treasury split
+        // Issue #1844: Test the 40/60 reserve/treasury split
         let mut token = BondingCurveToken::deploy(
             [1u8; 32],
             "Split Test".to_string(),
@@ -738,17 +738,17 @@ mod tests {
         // Test multiple purchases accumulate correctly
         let buy_1 = 10_000_000_000u64;
         let _ = token.buy(buyer.clone(), buy_1, 101, 1_600_000_001).unwrap();
-        let expected_reserve_1 = buy_1 / RESERVE_SPLIT_DIVISOR;
+        let expected_reserve_1 = buy_1 * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
         let expected_treasury_1 = buy_1 - expected_reserve_1;
-        assert_eq!(token.reserve_balance, expected_reserve_1, "Reserve should be 20% of buy_1");
-        assert_eq!(token.treasury_balance, expected_treasury_1, "Treasury should be 80% of buy_1");
+        assert_eq!(token.reserve_balance, expected_reserve_1, "Reserve should be 40% of buy_1");
+        assert_eq!(token.treasury_balance, expected_treasury_1, "Treasury should be 60% of buy_1");
 
         let buy_2 = 5_000_000_000u64;
         let _ = token.buy(buyer, buy_2, 102, 1_600_000_002).unwrap();
-        let expected_reserve_2 = expected_reserve_1 + buy_2 / RESERVE_SPLIT_DIVISOR;
-        let expected_treasury_2 = expected_treasury_1 + (buy_2 - buy_2 / RESERVE_SPLIT_DIVISOR);
-        assert_eq!(token.reserve_balance, expected_reserve_2, "Reserve should accumulate 20% of each buy");
-        assert_eq!(token.treasury_balance, expected_treasury_2, "Treasury should accumulate 80% of each buy");
+        let expected_reserve_2 = expected_reserve_1 + buy_2 * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
+        let expected_treasury_2 = expected_treasury_1 + (buy_2 - buy_2 * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR);
+        assert_eq!(token.reserve_balance, expected_reserve_2, "Reserve should accumulate 40% of each buy");
+        assert_eq!(token.treasury_balance, expected_treasury_2, "Treasury should accumulate 60% of each buy");
 
         // Verify total collected equals sum of all purchases
         let total_bought = buy_1 + buy_2;
@@ -758,10 +758,10 @@ mod tests {
             "Total should equal sum of purchases"
         );
 
-        // Verify split ratio is exactly 20/80 using integer arithmetic
+        // Verify split ratio is exactly 40/60 using integer arithmetic
         let total = token.reserve_balance + token.treasury_balance;
-        assert_eq!(token.reserve_balance * 10000 / total, 2000, "Reserve should be exactly 20%");
-        assert_eq!(token.treasury_balance * 10000 / total, 8000, "Treasury should be exactly 80%");
+        assert_eq!(token.reserve_balance * 10000 / total, 4000, "Reserve should be exactly 40%");
+        assert_eq!(token.treasury_balance * 10000 / total, 6000, "Treasury should be exactly 60%");
     }
 
     #[test]
@@ -815,16 +815,16 @@ mod tests {
         )
         .unwrap();
 
-        // Issue #1844: With 20% split, need 5x more purchases to reach reserve threshold
-        // Not enough reserve (100M purchase → 20M reserve)
+        // Issue #1844: With 40% split, need 2.5x total purchases to reach reserve threshold
+        // Not enough reserve (100M purchase → 40M reserve)
         let _ = token
             .buy(test_pubkey(2), 100_000_000, 101, 1_600_000_001)
             .unwrap();
         assert!(!token.can_graduate(1_600_000_001, 101));
 
-        // Add more to reach threshold (need 5B total purchases for 1B reserve)
+        // Add more to reach threshold (need 2.5B total purchases for 1B reserve)
         let _ = token
-            .buy(test_pubkey(3), 4_900_000_000, 102, 1_600_000_002)
+            .buy(test_pubkey(3), 2_400_000_000, 102, 1_600_000_002)
             .unwrap();
         assert!(token.can_graduate(1_600_000_002, 102));
         assert_eq!(token.reserve_balance, 1_000_000_000, "Reserve should be exactly at threshold");
@@ -904,7 +904,7 @@ mod tests {
                 base_price: 5_000_000, // $0.05 starting price
                 slope: 1_000,          // $0.00001 per token
             },
-            Threshold::ReserveAmount(5_000_000_000), // $5,000 graduation threshold
+            Threshold::ReserveAmount(7_000_000_000), // $7,000 graduation threshold
             true,                                    // Sell enabled
             test_pubkey(1),
             String::new(),
@@ -919,34 +919,34 @@ mod tests {
         assert_eq!(token.current_price(), 5_000_000); // $0.05
 
         // 2. BUY PHASE: Multiple users buy tokens
-        // Issue #1844: With 20% split, need 5x purchases to reach same reserve
+        // Issue #1844: With 40% split, need 2.5x purchases to reach same reserve
         let buyer1 = test_pubkey(10);
         let buyer2 = test_pubkey(20);
         let buyer3 = test_pubkey(30);
 
-        // Buyer 1: $5000 → $1000 reserve, ~100,000 tokens at $0.05
+        // Buyer 1: $5000 → $2000 reserve (40%), ~100,000 tokens at $0.05
         let (tokens1, event1) = token
             .buy(buyer1.clone(), 5_000_000_000, 101, 1_700_000_100)
             .unwrap();
         assert!(tokens1 > 0);
-        assert_eq!(token.reserve_balance, 1_000_000_000, "Reserve gets 20% = $1K");
-        assert_eq!(token.treasury_balance, 4_000_000_000, "Treasury gets 80% = $4K");
-        assert!(!token.can_graduate(1_700_000_100, 101)); // Not enough for graduation (need $5K reserve)
+        assert_eq!(token.reserve_balance, 2_000_000_000, "Reserve gets 40% = $2K");
+        assert_eq!(token.treasury_balance, 3_000_000_000, "Treasury gets 60% = $3K");
+        assert!(!token.can_graduate(1_700_000_100, 101)); // Not enough for graduation (need $7K reserve)
 
-        // Buyer 2: $10000 → $2000 more reserve, total $3000
+        // Buyer 2: $10000 → $4000 more reserve, total $6000
         let (tokens2, _event2) = token
             .buy(buyer2, 10_000_000_000, 102, 1_700_000_200)
             .unwrap();
         assert!(tokens2 > 0);
-        assert_eq!(token.reserve_balance, 3_000_000_000, "Reserve = $3K");
-        assert!(!token.can_graduate(1_700_000_200, 102)); // Still not graduated (need $5K)
+        assert_eq!(token.reserve_balance, 6_000_000_000, "Reserve = $6K");
+        assert!(!token.can_graduate(1_700_000_200, 102)); // Still not graduated (need $7K)
 
-        // Buyer 3: $12500 → $2500 more reserve, total $5500
+        // Buyer 3: $12500 → $5000 more reserve, total $11000
         let (tokens3, _event3) = token
             .buy(buyer3, 12_500_000_000, 103, 1_700_000_300)
             .unwrap();
         assert!(tokens3 > 0);
-        assert_eq!(token.reserve_balance, 5_500_000_000, "Reserve = $5.5K");
+        assert_eq!(token.reserve_balance, 11_000_000_000, "Reserve = $11K");
         assert!(token.can_graduate(1_700_000_300, 103), "NOW ready to graduate!");
 
         // Verify events
@@ -974,7 +974,7 @@ mod tests {
                 threshold_met,
                 ..
             } => {
-                assert_eq!(final_reserve, 5_500_000_000);
+                assert_eq!(final_reserve, 11_000_000_000);
                 assert_eq!(final_supply, token.total_supply);
                 assert!(threshold_met.contains("Reserve"));
             }
@@ -995,13 +995,13 @@ mod tests {
 
         // Final state verification
         assert!(token.total_supply > 0);
-        assert_eq!(token.reserve_balance, 5_500_000_000);
+        assert_eq!(token.reserve_balance, 11_000_000_000);
         assert!(token.current_price() > 5_000_000); // Price increased due to curve
 
         // Verify stats
         let stats = token.get_stats(1_700_000_600, 106);
         assert_eq!(stats.total_supply, token.total_supply);
-        assert_eq!(stats.reserve_balance, 5_500_000_000);
+        assert_eq!(stats.reserve_balance, 11_000_000_000);
         assert_eq!(stats.graduation_progress_percent, 100);
         // can_graduate is false because token already graduated (phase is AMM)
         assert!(!stats.can_graduate);
@@ -1029,24 +1029,24 @@ mod tests {
 
         let buyer = test_pubkey(2);
 
-        // Issue #1844: With 20% split, need to buy more to have enough reserve for selling
-        // Buy 250 tokens ($25) → need $25 purchase = 2_500_000_000
-        // Reserve gets 20% = 500_000_000
+        // Issue #1844: With 40% split — buy $12.5 → reserve = $5, then sell 50 tokens to deplete it
+        // Buy 125 tokens ($12.5) → need $12.5 purchase = 1_250_000_000
+        // Reserve gets 40% = 500_000_000
         // To sell 50 tokens ($5), need 500_000_000 in reserve
         let (tokens_bought, _) = token
-            .buy(buyer.clone(), 2_500_000_000, 101, 1_600_000_100)
+            .buy(buyer.clone(), 1_250_000_000, 101, 1_600_000_100)
             .unwrap();
-        // At $0.10, $25 buys 250 tokens
-        assert_eq!(tokens_bought, 25_000_000_000, "Should get 250 tokens");
-        assert_eq!(token.reserve_balance, 500_000_000, "Reserve should be 20% of $25 = $5");
-        assert_eq!(token.treasury_balance, 2_000_000_000, "Treasury should be 80% of $25 = $20");
+        // At $0.10, $12.5 buys 125 tokens
+        assert_eq!(tokens_bought, 12_500_000_000, "Should get 125 tokens");
+        assert_eq!(token.reserve_balance, 500_000_000, "Reserve should be 40% of $12.5 = $5");
+        assert_eq!(token.treasury_balance, 750_000_000, "Treasury should be 60% of $12.5 = $7.50");
 
         // Sell 50 tokens back ($5)
         let (stable_received, sell_event) = token
             .sell(buyer.clone(), 5_000_000_000, 102, 1_600_000_200)
             .unwrap();
         assert_eq!(stable_received, 500_000_000, "Should receive $5");
-        assert_eq!(token.total_supply, 20_000_000_000, "200 tokens remaining");
+        assert_eq!(token.total_supply, 7_500_000_000, "75 tokens remaining");
         assert_eq!(token.reserve_balance, 0, "Reserve depleted after sell");
 
         match sell_event {
@@ -1131,8 +1131,8 @@ mod tests {
 
         // Verify initial state after buy
         assert!(tokens_bought > 0, "Should receive tokens");
-        assert_eq!(token.reserve_balance, buy_amount / 5, "Reserve should be 20% of buy amount");
-        assert_eq!(token.treasury_balance, buy_amount * 4 / 5, "Treasury should be 80% of buy amount");
+        assert_eq!(token.reserve_balance, buy_amount * 2 / 5, "Reserve should be 40% of buy amount");
+        assert_eq!(token.treasury_balance, buy_amount * 3 / 5, "Treasury should be 60% of buy amount");
 
         // IMPORTANT: Due to 20/80 split, we can only sell a small % of tokens.
         // The reserve only has 20% of SOV, but tokens are priced at current market rate.
@@ -1151,7 +1151,7 @@ mod tests {
         // 2. Reserve decreases (SOV returned from reserve only)
         assert_eq!(token.reserve_balance, initial_reserve - sov_received, "Reserve should decrease by returned SOV");
         // 3. Treasury unchanged (no SOV from treasury)
-        assert_eq!(token.treasury_balance, buy_amount * 4 / 5, "Treasury should remain unchanged after sell");
+        assert_eq!(token.treasury_balance, buy_amount * 3 / 5, "Treasury should remain unchanged after sell");
         // 4. Verify SOV received is reasonable (not zero, less than reserve)
         assert!(sov_received > 0, "Should receive some SOV");
         assert!(sov_received < initial_reserve, "Should receive less than reserve balance");
@@ -1196,14 +1196,14 @@ mod tests {
 
         let buyer = test_pubkey(2);
 
-        // Buy tokens - with 20/80 split, need 25 SOV to put 5 SOV in reserve (for graduation)
+        // Buy tokens - with 40/60 split, buying 25 SOV puts 10 SOV in reserve (exceeds 5 SOV threshold)
         // With $0.01 per token, 25 SOV buys 2500 tokens
         let (tokens_bought, _) = token
             .buy(buyer.clone(), 25_000_000_000, 101, 1_600_000_100)
             .unwrap();
 
         // Verify still in curve phase (buy doesn't auto-graduate)
-        assert_eq!(token.reserve_balance, 5_000_000_000, "Reserve should be 5 SOV");
+        assert_eq!(token.reserve_balance, 10_000_000_000, "Reserve should be 10 SOV (40% of 25)");
         assert!(matches!(token.phase, Phase::Curve), "Should still be in curve phase after buy");
 
         // Graduate the token manually
@@ -1249,8 +1249,8 @@ mod tests {
             .buy(buyer.clone(), 100_000_000, 101, 1_600_000_100)
             .unwrap();
 
-        // Reserve is only 20% of buy = 20 SOV cents
-        assert_eq!(token.reserve_balance, 20_000_000);
+        // Reserve is 40% of buy = 40 SOV cents
+        assert_eq!(token.reserve_balance, 40_000_000);
 
         // Try to sell all tokens - should fail because reserve can't cover
         // The sell value would exceed reserve (20 cents reserve, but trying to sell ~$1 worth)
@@ -1574,9 +1574,9 @@ mod tests {
         assert_eq!(calculated_usd, GRADUATION_THRESHOLD_USD, "Math check failed: got ${}", calculated_usd);
 
         // Buy tokens to reach just below threshold
-        // With 20/80 split, need 5x the reserve amount in purchases
+        // With 40/60 split, need 2.5x the reserve amount in purchases
         let buyer = test_pubkey(2);
-        let buy_amount = (target_reserve_sov * 5) - 5_000_000_000; // Just below
+        let buy_amount = (target_reserve_sov * 5 / 2) - 5_000_000_000; // Just below
         token.buy(buyer.clone(), buy_amount, 101, 1_600_000_100).unwrap();
 
         // Verify reserve is just below threshold
@@ -1781,26 +1781,26 @@ mod tests {
         assert_eq!(value1, 0, "Empty reserve = $0");
 
         // Buy some tokens first: 10,000 SOV worth at $0.10 = 100,000 SOV tokens
-        // Reserve gets 20% = 20,000 SOV = 2,000,000,000,000 atomic
+        // Reserve gets 40% = 40,000 SOV = 4,000,000,000,000 atomic
         let mut token2 = token;
         let buyer = test_pubkey(2);
         token2.buy(buyer, 1_000_000_000_000, 101, 1_600_000_100).unwrap();
 
         // Check reserve balance
         let reserve_sov = token2.reserve_balance;
-        assert_eq!(reserve_sov, 200_000_000_000, "Reserve should be 2000 SOV (20% of 10,000)");
+        assert_eq!(reserve_sov, 400_000_000_000, "Reserve should be 4000 SOV (40% of 10,000)");
 
-        // $1.00 SOV price, 2000 SOV reserve = $2,000
+        // $1.00 SOV price, 4000 SOV reserve = $4,000
         let value2 = token2.reserve_value_usd(100_000_000).unwrap();
-        assert_eq!(value2, 2000, "2000 SOV at $1 = $2,000");
+        assert_eq!(value2, 4000, "4000 SOV at $1 = $4,000");
 
-        // $2.00 SOV price, 2000 SOV reserve = $4,000
+        // $2.00 SOV price, 4000 SOV reserve = $8,000
         let value3 = token2.reserve_value_usd(200_000_000).unwrap();
-        assert_eq!(value3, 4000, "2000 SOV at $2 = $4,000");
+        assert_eq!(value3, 8000, "4000 SOV at $2 = $8,000");
 
-        // $0.50 SOV price, 2000 SOV reserve = $1,000
+        // $0.50 SOV price, 4000 SOV reserve = $2,000
         let value4 = token2.reserve_value_usd(50_000_000).unwrap();
-        assert_eq!(value4, 1000, "2000 SOV at $0.50 = $1,000");
+        assert_eq!(value4, 2000, "4000 SOV at $0.50 = $2,000");
     }
 
     /// Issue #1846: Test graduation clears pending state.
@@ -1874,11 +1874,11 @@ mod tests {
 
         let buyer = test_pubkey(2);
 
-        // Buy enough to reach threshold (need 25,000 SOV at 20% split)
-        token.buy(buyer.clone(), 20_000_000_000, 101, 1_600_000_100).unwrap();
+        // Buy enough to reach threshold (need 12,500 SOV at 40% split)
+        token.buy(buyer.clone(), 10_000_000_000, 101, 1_600_000_100).unwrap();
         assert!(!token.can_graduate(1_600_000_100, 101), "Should not graduate yet");
 
-        token.buy(buyer, 6_000_000_000, 102, 1_600_000_200).unwrap();
+        token.buy(buyer, 3_000_000_000, 102, 1_600_000_200).unwrap();
         assert!(token.can_graduate(1_600_000_200, 102), "Should graduate at reserve threshold");
 
         // Oracle check should delegate to standard can_graduate for non-USD thresholds
