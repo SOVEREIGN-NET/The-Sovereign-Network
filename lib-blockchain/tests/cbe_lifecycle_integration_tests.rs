@@ -491,11 +491,11 @@ fn test_amm_pool_creation_constant_product() {
         }
     }
 
-    // Only proceed if we can graduate
-    if !token.can_graduate(1_600_000_200, 100) {
-        println!("⚠ Skipping AMM pool test (threshold not reached)");
-        return;
-    }
+    // Ensure we can graduate; this test must not silently skip AMM pool creation
+    assert!(
+        token.can_graduate(1_600_000_200, 100),
+        "Threshold not reached: AMM pool creation test requires graduation to be possible"
+    );
 
     // Graduate the token
     token.graduate(1_600_000_200, 100).expect("Graduation should succeed");
