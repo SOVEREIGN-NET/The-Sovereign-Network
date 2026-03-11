@@ -46,7 +46,7 @@ pub struct BondingCurveToken {
     // === Curve State ===
     /// Total token supply in circulation
     pub total_supply: u64,
-    /// Reserve balance in stablecoin (20% of purchases - backs bonding curve)
+    /// Reserve balance in stablecoin (40% of purchases - backs bonding curve)
     pub reserve_balance: u64,
     /// Curve pricing formula
     pub curve_type: CurveType,
@@ -69,8 +69,8 @@ pub struct BondingCurveToken {
     pub deployed_at_block: u64,
     /// Timestamp at deployment
     pub deployed_at_timestamp: u64,
-    /// Treasury balance in stablecoin (80% of purchases - protocol operations)
-    /// Issue #1844: Reserve and Treasury 20/80 Split
+    /// Treasury balance in stablecoin (60% of purchases - protocol operations)
+    /// Issue #1844: Reserve and Treasury 40/60 Split
     /// NOTE: Field is at end of struct intentionally — bincode is positional.
     /// Adding fields mid-struct corrupts deserialization of existing stored tokens.
     #[serde(default)]
@@ -248,9 +248,9 @@ impl BondingCurveToken {
     /// (token_amount, event)
     /// Buy tokens from the curve
     ///
-    /// Implements Issue #1844: 20%/80% split between reserve and treasury
-    /// - 20% goes to reserve pool (backs the bonding curve)
-    /// - 80% goes to treasury (protocol operations)
+    /// Implements Issue #1844: 40%/60% split between reserve and treasury
+    /// - 40% goes to reserve pool (backs the bonding curve)
+    /// - 60% goes to treasury (protocol operations)
     pub fn buy(
         &mut self,
         buyer: PublicKey,
@@ -260,8 +260,17 @@ impl BondingCurveToken {
     ) -> Result<(u64, BondingCurveEvent), CurveError> {
         let token_amount = self.calculate_buy(stable_amount)?;
 
-        // Issue #1844: Split purchase 40% reserve / 60% treasury
-        let to_reserve = stable_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
+        // Issue #1844: Split purchase 40% reserve / 60% treasury.
+        // Use u128 intermediate to prevent u64 overflow on large stable_amount values;
+        // use try_into() to explicitly guard the final cast back to u64.
+        let to_reserve = u64::try_from(
+            (stable_amount as u128)
+                .checked_mul(RESERVE_SPLIT_NUMERATOR as u128)
+                .ok_or(CurveError::Overflow)?
+                .checked_div(RESERVE_SPLIT_DENOMINATOR as u128)
+                .ok_or(CurveError::Overflow)?,
+        )
+        .map_err(|_| CurveError::Overflow)?;
         let to_treasury = stable_amount - to_reserve;
 
         // Update state
@@ -783,7 +792,7 @@ mod tests {
         )
         .unwrap();
 
-        // Buy enough to trigger graduation (need 500 total for 100 reserve at 20% split)
+        // Buy enough to trigger graduation (need 250 total for 100 reserve at 40% split)
         let _ = token.buy(test_pubkey(2), 500, 101, 1_600_000_001).unwrap();
         assert!(token.can_graduate(1_600_000_001, 101));
 
@@ -854,7 +863,8 @@ mod tests {
         )
         .unwrap();
 
-        // Graduate first (need 500 for 100 reserve at 20% split)
+        // Graduate first (need 250 purchases to reach 100 reserve at 40% split;
+        // buying 500 to reach 200 reserve — 2x threshold for safety margin)
         let _ = token.buy(test_pubkey(2), 500, 101, 1_600_000_001).unwrap();
         let _ = token.graduate(1_600_000_002, 102).unwrap();
 
@@ -957,7 +967,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(buyer, buyer1.key_id);
-                assert_eq!(stable_amount, 5_000_000_000); // Updated for 20/80 split test
+                assert_eq!(stable_amount, 5_000_000_000); // 40/60 split test
             }
             _ => panic!("Expected TokenPurchased event"),
         }
@@ -1100,8 +1110,8 @@ mod tests {
     /// Issue #1845: Test sell with PiecewiseLinear curve type
     /// Verifies sell functionality works with document-compliant piecewise linear curve
     /// 
-    /// NOTE: Due to the 20/80 split (Issue #1844), the reserve only has 20% of SOV paid.
-    /// The bonding curve pricing means tokens may be worth more than 20% of purchase price,
+    /// NOTE: Due to the 40/60 split (Issue #1844), the reserve only has 40% of SOV paid.
+    /// The bonding curve pricing means tokens may be worth more than 40% of purchase price,
     /// so we must sell only a small portion to stay within reserve limits.
     #[test]
     fn test_sell_tokens_with_piecewise_linear_curve() {
@@ -1273,7 +1283,7 @@ mod tests {
     /// Issue #1845: Test complete burn on sell (100% burn)
     /// Verifies that sold tokens are fully burned (supply decreases by exact amount)
     /// 
-    /// NOTE: Due to 20/80 split, we can only sell ~20% of tokens back before reserve is depleted.
+    /// NOTE: Due to 40/60 split, we can only sell ~40% of tokens back before reserve is depleted.
     #[test]
     fn test_sell_100_percent_burn() {
         let mut token = BondingCurveToken::deploy(
@@ -1335,7 +1345,7 @@ mod tests {
     /// Issue #1845: Test sell returns SOV from reserve only (not treasury)
     /// Verifies sell only draws from reserve pool, not treasury
     ///
-    /// NOTE: Due to 20/80 split, reserve only has 20% of SOV paid.
+    /// NOTE: Due to 40/60 split, reserve only has 40% of SOV paid.
     #[test]
     fn test_sell_returns_sov_from_reserve_only() {
         let mut token = BondingCurveToken::deploy(
@@ -1367,7 +1377,7 @@ mod tests {
         let initial_treasury = token.treasury_balance;
 
         // Sell a small portion of tokens (must be small enough for reserve to cover)
-        // With 20% in reserve, we can sell at most ~20% of tokens (at constant price)
+        // With 40% in reserve, we can sell at most ~40% of tokens (at constant price)
         let tokens_to_sell = tokens_bought / 25; // Sell 4% - well within reserve limits
         let (sov_received, _) = token
             .sell(buyer, tokens_to_sell, 102, 1_600_000_200)
@@ -1389,7 +1399,7 @@ mod tests {
     /// Issue #1845: Test sell with piecewise linear curve within a single band
     /// Verifies sell works correctly with a piecewise linear curve (CBE default).
     ///
-    /// NOTE: Due to 20/80 split, reserve only has 20% of SOV paid.
+    /// NOTE: Due to 40/60 split, reserve only has 40% of SOV paid.
     /// Must sell small amounts to stay within reserve limits.
     #[test]
     fn test_sell_with_piecewise_linear_curve_single_band() {
@@ -1660,8 +1670,9 @@ mod tests {
         )
         .unwrap();
 
-        // Buy enough to reach threshold: need 100,000 SOV in reserve
-        // At 20% split, need 500,000 SOV purchases = 50,000,000,000,000
+        // Buy enough to reach threshold: need $100K in reserve value (at $1 SOV price)
+        // At 40% split, minimum purchase = $100K / 0.40 = $250K = 250_000_000_000 micro-USD.
+        // Buying 50_000_000_000_000 micro-USD ($50M) to far exceed threshold.
         let buyer = test_pubkey(2);
         token.buy(buyer.clone(), 50_000_000_000_000, 101, 1_600_000_100).unwrap();
 
@@ -1836,7 +1847,8 @@ mod tests {
         .unwrap();
 
         // Buy enough to reach threshold: 100,000 SOV reserve needed
-        // 20% split: need 500,000 SOV purchases = 50,000,000,000,000
+        // 40% split: minimum purchase = $100K / 0.40 = $250K = 250_000_000_000 micro-USD.
+        // Buying 50_000_000_000_000 micro-USD ($50M) to far exceed threshold.
         let buyer = test_pubkey(2);
         token.buy(buyer, 50_000_000_000_000, 101, 1_600_000_100).unwrap();
 
