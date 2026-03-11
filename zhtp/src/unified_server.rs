@@ -831,6 +831,12 @@ impl ZhtpUnifiedServer {
         zhtp_router.register_handler("/api/v1/price".to_string(), valuation_handler.clone());
         zhtp_router.register_handler("/api/v1/valuation".to_string(), valuation_handler);
 
+        // Issue #1850: Bonding Curve REST API endpoints
+        let bonding_curve_api_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::bonding_curve::api_v1::BondingCurveApiHandler::new()
+        );
+        zhtp_router.register_handler("/api/v1/bonding-curve".to_string(), bonding_curve_api_handler);
+
         // DAO operations
         let dao_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             DaoHandler::new(identity_manager.clone(), _session_manager.clone())
