@@ -548,8 +548,8 @@ fn test_pol_no_liquidity_interface() {
     let mut pool = PolPool::new([0xCB; 32]);
 
     // Initialize with minimum liquidity
-    let initial_sov = 1_000_000_000_00u64; // 1000 SOV
-    let initial_cbe = 10_000_000_000_00u64; // 10B CBE
+    let initial_sov = 1_000_000_000_00u64; // 1000 SOV (8 decimal atomic units)
+    let initial_cbe = 10 * ONE_BILLION_TOKENS; // 10B CBE (8 decimal atomic units)
     pool.initialize(initial_sov, initial_cbe)
         .expect("Pool initialization should succeed");
 
