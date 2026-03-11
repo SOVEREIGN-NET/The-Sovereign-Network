@@ -2984,6 +2984,17 @@ impl RuntimeOrchestrator {
             }
         }
 
+        // Wire blockchain to consensus BEFORE starting the consensus component,
+        // since ConsensusComponent::start() reads self.blockchain to load the
+        // canonical validator set.
+        if component_id == ComponentId::Consensus {
+            if let Err(e) = self.wire_blockchain_to_consensus().await {
+                warn!("Failed to wire blockchain to consensus before start: {}", e);
+            } else {
+                info!(" Blockchain wired to consensus before start");
+            }
+        }
+
         // Get component and start it
         let components = self.components.read().await;
         if let Some(component) = components.get(&component_id) {
@@ -3008,15 +3019,6 @@ impl RuntimeOrchestrator {
 
                         // NOTE: Reward orchestrator moved to after ProtocolsComponent
                         // (needs mesh server to be initialized)
-                    }
-
-                    // Wire blockchain to consensus component after consensus starts
-                    if component_id == ComponentId::Consensus {
-                        if let Err(e) = self.wire_blockchain_to_consensus().await {
-                            warn!("Failed to wire blockchain to consensus: {}", e);
-                        } else {
-                            info!(" Blockchain successfully wired to consensus component");
-                        }
                     }
 
                     // Start reward orchestrator after ProtocolsComponent (mesh server now ready)
