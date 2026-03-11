@@ -1048,13 +1048,23 @@ impl RuntimeOrchestrator {
                             e
                         )
                     })?;
-                    let consensus_key = hex::decode(&bootstrap.consensus_key).map_err(|e| {
-                        anyhow::anyhow!(
-                            "Bootstrap validator {} must have a valid hex consensus_key in canonical genesis setup: {}",
-                            bootstrap.identity_id,
-                            e
-                        )
-                    })?;
+                    // Handle 0x prefix for consensus key (Copilot fix)
+                    let consensus_key = crate::runtime::components::consensus::decode_bootstrap_consensus_key(&bootstrap.consensus_key)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Bootstrap validator {} must have a valid hex consensus_key (with or without 0x prefix) in canonical genesis setup",
+                                bootstrap.identity_id
+                            )
+                        })?;
+                    
+                    // Validate network address (Copilot fix)
+                    let network_address = bootstrap.endpoints.first()
+                        .ok_or_else(|| anyhow::anyhow!(
+                            "Bootstrap validator {} must have at least one endpoint configured",
+                            bootstrap.identity_id
+                        ))?;
+                    Self::validate_validator_endpoint(network_address)?;
+                    
                     validators.push(crate::runtime::components::GenesisValidator {
                         identity_id,
                         node_device_id: None,
@@ -1062,7 +1072,7 @@ impl RuntimeOrchestrator {
                         storage_provided: bootstrap.storage_provided,
                         commission_rate: bootstrap.commission_rate,
                         consensus_key,
-                        network_address: bootstrap.endpoints.first().cloned().unwrap_or_default(),
+                        network_address: network_address.clone(),
                     });
                 }
                 validators
@@ -2614,8 +2624,8 @@ impl RuntimeOrchestrator {
         }
 
         // Submit a ValidatorRegistration tx for this node if validator_enabled.
-        // MUST run BEFORE seed_blockchain_validator_registry so the idempotency check
-        // inside submit_self_validator_registration() doesn't skip when finding the seeded entry.
+        // Note: Validator seeding from runtime config is disabled per Issue #1862.
+        // Validators must come from canonical genesis state or on-chain registration.
         if self.config.consensus_config.validator_enabled {
             if let Err(e) = self.submit_self_validator_registration().await {
                 warn!("⚠️ Failed to submit self validator registration: {}", e);
@@ -2640,19 +2650,22 @@ impl RuntimeOrchestrator {
         Ok(())
     }
 
-    /// Seed blockchain.validator_registry from bootstrap_validators config (idempotent).
+    /// Log that validator seeding from runtime config is disabled (canonical genesis only).
     ///
-    /// Startup seeding from runtime config is disabled. Canonical validator membership must
-    /// come from genesis or persisted chain state, not a local bootstrap list.
-    async fn seed_blockchain_validator_registry(&self) -> anyhow::Result<()> {
-        info!("Canonical validator startup: runtime bootstrap validator seeding disabled");
+    /// This method exists for documentation purposes only. Startup seeding from runtime config
+    /// is intentionally disabled per Issue #1862. Canonical validator membership must come 
+    /// from genesis or persisted chain state, not a local bootstrap list.
+    /// 
+    /// DO NOT ADD VALIDATOR SEEDING LOGIC HERE. Use canonical genesis state instead.
+    async fn log_validator_seeding_disabled(&self) -> anyhow::Result<()> {
+        info!("Canonical validator startup: runtime bootstrap validator seeding disabled (validators must come from genesis state)");
         Ok(())
     }
 
     /// Bootstrap the oracle committee from active validator consensus keys if it is still empty.
     ///
-    /// Called unconditionally during startup — after Sled load, dat-restore, and
-    /// `seed_blockchain_validator_registry` — so that nodes without `bootstrap_validators`
+    /// Called unconditionally during startup — after Sled load and dat-restore
+    /// — so that nodes without `bootstrap_validators`
     /// configured (e.g. nodes whose validators are registered purely on-chain) still get
     /// their oracle committee populated and can validate attestations without receiving
     /// NonCommitteeSigner errors.

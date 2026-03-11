@@ -869,7 +869,7 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
         }
 
         if committed_block.header.previous_block_hash.as_array()
-            != proposal.previous_hash.as_array()
+            != proposal.previous_hash.0
         {
             return Err(anyhow::anyhow!(
                 "Finalized block artifact previous_hash mismatch at height {}",
@@ -1034,10 +1034,15 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
             next_height,
             difficulty,
         )
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        .map_err(|e| format!("Block creation failed: {}", e))?;
 
-        let tx_data = bincode::serialize(&block)
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        // Mine the block so that it satisfies the configured difficulty target
+        // before it is proposed to the BFT consensus layer.
+        let mined_block = lib_blockchain::block::creation::mine_block(block, u64::MAX)
+            .map_err(|e| format!("Block mining failed: {}", e))?;
+
+        let tx_data = bincode::serialize(&mined_block)
+            .map_err(|e| format!("Block serialization failed: {}", e))?;
 
         info!(
             "📦 Providing canonical proposal block at height {} with {} transaction(s) ({} bytes) to consensus",
@@ -1125,7 +1130,8 @@ fn derive_key_from_identity(identity_id: &str, domain: &[u8]) -> Vec<u8> {
     lib_crypto::hash_blake3(&input).to_vec()
 }
 
-fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<Vec<u8>> {
+/// Decode bootstrap consensus key from hex string (accepts 0x prefix or plain hex).
+pub fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<Vec<u8>> {
     let trimmed = consensus_key_hex.trim();
     if trimmed.is_empty() {
         return None;
@@ -2198,5 +2204,51 @@ mod tests {
         let mut targets = HashSet::new();
         targets.insert(did_hash.to_vec());
         assert!(is_target_validator_peer(&peer, &targets));
+    }
+
+    /// Issue #1862: Test that blocks can be serialized/deserialized for BFT consensus.
+    /// This ensures the proposal/commit flow has a valid serialization contract.
+    #[test]
+    fn test_block_serialization_contract_for_bft_consensus() {
+        use lib_blockchain::block::creation::{create_block, mine_block};
+        
+        // Create a block with the same API used by get_pending_transactions
+        let tx = lib_blockchain::Transaction::new(
+            lib_blockchain::TransactionType::Transfer,
+            vec![],
+            0,
+            0,
+            vec![],
+        );
+        
+        let previous_hash = lib_blockchain::Hash::zero();
+        let height = 42;
+        let difficulty = lib_blockchain::Difficulty::minimum(); // Use minimum difficulty for testing
+        
+        let block = create_block(
+            vec![tx],
+            previous_hash,
+            height,
+            difficulty,
+        ).expect("Block should be created");
+        
+        // Mine the block (as done before BFT proposal)
+        let mined_block = mine_block(block, u64::MAX)
+            .expect("Block should be mined");
+        
+        // Serialize (as get_pending_transactions does for BFT proposal)
+        let block_data = bincode::serialize(&mined_block)
+            .expect("Block should serialize for BFT proposal");
+        
+        // Deserialize (as commit_finalized_block does)
+        let committed_block: lib_blockchain::Block = bincode::deserialize(&block_data)
+            .expect("Block should deserialize for BFT commit");
+        
+        // Verify the block data is preserved
+        assert_eq!(committed_block.header.height, 42);
+        assert_eq!(committed_block.transactions.len(), 1);
+        
+        // Verify the mined block has valid PoW
+        assert!(committed_block.header.nonce > 0, "Mined block should have non-zero nonce");
     }
 }

@@ -3,7 +3,7 @@ use anyhow::Result;
 use lib_blockchain::{
     integration::crypto_integration::{Signature, SignatureAlgorithm},
     transaction::{IdentityTransactionData, Transaction, TransactionOutput, WalletTransactionData},
-    Blockchain,
+    Blockchain, GENESIS_TIMESTAMP,
 };
 use lib_crypto::PublicKey;
 use tracing::{error, info, warn};
@@ -411,10 +411,7 @@ impl GenesisFundingService {
                 ownership_proof: vec![],
                 identity_type: "human".to_string(),
                 did_document_hash: lib_blockchain::types::hash::blake3_hash(user_did.as_bytes()),
-                created_at: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                created_at: GENESIS_TIMESTAMP, // Use fixed timestamp for deterministic genesis
                 registration_fee: 0,
                 dao_fee: 0,
                 controlled_nodes: controlled_node_ids,
