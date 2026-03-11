@@ -3,7 +3,7 @@ use anyhow::Result;
 use lib_blockchain::{
     integration::crypto_integration::{Signature, SignatureAlgorithm},
     transaction::{IdentityTransactionData, Transaction, TransactionOutput, WalletTransactionData},
-    Blockchain,
+    Blockchain, GENESIS_TIMESTAMP,
 };
 use lib_crypto::PublicKey;
 use tracing::{error, info, warn};
@@ -16,6 +16,8 @@ pub struct GenesisValidator {
     pub stake: u64,
     pub storage_provided: u64,
     pub commission_rate: u16, // basis points (e.g., 500 = 5%)
+    pub consensus_key: Vec<u8>,
+    pub network_address: String,
 }
 
 /// Service for creating genesis funding and bootstrapping the blockchain
@@ -212,9 +214,19 @@ impl GenesisFundingService {
             blockchain
                 .wallet_registry
                 .insert(hex::encode(&wallet_id.0), wallet_data);
+            blockchain.wallet_blocks.insert(hex::encode(&wallet_id.0), 0);
 
-            // Defer TokenMint creation until genesis block assembly is complete
-            let _ = (wallet_id.0, SOV_WELCOME_BONUS); // Placeholder for future TokenMint creation
+            let mut wallet_id_bytes_arr = [0u8; 32];
+            wallet_id_bytes_arr.copy_from_slice(&wallet_id.0);
+            let recipient_pk =
+                lib_blockchain::contracts::utils::wallet_key_for_sov(wallet_id_bytes_arr);
+            if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+                if token.balance_of(&recipient_pk) == 0 {
+                    token
+                        .mint(&recipient_pk, SOV_WELCOME_BONUS)
+                        .map_err(|e| anyhow::anyhow!("failed to mint genesis wallet SOV: {}", e))?;
+                }
+            }
 
             info!(
                 " Genesis user wallet funded and registered: {} SOV",
@@ -399,32 +411,24 @@ impl GenesisFundingService {
                 ownership_proof: vec![],
                 identity_type: "human".to_string(),
                 did_document_hash: lib_blockchain::types::hash::blake3_hash(user_did.as_bytes()),
-                created_at: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                created_at: GENESIS_TIMESTAMP, // Use fixed timestamp for deterministic genesis
                 registration_fee: 0,
                 dao_fee: 0,
                 controlled_nodes: controlled_node_ids,
                 owned_wallets: vec![hex::encode(&user_primary_wallet_id.as_ref().unwrap().0 .0)],
             };
 
-            match blockchain.register_identity(user_identity_data) {
-                Ok(tx_hash) => {
-                    info!(
-                        " Genesis USER identity registered with transaction: {}",
-                        hex::encode(tx_hash)
-                    );
-                    info!("   - DID: {}", user_did);
-                    info!("   - Identity ID: {}", hex::encode(&user_id.0));
-                    info!("   - Identity type: Human");
-                }
-                Err(e) => {
-                    warn!(
-                        "  User identity registration failed (may already exist): {}",
-                        e
-                    );
-                }
+            if blockchain.identity_registry.contains_key(&user_did) {
+                warn!("  User identity {} already present in genesis state", user_did);
+            } else {
+                blockchain
+                    .identity_registry
+                    .insert(user_did.clone(), user_identity_data);
+                blockchain.identity_blocks.insert(user_did.clone(), 0);
+                info!(" Genesis USER identity registered directly in genesis state");
+                info!("   - DID: {}", user_did);
+                info!("   - Identity ID: {}", hex::encode(&user_id.0));
+                info!("   - Identity type: Human");
             }
         }
 
@@ -448,18 +452,11 @@ impl GenesisFundingService {
                 info!("   - Node device: {}", hex::encode(&node_id.0[..16]));
             }
 
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            let now = lib_blockchain::GENESIS_TIMESTAMP;
 
-            // Genesis validators use identity-derived keys as placeholders.
-            // Key separation invariant: consensus_key, networking_key, and rewards_key
-            // MUST be distinct.  We derive each from the identity bytes with a unique
-            // domain-separation prefix so they are guaranteed to differ.
+            // Genesis validators use the configured consensus key, while ancillary keys
+            // are deterministically derived from the validator identity.
             let identity_bytes = validator.identity_id.as_bytes().to_vec();
-            let mut consensus_key = identity_bytes.clone();
-            consensus_key.insert(0, 0x01); // domain: consensus
             let mut networking_key = identity_bytes.clone();
             networking_key.insert(0, 0x02); // domain: networking
             let mut rewards_key = identity_bytes.clone();
@@ -469,10 +466,10 @@ impl GenesisFundingService {
                 identity_id: validator_did.clone(),
                 stake: validator.stake,
                 storage_provided: validator.storage_provided,
-                consensus_key,
+                consensus_key: validator.consensus_key.clone(),
                 networking_key,
                 rewards_key,
-                network_address: "127.0.0.1:9333".to_string(),
+                network_address: validator.network_address.clone(),
                 commission_rate: (validator.commission_rate.min(10000) / 100) as u8,
                 status: "active".to_string(),
                 registered_at: now,
@@ -488,32 +485,53 @@ impl GenesisFundingService {
                 oracle_key_id: None,
             };
 
-            match blockchain.register_validator(validator_info) {
-                Ok(validator_tx_hash) => {
-                    registered_validators += 1;
-                    info!(
-                        " Genesis validator {} registered in validator_registry",
-                        index + 1
-                    );
-                    info!("   - Validator TX: {}", hex::encode(validator_tx_hash));
-                    info!("   - Stake: {} SOV", validator.stake);
-                    info!("   - Storage: {} GB", validator.storage_provided);
-                    info!(
-                        "   - Commission: {}.{}%",
-                        validator.commission_rate / 100,
-                        validator.commission_rate % 100
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        "  Failed to register validator {} in validator_registry: {}",
-                        index + 1,
-                        e
-                    );
-                }
+            if !blockchain.identity_registry.contains_key(&validator_did) {
+                blockchain.identity_registry.insert(
+                    validator_did.clone(),
+                    IdentityTransactionData {
+                        did: validator_did.clone(),
+                        display_name: format!("Genesis Validator {}", index + 1),
+                        public_key: validator.consensus_key.clone(),
+                        ownership_proof: vec![],
+                        identity_type: "validator".to_string(),
+                        did_document_hash: lib_blockchain::types::hash::blake3_hash(
+                            validator_did.as_bytes(),
+                        ),
+                        created_at: now,
+                        registration_fee: 0,
+                        dao_fee: 0,
+                        controlled_nodes: validator
+                            .node_device_id
+                            .as_ref()
+                            .map(|id| vec![hex::encode(id.0)])
+                            .unwrap_or_default(),
+                        owned_wallets: Vec::new(),
+                    },
+                );
+                blockchain.identity_blocks.insert(validator_did.clone(), 0);
             }
-        }
 
+            blockchain
+                .validator_registry
+                .insert(validator_did.clone(), validator_info);
+            blockchain.validator_blocks.insert(validator_did.clone(), 0);
+            registered_validators += 1;
+            info!(
+                " Genesis validator {} registered directly in validator_registry",
+                index + 1
+            );
+            info!("   - Stake: {} SOV", validator.stake);
+            info!("   - Storage: {} GB", validator.storage_provided);
+            info!(
+                "   - Commission: {}.{}%",
+                validator.commission_rate / 100,
+                validator.commission_rate % 100
+            );
+            info!(
+                "   - Network address: {}",
+                validator.network_address
+            );
+        }
         info!(
             " Validator registration complete: {}/{} validators registered",
             registered_validators,

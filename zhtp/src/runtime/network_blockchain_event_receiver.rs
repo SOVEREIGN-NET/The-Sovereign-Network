@@ -1,16 +1,17 @@
-//! Receive-side blockchain event receiver (#916, #938)
+//! Receive-side blockchain event receiver (#916, #938, #1862)
 //!
-//! Implements lib-network's BlockchainEventReceiver trait to forward
+//! Implements lib-network's BlockchainEventReceiver trait to handle
 //! blocks and transactions received from mesh peers.
 //!
-//! **CRITICAL (Issue #938)**: Blocks from network are proposal-only.
-//! They MUST NOT be persisted before BFT commit. This receiver forwards
-//! network blocks as proposals to consensus, not direct blockchain storage.
+//! **CRITICAL (Issue #938, #1862)**: Relay blocks from network are used 
+//! ONLY as sync hints to trigger catch-up. They are NOT forwarded as 
+//! proposals and NOT applied directly. BFT consensus must commit blocks 
+//! through the canonical proposal/commit flow before they are persisted.
 
 use anyhow::Result;
 use async_trait::async_trait;
 use lib_network::blockchain_sync::BlockchainEventReceiver;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::blockchain_provider::get_global_blockchain;
 
@@ -62,27 +63,17 @@ impl BlockchainEventReceiver for ZhtpBlockchainEventReceiver {
             return Ok(());
         }
 
+        // Issue #1862: Relay blocks are used ONLY as sync hints, not forwarded as proposals.
+        // The block is deserialized only for logging; the actual block data is not used.
         let block_hash = hex::encode(&block.header.hash().as_bytes()[..8]);
         info!(
-            "⛓️ Applying network block {} (hash {}) from mesh peer",
+            "⛓️ Received relay block {} (hash {}) from mesh peer; using as sync hint only (BFT must commit canonical blocks)",
             height, block_hash
         );
 
-        let mut bc = blockchain.write().await;
-        match bc.add_block_from_network_with_persistence(block).await {
-            Ok(()) => {
-                info!(
-                    "✅ Network block {} applied, chain height now {}",
-                    height,
-                    bc.get_height()
-                );
-                Ok(())
-            }
-            Err(e) => {
-                warn!("❌ Failed to apply network block {}: {}", height, e);
-                Ok(())
-            }
-        }
+        // Trigger catch-up sync to download the block through canonical BFT consensus
+        crate::runtime::blockchain_provider::trigger_global_catchup(local_height);
+        Ok(())
     }
 
     async fn on_transaction_received(
