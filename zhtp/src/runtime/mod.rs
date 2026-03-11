@@ -1035,17 +1035,57 @@ impl RuntimeOrchestrator {
                 info!(" Development mode: Set blockchain difficulty to 0x1fffffff (easy mining)");
             }
 
-            // Create genesis validator from USER identity (not node identity)
-            // NOTE: A person can only be a validator once, regardless of how many nodes they own
-            // Nodes are just devices controlled by the user's identity
-            // Development mode: 1,000 SOV minimum stake (configurable in blockchain)
-            let genesis_validator = crate::runtime::components::GenesisValidator {
-                identity_id: wallet.user_identity.id.clone(), // Use USER identity, not node identity
-                stake: 1_000, // Development mode: 1k SOV meets minimum (blockchain validates based on mode)
-                storage_provided: 0, // Storage requirements enforced separately for production validators
-                commission_rate: 500, // 5% commission
-
-                node_device_id: Some(wallet.node_identity_id.clone()), // Track which node is running validator
+            let genesis_validators = if !self.config.network_config.bootstrap_validators.is_empty() {
+                let mut validators = Vec::new();
+                for bootstrap in &self.config.network_config.bootstrap_validators {
+                    let identity_id = lib_identity::did::parse_did_to_identity_id(
+                        &bootstrap.identity_id,
+                    )
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Invalid bootstrap validator DID {}: {}",
+                            bootstrap.identity_id,
+                            e
+                        )
+                    })?;
+                    // Handle 0x prefix for consensus key (Copilot fix)
+                    let consensus_key = crate::runtime::components::consensus::decode_bootstrap_consensus_key(&bootstrap.consensus_key)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Bootstrap validator {} must have a valid hex consensus_key (with or without 0x prefix) in canonical genesis setup",
+                                bootstrap.identity_id
+                            )
+                        })?;
+                    
+                    // Validate network address (Copilot fix)
+                    let network_address = bootstrap.endpoints.first()
+                        .ok_or_else(|| anyhow::anyhow!(
+                            "Bootstrap validator {} must have at least one endpoint configured",
+                            bootstrap.identity_id
+                        ))?;
+                    Self::validate_validator_endpoint(network_address)?;
+                    
+                    validators.push(crate::runtime::components::GenesisValidator {
+                        identity_id,
+                        node_device_id: None,
+                        stake: bootstrap.stake.max(1_000),
+                        storage_provided: bootstrap.storage_provided,
+                        commission_rate: bootstrap.commission_rate,
+                        consensus_key,
+                        network_address: network_address.clone(),
+                    });
+                }
+                validators
+            } else {
+                vec![crate::runtime::components::GenesisValidator {
+                    identity_id: wallet.node_identity.id.clone(),
+                    node_device_id: Some(wallet.node_identity_id.clone()),
+                    stake: 1_000,
+                    storage_provided: 0,
+                    commission_rate: 500,
+                    consensus_key: wallet.node_private_data.quantum_keypair.public_key.clone(),
+                    network_address: std::env::var("ZHTP_VALIDATOR_ENDPOINT").unwrap_or_default(),
+                }]
             };
 
             // Extract primary wallet ID and public key from user identity
@@ -1072,7 +1112,7 @@ impl RuntimeOrchestrator {
             // Note: blockchain is already in global provider, this just funds it
             crate::runtime::components::BlockchainComponent::create_genesis_funding(
                 &mut blockchain,
-                vec![genesis_validator],
+                genesis_validators,
                 &self.config.environment,
                 primary_wallet_info,
                 Some(wallet.user_identity.id.clone()), // Pass user identity ID
@@ -2584,25 +2624,11 @@ impl RuntimeOrchestrator {
         }
 
         // Submit a ValidatorRegistration tx for this node if validator_enabled.
-        // MUST run BEFORE seed_blockchain_validator_registry so the idempotency check
-        // inside submit_self_validator_registration() doesn't skip when finding the seeded entry.
+        // Note: Validator seeding from runtime config is disabled per Issue #1862.
+        // Validators must come from canonical genesis state or on-chain registration.
         if self.config.consensus_config.validator_enabled {
             if let Err(e) = self.submit_self_validator_registration().await {
                 warn!("⚠️ Failed to submit self validator registration: {}", e);
-            }
-        }
-
-        // Seed blockchain.validator_registry from bootstrap config (idempotent).
-        // This ensures all bootstrap validators appear in the registry immediately,
-        // regardless of whether their on-chain ValidatorRegistration txs have been mined yet.
-        // On-chain registrations (with real keys) always WIN over bootstrap-seeded entries
-        // because existing entries are never overwritten.
-        if !self.config.network_config.bootstrap_validators.is_empty() {
-            if let Err(e) = self.seed_blockchain_validator_registry().await {
-                warn!(
-                    "⚠️ Failed to seed blockchain validator registry from bootstrap config: {}",
-                    e
-                );
             }
         }
 
@@ -2624,106 +2650,22 @@ impl RuntimeOrchestrator {
         Ok(())
     }
 
-    /// Seed blockchain.validator_registry from bootstrap_validators config (idempotent).
+    /// Log that validator seeding from runtime config is disabled (canonical genesis only).
     ///
-    /// Inserts all bootstrap validators into the in-memory registry with status "active"
-    /// using derived keys (blake3 of identity_id || domain).  On-chain registrations are
-    /// never overwritten — a validator already present in the registry is skipped.
-    async fn seed_blockchain_validator_registry(&self) -> anyhow::Result<()> {
-        let bootstrap_validators = self.config.network_config.bootstrap_validators.clone();
-        if bootstrap_validators.is_empty() {
-            return Ok(());
-        }
-
-        let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
-        let mut blockchain = blockchain_arc.write().await;
-
-        let mut seeded = 0usize;
-        for bv in &bootstrap_validators {
-            if blockchain.validator_registry.contains_key(&bv.identity_id) {
-                continue; // on-chain registration wins
-            }
-
-            // Derive keys deterministically from identity_id (same scheme as ConsensusComponent)
-            let derive = |domain: &[u8]| -> Vec<u8> {
-                let mut input = Vec::with_capacity(bv.identity_id.len() + domain.len());
-                input.extend_from_slice(bv.identity_id.as_bytes());
-                input.extend_from_slice(domain);
-                lib_crypto::hash_blake3(&input).to_vec()
-            };
-
-            // If consensus_key is provided, hex-decode it into raw bytes; otherwise derive.
-            // IMPORTANT: a missing or malformed consensus_key causes the oracle committee to use
-            // a placeholder key that will never match the validator's real Dilithium signing key,
-            // resulting in NonCommitteeSigner rejections on every epoch.  Set consensus_key in
-            // config.toml to the hex-encoded Dilithium public key from the node's keystore.
-            let consensus_key = if bv.consensus_key.is_empty() {
-                tracing::warn!(
-                    "Bootstrap validator '{}' has no consensus_key in config — oracle committee \
-                     will use a derived placeholder that never matches the real signing key. \
-                     Set consensus_key to the hex-encoded Dilithium public key.",
-                    bv.identity_id
-                );
-                derive(b"consensus")
-            } else {
-                match hex::decode(&bv.consensus_key) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Bootstrap validator '{}' consensus_key is invalid hex ({}) — \
-                             falling back to derived placeholder. Oracle attestations will be \
-                             rejected as NonCommitteeSigner.",
-                            bv.identity_id,
-                            e
-                        );
-                        derive(b"consensus")
-                    }
-                }
-            };
-            let networking_key = derive(b"networking");
-            let rewards_key = derive(b"rewards");
-
-            // Use the first declared endpoint as network_address (already host:port format).
-            let network_address = bv.endpoints.first().cloned().unwrap_or_default();
-
-            let validator_info = lib_blockchain::ValidatorInfo {
-                identity_id: bv.identity_id.clone(),
-                stake: bv.stake.max(1),
-                storage_provided: bv.storage_provided,
-                consensus_key,
-                networking_key,
-                rewards_key,
-                network_address,
-                commission_rate: bv.commission_rate.min(100) as u8,
-                status: "active".to_string(),
-                registered_at: 0,
-                last_activity: 0,
-                blocks_validated: 0,
-                slash_count: 0,
-                admission_source: lib_blockchain::ADMISSION_SOURCE_BOOTSTRAP_GENESIS.to_string(),
-                governance_proposal_id: None,
-                oracle_key_id: None,
-            };
-            blockchain
-                .validator_registry
-                .insert(bv.identity_id.clone(), validator_info);
-            seeded += 1;
-        }
-
-        if seeded > 0 {
-            info!(
-                "🌱 Seeded blockchain.validator_registry with {} bootstrap validator(s)",
-                seeded
-            );
-        }
-
+    /// This method exists for documentation purposes only. Startup seeding from runtime config
+    /// is intentionally disabled per Issue #1862. Canonical validator membership must come 
+    /// from genesis or persisted chain state, not a local bootstrap list.
+    /// 
+    /// DO NOT ADD VALIDATOR SEEDING LOGIC HERE. Use canonical genesis state instead.
+    async fn log_validator_seeding_disabled(&self) -> anyhow::Result<()> {
+        info!("Canonical validator startup: runtime bootstrap validator seeding disabled (validators must come from genesis state)");
         Ok(())
     }
 
     /// Bootstrap the oracle committee from active validator consensus keys if it is still empty.
     ///
-    /// Called unconditionally during startup — after Sled load, dat-restore, and
-    /// `seed_blockchain_validator_registry` — so that nodes without `bootstrap_validators`
+    /// Called unconditionally during startup — after Sled load and dat-restore
+    /// — so that nodes without `bootstrap_validators`
     /// configured (e.g. nodes whose validators are registered purely on-chain) still get
     /// their oracle committee populated and can validate attestations without receiving
     /// NonCommitteeSigner errors.
