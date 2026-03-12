@@ -23,8 +23,15 @@ pub struct OnRampTrade {
     pub usdc_amount: u128,
 }
 
-/// VWAP window: 7 days at ~14,400 blocks/day (6 s block time).
-pub const VWAP_WINDOW_BLOCKS: u64 = 100_800;
+/// Target block time in seconds. Must match the consensus `TARGET_BLOCK_TIME` parameter.
+pub const TARGET_BLOCK_TIME_SECONDS: u64 = 10;
+
+/// VWAP time window in seconds (7 days).
+pub const VWAP_WINDOW_SECS: u64 = 7 * 24 * 60 * 60;
+
+/// VWAP window expressed in blocks, derived from the target block time.
+/// At 10s blocks: 7 * 24 * 3600 / 10 = 60,480 blocks.
+pub const VWAP_WINDOW_BLOCKS: u64 = VWAP_WINDOW_SECS / TARGET_BLOCK_TIME_SECONDS;
 
 /// Minimum number of on-ramp trades in the window for Mode B to activate.
 pub const MIN_TRADES: u64 = 5;
@@ -59,7 +66,8 @@ impl OnRampState {
 
     /// Record a new attested on-ramp trade.
     ///
-    /// Prunes trades older than 2× the VWAP window to bound memory use.
+    /// Bounds memory by capping the trade log at `MAX_TRADE_HISTORY` entries (oldest dropped).
+    /// Trades outside the VWAP window are naturally excluded by `cbe_usd_vwap` at query time.
     pub fn record_trade(&mut self, trade: OnRampTrade) {
         self.trades.push(trade);
         if self.trades.len() > MAX_TRADE_HISTORY {

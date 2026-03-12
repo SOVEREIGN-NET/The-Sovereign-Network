@@ -296,8 +296,8 @@ impl BondingCurveApiHandler {
             ));
         }
 
-        // Calculate 20/80 split using the canonical constant
-        let to_reserve = req.sov_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
+        // Calculate 40/60 split (RESERVE_SPLIT_NUMERATOR/DENOMINATOR = 2/5) using u128 to prevent overflow
+        let to_reserve = (req.sov_amount as u128 * RESERVE_SPLIT_NUMERATOR as u128 / RESERVE_SPLIT_DENOMINATOR as u128) as u64;
         let to_treasury = req.sov_amount - to_reserve;
 
         // Calculate CBE output using the contract's integer math

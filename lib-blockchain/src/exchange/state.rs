@@ -1,8 +1,11 @@
 //! Exchange State
 //!
 //! Generic on-chain order book infrastructure.
-//! SOV is never traded externally — SOV/USDC pairs do not exist.
 //! CBE/USD on-ramp trades are tracked in `crate::onramp::OnRampState`.
+//!
+//! Note: `TradingPair::sov_usdc()` and the associated helpers below are retained
+//! for integration test coverage only. SOV/USDC does not exist as a live pair —
+//! SOV/USD is always oracle-derived (Mode A/B), never order-book traded.
 
 use serde::{Deserialize, Serialize};
 

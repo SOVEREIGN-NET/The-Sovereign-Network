@@ -2988,10 +2988,21 @@ impl RuntimeOrchestrator {
         // since ConsensusComponent::start() reads self.blockchain to load the
         // canonical validator set.
         if component_id == ComponentId::Consensus {
-            if let Err(e) = self.wire_blockchain_to_consensus().await {
-                warn!("Failed to wire blockchain to consensus before start: {}", e);
-            } else {
-                info!(" Blockchain wired to consensus before start");
+            match self.wire_blockchain_to_consensus().await {
+                Ok(()) => {
+                    info!(" Blockchain wired to consensus before start");
+                }
+                Err(e) => {
+                    {
+                        let mut health = self.component_health.write().await;
+                        if let Some(health_info) = health.get_mut(&component_id) {
+                            health_info.status = ComponentStatus::Error(e.to_string());
+                            health_info.error_count += 1;
+                        }
+                    }
+                    error!("Failed to wire blockchain to consensus before start: {}", e);
+                    return Err(e);
+                }
             }
         }
 

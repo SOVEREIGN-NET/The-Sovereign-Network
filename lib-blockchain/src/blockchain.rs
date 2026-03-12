@@ -1221,11 +1221,47 @@ impl BlockchainStorageV3 {
     }
 }
 
-/// Stable storage format V4 for blockchain serialization.
+/// Stable storage format V4 for blockchain serialization (legacy — no onramp_state).
 ///
 /// V4 wraps legacy V3 payload and appends Oracle Protocol v1 consensus state.
+/// Used only for backward-compatible loading of pre-onramp `.dat` files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BlockchainStorageV4 {
+    pub v3: BlockchainStorageV3,
+    #[serde(default)]
+    pub oracle_state: crate::oracle::OracleState,
+    #[serde(default)]
+    pub exchange_state: crate::exchange::ExchangeState,
+    #[serde(default)]
+    pub oracle_slash_events: Vec<crate::oracle::OracleSlashEvent>,
+    #[serde(default)]
+    pub oracle_slashing_config: crate::oracle::OracleSlashingConfig,
+    #[serde(default)]
+    pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
+    #[serde(default)]
+    pub last_oracle_epoch_processed: u64,
+}
+
+impl BlockchainStorageV4 {
+    fn to_blockchain(self) -> Blockchain {
+        let mut blockchain = self.v3.to_blockchain();
+        blockchain.oracle_state = self.oracle_state;
+        blockchain.exchange_state = self.exchange_state;
+        // onramp_state defaults to empty — no on-ramp trades in legacy files
+        blockchain.oracle_slash_events = self.oracle_slash_events;
+        blockchain.oracle_slashing_config = self.oracle_slashing_config;
+        blockchain.oracle_banned_validators = self.oracle_banned_validators;
+        blockchain.last_oracle_epoch_processed = self.last_oracle_epoch_processed;
+        blockchain
+    }
+}
+
+/// Stable storage format V5 for blockchain serialization.
+///
+/// V5 extends V4 with `onramp_state` for CBE/USD VWAP-based oracle pricing (Mode B).
+/// Fields must remain append-only after this point — bincode is positional.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BlockchainStorageV5 {
     pub v3: BlockchainStorageV3,
     #[serde(default)]
     pub oracle_state: crate::oracle::OracleState,
@@ -1243,7 +1279,7 @@ struct BlockchainStorageV4 {
     pub last_oracle_epoch_processed: u64,
 }
 
-impl BlockchainStorageV4 {
+impl BlockchainStorageV5 {
     fn from_blockchain(bc: &Blockchain) -> Self {
         Self {
             v3: BlockchainStorageV3::from_blockchain(bc),
@@ -1259,8 +1295,6 @@ impl BlockchainStorageV4 {
 
     fn to_blockchain(self) -> Blockchain {
         let mut blockchain = self.v3.to_blockchain();
-        // Note: Do NOT reset last_oracle_epoch_processed to 0 here.
-        // The correct value is set at the end of this function from self.last_oracle_epoch_processed.
         blockchain.oracle_state = self.oracle_state;
         blockchain.exchange_state = self.exchange_state;
         blockchain.onramp_state = self.onramp_state;
@@ -1412,21 +1446,7 @@ impl Blockchain {
         use crate::contracts::bonding_curve::{BondingCurveToken, CurveType, Threshold, PiecewiseLinearCurve};
         use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
 
-        // Generate deterministic CBE token ID (same as CbeToken)
-        let token_id = {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            CBE_NAME.hash(&mut hasher);
-            CBE_SYMBOL.hash(&mut hasher);
-            let hash = hasher.finish();
-            let mut id = [0u8; 32];
-            id[..8].copy_from_slice(&hash.to_le_bytes());
-            for i in 8..32 {
-                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
-            }
-            id
-        };
+        let token_id = Self::cbe_token_id();
 
         // Initialize CBE corporate equity token with 100B allocation (Issue #1843)
         // Must run before the bonding curve registry guard so that cbe_token is
@@ -1613,24 +1633,28 @@ impl Blockchain {
     ///
     /// # Arguments
     /// * `timestamp` - Current block timestamp (for freshness tracking)
-    pub fn update_cbe_sov_ratio_from_curve(&mut self, timestamp: u64) {
+    /// Derive the deterministic CBE token ID from its name/symbol constants.
+    ///
+    /// Centralises the derivation used by `update_cbe_sov_ratio_from_curve`,
+    /// `get_cbe_curve_price_atomic`, and `get_cbe_price_info`.
+    pub fn cbe_token_id() -> [u8; 32] {
         use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        CBE_NAME.hash(&mut hasher);
+        CBE_SYMBOL.hash(&mut hasher);
+        let hash = hasher.finish();
+        let mut id = [0u8; 32];
+        id[..8].copy_from_slice(&hash.to_le_bytes());
+        for i in 8..32 {
+            id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
+        }
+        id
+    }
 
-        // Generate CBE token ID
-        let cbe_token_id = {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            CBE_NAME.hash(&mut hasher);
-            CBE_SYMBOL.hash(&mut hasher);
-            let hash = hasher.finish();
-            let mut id = [0u8; 32];
-            id[..8].copy_from_slice(&hash.to_le_bytes());
-            for i in 8..32 {
-                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
-            }
-            id
-        };
+    pub fn update_cbe_sov_ratio_from_curve(&mut self, timestamp: u64) {
+        let cbe_token_id = Self::cbe_token_id();
 
         // Get CBE token from registry
         if let Some(cbe_token) = self.bonding_curve_registry.get(&cbe_token_id) {
@@ -1649,18 +1673,7 @@ impl Blockchain {
     /// Returns `None` if the CBE token is not initialized or has no supply.
     /// Price is in 8-decimal fixed-point (same scale as ORACLE_PRICE_SCALE).
     pub fn get_cbe_curve_price_atomic(&self) -> Option<u64> {
-        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        CBE_NAME.hash(&mut hasher);
-        CBE_SYMBOL.hash(&mut hasher);
-        let hash = hasher.finish();
-        let mut id = [0u8; 32];
-        id[..8].copy_from_slice(&hash.to_le_bytes());
-        for i in 8..32 {
-            id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
-        }
+        let id = Self::cbe_token_id();
         self.bonding_curve_registry.get(&id).map(|t| t.current_price())
     }
 
@@ -1684,23 +1697,7 @@ impl Blockchain {
 
     /// Get current CBE price information for API
     pub fn get_cbe_price_info(&self) -> Option<crate::pricing::CbePriceInfo> {
-        use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
-        
-        // Generate CBE token ID
-        let cbe_token_id = {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            CBE_NAME.hash(&mut hasher);
-            CBE_SYMBOL.hash(&mut hasher);
-            let hash = hasher.finish();
-            let mut id = [0u8; 32];
-            id[..8].copy_from_slice(&hash.to_le_bytes());
-            for i in 8..32 {
-                id[i] = ((hash >> (i % 8)) & 0xFF) as u8;
-            }
-            id
-        };
+        let cbe_token_id = Self::cbe_token_id();
 
         let cbe_token = self.bonding_curve_registry.get(&cbe_token_id)?;
         let sov_price_8dec = self.token_pricing_state.get_sov_price_8dec();
@@ -11765,7 +11762,7 @@ impl Blockchain {
     /// File format magic bytes - "ZHTP"
     const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
     /// Current file format version
-    const FILE_VERSION: u16 = 4;
+    const FILE_VERSION: u16 = 5;
 
     #[deprecated(
         since = "0.2.0",
@@ -11791,7 +11788,7 @@ impl Blockchain {
         }
 
         // Convert to stable storage format
-        let storage = BlockchainStorageV4::from_blockchain(self);
+        let storage = BlockchainStorageV5::from_blockchain(self);
 
         // Serialize to bincode
         let serialized = bincode::serialize(&storage)
@@ -11866,32 +11863,68 @@ impl Blockchain {
             info!("📂 Detected versioned format v{}", version);
 
             match version {
-                4 => {
-                    // V4 format - includes Oracle Protocol v1 state.
-                    match bincode::deserialize::<BlockchainStorageV4>(data) {
+                5 => {
+                    // V5 format - includes onramp_state for CBE/USD VWAP oracle pricing.
+                    match bincode::deserialize::<BlockchainStorageV5>(data) {
                         Ok(storage) => {
-                            info!("📂 Loaded blockchain storage v4 (oracle-enabled format)");
+                            info!("📂 Loaded blockchain storage v5 (onramp-enabled format)");
                             storage.to_blockchain()
                         }
                         Err(storage_err) => {
-                            // Fallback: v4 header but direct Blockchain format
                             info!(
-                                "📂 BlockchainStorageV4 failed, trying direct format: {}",
+                                "📂 BlockchainStorageV5 failed, trying direct format: {}",
                                 storage_err
                             );
                             match bincode::deserialize::<Blockchain>(data) {
                                 Ok(bc) => {
-                                    info!("📂 Loaded v4 with direct Blockchain format (legacy v4)");
+                                    info!("📂 Loaded v5 with direct Blockchain format (legacy v5)");
                                     bc
                                 }
                                 Err(direct_err) => {
-                                    error!("❌ Failed to deserialize v4 blockchain:");
-                                    error!("   BlockchainStorageV4 error: {}", storage_err);
+                                    error!("❌ Failed to deserialize v5 blockchain:");
+                                    error!("   BlockchainStorageV5 error: {}", storage_err);
                                     error!("   Direct format error: {}", direct_err);
                                     return Err(anyhow::anyhow!(
-                                        "Failed to deserialize v4 blockchain: {}",
+                                        "Failed to deserialize v5 blockchain: {}",
                                         storage_err
                                     ));
+                                }
+                            }
+                        }
+                    }
+                }
+                4 => {
+                    // V4 format - two sub-variants:
+                    //   a) New V4 (deployed with onramp_state) → try BlockchainStorageV5 layout
+                    //   b) Legacy V4 (pre-onramp) → BlockchainStorageV4 without onramp_state
+                    match bincode::deserialize::<BlockchainStorageV5>(data) {
+                        Ok(storage) => {
+                            info!("📂 Loaded blockchain storage v4 (new layout with onramp_state)");
+                            storage.to_blockchain()
+                        }
+                        Err(_) => {
+                            match bincode::deserialize::<BlockchainStorageV4>(data) {
+                                Ok(storage) => {
+                                    info!("📂 Loaded blockchain storage v4 (legacy, no onramp_state)");
+                                    storage.to_blockchain()
+                                }
+                                Err(storage_err) => {
+                                    // Last resort: direct Blockchain format
+                                    match bincode::deserialize::<Blockchain>(data) {
+                                        Ok(bc) => {
+                                            info!("📂 Loaded v4 with direct Blockchain format");
+                                            bc
+                                        }
+                                        Err(direct_err) => {
+                                            error!("❌ Failed to deserialize v4 blockchain:");
+                                            error!("   BlockchainStorageV4 error: {}", storage_err);
+                                            error!("   Direct format error: {}", direct_err);
+                                            return Err(anyhow::anyhow!(
+                                                "Failed to deserialize v4 blockchain: {}",
+                                                storage_err
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -13581,8 +13614,8 @@ mod oracle_storage_migration_tests {
             bc.oracle_state.committee.pending_update()
         );
 
-        // Convert to storage V4 and back
-        let storage = BlockchainStorageV4::from_blockchain(&bc);
+        // Convert to storage V5 and back
+        let storage = BlockchainStorageV5::from_blockchain(&bc);
         println!(
             "Storage: pending_update = {:?}",
             storage.oracle_state.committee.pending_update()
@@ -13596,7 +13629,7 @@ mod oracle_storage_migration_tests {
 
         assert!(
             bc2.oracle_state.committee.pending_update().is_some(),
-            "pending_update should survive V4 round-trip"
+            "pending_update should survive V5 round-trip"
         );
     }
 
