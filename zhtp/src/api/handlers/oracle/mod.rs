@@ -304,12 +304,22 @@ impl OracleHandler {
                         let epochs_since = current_epoch.saturating_sub(finalized.epoch_id);
                         let max_staleness = bc.oracle_state.config.max_price_staleness_epochs;
                         let is_fresh = epochs_since <= max_staleness;
+                        let current_block = bc.get_height();
+                        let pricing_mode = bc.onramp_state.oracle_mode(current_block);
+                        let pricing_mode_str = match pricing_mode {
+                            lib_blockchain::onramp::OraclePricingMode::LiveDerived => "Mode B (Live Derived)",
+                            lib_blockchain::onramp::OraclePricingMode::GenesisReference => "Mode A (Genesis Reference)",
+                        };
+                        let cbe_usd_price_atomic = finalized.cbe_usd_price;
                         let body = json!({
                             "pair": pair.as_str(),
                             "source": "oracle_finalized",
+                            "pricing_mode": pricing_mode_str,
                             "epoch_id": finalized.epoch_id,
                             "price_atomic": finalized.sov_usd_price.to_string(),
                             "price": Self::price_f64_from_atomic(finalized.sov_usd_price),
+                            "cbe_usd_price_atomic": cbe_usd_price_atomic.map(|p| p.to_string()),
+                            "cbe_usd_price": cbe_usd_price_atomic.map(Self::price_f64_from_atomic),
                             "oracle_price_scale": ORACLE_PRICE_SCALE.to_string(),
                             "current_epoch": current_epoch,
                             "epochs_since_finalization": epochs_since,
@@ -612,6 +622,23 @@ impl OracleHandler {
         let finalized_count = bc.oracle_state.finalized_prices_len();
         let threshold = bc.oracle_state.committee.threshold();
 
+        let current_block = bc.get_height();
+        let pricing_mode = bc.onramp_state.oracle_mode(current_block);
+        let pricing_mode_str = match pricing_mode {
+            lib_blockchain::onramp::OraclePricingMode::LiveDerived => "Mode B (Live Derived)",
+            lib_blockchain::onramp::OraclePricingMode::GenesisReference => "Mode A (Genesis Reference)",
+        };
+        let cbe_usd_vwap = bc.onramp_state.cbe_usd_vwap(current_block);
+        // Count trades in the VWAP window for status reporting.
+        let window_start = current_block.saturating_sub(lib_blockchain::onramp::VWAP_WINDOW_BLOCKS);
+        let onramp_window_trade_count = bc.onramp_state.trades.iter()
+            .filter(|t| t.block_height >= window_start)
+            .count();
+        let onramp_window_usdc_volume: u128 = bc.onramp_state.trades.iter()
+            .filter(|t| t.block_height >= window_start)
+            .map(|t| t.usdc_amount)
+            .sum();
+
         let latest_price = bc
             .oracle_state
             .latest_finalized_price_at_or_before(current_epoch)
@@ -623,6 +650,8 @@ impl OracleHandler {
                     "epoch_id": p.epoch_id,
                     "sov_usd_price_atomic": p.sov_usd_price.to_string(),
                     "sov_usd_price": price_usd,
+                    "cbe_usd_price_atomic": p.cbe_usd_price.map(|v| v.to_string()),
+                    "cbe_usd_price": p.cbe_usd_price.map(Self::price_f64_from_atomic),
                     "epochs_since_finalization": epochs_since,
                     "is_fresh": epochs_since <= max_staleness,
                 })
@@ -638,6 +667,13 @@ impl OracleHandler {
             "latest_finalized_price": latest_price,
             "oracle_price_scale": ORACLE_PRICE_SCALE.to_string(),
             "max_price_staleness_epochs": bc.oracle_state.config.max_price_staleness_epochs,
+            "pricing_mode": pricing_mode_str,
+            "onramp_vwap_cbe_usd_atomic": cbe_usd_vwap.map(|v| v.to_string()),
+            "onramp_vwap_cbe_usd": cbe_usd_vwap.map(Self::price_f64_from_atomic),
+            "onramp_window_trade_count": onramp_window_trade_count,
+            "onramp_window_usdc_volume_atomic": onramp_window_usdc_volume.to_string(),
+            "onramp_min_trades_required": lib_blockchain::onramp::MIN_TRADES,
+            "onramp_min_volume_usdc_atomic": lib_blockchain::onramp::MIN_VOLUME_USDC.to_string(),
         });
 
         let bytes = match serde_json::to_vec(&body) {
