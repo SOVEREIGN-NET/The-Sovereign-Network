@@ -32,7 +32,7 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 
 use lib_blockchain::contracts::bonding_curve::{BondingCurveToken, Phase, PiecewiseLinearCurve};
-use lib_blockchain::contracts::bonding_curve::token::RESERVE_SPLIT_DIVISOR;
+use lib_blockchain::contracts::bonding_curve::token::{RESERVE_SPLIT_NUMERATOR, RESERVE_SPLIT_DENOMINATOR};
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::Blockchain;
 
@@ -296,9 +296,14 @@ impl BondingCurveApiHandler {
             ));
         }
 
-        // Calculate 20/80 split using the canonical constant
-        let to_reserve = req.sov_amount / RESERVE_SPLIT_DIVISOR;
-        let to_treasury = req.sov_amount - to_reserve;
+        // Calculate reserve/treasury split using canonical constants (2/5 to reserve, 3/5 to treasury).
+        // Use u128 for intermediate calculation to prevent overflow on large sov_amount.
+        let to_reserve = (req.sov_amount as u128)
+            .checked_mul(RESERVE_SPLIT_NUMERATOR as u128)
+            .and_then(|v| v.checked_div(RESERVE_SPLIT_DENOMINATOR as u128))
+            .and_then(|v| u64::try_from(v).ok())
+            .ok_or_else(|| anyhow::anyhow!("Reserve split calculation overflow"))?;
+        let to_treasury = req.sov_amount.saturating_sub(to_reserve);
 
         // Calculate CBE output using the contract's integer math
         let cbe_output = match cbe_token.calculate_buy(req.sov_amount) {
