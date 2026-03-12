@@ -1432,7 +1432,7 @@ impl Blockchain {
         use crate::contracts::bonding_curve::{BondingCurveToken, CurveType, Threshold, PiecewiseLinearCurve};
         use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
 
-        let token_id = Self::cbe_token_id();
+        let token_id = Self::derive_cbe_token_id();
 
         // Initialize CBE corporate equity token with 100B allocation (Issue #1843)
         // Must run before the bonding curve registry guard so that cbe_token is
