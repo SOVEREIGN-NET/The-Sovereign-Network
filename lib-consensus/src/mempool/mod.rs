@@ -47,7 +47,11 @@ impl MempoolTransaction {
             100
         };
 
-        (fee_per_byte * age_bonus * retry_penalty) / 100
+        // System transactions (fee=0, e.g. TokenTransfer) use a base score of 1
+        // so the age bonus accumulates and they are eventually included.
+        let base = if fee_per_byte == 0 { 1 } else { fee_per_byte };
+
+        (base * age_bonus * retry_penalty) / 100
     }
 
     /// Check if transaction should be retried (not in mempool too long)

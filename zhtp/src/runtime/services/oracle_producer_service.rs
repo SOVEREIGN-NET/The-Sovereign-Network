@@ -91,6 +91,7 @@ impl OracleProducerService {
         committee_members: &[[u8; 32]],
         validator_keypair: &KeyPair,
         fetched: Vec<OracleFetchedPrice>,
+        cbe_usd_price: Option<u128>,
     ) -> Result<Option<OraclePriceAttestation>, OracleProducerError> {
         let validator_pubkey = validator_keypair.public_key.key_id;
         if !committee_members
@@ -164,7 +165,7 @@ impl OracleProducerService {
         let mut attestation = OraclePriceAttestation {
             epoch_id,
             sov_usd_price: local_price,
-            cbe_usd_price: None,
+            cbe_usd_price,
             timestamp: current_timestamp,
             validator_pubkey,
             signature: Vec::new(),
@@ -246,6 +247,7 @@ mod tests {
                     sample("b", 202_000_000, now - 1),
                     sample("c", 198_000_000, now - 2),
                 ],
+                None,
             )
             .expect("attestation flow should succeed")
             .expect("must attest with valid sources");
@@ -273,6 +275,7 @@ mod tests {
                 sample("b", 202_000_000, now - 1),
                 sample("c", 198_000_000, now - 2),
             ],
+            None,
         );
 
         assert!(matches!(
@@ -302,6 +305,7 @@ mod tests {
                     // Single valid source remains -> abstain
                     sample("c", 201_000_000, now),
                 ],
+                None,
             )
             .expect("pipeline should not hard-fail");
 
@@ -349,6 +353,7 @@ mod tests {
                     sample("b", 202_000_000, now - 1),
                     sample("c", 198_000_000, now - 2),
                 ],
+                None,
             )
             .expect("pipeline should not hard-fail");
 
@@ -370,6 +375,7 @@ mod tests {
                     sample("b", 202_000_000, now + 2_000),
                     sample("c", 198_000_000, now + 3_000),
                 ],
+                None,
             )
             .expect("pipeline should not hard-fail");
 
@@ -394,6 +400,7 @@ mod tests {
                 sample("a", 200_000_000, now),
                 sample("b", 202_000_000, now - 1),
             ],
+            None,
         );
 
         // Should return error (not Ok(None))

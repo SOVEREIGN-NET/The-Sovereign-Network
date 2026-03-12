@@ -431,7 +431,8 @@ fn test_phase_transition_atomicity() {
 
         let _ = token.buy(buyer.clone(), 100_000_000_00u64, block, price);
         // Update oracle-driven graduation state for this block
-        let _ = token.check_graduation_with_oracle(price, block);
+        let ts = 1_700_000_000u64 + block;
+        let _ = token.check_graduation_with_oracle(price, ts, block, ts);
     }
 
     // After driving the oracle for multiple blocks, the token should be eligible to graduate

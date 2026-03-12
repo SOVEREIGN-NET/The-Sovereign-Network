@@ -19,6 +19,7 @@ pub mod edge_node_state;
 pub mod events;
 pub mod exchange;
 pub mod execution;
+pub mod onramp;
 pub mod fees;
 mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan module errors
 pub mod integration;
