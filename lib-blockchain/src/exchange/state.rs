@@ -1,6 +1,9 @@
 //! Exchange State
 //!
 //! Generic on-chain order book infrastructure.
+//! SOV is never traded externally — SOV/USDC pairs are unsupported in production.
+//! The `TradingPair::sov_usdc()` helper and related price-feed functions exist
+//! for legacy/test compatibility only; production code should not use them.
 //! CBE/USD on-ramp trades are tracked in `crate::onramp::OnRampState`.
 //!
 //! Note: `TradingPair::sov_usdc()` and the associated helpers below are retained
