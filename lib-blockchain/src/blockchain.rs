@@ -13588,7 +13588,7 @@ mod oracle_storage_migration_tests {
         let storage = BlockchainStorageV5::from_blockchain(&bc);
         println!(
             "Storage: pending_update = {:?}",
-            storage.oracle_state.committee.pending_update()
+            storage.v4.oracle_state.committee.pending_update()
         );
 
         let bc2 = storage.to_blockchain();
