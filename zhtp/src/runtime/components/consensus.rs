@@ -957,26 +957,25 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                 drop(blockchain);
 
                 // ZK proof generation (background — edge node sync falls back to headers if absent)
-                // Use try_write so proof generation never blocks the consensus read path.
+                // Never block consensus on proof generation: only generate if we can acquire
+                // the blockchain write lock immediately. If the lock is busy, skip this proof
+                // run; edge nodes can fall back to header-based sync.
                 {
                     let bc_arc = blockchain_arc.clone();
                     let block_for_proof = committed_block.clone();
                     tokio::spawn(async move {
-                        match bc_arc.try_write() {
-                            Ok(mut bc) => {
-                                if let Err(e) = bc.generate_proof_for_block(&block_for_proof).await {
-                                    warn!(
-                                        "Failed to generate recursive proof for block {}: {} — edge node sync falls back to headers",
-                                        block_for_proof.height(), e
-                                    );
-                                }
-                            }
-                            Err(_) => {
-                                debug!(
-                                    "Skipping recursive proof for block {}: blockchain lock busy (preserving consensus liveness)",
-                                    block_for_proof.height()
+                        if let Ok(mut bc) = bc_arc.try_write() {
+                            if let Err(e) = bc.generate_proof_for_block(&block_for_proof).await {
+                                warn!(
+                                    "Failed to generate recursive proof for block {}: {} — edge node sync falls back to headers",
+                                    block_for_proof.height(), e
                                 );
                             }
+                        } else {
+                            debug!(
+                                "Skipping recursive proof generation for block {}: blockchain lock is busy (preserving consensus liveness)",
+                                block_for_proof.height()
+                            );
                         }
                     });
                 }

@@ -296,9 +296,14 @@ impl BondingCurveApiHandler {
             ));
         }
 
-        // Calculate 40/60 split (RESERVE_SPLIT_NUMERATOR/DENOMINATOR = 2/5) using u128 to prevent overflow
-        let to_reserve = (req.sov_amount as u128 * RESERVE_SPLIT_NUMERATOR as u128 / RESERVE_SPLIT_DENOMINATOR as u128) as u64;
-        let to_treasury = req.sov_amount - to_reserve;
+        // Calculate reserve/treasury split using canonical constants (2/5 to reserve, 3/5 to treasury).
+        // Use u128 for intermediate calculation to prevent overflow on large sov_amount.
+        let to_reserve = (req.sov_amount as u128)
+            .checked_mul(RESERVE_SPLIT_NUMERATOR as u128)
+            .and_then(|v| v.checked_div(RESERVE_SPLIT_DENOMINATOR as u128))
+            .and_then(|v| u64::try_from(v).ok())
+            .ok_or_else(|| anyhow::anyhow!("Reserve split calculation overflow"))?;
+        let to_treasury = req.sov_amount.saturating_sub(to_reserve);
 
         // Calculate CBE output using the contract's integer math
         let cbe_output = match cbe_token.calculate_buy(req.sov_amount) {

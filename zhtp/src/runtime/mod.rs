@@ -2986,7 +2986,8 @@ impl RuntimeOrchestrator {
 
         // Wire blockchain to consensus BEFORE starting the consensus component,
         // since ConsensusComponent::start() reads self.blockchain to load the
-        // canonical validator set.
+        // canonical validator set. Wiring is a hard prerequisite — if it fails,
+        // we must not start consensus to avoid noisy repeated failures.
         if component_id == ComponentId::Consensus {
             match self.wire_blockchain_to_consensus().await {
                 Ok(()) => {
@@ -3000,7 +3001,11 @@ impl RuntimeOrchestrator {
                             health_info.error_count += 1;
                         }
                     }
-                    error!("Failed to wire blockchain to consensus before start: {}", e);
+                    error!(
+                        "Failed to wire blockchain to consensus before start: {}. \
+                         Consensus component will not be started.",
+                        e
+                    );
                     return Err(e);
                 }
             }
