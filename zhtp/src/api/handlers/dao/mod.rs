@@ -2073,6 +2073,106 @@ impl DaoHandler {
     }
 
     // =========================================================================
+    // Entity Registry handlers (TSR)
+    // =========================================================================
+
+    /// POST /api/v1/dao/entity-registry/init
+    ///
+    /// Initialize the entity registry with CBE and Nonprofit treasury addresses.
+    /// One-time, irreversible. Requires Bootstrap Council threshold signatures.
+    async fn handle_entity_registry_init(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct InitRequest {
+            /// Hex-encoded bincode of a signed InitEntityRegistry transaction
+            /// (built by lib-client's build_init_entity_registry_tx)
+            signed_tx: String,
+        }
+
+        let req: InitRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        let tx_bytes = hex::decode(&req.signed_tx)
+            .map_err(|_| anyhow::anyhow!("signed_tx must be hex-encoded"))?;
+
+        let tx = bincode::deserialize::<lib_blockchain::Transaction>(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize transaction: {}", e))?;
+
+        if tx.transaction_type
+            != lib_blockchain::types::transaction_type::TransactionType::InitEntityRegistry
+        {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "Transaction must be of type InitEntityRegistry".to_string(),
+            ));
+        }
+
+        let tx_hash = tx.hash();
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        // Check if already initialized — fail fast before touching the mempool
+        if blockchain
+            .entity_registry
+            .as_ref()
+            .map(|r| r.is_initialized())
+            .unwrap_or(false)
+        {
+            return Ok(create_error_response(
+                ZhtpStatus::Conflict,
+                "Entity registry already initialized".to_string(),
+            ));
+        }
+
+        // Submit to mempool — block processing enforces council authorization
+        match blockchain.add_pending_transaction(tx) {
+            Ok(()) => {
+                tracing::info!("InitEntityRegistry tx {} accepted to mempool", tx_hash);
+                create_json_response(json!({
+                    "status": "accepted",
+                    "transaction_hash": tx_hash.to_string(),
+                    "message": "InitEntityRegistry transaction submitted; will be applied on next block",
+                }))
+            }
+            Err(e) => Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                format!("Transaction rejected: {}", e),
+            )),
+        }
+    }
+
+    /// GET /api/v1/dao/entity-registry/status
+    async fn handle_entity_registry_status(&self) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let (initialized, cbe_treasury, nonprofit_treasury) =
+            if let Some(ref registry) = blockchain.entity_registry {
+                let initialized = registry.is_initialized();
+                let cbe = registry
+                    .cbe_treasury()
+                    .ok()
+                    .map(|pk| hex::encode(pk.as_bytes()));
+                let nonprofit = registry
+                    .nonprofit_treasury()
+                    .ok()
+                    .map(|pk| hex::encode(pk.as_bytes()));
+                (initialized, cbe, nonprofit)
+            } else {
+                (false, None, None)
+            };
+
+        create_json_response(json!({
+            "status": "success",
+            "entity_registry": {
+                "initialized": initialized,
+                "cbe_treasury": cbe_treasury,
+                "nonprofit_treasury": nonprofit_treasury,
+            }
+        }))
+    }
+
+    // =========================================================================
     // Emergency state handlers (dao-2)
     // =========================================================================
 
@@ -2707,6 +2807,16 @@ impl ZhtpRequestHandler for DaoHandler {
                 .map_err(anyhow::Error::from),
             (ZhtpMethod::Post, ["api", "v1", "dao", "council", "register"]) => self
                 .handle_register_council_member(&request)
+                .await
+                .map_err(anyhow::Error::from),
+
+            // Entity Registry endpoints (TSR)
+            (ZhtpMethod::Post, ["api", "v1", "dao", "entity-registry", "init"]) => self
+                .handle_entity_registry_init(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Get, ["api", "v1", "dao", "entity-registry", "status"]) => self
+                .handle_entity_registry_status()
                 .await
                 .map_err(anyhow::Error::from),
 

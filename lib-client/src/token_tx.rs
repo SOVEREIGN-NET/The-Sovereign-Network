@@ -317,6 +317,7 @@ pub fn build_contract_transaction(
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
     };
 
     eprintln!("[contract_tx] Chain ID: {}", chain_id);

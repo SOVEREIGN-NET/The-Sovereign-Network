@@ -277,6 +277,15 @@ pub struct Blockchain {
     pub council_threshold: u8,
 
     // =========================================================================
+    // Entity Registry (TSR — Treasury Signer Registration)
+    // =========================================================================
+    /// CBE and Nonprofit treasury address registry.
+    /// None until initialized via InitEntityRegistry transaction.
+    /// Immutable after initialization.
+    #[serde(default)]
+    pub entity_registry: Option<crate::contracts::governance::EntityRegistry>,
+
+    // =========================================================================
     // DAO Treasury Execution (dao-2)
     // =========================================================================
     /// SOV spent per epoch: epoch_number → cumulative_amount
@@ -575,6 +584,7 @@ impl TransactionV1 {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 }
@@ -717,6 +727,7 @@ impl BlockchainV1 {
             governance_phase: crate::dao::GovernancePhase::default(),
             council_members: Vec::new(),
             council_threshold: default_council_threshold(),
+            entity_registry: None,
             treasury_epoch_spend: HashMap::new(),
             treasury_epoch_length_blocks: default_treasury_epoch_length(),
             emergency_state: false,
@@ -1180,6 +1191,7 @@ impl BlockchainStorageV3 {
             governance_phase: self.governance_phase,
             council_members: self.council_members,
             council_threshold: self.council_threshold,
+            entity_registry: None, // Not stored in V3; populated when InitEntityRegistry tx is processed
 
             // DAO Treasury Execution
             treasury_epoch_spend: self.treasury_epoch_spend,
@@ -1243,22 +1255,11 @@ struct BlockchainStorageV4 {
 }
 
 impl BlockchainStorageV4 {
-    fn from_blockchain(bc: &Blockchain) -> Self {
-        Self {
-            v3: BlockchainStorageV3::from_blockchain(bc),
-            oracle_state: bc.oracle_state.clone(),
-            exchange_state: bc.exchange_state.clone(),
-            oracle_slash_events: bc.oracle_slash_events.clone(),
-            oracle_slashing_config: bc.oracle_slashing_config.clone(),
-            oracle_banned_validators: bc.oracle_banned_validators.clone(),
-            last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
-        }
-    }
-
     fn to_blockchain(self) -> Blockchain {
         let mut blockchain = self.v3.to_blockchain();
         blockchain.oracle_state = self.oracle_state;
         blockchain.exchange_state = self.exchange_state;
+        // onramp_state defaults to empty — no on-ramp trades in legacy files
         blockchain.oracle_slash_events = self.oracle_slash_events;
         blockchain.oracle_slashing_config = self.oracle_slashing_config;
         blockchain.oracle_banned_validators = self.oracle_banned_validators;
@@ -1269,25 +1270,55 @@ impl BlockchainStorageV4 {
 
 /// Stable storage format V5 for blockchain serialization.
 ///
-/// V5 adds onramp_state to the V4 format for CBE/USD VWAP pricing.
+/// V5 extends V4 with `onramp_state` for CBE/USD VWAP-based oracle pricing (Mode B).
+/// Fields must remain append-only after this point — bincode is positional.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BlockchainStorageV5 {
-    pub v4: BlockchainStorageV4,
+    pub v3: BlockchainStorageV3,
+    #[serde(default)]
+    pub oracle_state: crate::oracle::OracleState,
+    #[serde(default)]
+    pub exchange_state: crate::exchange::ExchangeState,
     #[serde(default)]
     pub onramp_state: crate::onramp::OnRampState,
+    #[serde(default)]
+    pub oracle_slash_events: Vec<crate::oracle::OracleSlashEvent>,
+    #[serde(default)]
+    pub oracle_slashing_config: crate::oracle::OracleSlashingConfig,
+    #[serde(default)]
+    pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
+    #[serde(default)]
+    pub last_oracle_epoch_processed: u64,
+    // TSR: entity registry — append-only, defaults to None for old storage files
+    #[serde(default)]
+    pub entity_registry: Option<crate::contracts::governance::EntityRegistry>,
 }
 
 impl BlockchainStorageV5 {
     fn from_blockchain(bc: &Blockchain) -> Self {
         Self {
-            v4: BlockchainStorageV4::from_blockchain(bc),
+            v3: BlockchainStorageV3::from_blockchain(bc),
+            oracle_state: bc.oracle_state.clone(),
+            exchange_state: bc.exchange_state.clone(),
             onramp_state: bc.onramp_state.clone(),
+            oracle_slash_events: bc.oracle_slash_events.clone(),
+            oracle_slashing_config: bc.oracle_slashing_config.clone(),
+            oracle_banned_validators: bc.oracle_banned_validators.clone(),
+            last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
+            entity_registry: bc.entity_registry.clone(),
         }
     }
 
     fn to_blockchain(self) -> Blockchain {
-        let mut blockchain = self.v4.to_blockchain();
+        let mut blockchain = self.v3.to_blockchain();
+        blockchain.oracle_state = self.oracle_state;
+        blockchain.exchange_state = self.exchange_state;
         blockchain.onramp_state = self.onramp_state;
+        blockchain.oracle_slash_events = self.oracle_slash_events;
+        blockchain.oracle_slashing_config = self.oracle_slashing_config;
+        blockchain.oracle_banned_validators = self.oracle_banned_validators;
+        blockchain.last_oracle_epoch_processed = self.last_oracle_epoch_processed;
+        blockchain.entity_registry = self.entity_registry;
         blockchain
     }
 }
@@ -1377,6 +1408,7 @@ impl Blockchain {
             governance_phase: crate::dao::GovernancePhase::default(),
             council_members: Vec::new(),
             council_threshold: default_council_threshold(),
+            entity_registry: None,
             treasury_epoch_spend: HashMap::new(),
             treasury_epoch_length_blocks: default_treasury_epoch_length(),
             emergency_state: false,
@@ -1429,7 +1461,9 @@ impl Blockchain {
     /// Issue #1842: Piecewise Linear Bonding Curve Mathematics
     /// Issue #1843: Genesis Allocation - 100B Supply Distribution
     fn initialize_cbe_genesis(&mut self) {
-        use crate::contracts::bonding_curve::{BondingCurveToken, CurveType, Threshold, PiecewiseLinearCurve};
+        use crate::contracts::bonding_curve::{
+            BondingCurveToken, CurveType, PiecewiseLinearCurve, Threshold,
+        };
         use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
 
         let token_id = Self::derive_cbe_token_id();
@@ -1474,7 +1508,10 @@ impl Blockchain {
                 if let Err(e) = self.bonding_curve_registry.register(token) {
                     warn!("Failed to register CBE genesis token: {}", e);
                 } else {
-                    info!("CBE genesis bonding curve token initialized: {}", hex::encode(&token_id[..8]));
+                    info!(
+                        "CBE genesis bonding curve token initialized: {}",
+                        hex::encode(&token_id[..8])
+                    );
                 }
             }
             Err(e) => {
@@ -1588,7 +1625,8 @@ impl Blockchain {
 
     /// Get the genesis block timestamp
     fn get_genesis_timestamp(&self) -> u64 {
-        self.blocks.first()
+        self.blocks
+            .first()
             .map(|b| b.header.timestamp)
             .unwrap_or(1_700_000_000)
     }
@@ -1604,7 +1642,8 @@ impl Blockchain {
     /// * `epoch` - Oracle epoch number
     /// * `timestamp` - Current block timestamp (for freshness tracking)
     pub fn update_cbe_usd_oracle_price(&mut self, price_8dec: u128, epoch: u64, timestamp: u64) {
-        self.token_pricing_state.update_cbe_usd_price(price_8dec, epoch, timestamp);
+        self.token_pricing_state
+            .update_cbe_usd_price(price_8dec, epoch, timestamp);
 
         if self.token_pricing_state.dynamic_pricing_active {
             info!(
@@ -1648,9 +1687,10 @@ impl Blockchain {
             // CBE token current_price() returns SOV-per-CBE in 8-decimal fixed point
             // This is exactly the cbe_sov_ratio we need (no additional calculation needed)
             let cbe_sov_ratio_8dec = cbe_token.current_price() as u128;
-            
+
             if cbe_sov_ratio_8dec > 0 {
-                self.token_pricing_state.update_cbe_sov_ratio(cbe_sov_ratio_8dec, timestamp);
+                self.token_pricing_state
+                    .update_cbe_sov_ratio(cbe_sov_ratio_8dec, timestamp);
             }
         }
     }
@@ -1661,7 +1701,9 @@ impl Blockchain {
     /// Price is in 8-decimal fixed-point (same scale as ORACLE_PRICE_SCALE).
     pub fn get_cbe_curve_price_atomic(&self) -> Option<u64> {
         let cbe_token_id = Self::derive_cbe_token_id();
-        self.bonding_curve_registry.get(&cbe_token_id).map(|t| t.current_price())
+        self.bonding_curve_registry
+            .get(&cbe_token_id)
+            .map(|t| t.current_price())
     }
 
     /// Get current SOV price information for API
@@ -1669,7 +1711,7 @@ impl Blockchain {
         let price_8dec = self.token_pricing_state.get_sov_price_8dec();
         let price_cents = crate::pricing::PricingCalculator::to_cents(price_8dec);
         let components = self.token_pricing_state.get_sov_components();
-        
+
         crate::pricing::TokenPrice {
             token_id: "sov".to_string(),
             symbol: "SOV".to_string(),
@@ -1688,26 +1730,26 @@ impl Blockchain {
 
         let cbe_token = self.bonding_curve_registry.get(&cbe_token_id)?;
         let sov_price_8dec = self.token_pricing_state.get_sov_price_8dec();
-        
-        // Calculate CBE price in USD
-        let (price_cents, components) = self.token_pricing_state.calculate_cbe_price(
-            sov_price_8dec,
-            cbe_token.current_price()
-        );
 
-        let (price_mode, price_source, oracle_confidence) = if self.token_pricing_state.cbe_usd_price.is_some() {
-            (
-                crate::pricing::PricingMode::PostGraduation,
-                crate::pricing::PriceSource::Oracle,
-                Some(0.95), // High confidence when oracle provides price
-            )
-        } else {
-            (
-                crate::pricing::PricingMode::PreGraduation,
-                crate::pricing::PriceSource::BondingCurve,
-                None,
-            )
-        };
+        // Calculate CBE price in USD
+        let (price_cents, components) = self
+            .token_pricing_state
+            .calculate_cbe_price(sov_price_8dec, cbe_token.current_price());
+
+        let (price_mode, price_source, oracle_confidence) =
+            if self.token_pricing_state.cbe_usd_price.is_some() {
+                (
+                    crate::pricing::PricingMode::PostGraduation,
+                    crate::pricing::PriceSource::Oracle,
+                    Some(0.95), // High confidence when oracle provides price
+                )
+            } else {
+                (
+                    crate::pricing::PricingMode::PreGraduation,
+                    crate::pricing::PriceSource::BondingCurve,
+                    None,
+                )
+            };
 
         Some(crate::pricing::CbePriceInfo {
             price_usd_cents: price_cents,
@@ -2289,6 +2331,7 @@ impl Blockchain {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         };
 
         // Add genesis transaction to genesis block
@@ -2818,6 +2861,7 @@ impl Blockchain {
         // Process identity transactions
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
+        self.process_entity_registry_transactions(&block)?;
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
         self.process_validator_registration_transactions(&block);
@@ -2945,6 +2989,7 @@ impl Blockchain {
         // Process identity transactions
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
+        self.process_entity_registry_transactions(&block)?;
 
         // Skip token/contract processing when using BlockExecutor - it handles these
         if !self.has_executor() {
@@ -5548,6 +5593,79 @@ impl Blockchain {
     }
 
     // ========================================================================
+    // Entity Registry (Treasury Signer Registration)
+    // ========================================================================
+
+    /// Process InitEntityRegistry transactions in a block.
+    ///
+    /// Enforces one-time initialization: once the registry is set, subsequent
+    /// InitEntityRegistry transactions are rejected (logged as warnings, not errors,
+    /// so the block still commits).
+    pub fn process_entity_registry_transactions(&mut self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            if tx.transaction_type
+                != crate::types::transaction_type::TransactionType::InitEntityRegistry
+            {
+                continue;
+            }
+            let tx_hash_hex = hex::encode(tx.hash().as_bytes());
+            let data = match &tx.init_entity_registry_data {
+                Some(d) => d,
+                None => {
+                    warn!(
+                        "InitEntityRegistry tx {} has no payload — skipping",
+                        tx_hash_hex
+                    );
+                    continue;
+                }
+            };
+
+            // Enforce Bootstrap Council authorization: the transaction signer must be
+            // a registered council member.
+            let signer_pk = &tx.signature.public_key.dilithium_pk;
+            let is_council = self
+                .get_identity_by_public_key(signer_pk)
+                .map(|id| self.is_council_member(&id.did))
+                .unwrap_or(false);
+            if !is_council {
+                warn!(
+                    "InitEntityRegistry tx {} rejected: signer is not a Bootstrap Council member",
+                    tx_hash_hex
+                );
+                continue;
+            }
+
+            let registry = self
+                .entity_registry
+                .get_or_insert_with(crate::contracts::governance::EntityRegistry::new);
+
+            if registry.is_initialized() {
+                warn!(
+                    "InitEntityRegistry tx {} rejected: registry already initialized",
+                    tx_hash_hex
+                );
+                continue;
+            }
+
+            match registry.init(data.cbe_treasury.clone(), data.nonprofit_treasury.clone()) {
+                Ok(()) => {
+                    info!(
+                        "EntityRegistry initialized at height {} (tx {})",
+                        block.header.height, tx_hash_hex
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "InitEntityRegistry tx {} failed: {} — skipping",
+                        tx_hash_hex, e
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // ========================================================================
     // Validator registration and management
     // ========================================================================
 
@@ -6539,15 +6657,24 @@ impl Blockchain {
                             steepness: deploy.curve_param,
                         },
                         3 => crate::contracts::bonding_curve::CurveType::PiecewiseLinear(
-                            crate::contracts::bonding_curve::PiecewiseLinearCurve::cbe_default()
+                            crate::contracts::bonding_curve::PiecewiseLinearCurve::cbe_default(),
                         ),
-                        _ => return Err(anyhow::anyhow!("Invalid curve type: {}", deploy.curve_type)),
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "Invalid curve type: {}",
+                                deploy.curve_type
+                            ))
+                        }
                     };
 
                     // Build Threshold from deploy data
                     let threshold = match deploy.threshold_type {
-                        0 => crate::contracts::bonding_curve::Threshold::ReserveAmount(deploy.threshold_value),
-                        1 => crate::contracts::bonding_curve::Threshold::SupplyAmount(deploy.threshold_value),
+                        0 => crate::contracts::bonding_curve::Threshold::ReserveAmount(
+                            deploy.threshold_value,
+                        ),
+                        1 => crate::contracts::bonding_curve::Threshold::SupplyAmount(
+                            deploy.threshold_value,
+                        ),
                         2 => crate::contracts::bonding_curve::Threshold::TimeAndReserve {
                             min_time_seconds: deploy.threshold_time_seconds.unwrap_or(0),
                             min_reserve: deploy.threshold_value,
@@ -6556,11 +6683,21 @@ impl Blockchain {
                             min_time_seconds: deploy.threshold_time_seconds.unwrap_or(0),
                             min_supply: deploy.threshold_value,
                         },
-                        _ => return Err(anyhow::anyhow!("Invalid threshold type: {}", deploy.threshold_type)),
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "Invalid threshold type: {}",
+                                deploy.threshold_type
+                            ))
+                        }
                     };
 
                     // Generate deterministic token_id
-                    let token_id_input = format!("{}:{}:{}", deploy.name, deploy.symbol, hex::encode(&deploy.creator));
+                    let token_id_input = format!(
+                        "{}:{}:{}",
+                        deploy.name,
+                        deploy.symbol,
+                        hex::encode(&deploy.creator)
+                    );
                     let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
 
                     // Check for duplicate token_id
@@ -6593,16 +6730,18 @@ impl Blockchain {
                     .map_err(|e| anyhow::anyhow!("BondingCurveDeploy failed: {}", e))?;
 
                     // Register in bonding curve registry
-                    self.bonding_curve_registry
-                        .register(token)
-                        .map_err(|e| anyhow::anyhow!("BondingCurveDeploy registration failed: {}", e))?;
+                    self.bonding_curve_registry.register(token).map_err(|e| {
+                        anyhow::anyhow!("BondingCurveDeploy registration failed: {}", e)
+                    })?;
 
                     // Persist to storage if available
                     if let Some(store) = &self.store {
                         if let Some(registered) = self.bonding_curve_registry.get(&token_id) {
                             let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                             let storage_token_id = crate::storage::TokenId(token_id);
-                            if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, registered) {
+                            if let Err(e) =
+                                store_ref.put_bonding_curve_token(&storage_token_id, registered)
+                            {
                                 warn!("Failed to persist bonding curve token after deploy: {}", e);
                             }
                         }
@@ -6632,7 +6771,12 @@ impl Blockchain {
 
                     // Execute buy
                     let (token_amount, _event) = token
-                        .buy(buyer_pk.clone(), buy.stable_amount, block.height(), block.header.timestamp)
+                        .buy(
+                            buyer_pk.clone(),
+                            buy.stable_amount,
+                            block.height(),
+                            block.header.timestamp,
+                        )
                         .map_err(|e| anyhow::anyhow!("BondingCurveBuy failed: {}", e))?;
 
                     // Validate slippage protection
@@ -6648,7 +6792,8 @@ impl Blockchain {
                     if let Some(store) = &self.store {
                         let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                         let storage_token_id = crate::storage::TokenId(buy.token_id);
-                        if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, token) {
+                        if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, token)
+                        {
                             warn!("Failed to persist bonding curve token after buy: {}", e);
                         }
                     }
@@ -6677,7 +6822,12 @@ impl Blockchain {
 
                     // Execute sell
                     let (stable_amount, _event) = token
-                        .sell(seller_pk.clone(), sell.token_amount, block.height(), block.header.timestamp)
+                        .sell(
+                            seller_pk.clone(),
+                            sell.token_amount,
+                            block.height(),
+                            block.header.timestamp,
+                        )
                         .map_err(|e| anyhow::anyhow!("BondingCurveSell failed: {}", e))?;
 
                     // Validate slippage protection
@@ -6693,7 +6843,8 @@ impl Blockchain {
                     if let Some(store) = &self.store {
                         let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                         let storage_token_id = crate::storage::TokenId(sell.token_id);
-                        if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, token) {
+                        if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, token)
+                        {
                             warn!("Failed to persist bonding curve token after sell: {}", e);
                         }
                     }
@@ -6707,7 +6858,9 @@ impl Blockchain {
                     // Get graduator public key from transaction signature
                     let graduator_pk = transaction.signature.public_key.clone();
                     if graduator_pk.key_id != graduate.graduator {
-                        return Err(anyhow::anyhow!("BondingCurveGraduate graduator key mismatch"));
+                        return Err(anyhow::anyhow!(
+                            "BondingCurveGraduate graduator key mismatch"
+                        ));
                     }
 
                     // For CBE token, validate oracle graduation gate BEFORE mutable borrow
@@ -6717,10 +6870,13 @@ impl Blockchain {
                         .get(&graduate.token_id)
                         .map(|t| t.symbol == CBE_SYMBOL && !t.phase.is_graduated())
                         .unwrap_or(false);
-                    
+
                     if is_cbe {
-                        self.validate_cbe_graduation_oracle_gate(graduate.token_id, block.header.timestamp)
-                            .map_err(|e| anyhow::anyhow!("CBE graduation gate check failed: {}", e))?;
+                        self.validate_cbe_graduation_oracle_gate(
+                            graduate.token_id,
+                            block.header.timestamp,
+                        )
+                        .map_err(|e| anyhow::anyhow!("CBE graduation gate check failed: {}", e))?;
                     }
 
                     // Get mutable reference to token
@@ -6736,16 +6892,28 @@ impl Blockchain {
 
                     // Update registry phase
                     self.bonding_curve_registry
-                        .update_phase(&graduate.token_id, crate::contracts::bonding_curve::Phase::Graduated)
-                        .map_err(|e| anyhow::anyhow!("BondingCurveGraduate phase update failed: {}", e))?;
+                        .update_phase(
+                            &graduate.token_id,
+                            crate::contracts::bonding_curve::Phase::Graduated,
+                        )
+                        .map_err(|e| {
+                            anyhow::anyhow!("BondingCurveGraduate phase update failed: {}", e)
+                        })?;
 
                     // Persist to storage if available
                     if let Some(store) = &self.store {
-                        if let Some(updated_token) = self.bonding_curve_registry.get(&graduate.token_id) {
+                        if let Some(updated_token) =
+                            self.bonding_curve_registry.get(&graduate.token_id)
+                        {
                             let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                             let storage_token_id = crate::storage::TokenId(graduate.token_id);
-                            if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, updated_token) {
-                                warn!("Failed to persist bonding curve token after graduate: {}", e);
+                            if let Err(e) =
+                                store_ref.put_bonding_curve_token(&storage_token_id, updated_token)
+                            {
+                                warn!(
+                                    "Failed to persist bonding curve token after graduate: {}",
+                                    e
+                                );
                             }
                         }
                     }
@@ -11877,27 +12045,21 @@ impl Blockchain {
                             blockchain.onramp_state = crate::onramp::OnRampState::default();
                             blockchain
                         }
-                        Err(storage_err) => {
-                            info!(
-                                "📂 BlockchainStorageV4 failed, trying direct format: {}",
-                                storage_err
-                            );
-                            match bincode::deserialize::<Blockchain>(data) {
-                                Ok(bc) => {
-                                    info!("📂 Loaded v4 with direct Blockchain format");
-                                    bc
-                                }
-                                Err(direct_err) => {
-                                    error!("❌ Failed to deserialize v4 blockchain:");
-                                    error!("   BlockchainStorageV4 error: {}", storage_err);
-                                    error!("   Direct format error: {}", direct_err);
-                                    return Err(anyhow::anyhow!(
-                                        "Failed to deserialize v4 blockchain: {}",
-                                        storage_err
-                                    ));
-                                }
+                        Err(storage_err) => match bincode::deserialize::<Blockchain>(data) {
+                            Ok(bc) => {
+                                info!("📂 Loaded v4 with direct Blockchain format");
+                                bc
                             }
-                        }
+                            Err(direct_err) => {
+                                error!("❌ Failed to deserialize v4 blockchain:");
+                                error!("   BlockchainStorageV4 error: {}", storage_err);
+                                error!("   Direct format error: {}", direct_err);
+                                return Err(anyhow::anyhow!(
+                                    "Failed to deserialize v4 blockchain: {}",
+                                    storage_err
+                                ));
+                            }
+                        },
                     }
                 }
                 3 => {
@@ -13117,6 +13279,7 @@ mod replay_contract_execution_tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -13299,6 +13462,7 @@ mod replay_contract_execution_tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -13348,6 +13512,7 @@ mod replay_contract_execution_tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -13588,7 +13753,7 @@ mod oracle_storage_migration_tests {
         let storage = BlockchainStorageV5::from_blockchain(&bc);
         println!(
             "Storage: pending_update = {:?}",
-            storage.v4.oracle_state.committee.pending_update()
+            storage.oracle_state.committee.pending_update()
         );
 
         let bc2 = storage.to_blockchain();
@@ -14590,27 +14755,29 @@ mod cbe_graduation_oracle_gate_tests {
     }
 }
 
-
 #[cfg(test)]
 mod cbe_genesis_allocation_tests {
     use super::*;
     use crate::contracts::tokens::{
-        CBE_TOTAL_SUPPLY, CBE_COMPENSATION_POOL, CBE_OPERATIONAL_TREASURY,
-        CBE_PERFORMANCE_INCENTIVES, CBE_STRATEGIC_RESERVES, VestingPool
+        VestingPool, CBE_COMPENSATION_POOL, CBE_OPERATIONAL_TREASURY, CBE_PERFORMANCE_INCENTIVES,
+        CBE_STRATEGIC_RESERVES, CBE_TOTAL_SUPPLY,
     };
 
     #[test]
     fn test_cbe_token_initialized_at_genesis() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
-        
+
         // CBE token should be initialized
-        assert!(blockchain.cbe_token.is_initialized(), "CBE token should be initialized at genesis");
+        assert!(
+            blockchain.cbe_token.is_initialized(),
+            "CBE token should be initialized at genesis"
+        );
     }
 
     #[test]
     fn test_cbe_total_supply_is_100b() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
-        
+
         assert_eq!(blockchain.cbe_token.total_supply(), CBE_TOTAL_SUPPLY);
         assert_eq!(blockchain.cbe_token.total_supply(), 100_000_000_000);
     }
@@ -14618,86 +14785,114 @@ mod cbe_genesis_allocation_tests {
     #[test]
     fn test_cbe_compensation_pool_allocation() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
-        
+
         // Compensation pool address is [0x01; 32]
         let compensation_addr = PublicKey {
             dilithium_pk: vec![],
             kyber_pk: vec![],
             key_id: [0x01; 32],
         };
-        
-        assert_eq!(blockchain.cbe_token.balance_of(&compensation_addr), CBE_COMPENSATION_POOL);
-        assert_eq!(blockchain.cbe_token.balance_of(&compensation_addr), 40_000_000_000);
+
+        assert_eq!(
+            blockchain.cbe_token.balance_of(&compensation_addr),
+            CBE_COMPENSATION_POOL
+        );
+        assert_eq!(
+            blockchain.cbe_token.balance_of(&compensation_addr),
+            40_000_000_000
+        );
     }
 
     #[test]
     fn test_cbe_operational_treasury_allocation() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
-        
+
         let operational_addr = PublicKey {
             dilithium_pk: vec![],
             kyber_pk: vec![],
             key_id: [0x02; 32],
         };
-        
-        assert_eq!(blockchain.cbe_token.balance_of(&operational_addr), CBE_OPERATIONAL_TREASURY);
-        assert_eq!(blockchain.cbe_token.balance_of(&operational_addr), 30_000_000_000);
+
+        assert_eq!(
+            blockchain.cbe_token.balance_of(&operational_addr),
+            CBE_OPERATIONAL_TREASURY
+        );
+        assert_eq!(
+            blockchain.cbe_token.balance_of(&operational_addr),
+            30_000_000_000
+        );
     }
 
     #[test]
     fn test_cbe_performance_incentives_allocation() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
-        
+
         let performance_addr = PublicKey {
             dilithium_pk: vec![],
             kyber_pk: vec![],
             key_id: [0x03; 32],
         };
-        
-        assert_eq!(blockchain.cbe_token.balance_of(&performance_addr), CBE_PERFORMANCE_INCENTIVES);
-        assert_eq!(blockchain.cbe_token.balance_of(&performance_addr), 20_000_000_000);
+
+        assert_eq!(
+            blockchain.cbe_token.balance_of(&performance_addr),
+            CBE_PERFORMANCE_INCENTIVES
+        );
+        assert_eq!(
+            blockchain.cbe_token.balance_of(&performance_addr),
+            20_000_000_000
+        );
     }
 
     #[test]
     fn test_cbe_strategic_reserves_allocation() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
-        
+
         let strategic_addr = PublicKey {
             dilithium_pk: vec![],
             kyber_pk: vec![],
             key_id: [0x04; 32],
         };
-        
-        assert_eq!(blockchain.cbe_token.balance_of(&strategic_addr), CBE_STRATEGIC_RESERVES);
-        assert_eq!(blockchain.cbe_token.balance_of(&strategic_addr), 10_000_000_000);
+
+        assert_eq!(
+            blockchain.cbe_token.balance_of(&strategic_addr),
+            CBE_STRATEGIC_RESERVES
+        );
+        assert_eq!(
+            blockchain.cbe_token.balance_of(&strategic_addr),
+            10_000_000_000
+        );
     }
 
     #[test]
     fn test_cbe_vesting_schedules_created() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
-        
+
         // Operational should have vesting
         let operational_addr = PublicKey {
             dilithium_pk: vec![],
             kyber_pk: vec![],
             key_id: [0x02; 32],
         };
-        let operational_schedules = blockchain.cbe_token.get_vesting_schedules(&operational_addr);
+        let operational_schedules = blockchain
+            .cbe_token
+            .get_vesting_schedules(&operational_addr);
         assert_eq!(operational_schedules.len(), 1);
         assert_eq!(operational_schedules[0].pool, VestingPool::Operational);
         assert_eq!(operational_schedules[0].total_amount, 30_000_000_000);
-        
+
         // Performance should have vesting
         let performance_addr = PublicKey {
             dilithium_pk: vec![],
             kyber_pk: vec![],
             key_id: [0x03; 32],
         };
-        let performance_schedules = blockchain.cbe_token.get_vesting_schedules(&performance_addr);
+        let performance_schedules = blockchain
+            .cbe_token
+            .get_vesting_schedules(&performance_addr);
         assert_eq!(performance_schedules.len(), 1);
         assert_eq!(performance_schedules[0].pool, VestingPool::Performance);
         assert_eq!(performance_schedules[0].total_amount, 20_000_000_000);
-        
+
         // Strategic should have vesting
         let strategic_addr = PublicKey {
             dilithium_pk: vec![],
@@ -14713,26 +14908,32 @@ mod cbe_genesis_allocation_tests {
     #[test]
     fn test_cbe_compensation_no_vesting() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
-        
+
         // Compensation pool should NOT have vesting (immediately available)
         let compensation_addr = PublicKey {
             dilithium_pk: vec![],
             kyber_pk: vec![],
             key_id: [0x01; 32],
         };
-        let compensation_schedules = blockchain.cbe_token.get_vesting_schedules(&compensation_addr);
-        assert_eq!(compensation_schedules.len(), 0, "Compensation pool should have no vesting");
+        let compensation_schedules = blockchain
+            .cbe_token
+            .get_vesting_schedules(&compensation_addr);
+        assert_eq!(
+            compensation_schedules.len(),
+            0,
+            "Compensation pool should have no vesting"
+        );
     }
 
     #[test]
     fn test_cbe_bonding_curve_starts_with_zero_supply() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
-        
+
         // Find the CBE bonding curve token
         use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let token_id = {
             let mut hasher = DefaultHasher::new();
             CBE_NAME.hash(&mut hasher);
@@ -14745,27 +14946,35 @@ mod cbe_genesis_allocation_tests {
             }
             id
         };
-        
-        let cbe_curve_token = blockchain.bonding_curve_registry.get(&token_id)
+
+        let cbe_curve_token = blockchain
+            .bonding_curve_registry
+            .get(&token_id)
             .expect("CBE bonding curve token should exist");
-        
+
         // Bonding curve should start with 0 circulating supply
-        assert_eq!(cbe_curve_token.total_supply, 0, "CBE bonding curve should start with 0 circulating supply");
+        assert_eq!(
+            cbe_curve_token.total_supply, 0,
+            "CBE bonding curve should start with 0 circulating supply"
+        );
     }
 
     #[test]
     fn test_cbe_minting_disabled() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
-        
+
         let test_addr = PublicKey {
             dilithium_pk: vec![],
             kyber_pk: vec![],
             key_id: [0x99; 32],
         };
-        
+
         // Attempt to mint should fail
         let result = blockchain.cbe_token.mint(&test_addr, 1000);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Minting is disabled after initialization");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Minting is disabled after initialization"
+        );
     }
 }

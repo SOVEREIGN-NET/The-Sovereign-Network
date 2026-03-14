@@ -104,6 +104,7 @@ fn wallet_registration_tx(
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
     }
 }
 
@@ -172,6 +173,7 @@ fn token_transfer_tx_with_nonce(
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
     }
 }
 
@@ -209,6 +211,7 @@ fn token_mint_tx(signer: &PublicKey, token_id: [u8; 32], to: [u8; 32], amount: u
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
     }
 }
 
@@ -248,6 +251,7 @@ fn contract_execution_tx(signer: &PublicKey, method: &str, params: Vec<u8>) -> T
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
     }
 }
 

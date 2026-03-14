@@ -116,6 +116,10 @@ pub enum TransactionType {
     OracleAttestation = 36,
     /// Cancel pending oracle update (via DAO governance)
     CancelOracleUpdate = 37,
+    /// Initialize entity registry with CBE and Nonprofit treasury addresses (one-time, irreversible)
+    ///
+    /// Must be signed by a Bootstrap Council member. Locks EntityRegistry permanently after execution.
+    InitEntityRegistry = 38,
 }
 
 impl TransactionType {
@@ -180,7 +184,13 @@ impl TransactionType {
                 | TransactionType::DifficultyUpdate
                 | TransactionType::UpdateOracleCommittee
                 | TransactionType::UpdateOracleConfig
+                | TransactionType::InitEntityRegistry
         )
+    }
+
+    /// Check if this is a one-time entity registry initialization transaction
+    pub fn is_entity_registry_init(&self) -> bool {
+        matches!(self, TransactionType::InitEntityRegistry)
     }
 
     /// Check if this transaction type relates to oracle governance
@@ -247,6 +257,9 @@ impl TransactionType {
             TransactionType::CancelOracleUpdate => {
                 "Cancel pending oracle update (via DAO governance)"
             }
+            TransactionType::InitEntityRegistry => {
+                "Initialize entity registry with CBE and Nonprofit treasury addresses (one-time)"
+            }
         }
     }
 
@@ -291,6 +304,7 @@ impl TransactionType {
             TransactionType::UpdateOracleConfig => "update_oracle_config",
             TransactionType::OracleAttestation => "oracle_attestation",
             TransactionType::CancelOracleUpdate => "cancel_oracle_update",
+            TransactionType::InitEntityRegistry => "init_entity_registry",
         }
     }
 
@@ -335,6 +349,7 @@ impl TransactionType {
             "update_oracle_config" => Some(TransactionType::UpdateOracleConfig),
             "oracle_attestation" => Some(TransactionType::OracleAttestation),
             "cancel_oracle_update" => Some(TransactionType::CancelOracleUpdate),
+            "init_entity_registry" => Some(TransactionType::InitEntityRegistry),
             _ => None,
         }
     }

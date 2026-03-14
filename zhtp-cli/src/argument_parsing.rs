@@ -373,6 +373,16 @@ pub enum DaoAction {
         #[arg(long)]
         metadata_hash: String,
     },
+    /// Initialize entity registry (one-time, Bootstrap Council only).
+    /// Build the signed transaction with lib-client's build_init_entity_registry_tx,
+    /// then pass the hex output here.
+    EntityRegistryInit {
+        /// Hex-encoded, bincode-serialized, signed InitEntityRegistry transaction
+        #[arg(long)]
+        signed_tx: String,
+    },
+    /// Show entity registry status
+    EntityRegistryStatus,
 }
 
 /// Citizen management commands

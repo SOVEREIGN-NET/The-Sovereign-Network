@@ -287,6 +287,18 @@ impl TransactionValidator {
             TransactionType::CancelOracleUpdate => {
                 // Cancel oracle update - validation in stateful validator
             }
+            TransactionType::InitEntityRegistry => {
+                // Payload must be present; no inputs/outputs allowed
+                if transaction.init_entity_registry_data.is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                if !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+            }
         }
 
         // Signature validation:
@@ -298,6 +310,7 @@ impl TransactionValidator {
                 TransactionType::WalletUpdate
                     | TransactionType::TokenMint
                     | TransactionType::TokenCreation
+                    | TransactionType::InitEntityRegistry
             );
         if require_signature {
             self.validate_signature(transaction)?;
@@ -478,6 +491,17 @@ impl TransactionValidator {
             TransactionType::CancelOracleUpdate => {
                 // Cancel oracle update - validation in stateful validator
             }
+            TransactionType::InitEntityRegistry => {
+                if transaction.init_entity_registry_data.is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                if !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+            }
         }
 
         // Signature validation:
@@ -489,6 +513,7 @@ impl TransactionValidator {
                 TransactionType::WalletUpdate
                     | TransactionType::TokenMint
                     | TransactionType::TokenCreation
+                    | TransactionType::InitEntityRegistry
             );
         if require_signature {
             self.validate_signature(transaction)?;
@@ -1616,6 +1641,20 @@ impl<'a> StatefulTransactionValidator<'a> {
             TransactionType::CancelOracleUpdate => {
                 // Cancel oracle update - validation handled at execution layer
             }
+            TransactionType::InitEntityRegistry => {
+                // Stateful: payload presence + structure.
+                // Bootstrap Council authorization is enforced in process_entity_registry_transactions
+                // by verifying the transaction signer's identity is a registered council member.
+                if transaction.init_entity_registry_data.is_none() {
+                    return Err(ValidationError::MissingRequiredData);
+                }
+                if !transaction.inputs.is_empty() {
+                    return Err(ValidationError::InvalidInputs);
+                }
+                if !transaction.outputs.is_empty() {
+                    return Err(ValidationError::InvalidOutputs);
+                }
+            }
         }
 
         //  CRITICAL FIX: Verify sender identity exists on blockchain
@@ -2198,6 +2237,11 @@ pub mod utils {
                 // Cancel oracle update
                 true
             }
+            TransactionType::InitEntityRegistry => {
+                transaction.init_entity_registry_data.is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
         }
     }
 
@@ -2298,6 +2342,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -2338,6 +2383,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -2385,6 +2431,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -2457,6 +2504,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         };
 
         assert!(!is_token_contract_execution(&mint_tx));
@@ -2561,6 +2609,7 @@ mod tests {
                 oracle_config_update_data: None,
                 oracle_attestation_data: None,
                 cancel_oracle_update_data: None,
+                init_entity_registry_data: None,
             };
 
             assert!(
@@ -2605,6 +2654,7 @@ mod tests {
                 oracle_config_update_data: None,
                 oracle_attestation_data: None,
                 cancel_oracle_update_data: None,
+                init_entity_registry_data: None,
             };
 
             assert!(
@@ -2649,6 +2699,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         };
 
         assert!(
@@ -2694,6 +2745,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         };
 
         let validator = TransactionValidator::new();
@@ -2904,6 +2956,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -2946,6 +2999,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
