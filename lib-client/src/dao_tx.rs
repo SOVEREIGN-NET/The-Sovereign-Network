@@ -72,3 +72,32 @@ pub fn build_init_entity_registry_tx(
 
     Ok(hex::encode(final_tx_bytes))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::build_init_entity_registry_tx;
+    use lib_blockchain::types::transaction_type::TransactionType;
+
+    #[test]
+    fn test_build_init_entity_registry_tx_round_trip() {
+        let identity = crate::generate_identity("entity-registry-test".to_string()).unwrap();
+        let signed_tx =
+            build_init_entity_registry_tx(&identity, vec![0x11; 2592], vec![0x22; 2592], 1, 42)
+                .unwrap();
+
+        let tx_bytes = hex::decode(signed_tx).unwrap();
+        let tx: lib_blockchain::Transaction = bincode::deserialize(&tx_bytes).unwrap();
+
+        assert_eq!(tx.transaction_type, TransactionType::InitEntityRegistry);
+        assert_eq!(
+            tx.signature.algorithm,
+            lib_crypto::types::SignatureAlgorithm::Dilithium5
+        );
+        assert_eq!(tx.fee, 0);
+
+        let data = tx.init_entity_registry_data.expect("init payload");
+        assert_eq!(data.initialized_at_height, 42);
+        assert_eq!(data.cbe_treasury.dilithium_pk, vec![0x11; 2592]);
+        assert_eq!(data.nonprofit_treasury.dilithium_pk, vec![0x22; 2592]);
+    }
+}

@@ -267,6 +267,14 @@ impl DaoHandler {
             .map_err(|e| anyhow::anyhow!("Failed to access blockchain: {}", e))
     }
 
+    fn decode_signed_tx_raw(&self, signed_tx: &str) -> Result<Transaction> {
+        let tx_bytes =
+            hex::decode(signed_tx).map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
+        let tx: Transaction = bincode::deserialize(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
+        Ok(tx)
+    }
+
     /// Parse proposal type from string
     fn parse_proposal_type(type_str: &str) -> Result<DaoProposalType> {
         match type_str.to_lowercase().as_str() {
@@ -2079,66 +2087,62 @@ impl DaoHandler {
     /// POST /api/v1/dao/entity-registry/init
     ///
     /// Initialize the entity registry with CBE and Nonprofit treasury addresses.
-    /// One-time, irreversible. Requires Bootstrap Council threshold signatures.
+    /// One-time, irreversible. Requires a signed InitEntityRegistry transaction
+    /// from a Bootstrap Council member.
     async fn handle_entity_registry_init(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
         #[derive(serde::Deserialize)]
         struct InitRequest {
-            /// Hex-encoded bincode of a signed InitEntityRegistry transaction
-            /// (built by lib-client's build_init_entity_registry_tx)
             signed_tx: String,
         }
 
         let req: InitRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
-
-        let tx_bytes = hex::decode(&req.signed_tx)
-            .map_err(|_| anyhow::anyhow!("signed_tx must be hex-encoded"))?;
-
-        let tx = bincode::deserialize::<lib_blockchain::Transaction>(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize transaction: {}", e))?;
-
+        let tx = match self.decode_signed_tx_raw(&req.signed_tx) {
+            Ok(tx) => tx,
+            Err(e) => {
+                return Ok(create_error_response(ZhtpStatus::BadRequest, e.to_string()));
+            }
+        };
         if tx.transaction_type
             != lib_blockchain::types::transaction_type::TransactionType::InitEntityRegistry
         {
             return Ok(create_error_response(
                 ZhtpStatus::BadRequest,
-                "Transaction must be of type InitEntityRegistry".to_string(),
+                "signed_tx must be an InitEntityRegistry transaction".to_string(),
             ));
         }
-
-        let tx_hash = tx.hash();
 
         let blockchain_arc = self.get_blockchain().await?;
         let mut blockchain = blockchain_arc.write().await;
-
-        // Check if already initialized — fail fast before touching the mempool
-        if blockchain
-            .entity_registry
-            .as_ref()
-            .map(|r| r.is_initialized())
-            .unwrap_or(false)
-        {
-            return Ok(create_error_response(
-                ZhtpStatus::Conflict,
-                "Entity registry already initialized".to_string(),
-            ));
+        let validator =
+            lib_blockchain::transaction::validation::StatefulTransactionValidator::new(&blockchain);
+        if let Err(e) = validator.validate_transaction_with_state(&tx) {
+            let status = match e {
+                lib_blockchain::transaction::validation::ValidationError::Unauthorized => {
+                    ZhtpStatus::Forbidden
+                }
+                lib_blockchain::transaction::validation::ValidationError::AlreadyInitialized => {
+                    ZhtpStatus::Conflict
+                }
+                _ => ZhtpStatus::BadRequest,
+            };
+            return Ok(create_error_response(status, e.to_string()));
         }
 
-        // Submit to mempool — block processing enforces council authorization
-        match blockchain.add_pending_transaction(tx) {
-            Ok(()) => {
-                tracing::info!("InitEntityRegistry tx {} accepted to mempool", tx_hash);
-                create_json_response(json!({
-                    "status": "accepted",
-                    "transaction_hash": tx_hash.to_string(),
-                    "message": "InitEntityRegistry transaction submitted; will be applied on next block",
-                }))
-            }
-            Err(e) => Ok(create_error_response(
-                ZhtpStatus::BadRequest,
-                format!("Transaction rejected: {}", e),
-            )),
-        }
+        blockchain
+            .add_pending_transaction(tx.clone())
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to submit InitEntityRegistry transaction to mempool: {}",
+                    e
+                )
+            })?;
+
+        create_json_response(json!({
+            "status": "success",
+            "message": "Entity registry init transaction submitted",
+            "transaction_hash": tx.hash().to_string(),
+        }))
     }
 
     /// GET /api/v1/dao/entity-registry/status
@@ -2162,12 +2166,26 @@ impl DaoHandler {
                 (false, None, None)
             };
 
+        let init_metadata = blockchain
+            .blocks
+            .iter()
+            .flat_map(|block| block.transactions.iter())
+            .find(|tx| {
+                tx.transaction_type
+                    == lib_blockchain::types::transaction_type::TransactionType::InitEntityRegistry
+            })
+            .and_then(|tx| tx.init_entity_registry_data.as_ref())
+            .map(|data| (Some(data.initialized_at), Some(data.initialized_at_height)))
+            .unwrap_or((None, None));
+
         create_json_response(json!({
             "status": "success",
             "entity_registry": {
                 "initialized": initialized,
                 "cbe_treasury": cbe_treasury,
                 "nonprofit_treasury": nonprofit_treasury,
+                "initialized_at": init_metadata.0,
+                "initialized_at_height": init_metadata.1,
             }
         }))
     }

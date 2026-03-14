@@ -20,6 +20,8 @@ pub enum ValidationError {
     InvalidAmount,
     InvalidFee,
     InvalidTransaction,
+    Unauthorized,
+    AlreadyInitialized,
     InvalidIdentityData,
     InvalidInputs,
     InvalidOutputs,
@@ -45,6 +47,8 @@ impl std::fmt::Display for ValidationError {
             ValidationError::InvalidAmount => write!(f, "Invalid transaction amount"),
             ValidationError::InvalidFee => write!(f, "Invalid transaction fee"),
             ValidationError::InvalidTransaction => write!(f, "Invalid transaction structure"),
+            ValidationError::Unauthorized => write!(f, "Unauthorized transaction signer"),
+            ValidationError::AlreadyInitialized => write!(f, "Entity registry already initialized"),
             ValidationError::InvalidIdentityData => write!(f, "Invalid identity data"),
             ValidationError::InvalidInputs => write!(f, "Invalid transaction inputs"),
             ValidationError::InvalidOutputs => write!(f, "Invalid transaction outputs"),
@@ -1642,18 +1646,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                 // Cancel oracle update - validation handled at execution layer
             }
             TransactionType::InitEntityRegistry => {
-                // Stateful: payload presence + structure.
-                // Bootstrap Council authorization is enforced in process_entity_registry_transactions
-                // by verifying the transaction signer's identity is a registered council member.
-                if transaction.init_entity_registry_data.is_none() {
-                    return Err(ValidationError::MissingRequiredData);
-                }
-                if !transaction.inputs.is_empty() {
-                    return Err(ValidationError::InvalidInputs);
-                }
-                if !transaction.outputs.is_empty() {
-                    return Err(ValidationError::InvalidOutputs);
-                }
+                self.validate_init_entity_registry(transaction)?;
             }
         }
 
@@ -1680,9 +1673,12 @@ impl<'a> StatefulTransactionValidator<'a> {
         }
 
         // Signature validation (always required except for system transactions)
-        // TokenMint is system for fee purposes but MUST still be signed (except genesis)
-        let mut skip_signature =
-            is_system_transaction && transaction.transaction_type != TransactionType::TokenMint;
+        // TokenMint and InitEntityRegistry are system for fee purposes but MUST still be signed.
+        let mut skip_signature = is_system_transaction
+            && !matches!(
+                transaction.transaction_type,
+                TransactionType::TokenMint | TransactionType::InitEntityRegistry
+            );
         if transaction.transaction_type == TransactionType::TokenMint {
             if let Some(blockchain) = self.blockchain {
                 if blockchain.height == 0
@@ -1718,6 +1714,58 @@ impl<'a> StatefulTransactionValidator<'a> {
         stateless_validator
             .validate_economics_with_system_check(transaction, economics_is_system)?;
         tracing::debug!("[BREADCRUMB] validate_economics_with_system_check OK");
+
+        Ok(())
+    }
+
+    fn validate_init_entity_registry(&self, transaction: &Transaction) -> ValidationResult {
+        let data = transaction
+            .init_entity_registry_data
+            .as_ref()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        if !transaction.inputs.is_empty() {
+            return Err(ValidationError::InvalidInputs);
+        }
+        if !transaction.outputs.is_empty() {
+            return Err(ValidationError::InvalidOutputs);
+        }
+        if transaction.fee != 0 {
+            return Err(ValidationError::InvalidFee);
+        }
+
+        let cbe_bytes = data.cbe_treasury.as_bytes();
+        let nonprofit_bytes = data.nonprofit_treasury.as_bytes();
+        let is_all_zero = |bytes: &[u8]| !bytes.is_empty() && bytes.iter().all(|byte| *byte == 0);
+
+        if is_all_zero(&cbe_bytes) || is_all_zero(&nonprofit_bytes) {
+            return Err(ValidationError::InvalidPublicKey);
+        }
+        if data.cbe_treasury.key_id == data.nonprofit_treasury.key_id {
+            return Err(ValidationError::InvalidPublicKey);
+        }
+
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+        if blockchain
+            .entity_registry
+            .as_ref()
+            .map(|registry| registry.is_initialized())
+            .unwrap_or(false)
+        {
+            return Err(ValidationError::AlreadyInitialized);
+        }
+
+        let signer_pk = &transaction.signature.public_key.dilithium_pk;
+        if signer_pk.is_empty() {
+            return Err(ValidationError::InvalidPublicKey);
+        }
+
+        let signer_identity = blockchain
+            .get_identity_by_public_key(signer_pk)
+            .ok_or(ValidationError::Unauthorized)?;
+        if !blockchain.is_council_member(&signer_identity.did) {
+            return Err(ValidationError::Unauthorized);
+        }
 
         Ok(())
     }
@@ -2435,6 +2483,47 @@ mod tests {
         }
     }
 
+    fn create_init_entity_registry_transaction_for_test(
+        signer: &PublicKey,
+        cbe_treasury: PublicKey,
+        nonprofit_treasury: PublicKey,
+    ) -> Transaction {
+        Transaction::new_init_entity_registry(
+            1,
+            cbe_treasury,
+            nonprofit_treasury,
+            123,
+            0,
+            test_signature(signer),
+        )
+    }
+
+    fn register_council_identity(
+        blockchain: &mut crate::blockchain::Blockchain,
+        did: &str,
+        signer: &PublicKey,
+    ) {
+        blockchain.identity_registry.insert(
+            did.to_string(),
+            IdentityTransactionData::new(
+                did.to_string(),
+                "Council Member".to_string(),
+                signer.dilithium_pk.clone(),
+                vec![1, 2, 3],
+                "human".to_string(),
+                Hash::from([9u8; 32]),
+                0,
+                0,
+            ),
+        );
+        blockchain.council_members.push(crate::dao::CouncilMember {
+            identity_id: did.to_string(),
+            wallet_id: "wallet".to_string(),
+            stake_amount: 1,
+            joined_at_height: 0,
+        });
+    }
+
     /// Test A: Token contract creation call is detected without identity record
     ///
     /// The canonical sender is derived from tx.signature.public_key.
@@ -2837,6 +2926,119 @@ mod tests {
             matches!(result, Err(ValidationError::InvalidTransaction)),
             "Unknown token mint must be rejected during stateful precheck"
         );
+    }
+
+    #[test]
+    fn test_init_entity_registry_rejects_zero_treasury_keys() {
+        let blockchain = crate::blockchain::Blockchain::default();
+        let signer = test_public_key(41);
+        let zero_pk = PublicKey::new(vec![0u8; 2592]);
+        let tx = create_init_entity_registry_transaction_for_test(
+            &signer,
+            zero_pk.clone(),
+            test_public_key(42),
+        );
+
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        assert!(matches!(
+            validator.validate_init_entity_registry(&tx),
+            Err(ValidationError::InvalidPublicKey)
+        ));
+
+        let tx =
+            create_init_entity_registry_transaction_for_test(&signer, test_public_key(43), zero_pk);
+        assert!(matches!(
+            validator.validate_init_entity_registry(&tx),
+            Err(ValidationError::InvalidPublicKey)
+        ));
+    }
+
+    #[test]
+    fn test_init_entity_registry_rejects_matching_treasury_keys() {
+        let blockchain = crate::blockchain::Blockchain::default();
+        let signer = test_public_key(44);
+        let treasury = test_public_key(45);
+        let tx =
+            create_init_entity_registry_transaction_for_test(&signer, treasury.clone(), treasury);
+
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        assert!(matches!(
+            validator.validate_init_entity_registry(&tx),
+            Err(ValidationError::InvalidPublicKey)
+        ));
+    }
+
+    #[test]
+    fn test_init_entity_registry_rejects_non_council_signer() {
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        let council_signer = test_public_key(46);
+        register_council_identity(&mut blockchain, "did:zhtp:council", &council_signer);
+
+        let attacker = test_public_key(47);
+        blockchain.identity_registry.insert(
+            "did:zhtp:attacker".to_string(),
+            IdentityTransactionData::new(
+                "did:zhtp:attacker".to_string(),
+                "Attacker".to_string(),
+                attacker.dilithium_pk.clone(),
+                vec![4, 5, 6],
+                "human".to_string(),
+                Hash::from([8u8; 32]),
+                0,
+                0,
+            ),
+        );
+
+        let tx = create_init_entity_registry_transaction_for_test(
+            &attacker,
+            test_public_key(48),
+            test_public_key(49),
+        );
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        assert!(matches!(
+            validator.validate_init_entity_registry(&tx),
+            Err(ValidationError::Unauthorized)
+        ));
+    }
+
+    #[test]
+    fn test_init_entity_registry_rejects_when_already_initialized() {
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        let signer = test_public_key(50);
+        register_council_identity(&mut blockchain, "did:zhtp:council", &signer);
+        blockchain.entity_registry = Some(crate::contracts::governance::EntityRegistry::new());
+        blockchain
+            .entity_registry
+            .as_mut()
+            .unwrap()
+            .init(test_public_key(51), test_public_key(52))
+            .unwrap();
+
+        let tx = create_init_entity_registry_transaction_for_test(
+            &signer,
+            test_public_key(53),
+            test_public_key(54),
+        );
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        assert!(matches!(
+            validator.validate_init_entity_registry(&tx),
+            Err(ValidationError::AlreadyInitialized)
+        ));
+    }
+
+    #[test]
+    fn test_init_entity_registry_accepts_council_member_with_valid_payload() {
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        let signer = test_public_key(55);
+        register_council_identity(&mut blockchain, "did:zhtp:council", &signer);
+
+        let tx = create_init_entity_registry_transaction_for_test(
+            &signer,
+            test_public_key(56),
+            test_public_key(57),
+        );
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        assert!(validator.validate_init_entity_registry(&tx).is_ok());
     }
 
     #[test]

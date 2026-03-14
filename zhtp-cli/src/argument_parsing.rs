@@ -377,9 +377,15 @@ pub enum DaoAction {
     /// Build the signed transaction with lib-client's build_init_entity_registry_tx,
     /// then pass the hex output here.
     EntityRegistryInit {
-        /// Hex-encoded, bincode-serialized, signed InitEntityRegistry transaction
+        /// CBE (for-profit) treasury public key, hex-encoded
         #[arg(long)]
-        signed_tx: String,
+        cbe_treasury: String,
+        /// Nonprofit treasury public key, hex-encoded
+        #[arg(long)]
+        nonprofit_treasury: String,
+        /// Optional keystore path for the council identity signing this tx
+        #[arg(long)]
+        keystore: Option<String>,
     },
     /// Show entity registry status
     EntityRegistryStatus,

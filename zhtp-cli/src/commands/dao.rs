@@ -5,7 +5,7 @@
 use crate::argument_parsing::{format_output, DaoAction, DaoArgs, ZhtpCli};
 use crate::commands::transaction_utils::{broadcast_signed_tx, parse_hex_32};
 use crate::commands::web4_utils::{
-    connect_default, default_keystore_path, load_identity_from_keystore,
+    connect_default, default_keystore_path, load_identity_from_keystore, resolve_keystore_path,
 };
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
@@ -423,20 +423,47 @@ async fn handle_dao_command_impl(
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
         }
-        DaoAction::EntityRegistryInit { signed_tx } => {
-            if signed_tx.is_empty() {
+        DaoAction::EntityRegistryInit {
+            cbe_treasury,
+            nonprofit_treasury,
+            keystore,
+        } => {
+            if cbe_treasury.is_empty() || nonprofit_treasury.is_empty() {
                 return Err(CliError::ConfigError(
-                    "--signed-tx is required (build it with lib-client's build_init_entity_registry_tx)".to_string(),
+                    "--cbe-treasury and --nonprofit-treasury are required".to_string(),
                 ));
             }
-            // Validate hex before sending
-            hex::decode(&signed_tx).map_err(|_| {
-                CliError::ConfigError("--signed-tx must be hex-encoded".to_string())
+            let cbe_treasury_bytes = hex::decode(&cbe_treasury).map_err(|_| {
+                CliError::ConfigError("--cbe-treasury must be hex-encoded".to_string())
             })?;
+            let nonprofit_treasury_bytes = hex::decode(&nonprofit_treasury).map_err(|_| {
+                CliError::ConfigError("--nonprofit-treasury must be hex-encoded".to_string())
+            })?;
+            let keystore_path = resolve_keystore_path(keystore.as_deref())?;
+            let loaded = load_identity_from_keystore(&keystore_path)?;
+            let client_identity = zhtp_client::Identity {
+                did: loaded.identity.did.clone(),
+                public_key: loaded.identity.public_key.dilithium_pk.clone(),
+                private_key: loaded.keypair.private_key.dilithium_sk.clone(),
+                kyber_public_key: loaded.identity.public_key.kyber_pk.clone(),
+                kyber_secret_key: loaded.keypair.private_key.kyber_sk.clone(),
+                node_id: loaded.identity.node_id.as_bytes().to_vec(),
+                device_id: loaded.identity.primary_device.clone(),
+                recovery_entropy: loaded.keypair.private_key.master_seed.clone(),
+                created_at: loaded.identity.created_at,
+            };
+            let signed_tx = zhtp_client::build_init_entity_registry_tx(
+                &client_identity,
+                cbe_treasury_bytes,
+                nonprofit_treasury_bytes,
+                1,
+                0,
+            )
+            .map_err(CliError::ConfigError)?;
 
             let payload = serde_json::json!({ "signed_tx": signed_tx });
             let endpoint = "/api/v1/dao/entity-registry/init";
-            output.info("Submitting InitEntityRegistry transaction...")?;
+            output.info("Initializing entity registry...")?;
             let response = client.post_json(endpoint, &payload).await.map_err(|e| {
                 CliError::ApiCallFailed {
                     endpoint: endpoint.to_string(),

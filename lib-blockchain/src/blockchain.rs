@@ -5598,9 +5598,8 @@ impl Blockchain {
 
     /// Process InitEntityRegistry transactions in a block.
     ///
-    /// Enforces one-time initialization: once the registry is set, subsequent
-    /// InitEntityRegistry transactions are rejected (logged as warnings, not errors,
-    /// so the block still commits).
+    /// Enforces one-time initialization: once the registry is set, any subsequent
+    /// InitEntityRegistry transaction is a block-level error.
     pub fn process_entity_registry_transactions(&mut self, block: &Block) -> Result<()> {
         for tx in &block.transactions {
             if tx.transaction_type
@@ -5609,58 +5608,31 @@ impl Blockchain {
                 continue;
             }
             let tx_hash_hex = hex::encode(tx.hash().as_bytes());
-            let data = match &tx.init_entity_registry_data {
-                Some(d) => d,
-                None => {
-                    warn!(
-                        "InitEntityRegistry tx {} has no payload — skipping",
-                        tx_hash_hex
-                    );
-                    continue;
-                }
-            };
-
-            // Enforce Bootstrap Council authorization: the transaction signer must be
-            // a registered council member.
-            let signer_pk = &tx.signature.public_key.dilithium_pk;
-            let is_council = self
-                .get_identity_by_public_key(signer_pk)
-                .map(|id| self.is_council_member(&id.did))
-                .unwrap_or(false);
-            if !is_council {
-                warn!(
-                    "InitEntityRegistry tx {} rejected: signer is not a Bootstrap Council member",
-                    tx_hash_hex
-                );
-                continue;
-            }
+            let data = tx.init_entity_registry_data.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("InitEntityRegistry tx {} is missing payload", tx_hash_hex)
+            })?;
 
             let registry = self
                 .entity_registry
                 .get_or_insert_with(crate::contracts::governance::EntityRegistry::new);
 
             if registry.is_initialized() {
-                warn!(
+                return Err(anyhow::anyhow!(
                     "InitEntityRegistry tx {} rejected: registry already initialized",
                     tx_hash_hex
-                );
-                continue;
+                ));
             }
 
-            match registry.init(data.cbe_treasury.clone(), data.nonprofit_treasury.clone()) {
-                Ok(()) => {
-                    info!(
-                        "EntityRegistry initialized at height {} (tx {})",
-                        block.header.height, tx_hash_hex
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        "InitEntityRegistry tx {} failed: {} — skipping",
-                        tx_hash_hex, e
-                    );
-                }
-            }
+            registry
+                .init(data.cbe_treasury.clone(), data.nonprofit_treasury.clone())
+                .map_err(|e| {
+                    anyhow::anyhow!("InitEntityRegistry tx {} failed: {}", tx_hash_hex, e)
+                })?;
+
+            info!(
+                "EntityRegistry initialized at height {} (tx {})",
+                block.header.height, tx_hash_hex
+            );
         }
         Ok(())
     }
