@@ -63,7 +63,7 @@ pub fn build_init_entity_registry_tx(
     tx.signature = Signature {
         signature: signature_bytes,
         public_key: signer_pk,
-        algorithm: SignatureAlgorithm::Dilithium2,
+        algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: now,
     };
 

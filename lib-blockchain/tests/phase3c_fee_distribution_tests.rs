@@ -128,7 +128,7 @@ fn create_coinbase_with_fees(
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+        init_entity_registry_data: None,
     }
 }
 
@@ -200,7 +200,7 @@ fn create_transfer_tx(
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+        init_entity_registry_data: None,
     }
 }
 
@@ -375,7 +375,7 @@ fn test_fee_sink_balance_increases_deterministically() {
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+        init_entity_registry_data: None,
     };
 
     let genesis = create_genesis_with_coinbase(genesis_coinbase.clone());
@@ -491,7 +491,7 @@ fn test_coinbase_without_fee_sink_rejected() {
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+        init_entity_registry_data: None,
     };
 
     let block1 = create_block_with_txs(1, genesis.header.block_hash, bad_coinbase, vec![transfer]);
@@ -546,7 +546,7 @@ fn test_zero_fees_no_fee_sink_required() {
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+        init_entity_registry_data: None,
     };
 
     let genesis = create_genesis_with_coinbase(coinbase);

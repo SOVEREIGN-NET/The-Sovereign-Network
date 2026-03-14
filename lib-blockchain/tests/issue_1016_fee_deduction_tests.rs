@@ -72,7 +72,7 @@ fn create_transfer_tx(sender: &PublicKey, fee: u64, nullifier_id: u8) -> Transac
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+        init_entity_registry_data: None,
     }
 }
 

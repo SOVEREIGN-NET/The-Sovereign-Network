@@ -373,17 +373,13 @@ pub enum DaoAction {
         #[arg(long)]
         metadata_hash: String,
     },
-    /// Initialize entity registry (one-time, Bootstrap Council only)
+    /// Initialize entity registry (one-time, Bootstrap Council only).
+    /// Build the signed transaction with lib-client's build_init_entity_registry_tx,
+    /// then pass the hex output here.
     EntityRegistryInit {
-        /// CBE (for-profit) treasury public key, hex-encoded
+        /// Hex-encoded, bincode-serialized, signed InitEntityRegistry transaction
         #[arg(long)]
-        cbe_treasury: String,
-        /// Nonprofit treasury public key, hex-encoded
-        #[arg(long)]
-        nonprofit_treasury: String,
-        /// Bootstrap Council member DIDs co-signing this initialization (repeat for multiple)
-        #[arg(long = "council-sig")]
-        council_signatures: Vec<String>,
+        signed_tx: String,
     },
     /// Show entity registry status
     EntityRegistryStatus,

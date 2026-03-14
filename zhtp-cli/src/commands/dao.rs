@@ -423,39 +423,27 @@ async fn handle_dao_command_impl(
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
         }
-        DaoAction::EntityRegistryInit {
-            cbe_treasury,
-            nonprofit_treasury,
-            council_signatures,
-        } => {
-            if cbe_treasury.is_empty() || nonprofit_treasury.is_empty() {
+        DaoAction::EntityRegistryInit { signed_tx } => {
+            if signed_tx.is_empty() {
                 return Err(CliError::ConfigError(
-                    "--cbe-treasury and --nonprofit-treasury are required".to_string(),
+                    "--signed-tx is required (build it with lib-client's build_init_entity_registry_tx)".to_string(),
                 ));
             }
-            // Validate hex
-            hex::decode(&cbe_treasury).map_err(|_| {
-                CliError::ConfigError("--cbe-treasury must be hex-encoded".to_string())
-            })?;
-            hex::decode(&nonprofit_treasury).map_err(|_| {
-                CliError::ConfigError("--nonprofit-treasury must be hex-encoded".to_string())
+            // Validate hex before sending
+            hex::decode(&signed_tx).map_err(|_| {
+                CliError::ConfigError("--signed-tx must be hex-encoded".to_string())
             })?;
 
-            let payload = serde_json::json!({
-                "cbe_treasury": cbe_treasury,
-                "nonprofit_treasury": nonprofit_treasury,
-                "council_signatures": council_signatures,
-            });
+            let payload = serde_json::json!({ "signed_tx": signed_tx });
             let endpoint = "/api/v1/dao/entity-registry/init";
-            output.info("Initializing entity registry...")?;
-            let response = client
-                .post_json(endpoint, &payload)
-                .await
-                .map_err(|e| CliError::ApiCallFailed {
+            output.info("Submitting InitEntityRegistry transaction...")?;
+            let response = client.post_json(endpoint, &payload).await.map_err(|e| {
+                CliError::ApiCallFailed {
                     endpoint: endpoint.to_string(),
                     status: 0,
                     reason: e.to_string(),
-                })?;
+                }
+            })?;
             let result: Value =
                 ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
                     endpoint: endpoint.to_string(),

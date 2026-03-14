@@ -1642,7 +1642,9 @@ impl<'a> StatefulTransactionValidator<'a> {
                 // Cancel oracle update - validation handled at execution layer
             }
             TransactionType::InitEntityRegistry => {
-                // Stateful: payload presence + structure (authority check is in process_entity_registry_transactions)
+                // Stateful: payload presence + structure.
+                // Bootstrap Council authorization is enforced in process_entity_registry_transactions
+                // by verifying the transaction signer's identity is a registered council member.
                 if transaction.init_entity_registry_data.is_none() {
                     return Err(ValidationError::MissingRequiredData);
                 }
@@ -2607,7 +2609,7 @@ mod tests {
                 oracle_config_update_data: None,
                 oracle_attestation_data: None,
                 cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+                init_entity_registry_data: None,
             };
 
             assert!(
@@ -2652,7 +2654,7 @@ mod tests {
                 oracle_config_update_data: None,
                 oracle_attestation_data: None,
                 cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+                init_entity_registry_data: None,
             };
 
             assert!(

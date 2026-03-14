@@ -2463,6 +2463,7 @@ pub struct InitEntityRegistryData {
     pub nonprofit_treasury: crate::integration::crypto_integration::PublicKey,
     /// Unix timestamp when this initialization was requested
     pub initialized_at: u64,
-    /// Block height at which this tx is included (filled by node on commit)
+    /// Block height at time of signing (client-provided; part of the signed payload
+    /// so it cannot be modified post-signing without invalidating the signature).
     pub initialized_at_height: u64,
 }

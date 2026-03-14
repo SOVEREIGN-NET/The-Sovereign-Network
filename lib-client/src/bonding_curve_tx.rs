@@ -19,7 +19,7 @@ pub const CURVE_TYPE_PIECEWISE_LINEAR: u8 = 3; // CBE token default
 
 /// Build a signed bonding curve deploy transaction.
 /// Returns hex-encoded transaction ready to POST to /api/v1/curve/deploy
-/// 
+///
 /// # Curve Types
 /// - 0 = Linear: price = base + slope × supply
 /// - 1 = Exponential: price = base × (1 + rate)^supply
