@@ -897,7 +897,9 @@ impl BlockExecutor {
             // Oracle attestation - validated in StatefulValidator; no special-casing here
             // Cancel oracle update - validated in stateful validator, applied as no-op here
             | TransactionType::OracleAttestation
-            | TransactionType::CancelOracleUpdate => {
+            | TransactionType::CancelOracleUpdate
+            // Entity registry init - handled by process_entity_registry_transactions
+            | TransactionType::InitEntityRegistry => {
                 // Fall through to the general validation flow below without
                 // treating oracle attestations as automatically valid.
             }
@@ -2544,6 +2546,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -2580,6 +2583,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -2772,6 +2776,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -2937,6 +2942,7 @@ mod tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 

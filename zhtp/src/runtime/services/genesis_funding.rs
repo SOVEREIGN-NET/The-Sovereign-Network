@@ -288,6 +288,7 @@ impl GenesisFundingService {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         };
 
         // Add genesis transaction to the genesis block

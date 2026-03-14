@@ -372,6 +372,7 @@ pub fn build_swap_tx(
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
     };
 
     let tx_hash = tx.signing_hash();
@@ -469,6 +470,7 @@ pub fn build_add_liquidity_tx(
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
     };
 
     let tx_hash = tx.signing_hash();
@@ -558,6 +560,7 @@ pub fn build_remove_liquidity_tx(
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
     };
 
     let tx_hash = tx.signing_hash();

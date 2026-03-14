@@ -67,6 +67,7 @@ fn mk_contract_deploy_tx() -> Transaction {
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
     }
 }
 
@@ -109,6 +110,7 @@ fn mk_contract_call_tx() -> Transaction {
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
     }
 }
 
@@ -295,6 +297,7 @@ fn test_contract_deployment_rejection_path_invalid_memo_payload() -> Result<()> 
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
     };
 
     assert!(

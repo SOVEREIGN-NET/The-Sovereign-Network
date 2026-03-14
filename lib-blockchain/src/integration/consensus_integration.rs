@@ -1609,6 +1609,7 @@ impl BlockchainConsensusCoordinator {
                     oracle_config_update_data: None,
                     oracle_attestation_data: None,
                     cancel_oracle_update_data: None,
+                    init_entity_registry_data: None,
                 };
 
                 reward_transactions.push(reward_tx);

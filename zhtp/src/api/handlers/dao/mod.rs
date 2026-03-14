@@ -2073,6 +2073,128 @@ impl DaoHandler {
     }
 
     // =========================================================================
+    // Entity Registry handlers (TSR)
+    // =========================================================================
+
+    /// POST /api/v1/dao/entity-registry/init
+    ///
+    /// Initialize the entity registry with CBE and Nonprofit treasury addresses.
+    /// One-time, irreversible. Requires Bootstrap Council threshold signatures.
+    async fn handle_entity_registry_init(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        #[derive(serde::Deserialize)]
+        struct InitRequest {
+            cbe_treasury: String,
+            nonprofit_treasury: String,
+            /// DIDs of council members co-signing this initialization
+            council_signatures: Vec<String>,
+        }
+
+        let req: InitRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+
+        if req.cbe_treasury.is_empty() || req.nonprofit_treasury.is_empty() {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "cbe_treasury and nonprofit_treasury are required".to_string(),
+            ));
+        }
+
+        let cbe_bytes = hex::decode(&req.cbe_treasury)
+            .map_err(|_| anyhow::anyhow!("cbe_treasury must be hex-encoded"))?;
+        let nonprofit_bytes = hex::decode(&req.nonprofit_treasury)
+            .map_err(|_| anyhow::anyhow!("nonprofit_treasury must be hex-encoded"))?;
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+
+        // Check if already initialized
+        if blockchain
+            .entity_registry
+            .as_ref()
+            .map(|r| r.is_initialized())
+            .unwrap_or(false)
+        {
+            return Ok(create_error_response(
+                ZhtpStatus::Conflict,
+                "Entity registry already initialized".to_string(),
+            ));
+        }
+
+        // Require Bootstrap Council threshold
+        let threshold = blockchain.council_threshold as usize;
+        if threshold > 0 {
+            let valid_sig_count = req
+                .council_signatures
+                .iter()
+                .filter(|did| blockchain.is_council_member(did.as_str()))
+                .count();
+
+            if valid_sig_count < threshold {
+                return Ok(create_error_response(
+                    ZhtpStatus::Forbidden,
+                    format!(
+                        "Entity registry init requires {} council co-signers, got {}",
+                        threshold, valid_sig_count
+                    ),
+                ));
+            }
+        }
+
+        let cbe_pk =
+            lib_blockchain::integration::crypto_integration::PublicKey::new(cbe_bytes);
+        let nonprofit_pk =
+            lib_blockchain::integration::crypto_integration::PublicKey::new(nonprofit_bytes);
+
+        let registry = blockchain
+            .entity_registry
+            .get_or_insert_with(lib_blockchain::contracts::governance::EntityRegistry::new);
+
+        match registry.init(cbe_pk, nonprofit_pk) {
+            Ok(()) => create_json_response(json!({
+                "status": "success",
+                "message": "Entity registry initialized",
+                "cbe_treasury": req.cbe_treasury,
+                "nonprofit_treasury": req.nonprofit_treasury,
+            })),
+            Err(e) => Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                format!("Failed to initialize entity registry: {}", e),
+            )),
+        }
+    }
+
+    /// GET /api/v1/dao/entity-registry/status
+    async fn handle_entity_registry_status(&self) -> Result<ZhtpResponse> {
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let (initialized, cbe_treasury, nonprofit_treasury) =
+            if let Some(ref registry) = blockchain.entity_registry {
+                let initialized = registry.is_initialized();
+                let cbe = registry
+                    .cbe_treasury()
+                    .ok()
+                    .map(|pk| hex::encode(pk.as_bytes()));
+                let nonprofit = registry
+                    .nonprofit_treasury()
+                    .ok()
+                    .map(|pk| hex::encode(pk.as_bytes()));
+                (initialized, cbe, nonprofit)
+            } else {
+                (false, None, None)
+            };
+
+        create_json_response(json!({
+            "status": "success",
+            "entity_registry": {
+                "initialized": initialized,
+                "cbe_treasury": cbe_treasury,
+                "nonprofit_treasury": nonprofit_treasury,
+            }
+        }))
+    }
+
+    // =========================================================================
     // Emergency state handlers (dao-2)
     // =========================================================================
 
@@ -2707,6 +2829,16 @@ impl ZhtpRequestHandler for DaoHandler {
                 .map_err(anyhow::Error::from),
             (ZhtpMethod::Post, ["api", "v1", "dao", "council", "register"]) => self
                 .handle_register_council_member(&request)
+                .await
+                .map_err(anyhow::Error::from),
+
+            // Entity Registry endpoints (TSR)
+            (ZhtpMethod::Post, ["api", "v1", "dao", "entity-registry", "init"]) => self
+                .handle_entity_registry_init(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Get, ["api", "v1", "dao", "entity-registry", "status"]) => self
+                .handle_entity_registry_status()
                 .await
                 .map_err(anyhow::Error::from),
 

@@ -42,6 +42,7 @@
 mod bip39_wordlist;
 pub mod bonding_curve_tx;
 pub mod crypto;
+pub mod dao_tx;
 pub mod error;
 pub mod handshake;
 pub mod identity;

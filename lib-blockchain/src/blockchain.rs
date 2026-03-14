@@ -277,6 +277,15 @@ pub struct Blockchain {
     pub council_threshold: u8,
 
     // =========================================================================
+    // Entity Registry (TSR — Treasury Signer Registration)
+    // =========================================================================
+    /// CBE and Nonprofit treasury address registry.
+    /// None until initialized via InitEntityRegistry transaction.
+    /// Immutable after initialization.
+    #[serde(default)]
+    pub entity_registry: Option<crate::contracts::governance::EntityRegistry>,
+
+    // =========================================================================
     // DAO Treasury Execution (dao-2)
     // =========================================================================
     /// SOV spent per epoch: epoch_number → cumulative_amount
@@ -575,6 +584,8 @@ impl TransactionV1 {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
+
         }
     }
 }
@@ -717,6 +728,7 @@ impl BlockchainV1 {
             governance_phase: crate::dao::GovernancePhase::default(),
             council_members: Vec::new(),
             council_threshold: default_council_threshold(),
+            entity_registry: None,
             treasury_epoch_spend: HashMap::new(),
             treasury_epoch_length_blocks: default_treasury_epoch_length(),
             emergency_state: false,
@@ -1180,6 +1192,7 @@ impl BlockchainStorageV3 {
             governance_phase: self.governance_phase,
             council_members: self.council_members,
             council_threshold: self.council_threshold,
+            entity_registry: None, // Not stored in V3; populated when InitEntityRegistry tx is processed
 
             // DAO Treasury Execution
             treasury_epoch_spend: self.treasury_epoch_spend,
@@ -1277,6 +1290,9 @@ struct BlockchainStorageV5 {
     pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
     #[serde(default)]
     pub last_oracle_epoch_processed: u64,
+    // TSR: entity registry — append-only, defaults to None for old storage files
+    #[serde(default)]
+    pub entity_registry: Option<crate::contracts::governance::EntityRegistry>,
 }
 
 impl BlockchainStorageV5 {
@@ -1290,6 +1306,7 @@ impl BlockchainStorageV5 {
             oracle_slashing_config: bc.oracle_slashing_config.clone(),
             oracle_banned_validators: bc.oracle_banned_validators.clone(),
             last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
+            entity_registry: bc.entity_registry.clone(),
         }
     }
 
@@ -1302,34 +1319,11 @@ impl BlockchainStorageV5 {
         blockchain.oracle_slashing_config = self.oracle_slashing_config;
         blockchain.oracle_banned_validators = self.oracle_banned_validators;
         blockchain.last_oracle_epoch_processed = self.last_oracle_epoch_processed;
+        blockchain.entity_registry = self.entity_registry;
         blockchain
     }
 }
 
-/// Stable storage format V5 for blockchain serialization.
-///
-/// V5 adds onramp_state to the V4 format for CBE/USD VWAP pricing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BlockchainStorageV5 {
-    pub v4: BlockchainStorageV4,
-    #[serde(default)]
-    pub onramp_state: crate::onramp::OnRampState,
-}
-
-impl BlockchainStorageV5 {
-    fn from_blockchain(bc: &Blockchain) -> Self {
-        Self {
-            v4: BlockchainStorageV4::from_blockchain(bc),
-            onramp_state: bc.onramp_state.clone(),
-        }
-    }
-
-    fn to_blockchain(self) -> Blockchain {
-        let mut blockchain = self.v4.to_blockchain();
-        blockchain.onramp_state = self.onramp_state;
-        blockchain
-    }
-}
 
 /// Blockchain import structure for deserializing received chains
 #[derive(Serialize, Deserialize)]
@@ -1416,6 +1410,7 @@ impl Blockchain {
             governance_phase: crate::dao::GovernancePhase::default(),
             council_members: Vec::new(),
             council_threshold: default_council_threshold(),
+            entity_registry: None,
             treasury_epoch_spend: HashMap::new(),
             treasury_epoch_length_blocks: default_treasury_epoch_length(),
             emergency_state: false,
@@ -2328,6 +2323,8 @@ impl Blockchain {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
+
         };
 
         // Add genesis transaction to genesis block
@@ -2857,6 +2854,7 @@ impl Blockchain {
         // Process identity transactions
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
+        self.process_entity_registry_transactions(&block)?;
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
         self.process_validator_registration_transactions(&block);
@@ -2984,6 +2982,7 @@ impl Blockchain {
         // Process identity transactions
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
+        self.process_entity_registry_transactions(&block)?;
 
         // Skip token/contract processing when using BlockExecutor - it handles these
         if !self.has_executor() {
@@ -5580,6 +5579,64 @@ impl Blockchain {
                             }
                         }
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // ========================================================================
+    // Entity Registry (Treasury Signer Registration)
+    // ========================================================================
+
+    /// Process InitEntityRegistry transactions in a block.
+    ///
+    /// Enforces one-time initialization: once the registry is set, subsequent
+    /// InitEntityRegistry transactions are rejected (logged as warnings, not errors,
+    /// so the block still commits).
+    pub fn process_entity_registry_transactions(&mut self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            if tx.transaction_type != crate::types::transaction_type::TransactionType::InitEntityRegistry {
+                continue;
+            }
+            let tx_hash_hex = hex::encode(tx.hash().as_bytes());
+            let data = match &tx.init_entity_registry_data {
+                Some(d) => d,
+                None => {
+                    warn!(
+                        "InitEntityRegistry tx {} has no payload — skipping",
+                        tx_hash_hex
+                    );
+                    continue;
+                }
+            };
+
+            let registry = self.entity_registry.get_or_insert_with(
+                crate::contracts::governance::EntityRegistry::new,
+            );
+
+            if registry.is_initialized() {
+                warn!(
+                    "InitEntityRegistry tx {} rejected: registry already initialized",
+                    tx_hash_hex
+                );
+                continue;
+            }
+
+            match registry.init(data.cbe_treasury.clone(), data.nonprofit_treasury.clone()) {
+                Ok(()) => {
+                    info!(
+                        "EntityRegistry initialized at height {} (tx {})",
+                        block.header.height,
+                        tx_hash_hex
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "InitEntityRegistry tx {} failed: {} — skipping",
+                        tx_hash_hex,
+                        e
+                    );
                 }
             }
         }
@@ -13152,7 +13209,8 @@ mod replay_contract_execution_tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-        }
+            init_entity_registry_data: None,
+}
     }
 
     #[test]
@@ -13334,7 +13392,8 @@ mod replay_contract_execution_tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-        }
+            init_entity_registry_data: None,
+}
     }
 
     fn token_creation_tx(
@@ -13383,7 +13442,8 @@ mod replay_contract_execution_tests {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
-        }
+            init_entity_registry_data: None,
+}
     }
 
     #[test]
@@ -13623,7 +13683,7 @@ mod oracle_storage_migration_tests {
         let storage = BlockchainStorageV5::from_blockchain(&bc);
         println!(
             "Storage: pending_update = {:?}",
-            storage.v4.oracle_state.committee.pending_update()
+            storage.oracle_state.committee.pending_update()
         );
 
         let bc2 = storage.to_blockchain();

@@ -82,7 +82,10 @@ pub fn action_to_operation(action: &DaoAction) -> Option<DaoOperation> {
         DaoAction::Balance | DaoAction::TreasuryBalance => Some(DaoOperation::Balance),
         DaoAction::RegistryList => Some(DaoOperation::RegistryList),
         DaoAction::RegistryGet { .. } => Some(DaoOperation::RegistryGet),
-        DaoAction::RegistryRegister { .. } | DaoAction::FactoryCreate { .. } => None,
+        DaoAction::RegistryRegister { .. }
+        | DaoAction::FactoryCreate { .. }
+        | DaoAction::EntityRegistryInit { .. }
+        | DaoAction::EntityRegistryStatus => None,
     }
 }
 
@@ -417,6 +420,70 @@ async fn handle_dao_command_impl(
             output.header("DAO Factory Create Broadcast")?;
             output.print(&format!("Signed tx hash: {tx_hash}"))?;
             output.print(&format!("Derived dao_id: {}", hex::encode(dao_id)))?;
+            output.print(&format_output(&result, &cli.format)?)?;
+            Ok(())
+        }
+        DaoAction::EntityRegistryInit {
+            cbe_treasury,
+            nonprofit_treasury,
+            council_signatures,
+        } => {
+            if cbe_treasury.is_empty() || nonprofit_treasury.is_empty() {
+                return Err(CliError::ConfigError(
+                    "--cbe-treasury and --nonprofit-treasury are required".to_string(),
+                ));
+            }
+            // Validate hex
+            hex::decode(&cbe_treasury).map_err(|_| {
+                CliError::ConfigError("--cbe-treasury must be hex-encoded".to_string())
+            })?;
+            hex::decode(&nonprofit_treasury).map_err(|_| {
+                CliError::ConfigError("--nonprofit-treasury must be hex-encoded".to_string())
+            })?;
+
+            let payload = serde_json::json!({
+                "cbe_treasury": cbe_treasury,
+                "nonprofit_treasury": nonprofit_treasury,
+                "council_signatures": council_signatures,
+            });
+            let endpoint = "/api/v1/dao/entity-registry/init";
+            output.info("Initializing entity registry...")?;
+            let response = client
+                .post_json(endpoint, &payload)
+                .await
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                })?;
+            let result: Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {e}"),
+                })?;
+            output.header("Entity Registry Init")?;
+            output.print(&format_output(&result, &cli.format)?)?;
+            Ok(())
+        }
+        DaoAction::EntityRegistryStatus => {
+            let endpoint = "/api/v1/dao/entity-registry/status";
+            output.info("Fetching entity registry status...")?;
+            let response = client
+                .get(endpoint)
+                .await
+                .map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                })?;
+            let result: Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {e}"),
+                })?;
+            output.header("Entity Registry Status")?;
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
         }
