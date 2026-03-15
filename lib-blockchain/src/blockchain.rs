@@ -2737,7 +2737,9 @@ impl Blockchain {
                                         if let Some(proposal) =
                                             self.get_dao_proposal(&exec.proposal_id)
                                         {
-                                            if proposal.proposal_type == "treasury_allocation" {
+                                            if proposal.proposal_type
+                                                == crate::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE
+                                            {
                                                 if let Some(bytes) =
                                                     proposal.execution_params.as_deref()
                                                 {
@@ -2746,23 +2748,15 @@ impl Blockchain {
                                                     >(
                                                         bytes
                                                     ) {
-                                                        if let Ok(source) =
-                                                            hex::decode(&params.source_wallet_id)
-                                                        {
-                                                            if source.len() == 32 {
-                                                                let mut arr = [0u8; 32];
-                                                                arr.copy_from_slice(&source);
-                                                                addrs_to_sync.push(arr);
-                                                            }
+                                                        if let Some(arr) = crate::dao::parse_hex_32(
+                                                            &params.source_wallet_id,
+                                                        ) {
+                                                            addrs_to_sync.push(arr);
                                                         }
-                                                        if let Ok(dest) =
-                                                            hex::decode(&params.recipient_wallet_id)
-                                                        {
-                                                            if dest.len() == 32 {
-                                                                let mut arr = [0u8; 32];
-                                                                arr.copy_from_slice(&dest);
-                                                                addrs_to_sync.push(arr);
-                                                            }
+                                                        if let Some(arr) = crate::dao::parse_hex_32(
+                                                            &params.recipient_wallet_id,
+                                                        ) {
+                                                            addrs_to_sync.push(arr);
                                                         }
                                                     }
                                                 }

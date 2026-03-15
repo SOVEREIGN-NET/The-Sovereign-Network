@@ -1897,8 +1897,27 @@ impl DaoHandler {
         let dao_id = Self::parse_hex_32(&request_data.dao_id, "dao_id")?;
         let recipient_wallet_id = Self::parse_hex_32(&request_data.recipient, "recipient")?;
 
+        let identity_manager = self.identity_manager.read().await;
+        let proposer_identity = match identity_manager
+            .get_identity(&authenticated_identity_id)
+            .cloned()
+        {
+            Some(i) => i,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    "Proposer identity not found".to_string(),
+                ))
+            }
+        };
+        drop(identity_manager);
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| anyhow::anyhow!("System time error: {}", e))?
+            .as_secs();
         let blockchain_arc = self.get_blockchain().await?;
-        let blockchain = blockchain_arc.read().await;
+        let mut blockchain = blockchain_arc.write().await;
         let entity_registry = blockchain
             .entity_registry
             .as_ref()
@@ -1925,36 +1944,13 @@ impl DaoHandler {
             recipient_wallet_id: hex::encode(recipient_wallet_id),
             amount: request_data.amount,
         })?;
-        drop(blockchain);
-
-        let identity_manager = self.identity_manager.read().await;
-        let proposer_identity = match identity_manager
-            .get_identity(&authenticated_identity_id)
-            .cloned()
-        {
-            Some(i) => i,
-            None => {
-                return Ok(create_error_response(
-                    ZhtpStatus::BadRequest,
-                    "Proposer identity not found".to_string(),
-                ))
-            }
-        };
-        drop(identity_manager);
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| anyhow::anyhow!("System time error: {}", e))?
-            .as_secs();
-        let blockchain_arc = self.get_blockchain().await?;
-        let mut blockchain = blockchain_arc.write().await;
         let current_height = blockchain.get_height();
         let proposal_id = BcHash::from_slice(&lib_crypto::hash_blake3(
             &[
                 authenticated_identity_id.as_bytes(),
                 request_data.title.as_bytes(),
                 request_data.description.as_bytes(),
-                b"treasury_allocation",
+                lib_blockchain::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE.as_bytes(),
                 &now.to_le_bytes(),
             ]
             .concat(),
@@ -1970,7 +1966,7 @@ impl DaoHandler {
                 request_data.recipient,
                 request_data.dao_id
             ),
-            proposal_type: "treasury_allocation".to_string(),
+            proposal_type: lib_blockchain::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE.to_string(),
             voting_period_blocks: 7u64.saturating_mul(14_400),
             quorum_required: Self::proposal_quorum_required(&DaoProposalType::TreasuryAllocation),
             execution_params: Some(execution_params),
@@ -2074,7 +2070,7 @@ impl DaoHandler {
         let execution_data = DaoExecutionData {
             proposal_id,
             executor: identity.did.clone(),
-            execution_type: "treasury_allocation".to_string(),
+            execution_type: lib_blockchain::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE.to_string(),
             recipient: Some(params.recipient_wallet_id.clone()),
             amount: Some(params.amount),
             executed_at: now,

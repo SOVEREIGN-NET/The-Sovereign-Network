@@ -2197,8 +2197,17 @@ impl<'a> StatefulTransactionValidator<'a> {
             .get_dao_proposal(&execution.proposal_id)
             .ok_or(ValidationError::InvalidTransaction)?;
 
-        if proposal.proposal_type != "treasury_allocation" {
+        if proposal.proposal_type != crate::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE {
             return Ok(());
+        }
+
+        // Execution is only valid after the voting period has fully closed.
+        let voting_deadline = proposal
+            .created_at_height
+            .saturating_add(proposal.voting_period_blocks);
+        let current_height = blockchain.get_height();
+        if current_height <= voting_deadline {
+            return Err(ValidationError::InvalidTransaction);
         }
 
         let params = proposal
@@ -2207,12 +2216,12 @@ impl<'a> StatefulTransactionValidator<'a> {
             .ok_or(ValidationError::MissingRequiredData)
             .and_then(Self::decode_treasury_execution_params)?;
 
-        let destination_dao_id = Self::parse_hex_32(&params.destination_dao_id)
+        let destination_dao_id = crate::dao::parse_hex_32(&params.destination_dao_id)
             .ok_or(ValidationError::InvalidWalletId)?;
         let destination_entry = blockchain
             .get_dao_registry_entry(&destination_dao_id)
             .ok_or(ValidationError::InvalidWalletId)?;
-        let recipient_wallet_id = Self::parse_hex_32(&params.recipient_wallet_id)
+        let recipient_wallet_id = crate::dao::parse_hex_32(&params.recipient_wallet_id)
             .ok_or(ValidationError::InvalidWalletId)?;
 
         if destination_entry.treasury_key_id != recipient_wallet_id {
@@ -2263,7 +2272,13 @@ impl<'a> StatefulTransactionValidator<'a> {
             if council_yes < blockchain.council_threshold {
                 return Err(ValidationError::Unauthorized);
             }
-            if !blockchain.is_council_member(&execution.executor) {
+            // Verify that the actual tx signer is a council member — not just the
+            // self-declared `executor` DID string. DaoExecution is excluded from the
+            // generic sender-identity check above, so we enforce it here explicitly.
+            let signer_identity = blockchain
+                .get_identity_by_public_key(&transaction.signature.public_key.dilithium_pk)
+                .ok_or(ValidationError::Unauthorized)?;
+            if !blockchain.is_council_member(&signer_identity.did) {
                 return Err(ValidationError::Unauthorized);
             }
         }
@@ -2281,15 +2296,13 @@ impl<'a> StatefulTransactionValidator<'a> {
         if params.source_wallet_id != hex::encode(source_treasury_key.key_id) {
             return Err(ValidationError::InvalidWalletId);
         }
-        let sov_id = crate::contracts::utils::generate_lib_token_id();
-        let treasury_balance = blockchain
-            .token_contracts
-            .get(&sov_id)
-            .map(|token| token.balance_of(&source_treasury_key))
-            .unwrap_or(0);
-        if treasury_balance < amount {
-            return Err(ValidationError::InvalidAmount);
-        }
+
+        // NOTE: We intentionally do not pre-check the treasury SOV balance here.
+        // The validator reads from the in-memory `token_contracts` map while the
+        // executor debits from SledStore — they are different subsystems and the
+        // in-memory balance is not authoritative. The executor's `debit_token` will
+        // fail atomically with `InsufficientBalance` if funds are lacking at execution
+        // time, which is the correct and only authoritative check.
 
         Ok(())
     }
@@ -2297,18 +2310,12 @@ impl<'a> StatefulTransactionValidator<'a> {
     fn decode_treasury_execution_params(
         bytes: &[u8],
     ) -> Result<crate::dao::TreasuryExecutionParams, ValidationError> {
-        serde_json::from_slice(bytes).map_err(|_| ValidationError::InvalidTransaction)
-    }
-
-    fn parse_hex_32(value: &str) -> Option<[u8; 32]> {
-        let trimmed = value.strip_prefix("0x").unwrap_or(value);
-        let decoded = hex::decode(trimmed).ok()?;
-        if decoded.len() != 32 {
-            return None;
+        let params: crate::dao::TreasuryExecutionParams =
+            serde_json::from_slice(bytes).map_err(|_| ValidationError::InvalidTransaction)?;
+        if params.schema_version != 1 {
+            return Err(ValidationError::InvalidTransaction);
         }
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&decoded);
-        Some(out)
+        Ok(params)
     }
 }
 
@@ -2706,8 +2713,10 @@ mod tests {
                 proposer: "did:zhtp:proposer".to_string(),
                 title: "Treasury Allocation".to_string(),
                 description: "Test treasury allocation".to_string(),
-                proposal_type: "treasury_allocation".to_string(),
-                voting_period_blocks: 100,
+                proposal_type: crate::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE.to_string(),
+                // voting_period_blocks = 1 so deadline = height 1.
+                // Tests set blockchain.height = 2 to be past the period.
+                voting_period_blocks: 1,
                 quorum_required: 1,
                 execution_params: Some(serde_json::to_vec(&params).unwrap()),
                 created_at: 0,
@@ -3333,6 +3342,9 @@ mod tests {
             ),
         ]));
         blockchain.push_test_dao_vote(proposal_id, "did:zhtp:council:treasury", "Yes");
+        // Voting period closes at height 1 (created_at_height=0 + voting_period_blocks=1).
+        // Set blockchain height to 2 so execution is valid.
+        blockchain.height = 2;
 
         let tx = create_treasury_allocation_execution_for_test(
             proposal_id,
@@ -3397,7 +3409,10 @@ mod tests {
             ),
         ]));
         blockchain.push_test_dao_vote(proposal_id, "did:zhtp:council:member", "Yes");
+        blockchain.height = 2;
 
+        // `outsider_signer` has no registered identity — get_identity_by_public_key returns None
+        // → Unauthorized. This also covers the case where a non-council key signs.
         let tx = create_treasury_allocation_execution_for_test(
             proposal_id,
             "did:zhtp:not-council",
@@ -3412,8 +3427,13 @@ mod tests {
         ));
     }
 
+    /// Balance is NOT pre-checked in the validator — the executor's `debit_token` is the
+    /// authoritative check (it reads from SledStore; the validator reads from in-memory
+    /// `token_contracts` which is a different subsystem and not authoritative).
+    /// A council member submitting an execution against a treasury with insufficient
+    /// balance passes validation and is rejected at execution time.
     #[test]
-    fn test_treasury_allocation_execution_rejects_insufficient_balance() {
+    fn test_treasury_allocation_execution_passes_validation_regardless_of_balance() {
         let mut blockchain = crate::blockchain::Blockchain::default();
         let signer = test_public_key(73);
         let nonprofit_treasury = test_public_key(74);
@@ -3449,6 +3469,8 @@ mod tests {
             1_000_000,
             signer.clone(),
         );
+        // Only 10 SOV in the in-memory contract — far below the requested 250.
+        // Validation still passes; the executor's debit_token will fail atomically.
         token.credit_balance(&nonprofit_treasury, 10).unwrap();
         blockchain
             .token_contracts
@@ -3463,6 +3485,7 @@ mod tests {
             ),
         ]));
         blockchain.push_test_dao_vote(proposal_id, "did:zhtp:council:funds", "Yes");
+        blockchain.height = 2;
 
         let tx = create_treasury_allocation_execution_for_test(
             proposal_id,
@@ -3472,10 +3495,7 @@ mod tests {
             250,
         );
         let validator = StatefulTransactionValidator::new(&blockchain);
-        assert!(matches!(
-            validator.validate_dao_execution_transaction(&tx),
-            Err(ValidationError::InvalidAmount)
-        ));
+        assert!(validator.validate_dao_execution_transaction(&tx).is_ok());
     }
 
     #[test]

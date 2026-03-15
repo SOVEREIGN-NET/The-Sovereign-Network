@@ -1323,17 +1323,6 @@ impl BlockExecutor {
         lib_crypto::hash_blake3(b"DAO_GOVERNANCE_V1")
     }
 
-    fn parse_hex_32(value: &str) -> Option<[u8; 32]> {
-        let trimmed = value.strip_prefix("0x").unwrap_or(value);
-        let decoded = hex::decode(trimmed).ok()?;
-        if decoded.len() != 32 {
-            return None;
-        }
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&decoded);
-        Some(out)
-    }
-
     fn apply_dao_proposal(
         &self,
         mutator: &StateMutator<'_>,
@@ -1430,6 +1419,7 @@ impl BlockExecutor {
         &self,
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
+        block_height: u64,
         _tx_hash: &crate::types::Hash,
     ) -> Result<DaoExecutionOutcome, TxApplyError> {
         let data = tx.dao_execution_data.as_ref().ok_or_else(|| {
@@ -1451,7 +1441,20 @@ impl BlockExecutor {
                     "Failed to deserialize DaoProposalData for execution: {e}"
                 ))
             })?;
-        if proposal.proposal_type == "treasury_allocation" {
+
+        // Execution is only valid after the voting period has fully closed.
+        let voting_deadline = proposal
+            .created_at_height
+            .saturating_add(proposal.voting_period_blocks);
+        if block_height <= voting_deadline {
+            return Err(TxApplyError::InvalidType(format!(
+                "DaoExecution rejected: voting period for proposal '{}' closes at height \
+                 {voting_deadline} (current height: {block_height})",
+                data.proposal_id,
+            )));
+        }
+
+        if proposal.proposal_type == crate::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE {
             let params_bytes = proposal.execution_params.as_deref().ok_or_else(|| {
                 TxApplyError::InvalidType(
                     "Treasury allocation proposal missing execution_params".to_string(),
@@ -1480,13 +1483,14 @@ impl BlockExecutor {
                 ));
             }
 
-            let from =
-                Address::new(Self::parse_hex_32(&params.source_wallet_id).ok_or_else(|| {
+            let from = Address::new(
+                crate::dao::parse_hex_32(&params.source_wallet_id).ok_or_else(|| {
                     TxApplyError::InvalidType(
                         "Treasury allocation source_wallet_id must be 32-byte hex".to_string(),
                     )
-                })?);
-            let to = Address::new(Self::parse_hex_32(recipient_wallet).ok_or_else(|| {
+                })?,
+            );
+            let to = Address::new(crate::dao::parse_hex_32(recipient_wallet).ok_or_else(|| {
                 TxApplyError::InvalidType(
                     "Treasury allocation recipient_wallet_id must be 32-byte hex".to_string(),
                 )
@@ -2185,7 +2189,7 @@ impl BlockExecutor {
                 Ok(TxOutcome::DaoVote(outcome))
             }
             TransactionType::DaoExecution => {
-                let outcome = self.apply_dao_execution(mutator, tx, &tx_hash)?;
+                let outcome = self.apply_dao_execution(mutator, tx, block_height, &tx_hash)?;
                 Ok(TxOutcome::DaoExecution(outcome))
             }
 
@@ -3490,8 +3494,10 @@ mod tests {
             proposer: "council".to_string(),
             title: "Treasury Allocation".to_string(),
             description: "Move SOV to DAO treasury".to_string(),
-            proposal_type: "treasury_allocation".to_string(),
-            voting_period_blocks: 100,
+            proposal_type: crate::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE.to_string(),
+            // voting_period_blocks = 1 so the period closes at height 2 (created_at_height + 1).
+            // Execution tests submit at block 3, which is strictly after the deadline.
+            voting_period_blocks: 1,
             quorum_required: 1,
             execution_params: Some(
                 serde_json::to_vec(&crate::dao::TreasuryExecutionParams {
@@ -3671,10 +3677,15 @@ mod tests {
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
         executor.apply_block(&block1).unwrap();
 
+        // Block 2 is the last block in the voting period (deadline = created_at_height(1) + period(1) = 2).
+        // Block 3 is the first block after the period closes — execution is valid here.
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![]);
+        executor.apply_block(&block2).unwrap();
+
         let exec_tx =
             create_treasury_allocation_execution_tx(proposal_id, destination_wallet, amount);
-        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![exec_tx]);
-        executor.apply_block(&block2).unwrap();
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![exec_tx]);
+        executor.apply_block(&block3).unwrap();
 
         assert_eq!(store.get_token_balance(&token, &from).unwrap(), 750);
         assert_eq!(store.get_token_balance(&token, &to).unwrap(), 250);
@@ -3713,10 +3724,13 @@ mod tests {
             let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
             executor.apply_block(&block1).unwrap();
 
+            let block2 = create_block_with_txs(2, block1.header.block_hash, vec![]);
+            executor.apply_block(&block2).unwrap();
+
             let exec_tx =
                 create_treasury_allocation_execution_tx(proposal_id, destination_wallet, amount);
-            let block2 = create_block_with_txs(2, block1.header.block_hash, vec![exec_tx]);
-            executor.apply_block(&block2).unwrap();
+            let block3 = create_block_with_txs(3, block2.header.block_hash, vec![exec_tx]);
+            executor.apply_block(&block3).unwrap();
         }
 
         {

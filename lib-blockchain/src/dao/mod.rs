@@ -9,6 +9,9 @@ pub use council::{CouncilBootstrapConfig, CouncilBootstrapEntry, CouncilMember, 
 
 pub use phases::{DecentralizationSnapshot, PhaseTransitionConfig};
 
-pub use treasury::{TreasuryExecutionParams, TreasurySource, TreasurySpendingCategory};
+pub use treasury::{
+    parse_hex_32, TreasuryExecutionParams, TreasurySource, TreasurySpendingCategory,
+    TREASURY_ALLOCATION_PROPOSAL_TYPE,
+};
 
 pub use voting::VotingPowerMode;

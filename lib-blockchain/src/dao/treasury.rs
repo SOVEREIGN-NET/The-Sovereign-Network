@@ -2,6 +2,22 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Canonical `proposal_type` string for treasury allocation proposals.
+/// Used everywhere `DaoProposalData.proposal_type` is compared or set.
+pub const TREASURY_ALLOCATION_PROPOSAL_TYPE: &str = "treasury_allocation";
+
+/// Decode a lowercase-hex-encoded 32-byte value (with or without `0x` prefix).
+pub fn parse_hex_32(value: &str) -> Option<[u8; 32]> {
+    let trimmed = value.strip_prefix("0x").unwrap_or(value);
+    let decoded = hex::decode(trimmed).ok()?;
+    if decoded.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&decoded);
+    Some(out)
+}
+
 /// Categorizes a treasury spending proposal.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
