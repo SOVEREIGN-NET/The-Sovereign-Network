@@ -17,10 +17,11 @@ pub mod validation;
 // Explicit re-exports from core module
 pub use core::{
     BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData, BondingCurveSellData,
-    DaoExecutionData, DaoProposalData, DaoVoteData, IdentityTransactionData, ProfitDeclarationData,
-    RevenueSource, TokenMintData, TokenTransferData, Transaction, TransactionInput,
-    TransactionOutput, UbiClaimData, ValidatorOperation, ValidatorTransactionData,
-    WalletPrivateData, WalletReference, WalletTransactionData,
+    DaoExecutionData, DaoProposalData, DaoVoteData, IdentityTransactionData,
+    InitEntityRegistryData, ProfitDeclarationData, RevenueSource, TokenMintData, TokenTransferData,
+    Transaction, TransactionInput, TransactionOutput, UbiClaimData, ValidatorOperation,
+    ValidatorTransactionData, WalletPrivateData, WalletReference, WalletTransactionData,
+    TX_VERSION_V7,
 };
 
 // Re-exports from oracle_governance module

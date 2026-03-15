@@ -214,7 +214,9 @@ impl GenesisFundingService {
             blockchain
                 .wallet_registry
                 .insert(hex::encode(&wallet_id.0), wallet_data);
-            blockchain.wallet_blocks.insert(hex::encode(&wallet_id.0), 0);
+            blockchain
+                .wallet_blocks
+                .insert(hex::encode(&wallet_id.0), 0);
 
             let mut wallet_id_bytes_arr = [0u8; 32];
             wallet_id_bytes_arr.copy_from_slice(&wallet_id.0);
@@ -288,6 +290,7 @@ impl GenesisFundingService {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         };
 
         // Add genesis transaction to the genesis block
@@ -419,7 +422,10 @@ impl GenesisFundingService {
             };
 
             if blockchain.identity_registry.contains_key(&user_did) {
-                warn!("  User identity {} already present in genesis state", user_did);
+                warn!(
+                    "  User identity {} already present in genesis state",
+                    user_did
+                );
             } else {
                 blockchain
                     .identity_registry
@@ -527,10 +533,7 @@ impl GenesisFundingService {
                 validator.commission_rate / 100,
                 validator.commission_rate % 100
             );
-            info!(
-                "   - Network address: {}",
-                validator.network_address
-            );
+            info!("   - Network address: {}", validator.network_address);
         }
         info!(
             " Validator registration complete: {}/{} validators registered",

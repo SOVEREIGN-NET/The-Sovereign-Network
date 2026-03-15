@@ -42,6 +42,7 @@
 mod bip39_wordlist;
 pub mod bonding_curve_tx;
 pub mod crypto;
+pub mod dao_tx;
 pub mod error;
 pub mod handshake;
 pub mod identity;
@@ -54,6 +55,7 @@ pub mod wasm;
 
 // Re-exports for convenience
 pub use crypto::{Blake3, Dilithium5, Kyber1024};
+pub use dao_tx::build_init_entity_registry_tx;
 pub use error::{ClientError, Result};
 pub use handshake::{HandshakeResult, HandshakeState};
 pub use identity::{

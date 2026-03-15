@@ -84,6 +84,9 @@ pub struct Transaction {
     /// Required for TransactionType::CancelOracleUpdate
     pub cancel_oracle_update_data:
         Option<crate::transaction::oracle_governance::CancelOracleUpdateData>,
+    /// Entity registry initialization data (TSR)
+    /// Required for TransactionType::InitEntityRegistry
+    pub init_entity_registry_data: Option<InitEntityRegistryData>,
 }
 
 /// Version constants for the `Transaction` wire format.
@@ -95,6 +98,7 @@ pub const TX_VERSION_V3: u32 = 3; // +bonding_curve_*_data → 23 fields
 pub const TX_VERSION_V4: u32 = 4; // +oracle_*_data → 25 fields
 pub const TX_VERSION_V5: u32 = 5; // +oracle_attestation_data → 26 fields
 pub const TX_VERSION_V6: u32 = 6; // +cancel_oracle_update_data → 27 fields
+pub const TX_VERSION_V7: u32 = 7; // +init_entity_registry_data → 28 fields
 
 /// V1 has 18 fields (no token_mint_data). V2 has 19 (token_mint_data between
 /// token_transfer_data and governance_config_data). V3 adds bonding curve data.
@@ -108,12 +112,15 @@ const TX_FIELD_COUNT_V3: usize = 23; // Added bonding curve data fields
 const TX_FIELD_COUNT_V4: usize = 25; // Added oracle governance data fields
 const TX_FIELD_COUNT_V5: usize = 26; // Added oracle attestation data
 const TX_FIELD_COUNT_V6: usize = 27; // Added cancel oracle update data
+const TX_FIELD_COUNT_V7: usize = 28; // Added init entity registry data
 
 impl Serialize for Transaction {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeTuple;
 
-        let field_count = if self.version >= TX_VERSION_V6 {
+        let field_count = if self.version >= TX_VERSION_V7 {
+            TX_FIELD_COUNT_V7
+        } else if self.version >= TX_VERSION_V6 {
             TX_FIELD_COUNT_V6
         } else if self.version >= TX_VERSION_V5 {
             TX_FIELD_COUNT_V5
@@ -164,6 +171,9 @@ impl Serialize for Transaction {
         }
         if self.version >= TX_VERSION_V6 {
             tup.serialize_element(&self.cancel_oracle_update_data)?;
+        }
+        if self.version >= TX_VERSION_V7 {
+            tup.serialize_element(&self.init_entity_registry_data)?;
         }
 
         tup.end()
@@ -267,6 +277,14 @@ impl<'de> Deserialize<'de> for Transaction {
                         None
                     };
 
+                // V7 added entity registry initialization data
+                let init_entity_registry_data: Option<InitEntityRegistryData> =
+                    if version >= TX_VERSION_V7 {
+                        next!("init_entity_registry_data")
+                    } else {
+                        None
+                    };
+
                 Ok(Transaction {
                     version,
                     chain_id,
@@ -295,13 +313,14 @@ impl<'de> Deserialize<'de> for Transaction {
                     oracle_config_update_data,
                     oracle_attestation_data,
                     cancel_oracle_update_data,
+                    init_entity_registry_data,
                 })
             }
         }
 
-        // Request V6 field count (the maximum). For older versions the visitor reads
+        // Request V7 field count (the maximum). For older versions the visitor reads
         // fewer elements; leftover slots are never consumed.
-        deserializer.deserialize_tuple(TX_FIELD_COUNT_V6, TxVisitor)
+        deserializer.deserialize_tuple(TX_FIELD_COUNT_V7, TxVisitor)
     }
 }
 
@@ -869,6 +888,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -908,6 +928,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -949,6 +970,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1006,6 +1028,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1045,6 +1068,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1101,6 +1125,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1149,6 +1174,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1196,6 +1222,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1238,6 +1265,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1277,6 +1305,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1318,6 +1347,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1359,6 +1389,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1400,6 +1431,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1441,6 +1473,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1482,6 +1515,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1535,6 +1569,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1595,6 +1630,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1653,6 +1689,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1749,6 +1786,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1787,6 +1825,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1825,6 +1864,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1863,6 +1903,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1901,6 +1942,7 @@ impl Transaction {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         }
     }
 
@@ -1939,6 +1981,57 @@ impl Transaction {
             oracle_config_update_data: Some(oracle_config_update_data),
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
+        }
+    }
+
+    /// Create a new InitEntityRegistry transaction.
+    ///
+    /// This is a one-time, irreversible transaction that sets the CBE and Nonprofit
+    /// treasury addresses. Must be signed by a Bootstrap Council member.
+    pub fn new_init_entity_registry(
+        chain_id: u8,
+        cbe_treasury: PublicKey,
+        nonprofit_treasury: PublicKey,
+        initialized_at: u64,
+        initialized_at_height: u64,
+        signature: Signature,
+    ) -> Self {
+        let data = InitEntityRegistryData {
+            cbe_treasury,
+            nonprofit_treasury,
+            initialized_at,
+            initialized_at_height,
+        };
+        Transaction {
+            version: TX_VERSION_V7,
+            chain_id,
+            transaction_type: TransactionType::InitEntityRegistry,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_INIT_ENTITY_REGISTRY".to_vec(),
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
+            init_entity_registry_data: Some(data),
         }
     }
 }
@@ -2350,4 +2443,27 @@ pub struct BondingCurveGraduateData {
     pub graduator: [u8; 32],
     /// Nonce for replay protection
     pub nonce: u64,
+}
+
+/// Entity registry initialization data (TSR)
+///
+/// One-time transaction that sets the CBE (for-profit) and Nonprofit treasury
+/// addresses on-chain. The EntityRegistry becomes immutable after this transaction
+/// is committed. Must be signed by a Bootstrap Council member.
+///
+/// # Invariants
+/// - cbe_treasury != nonprofit_treasury
+/// - Neither address may be zero
+/// - Can only be processed once per chain lifetime
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InitEntityRegistryData {
+    /// CBE (For-Profit) treasury public key
+    pub cbe_treasury: crate::integration::crypto_integration::PublicKey,
+    /// Nonprofit treasury public key
+    pub nonprofit_treasury: crate::integration::crypto_integration::PublicKey,
+    /// Unix timestamp when this initialization was requested
+    pub initialized_at: u64,
+    /// Block height at time of signing (client-provided; part of the signed payload
+    /// so it cannot be modified post-signing without invalidating the signature).
+    pub initialized_at_height: u64,
 }
