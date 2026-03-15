@@ -19,7 +19,7 @@ pub const CURVE_TYPE_PIECEWISE_LINEAR: u8 = 3; // CBE token default
 
 /// Build a signed bonding curve deploy transaction.
 /// Returns hex-encoded transaction ready to POST to /api/v1/curve/deploy
-/// 
+///
 /// # Curve Types
 /// - 0 = Linear: price = base + slope × supply
 /// - 1 = Exponential: price = base × (1 + rate)^supply
@@ -372,6 +372,7 @@ pub fn build_swap_tx(
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
     };
 
     let tx_hash = tx.signing_hash();
@@ -469,6 +470,7 @@ pub fn build_add_liquidity_tx(
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
     };
 
     let tx_hash = tx.signing_hash();
@@ -558,6 +560,7 @@ pub fn build_remove_liquidity_tx(
         oracle_config_update_data: None,
         oracle_attestation_data: None,
         cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
     };
 
     let tx_hash = tx.signing_hash();

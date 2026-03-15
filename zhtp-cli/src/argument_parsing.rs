@@ -373,6 +373,22 @@ pub enum DaoAction {
         #[arg(long)]
         metadata_hash: String,
     },
+    /// Initialize entity registry (one-time, Bootstrap Council only).
+    /// Builds and signs the InitEntityRegistry transaction locally from the
+    /// provided treasury keys and council identity keystore.
+    EntityRegistryInit {
+        /// CBE (for-profit) treasury public key, hex-encoded
+        #[arg(long)]
+        cbe_treasury: String,
+        /// Nonprofit treasury public key, hex-encoded
+        #[arg(long)]
+        nonprofit_treasury: String,
+        /// Optional keystore path for the council identity signing this tx
+        #[arg(long)]
+        keystore: Option<String>,
+    },
+    /// Show entity registry status
+    EntityRegistryStatus,
 }
 
 /// Citizen management commands
