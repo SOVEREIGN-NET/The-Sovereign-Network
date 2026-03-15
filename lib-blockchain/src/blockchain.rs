@@ -2732,6 +2732,44 @@ impl Blockchain {
                                         addrs_to_sync.push(d.to);
                                     }
                                 }
+                                TransactionType::DaoExecution => {
+                                    if let Some(exec) = &tx.dao_execution_data {
+                                        if let Some(proposal) =
+                                            self.get_dao_proposal(&exec.proposal_id)
+                                        {
+                                            if proposal.proposal_type == "treasury_allocation" {
+                                                if let Some(bytes) =
+                                                    proposal.execution_params.as_deref()
+                                                {
+                                                    if let Ok(params) = serde_json::from_slice::<
+                                                        crate::dao::TreasuryExecutionParams,
+                                                    >(
+                                                        bytes
+                                                    ) {
+                                                        if let Ok(source) =
+                                                            hex::decode(&params.source_wallet_id)
+                                                        {
+                                                            if source.len() == 32 {
+                                                                let mut arr = [0u8; 32];
+                                                                arr.copy_from_slice(&source);
+                                                                addrs_to_sync.push(arr);
+                                                            }
+                                                        }
+                                                        if let Ok(dest) =
+                                                            hex::decode(&params.recipient_wallet_id)
+                                                        {
+                                                            if dest.len() == 32 {
+                                                                let mut arr = [0u8; 32];
+                                                                arr.copy_from_slice(&dest);
+                                                                addrs_to_sync.push(arr);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -14036,7 +14074,11 @@ impl Blockchain {
         // Serialize a minimal TreasuryExecutionParams — recipient/amount are overridden at
         // execution time, but the category is validated before the transfer happens.
         let params = crate::dao::TreasuryExecutionParams {
+            schema_version: 1,
             category,
+            source_treasury: crate::dao::TreasurySource::Nonprofit,
+            source_wallet_id: String::new(),
+            destination_dao_id: String::new(),
             recipient_wallet_id: String::new(),
             amount: 0,
         };
