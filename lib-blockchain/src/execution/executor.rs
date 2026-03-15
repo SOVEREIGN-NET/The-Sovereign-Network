@@ -1419,6 +1419,7 @@ impl BlockExecutor {
         &self,
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
+        block_height: u64,
         _tx_hash: &crate::types::Hash,
     ) -> Result<DaoExecutionOutcome, TxApplyError> {
         let data = tx.dao_execution_data.as_ref().ok_or_else(|| {
@@ -1428,14 +1429,73 @@ impl BlockExecutor {
         let contract_id = Self::dao_state_contract_id();
         let mut proposal_key = b"proposal:".to_vec();
         proposal_key.extend_from_slice(data.proposal_id.as_bytes());
-        let proposal_exists = self
+        let proposal_raw = self
             .store
             .get_contract_storage(&contract_id, &proposal_key)?
-            .is_some();
-        if !proposal_exists {
-            return Err(TxApplyError::InvalidType(
-                "DaoExecution references unknown proposal".to_string(),
-            ));
+            .ok_or_else(|| {
+                TxApplyError::InvalidType("DaoExecution references unknown proposal".to_string())
+            })?;
+        let proposal: crate::transaction::DaoProposalData = bincode::deserialize(&proposal_raw)
+            .map_err(|e| {
+                TxApplyError::Internal(format!(
+                    "Failed to deserialize DaoProposalData for execution: {e}"
+                ))
+            })?;
+
+        // Execution is only valid after the voting period has fully closed.
+        let voting_deadline = proposal
+            .created_at_height
+            .saturating_add(proposal.voting_period_blocks);
+        if block_height <= voting_deadline {
+            return Err(TxApplyError::InvalidType(format!(
+                "DaoExecution rejected: voting period for proposal '{}' closes at height \
+                 {voting_deadline} (current height: {block_height})",
+                data.proposal_id,
+            )));
+        }
+
+        if proposal.proposal_type == crate::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE {
+            let params_bytes = proposal.execution_params.as_deref().ok_or_else(|| {
+                TxApplyError::InvalidType(
+                    "Treasury allocation proposal missing execution_params".to_string(),
+                )
+            })?;
+            let params: crate::dao::TreasuryExecutionParams = serde_json::from_slice(params_bytes)
+                .map_err(|e| {
+                    TxApplyError::InvalidType(format!(
+                        "Treasury allocation execution_params invalid: {e}"
+                    ))
+                })?;
+
+            let amount = data.amount.ok_or_else(|| {
+                TxApplyError::InvalidType(
+                    "Treasury allocation execution missing amount".to_string(),
+                )
+            })?;
+            let recipient_wallet = data.recipient.as_deref().ok_or_else(|| {
+                TxApplyError::InvalidType(
+                    "Treasury allocation execution missing recipient".to_string(),
+                )
+            })?;
+            if amount != params.amount || recipient_wallet != params.recipient_wallet_id {
+                return Err(TxApplyError::InvalidType(
+                    "Treasury allocation execution does not match proposal params".to_string(),
+                ));
+            }
+
+            let from = Address::new(
+                crate::dao::parse_hex_32(&params.source_wallet_id).ok_or_else(|| {
+                    TxApplyError::InvalidType(
+                        "Treasury allocation source_wallet_id must be 32-byte hex".to_string(),
+                    )
+                })?,
+            );
+            let to = Address::new(crate::dao::parse_hex_32(recipient_wallet).ok_or_else(|| {
+                TxApplyError::InvalidType(
+                    "Treasury allocation recipient_wallet_id must be 32-byte hex".to_string(),
+                )
+            })?);
+            mutator.transfer_token(&TokenId::NATIVE, &from, &to, amount as u128)?;
         }
 
         // Use a deterministic key (not including tx_hash) so a proposal can only be
@@ -2129,7 +2189,7 @@ impl BlockExecutor {
                 Ok(TxOutcome::DaoVote(outcome))
             }
             TransactionType::DaoExecution => {
-                let outcome = self.apply_dao_execution(mutator, tx, &tx_hash)?;
+                let outcome = self.apply_dao_execution(mutator, tx, block_height, &tx_hash)?;
                 Ok(TxOutcome::DaoExecution(outcome))
             }
 
@@ -3420,6 +3480,63 @@ mod tests {
         tx
     }
 
+    fn create_treasury_allocation_proposal_tx(
+        proposal_id: crate::types::Hash,
+        source_wallet_id: [u8; 32],
+        destination_dao_id: [u8; 32],
+        recipient_wallet_id: [u8; 32],
+        amount: u64,
+    ) -> Transaction {
+        let mut tx = create_legacy_tx(TransactionType::DaoProposal);
+        tx.fee = 1_000;
+        tx.dao_proposal_data = Some(crate::transaction::DaoProposalData {
+            proposal_id,
+            proposer: "council".to_string(),
+            title: "Treasury Allocation".to_string(),
+            description: "Move SOV to DAO treasury".to_string(),
+            proposal_type: crate::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE.to_string(),
+            // voting_period_blocks = 1 so the period closes at height 2 (created_at_height + 1).
+            // Execution tests submit at block 3, which is strictly after the deadline.
+            voting_period_blocks: 1,
+            quorum_required: 1,
+            execution_params: Some(
+                serde_json::to_vec(&crate::dao::TreasuryExecutionParams {
+                    schema_version: 1,
+                    category: crate::dao::TreasurySpendingCategory::SectorDaoAllocation,
+                    source_treasury: crate::dao::TreasurySource::Nonprofit,
+                    source_wallet_id: hex::encode(source_wallet_id),
+                    destination_dao_id: hex::encode(destination_dao_id),
+                    recipient_wallet_id: hex::encode(recipient_wallet_id),
+                    amount,
+                })
+                .unwrap(),
+            ),
+            created_at: 1000,
+            created_at_height: 1,
+        });
+        tx
+    }
+
+    fn create_treasury_allocation_execution_tx(
+        proposal_id: crate::types::Hash,
+        recipient_wallet_id: [u8; 32],
+        amount: u64,
+    ) -> Transaction {
+        let mut tx = create_legacy_tx(TransactionType::DaoExecution);
+        tx.fee = 1_000;
+        tx.dao_execution_data = Some(crate::transaction::DaoExecutionData {
+            proposal_id,
+            executor: "council".to_string(),
+            execution_type: "treasury_allocation".to_string(),
+            recipient: Some(hex::encode(recipient_wallet_id)),
+            amount: Some(amount),
+            executed_at: 3000,
+            executed_at_height: 3,
+            multisig_signatures: vec![],
+        });
+        tx
+    }
+
     /// DAO full lifecycle: Proposal (block 1) → Vote (block 2) → Execution (block 3).
     ///
     /// SledStore writes are only visible after apply_batch in commit_block, so each
@@ -3528,6 +3645,109 @@ mod tests {
         );
         let result = executor.apply_block(&block3);
         assert!(result.is_err(), "Double DaoExecution must be rejected");
+    }
+
+    #[test]
+    fn test_treasury_allocation_execution_moves_native_sov() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let proposal_id = proposal_id_for("treasury-allocation-transfer");
+        let source_wallet = [0xA1; 32];
+        let destination_dao_id = [0xB2; 32];
+        let destination_wallet = [0xC3; 32];
+        let amount = 250u64;
+        let token = TokenId::NATIVE;
+        let from = Address::new(source_wallet);
+        let to = Address::new(destination_wallet);
+        store
+            .force_set_token_balances(&[(token, from, 1_000), (token, to, 0)])
+            .unwrap();
+
+        let proposal_tx = create_treasury_allocation_proposal_tx(
+            proposal_id,
+            source_wallet,
+            destination_dao_id,
+            destination_wallet,
+            amount,
+        );
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
+        executor.apply_block(&block1).unwrap();
+
+        // Block 2 is the last block in the voting period (deadline = created_at_height(1) + period(1) = 2).
+        // Block 3 is the first block after the period closes — execution is valid here.
+        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![]);
+        executor.apply_block(&block2).unwrap();
+
+        let exec_tx =
+            create_treasury_allocation_execution_tx(proposal_id, destination_wallet, amount);
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![exec_tx]);
+        executor.apply_block(&block3).unwrap();
+
+        assert_eq!(store.get_token_balance(&token, &from).unwrap(), 750);
+        assert_eq!(store.get_token_balance(&token, &to).unwrap(), 250);
+    }
+
+    #[test]
+    fn test_treasury_allocation_execution_balances_persist_across_restart() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store_path = temp_dir.path().join("treasury_allocation_restart");
+        let proposal_id = proposal_id_for("treasury-allocation-restart");
+        let source_wallet = [0xD1; 32];
+        let destination_dao_id = [0xD2; 32];
+        let destination_wallet = [0xD3; 32];
+        let amount = 400u64;
+        let token = TokenId::NATIVE;
+
+        {
+            let store = Arc::new(SledStore::open(&store_path).unwrap()) as Arc<dyn BlockchainStore>;
+            let executor = create_test_executor(store.clone());
+            let genesis = create_genesis_block();
+            executor.apply_block(&genesis).unwrap();
+            store
+                .force_set_token_balances(&[
+                    (token, Address::new(source_wallet), 1_000),
+                    (token, Address::new(destination_wallet), 0),
+                ])
+                .unwrap();
+
+            let proposal_tx = create_treasury_allocation_proposal_tx(
+                proposal_id,
+                source_wallet,
+                destination_dao_id,
+                destination_wallet,
+                amount,
+            );
+            let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
+            executor.apply_block(&block1).unwrap();
+
+            let block2 = create_block_with_txs(2, block1.header.block_hash, vec![]);
+            executor.apply_block(&block2).unwrap();
+
+            let exec_tx =
+                create_treasury_allocation_execution_tx(proposal_id, destination_wallet, amount);
+            let block3 = create_block_with_txs(3, block2.header.block_hash, vec![exec_tx]);
+            executor.apply_block(&block3).unwrap();
+        }
+
+        {
+            let store = Arc::new(SledStore::open(&store_path).unwrap()) as Arc<dyn BlockchainStore>;
+            assert_eq!(
+                store
+                    .get_token_balance(&token, &Address::new(source_wallet))
+                    .unwrap(),
+                600
+            );
+            assert_eq!(
+                store
+                    .get_token_balance(&token, &Address::new(destination_wallet))
+                    .unwrap(),
+                400
+            );
+        }
     }
 
     /// DaoVote must be rejected when the proposal voting period has expired.

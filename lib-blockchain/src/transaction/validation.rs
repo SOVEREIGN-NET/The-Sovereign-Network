@@ -1549,9 +1549,11 @@ impl<'a> StatefulTransactionValidator<'a> {
             }
             TransactionType::DaoProposal
             | TransactionType::DaoVote
-            | TransactionType::DaoExecution
             | TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation handled at consensus layer
+            }
+            TransactionType::DaoExecution => {
+                self.validate_dao_execution_transaction(transaction)?;
             }
 
             TransactionType::UBIClaim => {
@@ -1665,6 +1667,9 @@ impl<'a> StatefulTransactionValidator<'a> {
             && transaction.transaction_type != TransactionType::TokenTransfer
             && transaction.transaction_type != TransactionType::TokenMint
             && transaction.transaction_type != TransactionType::TokenCreation
+            && transaction.transaction_type != TransactionType::DaoProposal
+            && transaction.transaction_type != TransactionType::DaoVote
+            && transaction.transaction_type != TransactionType::DaoExecution
             && !is_token_contract_execution(transaction)
         {
             tracing::debug!("[BREADCRUMB] validate_sender_identity_exists CALL");
@@ -1677,7 +1682,11 @@ impl<'a> StatefulTransactionValidator<'a> {
         let mut skip_signature = is_system_transaction
             && !matches!(
                 transaction.transaction_type,
-                TransactionType::TokenMint | TransactionType::InitEntityRegistry
+                TransactionType::TokenMint
+                    | TransactionType::InitEntityRegistry
+                    | TransactionType::DaoProposal
+                    | TransactionType::DaoVote
+                    | TransactionType::DaoExecution
             );
         if transaction.transaction_type == TransactionType::TokenMint {
             if let Some(blockchain) = self.blockchain {
@@ -2177,6 +2186,137 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         Ok(())
     }
+
+    fn validate_dao_execution_transaction(&self, transaction: &Transaction) -> ValidationResult {
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+        let execution = transaction
+            .dao_execution_data
+            .as_ref()
+            .ok_or(ValidationError::MissingRequiredData)?;
+        let proposal = blockchain
+            .get_dao_proposal(&execution.proposal_id)
+            .ok_or(ValidationError::InvalidTransaction)?;
+
+        if proposal.proposal_type != crate::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE {
+            return Ok(());
+        }
+
+        // Execution is only valid after the voting period has fully closed.
+        let voting_deadline = proposal
+            .created_at_height
+            .saturating_add(proposal.voting_period_blocks);
+        let current_height = blockchain.get_height();
+        if current_height <= voting_deadline {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        let params = proposal
+            .execution_params
+            .as_deref()
+            .ok_or(ValidationError::MissingRequiredData)
+            .and_then(Self::decode_treasury_execution_params)?;
+
+        let destination_dao_id = crate::dao::parse_hex_32(&params.destination_dao_id)
+            .ok_or(ValidationError::InvalidWalletId)?;
+        let destination_entry = blockchain
+            .get_dao_registry_entry(&destination_dao_id)
+            .ok_or(ValidationError::InvalidWalletId)?;
+        let recipient_wallet_id = crate::dao::parse_hex_32(&params.recipient_wallet_id)
+            .ok_or(ValidationError::InvalidWalletId)?;
+
+        if destination_entry.treasury_key_id != recipient_wallet_id {
+            return Err(ValidationError::InvalidWalletId);
+        }
+
+        let amount = execution.amount.ok_or(ValidationError::InvalidAmount)?;
+        let recipient = execution
+            .recipient
+            .as_deref()
+            .ok_or(ValidationError::InvalidWalletId)?;
+        if amount == 0 || amount != params.amount || recipient != params.recipient_wallet_id {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        if blockchain
+            .get_dao_executions()
+            .iter()
+            .any(|existing| existing.proposal_id == execution.proposal_id)
+        {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        if blockchain.pending_transactions.iter().any(|pending| {
+            pending.hash() != transaction.hash()
+                && pending.transaction_type == TransactionType::DaoExecution
+                && pending.dao_execution_data.as_ref().map(|d| d.proposal_id)
+                    == Some(execution.proposal_id)
+        }) {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        if !blockchain
+            .has_proposal_passed(&execution.proposal_id, proposal.quorum_required as u32)
+            .map_err(|_| ValidationError::InvalidTransaction)?
+        {
+            return Err(ValidationError::Unauthorized);
+        }
+
+        if blockchain.governance_phase == crate::dao::GovernancePhase::Bootstrap {
+            let council_yes = blockchain
+                .get_dao_votes_for_proposal(&execution.proposal_id)
+                .iter()
+                .filter(|vote| {
+                    vote.vote_choice == "Yes" && blockchain.is_council_member(&vote.voter)
+                })
+                .count() as u8;
+            if council_yes < blockchain.council_threshold {
+                return Err(ValidationError::Unauthorized);
+            }
+            // Verify that the actual tx signer is a council member — not just the
+            // self-declared `executor` DID string. DaoExecution is excluded from the
+            // generic sender-identity check above, so we enforce it here explicitly.
+            let signer_identity = blockchain
+                .get_identity_by_public_key(&transaction.signature.public_key.dilithium_pk)
+                .ok_or(ValidationError::Unauthorized)?;
+            if !blockchain.is_council_member(&signer_identity.did) {
+                return Err(ValidationError::Unauthorized);
+            }
+        }
+
+        let entity_registry = blockchain
+            .entity_registry
+            .as_ref()
+            .ok_or(ValidationError::InvalidTransaction)?;
+        let source_treasury_key = match params.source_treasury {
+            crate::dao::TreasurySource::Nonprofit => entity_registry
+                .nonprofit_treasury()
+                .map_err(|_| ValidationError::InvalidTransaction)?
+                .clone(),
+        };
+        if params.source_wallet_id != hex::encode(source_treasury_key.key_id) {
+            return Err(ValidationError::InvalidWalletId);
+        }
+
+        // NOTE: We intentionally do not pre-check the treasury SOV balance here.
+        // The validator reads from the in-memory `token_contracts` map while the
+        // executor debits from SledStore — they are different subsystems and the
+        // in-memory balance is not authoritative. The executor's `debit_token` will
+        // fail atomically with `InsufficientBalance` if funds are lacking at execution
+        // time, which is the correct and only authoritative check.
+
+        Ok(())
+    }
+
+    fn decode_treasury_execution_params(
+        bytes: &[u8],
+    ) -> Result<crate::dao::TreasuryExecutionParams, ValidationError> {
+        let params: crate::dao::TreasuryExecutionParams =
+            serde_json::from_slice(bytes).map_err(|_| ValidationError::InvalidTransaction)?;
+        if params.schema_version != 1 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+        Ok(params)
+    }
 }
 
 /// Calculate minimum fee based on transaction size
@@ -2528,6 +2668,92 @@ mod tests {
             stake_amount: 1,
             joined_at_height: 0,
         });
+    }
+
+    fn minimal_test_block(transactions: Vec<Transaction>) -> crate::block::Block {
+        crate::block::Block {
+            header: crate::block::BlockHeader {
+                version: 1,
+                previous_block_hash: Hash::default(),
+                merkle_root: Hash::default(),
+                state_root: Hash::default(),
+                timestamp: 0,
+                difficulty: crate::types::Difficulty::default(),
+                nonce: 0,
+                cumulative_difficulty: crate::types::Difficulty::default(),
+                height: 1,
+                block_hash: Hash::default(),
+                transaction_count: transactions.len() as u32,
+                block_size: 0,
+                fee_model_version: 1,
+            },
+            transactions,
+        }
+    }
+
+    fn create_treasury_allocation_proposal_for_test(
+        proposal_id: Hash,
+        destination_dao_id: [u8; 32],
+        source_wallet_id: [u8; 32],
+        recipient_wallet_id: [u8; 32],
+        amount: u64,
+    ) -> Transaction {
+        let params = crate::dao::TreasuryExecutionParams {
+            schema_version: 1,
+            category: crate::dao::TreasurySpendingCategory::SectorDaoAllocation,
+            source_treasury: crate::dao::TreasurySource::Nonprofit,
+            source_wallet_id: hex::encode(source_wallet_id),
+            destination_dao_id: hex::encode(destination_dao_id),
+            recipient_wallet_id: hex::encode(recipient_wallet_id),
+            amount,
+        };
+        Transaction::new_dao_proposal(
+            crate::transaction::DaoProposalData {
+                proposal_id,
+                proposer: "did:zhtp:proposer".to_string(),
+                title: "Treasury Allocation".to_string(),
+                description: "Test treasury allocation".to_string(),
+                proposal_type: crate::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE.to_string(),
+                // voting_period_blocks = 1 so deadline = height 1.
+                // Tests set blockchain.height = 2 to be past the period.
+                voting_period_blocks: 1,
+                quorum_required: 1,
+                execution_params: Some(serde_json::to_vec(&params).unwrap()),
+                created_at: 0,
+                created_at_height: 0,
+            },
+            vec![],
+            vec![],
+            0,
+            Signature::default(),
+            vec![],
+        )
+    }
+
+    fn create_treasury_allocation_execution_for_test(
+        proposal_id: Hash,
+        executor: &str,
+        signer: &PublicKey,
+        recipient_wallet_id: [u8; 32],
+        amount: u64,
+    ) -> Transaction {
+        Transaction::new_dao_execution(
+            crate::transaction::DaoExecutionData {
+                proposal_id,
+                executor: executor.to_string(),
+                execution_type: "treasury_allocation".to_string(),
+                recipient: Some(hex::encode(recipient_wallet_id)),
+                amount: Some(amount),
+                executed_at: 0,
+                executed_at_height: 1,
+                multisig_signatures: vec![],
+            },
+            vec![],
+            vec![],
+            0,
+            test_signature(signer),
+            vec![],
+        )
     }
 
     /// Test A: Token contract creation call is detected without identity record
@@ -3063,6 +3289,213 @@ mod tests {
         );
         let validator = StatefulTransactionValidator::new(&blockchain);
         assert!(validator.validate_init_entity_registry(&tx).is_ok());
+    }
+
+    #[test]
+    fn test_treasury_allocation_execution_accepts_valid_bootstrap_council_flow() {
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        let signer = test_public_key(60);
+        let nonprofit_treasury = test_public_key(61);
+        let cbe_treasury = test_public_key(62);
+        let dao_treasury = test_public_key(63);
+        let dao_id = [0x44; 32];
+        let proposal_id = Hash::new([0x55; 32]);
+
+        register_council_identity(&mut blockchain, "did:zhtp:council:treasury", &signer);
+        blockchain.council_threshold = 1;
+        blockchain.entity_registry = Some(crate::contracts::governance::EntityRegistry::new());
+        blockchain
+            .entity_registry
+            .as_mut()
+            .unwrap()
+            .init(cbe_treasury, nonprofit_treasury.clone())
+            .unwrap();
+        blockchain.dao_registry_index.insert(
+            dao_id,
+            crate::blockchain::DaoRegistryIndexEntry {
+                dao_id,
+                token_key_id: [0x11; 32],
+                class: "np".to_string(),
+                metadata_hash: [0x22; 32],
+                treasury_key_id: dao_treasury.key_id,
+                owner_key_id: signer.key_id,
+                created_at: 0,
+            },
+        );
+        let mut token = crate::contracts::TokenContract::new_custom(
+            "Sovereign".to_string(),
+            "SOV".to_string(),
+            1_000_000,
+            signer.clone(),
+        );
+        token.credit_balance(&nonprofit_treasury, 500).unwrap();
+        blockchain
+            .token_contracts
+            .insert(crate::contracts::utils::generate_lib_token_id(), token);
+        blockchain.blocks.push(minimal_test_block(vec![
+            create_treasury_allocation_proposal_for_test(
+                proposal_id,
+                dao_id,
+                nonprofit_treasury.key_id,
+                dao_treasury.key_id,
+                250,
+            ),
+        ]));
+        blockchain.push_test_dao_vote(proposal_id, "did:zhtp:council:treasury", "Yes");
+        // Voting period closes at height 1 (created_at_height=0 + voting_period_blocks=1).
+        // Set blockchain height to 2 so execution is valid.
+        blockchain.height = 2;
+
+        let tx = create_treasury_allocation_execution_for_test(
+            proposal_id,
+            "did:zhtp:council:treasury",
+            &signer,
+            dao_treasury.key_id,
+            250,
+        );
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        assert!(validator.validate_dao_execution_transaction(&tx).is_ok());
+    }
+
+    #[test]
+    fn test_treasury_allocation_execution_rejects_non_council_executor_in_bootstrap() {
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        let council_signer = test_public_key(64);
+        let outsider_signer = test_public_key(65);
+        let nonprofit_treasury = test_public_key(66);
+        let cbe_treasury = test_public_key(67);
+        let dao_treasury = test_public_key(68);
+        let dao_id = [0x69; 32];
+        let proposal_id = Hash::new([0x70; 32]);
+
+        register_council_identity(&mut blockchain, "did:zhtp:council:member", &council_signer);
+        blockchain.council_threshold = 1;
+        blockchain.entity_registry = Some(crate::contracts::governance::EntityRegistry::new());
+        blockchain
+            .entity_registry
+            .as_mut()
+            .unwrap()
+            .init(cbe_treasury, nonprofit_treasury.clone())
+            .unwrap();
+        blockchain.dao_registry_index.insert(
+            dao_id,
+            crate::blockchain::DaoRegistryIndexEntry {
+                dao_id,
+                token_key_id: [0x71; 32],
+                class: "np".to_string(),
+                metadata_hash: [0x72; 32],
+                treasury_key_id: dao_treasury.key_id,
+                owner_key_id: council_signer.key_id,
+                created_at: 0,
+            },
+        );
+        let mut token = crate::contracts::TokenContract::new_custom(
+            "Sovereign".to_string(),
+            "SOV".to_string(),
+            1_000_000,
+            council_signer.clone(),
+        );
+        token.credit_balance(&nonprofit_treasury, 500).unwrap();
+        blockchain
+            .token_contracts
+            .insert(crate::contracts::utils::generate_lib_token_id(), token);
+        blockchain.blocks.push(minimal_test_block(vec![
+            create_treasury_allocation_proposal_for_test(
+                proposal_id,
+                dao_id,
+                nonprofit_treasury.key_id,
+                dao_treasury.key_id,
+                250,
+            ),
+        ]));
+        blockchain.push_test_dao_vote(proposal_id, "did:zhtp:council:member", "Yes");
+        blockchain.height = 2;
+
+        // `outsider_signer` has no registered identity — get_identity_by_public_key returns None
+        // → Unauthorized. This also covers the case where a non-council key signs.
+        let tx = create_treasury_allocation_execution_for_test(
+            proposal_id,
+            "did:zhtp:not-council",
+            &outsider_signer,
+            dao_treasury.key_id,
+            250,
+        );
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        assert!(matches!(
+            validator.validate_dao_execution_transaction(&tx),
+            Err(ValidationError::Unauthorized)
+        ));
+    }
+
+    /// Balance is NOT pre-checked in the validator — the executor's `debit_token` is the
+    /// authoritative check (it reads from SledStore; the validator reads from in-memory
+    /// `token_contracts` which is a different subsystem and not authoritative).
+    /// A council member submitting an execution against a treasury with insufficient
+    /// balance passes validation and is rejected at execution time.
+    #[test]
+    fn test_treasury_allocation_execution_passes_validation_regardless_of_balance() {
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        let signer = test_public_key(73);
+        let nonprofit_treasury = test_public_key(74);
+        let cbe_treasury = test_public_key(75);
+        let dao_treasury = test_public_key(76);
+        let dao_id = [0x77; 32];
+        let proposal_id = Hash::new([0x78; 32]);
+
+        register_council_identity(&mut blockchain, "did:zhtp:council:funds", &signer);
+        blockchain.council_threshold = 1;
+        blockchain.entity_registry = Some(crate::contracts::governance::EntityRegistry::new());
+        blockchain
+            .entity_registry
+            .as_mut()
+            .unwrap()
+            .init(cbe_treasury, nonprofit_treasury.clone())
+            .unwrap();
+        blockchain.dao_registry_index.insert(
+            dao_id,
+            crate::blockchain::DaoRegistryIndexEntry {
+                dao_id,
+                token_key_id: [0x79; 32],
+                class: "np".to_string(),
+                metadata_hash: [0x80; 32],
+                treasury_key_id: dao_treasury.key_id,
+                owner_key_id: signer.key_id,
+                created_at: 0,
+            },
+        );
+        let mut token = crate::contracts::TokenContract::new_custom(
+            "Sovereign".to_string(),
+            "SOV".to_string(),
+            1_000_000,
+            signer.clone(),
+        );
+        // Only 10 SOV in the in-memory contract — far below the requested 250.
+        // Validation still passes; the executor's debit_token will fail atomically.
+        token.credit_balance(&nonprofit_treasury, 10).unwrap();
+        blockchain
+            .token_contracts
+            .insert(crate::contracts::utils::generate_lib_token_id(), token);
+        blockchain.blocks.push(minimal_test_block(vec![
+            create_treasury_allocation_proposal_for_test(
+                proposal_id,
+                dao_id,
+                nonprofit_treasury.key_id,
+                dao_treasury.key_id,
+                250,
+            ),
+        ]));
+        blockchain.push_test_dao_vote(proposal_id, "did:zhtp:council:funds", "Yes");
+        blockchain.height = 2;
+
+        let tx = create_treasury_allocation_execution_for_test(
+            proposal_id,
+            "did:zhtp:council:funds",
+            &signer,
+            dao_treasury.key_id,
+            250,
+        );
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        assert!(validator.validate_dao_execution_transaction(&tx).is_ok());
     }
 
     #[test]

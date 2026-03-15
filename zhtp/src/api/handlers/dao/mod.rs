@@ -216,7 +216,13 @@ struct SpendingProposalRequest {
     title: String,
     amount: u64,
     recipient: String,
+    dao_id: String,
     description: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExecuteProposalRequest {
+    proposal_id: String,
 }
 
 /// Council member registration request (dao-1)
@@ -1888,31 +1894,225 @@ impl DaoHandler {
             &request_data.recipient,
             request_data.amount,
         )?;
+        let dao_id = Self::parse_hex_32(&request_data.dao_id, "dao_id")?;
+        let recipient_wallet_id = Self::parse_hex_32(&request_data.recipient, "recipient")?;
 
-        // Use authenticated identity as proposer (not first identity!)
-        let proposer_id = hex::encode(authenticated_identity_id.as_bytes());
+        let identity_manager = self.identity_manager.read().await;
+        let proposer_identity = match identity_manager
+            .get_identity(&authenticated_identity_id)
+            .cloned()
+        {
+            Some(i) => i,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    "Proposer identity not found".to_string(),
+                ))
+            }
+        };
+        drop(identity_manager);
 
-        // Create treasury allocation proposal
-        let create_request = CreateProposalRequest {
-            proposer_identity_id: Some(proposer_id.to_string()),
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| anyhow::anyhow!("System time error: {}", e))?
+            .as_secs();
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+        let entity_registry = blockchain
+            .entity_registry
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Entity registry is not initialized"))?;
+        let nonprofit_wallet_id = entity_registry
+            .nonprofit_treasury()
+            .map_err(|e| anyhow::anyhow!("Nonprofit treasury unavailable: {}", e))?
+            .key_id;
+        let destination_entry = blockchain
+            .get_dao_registry_entry(&dao_id)
+            .ok_or_else(|| anyhow::anyhow!("destination dao_id is not registered"))?;
+        if destination_entry.treasury_key_id != recipient_wallet_id {
+            return Ok(create_error_response(
+                ZhtpStatus::BadRequest,
+                "recipient must match the registered DAO treasury wallet".to_string(),
+            ));
+        }
+        let execution_params = serde_json::to_vec(&lib_blockchain::dao::TreasuryExecutionParams {
+            schema_version: 1,
+            category: lib_blockchain::dao::TreasurySpendingCategory::SectorDaoAllocation,
+            source_treasury: lib_blockchain::dao::TreasurySource::Nonprofit,
+            source_wallet_id: hex::encode(nonprofit_wallet_id),
+            destination_dao_id: hex::encode(dao_id),
+            recipient_wallet_id: hex::encode(recipient_wallet_id),
+            amount: request_data.amount,
+        })?;
+        let current_height = blockchain.get_height();
+        let proposal_id = BcHash::from_slice(&lib_crypto::hash_blake3(
+            &[
+                authenticated_identity_id.as_bytes(),
+                request_data.title.as_bytes(),
+                request_data.description.as_bytes(),
+                lib_blockchain::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE.as_bytes(),
+                &now.to_le_bytes(),
+            ]
+            .concat(),
+        ));
+        let proposal_data = DaoProposalData {
+            proposal_id,
+            proposer: proposer_identity.did.clone(),
             title: request_data.title.clone(),
             description: format!(
-                "{}\n\nAmount: {}\nRecipient: {}",
-                request_data.description, request_data.amount, request_data.recipient
+                "{}\n\nAmount: {}\nRecipient: {}\nDAO: {}",
+                request_data.description,
+                request_data.amount,
+                request_data.recipient,
+                request_data.dao_id
             ),
-            proposal_type: Some("treasury_allocation".to_string()),
-            voting_period_days: Some(7),
-            activate_at_epoch: None,
-            reason: None,
-            oracle_committee_members: None,
-            oracle_epoch_duration_secs: None,
-            oracle_max_source_age_secs: None,
-            oracle_max_deviation_bps: None,
-            oracle_max_price_staleness_epochs: None,
+            proposal_type: lib_blockchain::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE.to_string(),
+            voting_period_blocks: 7u64.saturating_mul(14_400),
+            quorum_required: Self::proposal_quorum_required(&DaoProposalType::TreasuryAllocation),
+            execution_params: Some(execution_params),
+            created_at: now,
+            created_at_height: current_height,
         };
 
-        self.handle_create_proposal_from_identity(authenticated_identity_id, create_request)
+        let mut proposal_tx = Transaction::new_dao_proposal(
+            proposal_data,
+            Vec::new(),
+            Vec::new(),
+            0,
+            Signature {
+                signature: Vec::new(),
+                public_key: proposer_identity.public_key.clone(),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: now,
+            },
+            format!("dao:proposal:{}", request_data.title).into_bytes(),
+        );
+        if let Some(private_key) = proposer_identity.private_key.clone() {
+            let keypair = lib_crypto::KeyPair {
+                public_key: proposer_identity.public_key.clone(),
+                private_key,
+            };
+            let sig = lib_crypto::sign_message(&keypair, proposal_tx.signing_hash().as_bytes())
+                .map_err(|e| anyhow::anyhow!("Failed to sign DAO proposal tx: {}", e))?;
+            proposal_tx.signature.signature = sig.signature;
+        } else {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Proposer private key unavailable on node".to_string(),
+            ));
+        }
+        blockchain
+            .add_pending_transaction(proposal_tx)
+            .map_err(|e| anyhow::anyhow!("Failed to submit proposal transaction: {}", e))?;
+
+        create_json_response(json!({
+            "status": "success",
+            "proposal_id": Self::hash_to_string(&proposal_id),
+            "title": request_data.title,
+            "proposal_type": "treasury_allocation",
+            "message": "Treasury allocation proposal submitted to mempool"
+        }))
+    }
+
+    async fn handle_execute_proposal(&self, request: &ZhtpRequest) -> Result<ZhtpResponse> {
+        let session_token = match request
+            .headers
+            .get("Authorization")
+            .and_then(|auth| auth.strip_prefix("Bearer ").map(|s| s.to_string()))
+        {
+            Some(token) => token,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::Unauthorized,
+                    "Missing or invalid Authorization header".to_string(),
+                ));
+            }
+        };
+        let client_ip = extract_client_ip(request);
+        let user_agent = extract_user_agent(request);
+        let session = self
+            .session_manager
+            .validate_session(&session_token, &client_ip, &user_agent)
             .await
+            .map_err(|e| anyhow::anyhow!("Session validation failed: {}", e))?;
+        let request_data: ExecuteProposalRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
+        let proposal_id =
+            Self::parse_hex_32(&request_data.proposal_id, "proposal_id").map(BcHash::new)?;
+
+        let identity_manager = self.identity_manager.read().await;
+        let identity = match identity_manager.get_identity(&session.identity_id).cloned() {
+            Some(i) => i,
+            None => {
+                return Ok(create_error_response(
+                    ZhtpStatus::BadRequest,
+                    "Authenticated identity not found".to_string(),
+                ))
+            }
+        };
+        drop(identity_manager);
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| anyhow::anyhow!("System time error: {}", e))?
+            .as_secs();
+        let blockchain_arc = self.get_blockchain().await?;
+        let mut blockchain = blockchain_arc.write().await;
+        let proposal = blockchain
+            .get_dao_proposal(&proposal_id)
+            .ok_or_else(|| anyhow::anyhow!("proposal not found"))?;
+        let params: lib_blockchain::dao::TreasuryExecutionParams = serde_json::from_slice(
+            proposal
+                .execution_params
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("proposal missing execution_params"))?,
+        )?;
+        let execution_data = DaoExecutionData {
+            proposal_id,
+            executor: identity.did.clone(),
+            execution_type: lib_blockchain::dao::TREASURY_ALLOCATION_PROPOSAL_TYPE.to_string(),
+            recipient: Some(params.recipient_wallet_id.clone()),
+            amount: Some(params.amount),
+            executed_at: now,
+            executed_at_height: blockchain.get_height(),
+            multisig_signatures: Vec::new(),
+        };
+        let mut tx = Transaction::new_dao_execution(
+            execution_data,
+            Vec::new(),
+            Vec::new(),
+            0,
+            Signature {
+                signature: Vec::new(),
+                public_key: identity.public_key.clone(),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: now,
+            },
+            format!("dao:execute:{}", request_data.proposal_id).into_bytes(),
+        );
+        if let Some(private_key) = identity.private_key.clone() {
+            let keypair = lib_crypto::KeyPair {
+                public_key: identity.public_key.clone(),
+                private_key,
+            };
+            let sig = lib_crypto::sign_message(&keypair, tx.signing_hash().as_bytes())
+                .map_err(|e| anyhow::anyhow!("Failed to sign DAO execution tx: {}", e))?;
+            tx.signature.signature = sig.signature;
+        } else {
+            return Ok(create_error_response(
+                ZhtpStatus::Forbidden,
+                "Executor private key unavailable on node".to_string(),
+            ));
+        }
+        blockchain
+            .add_pending_transaction(tx)
+            .map_err(|e| anyhow::anyhow!("Failed to submit execution transaction: {}", e))?;
+
+        create_json_response(json!({
+            "status": "success",
+            "proposal_id": request_data.proposal_id,
+            "message": "Proposal execution submitted to mempool"
+        }))
     }
 
     /// Handle DAO statistics endpoint
@@ -2795,6 +2995,10 @@ impl ZhtpRequestHandler for DaoHandler {
                 .map_err(anyhow::Error::from),
             (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", "spending"]) => self
                 .handle_spending_proposal(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", "execute"]) => self
+                .handle_execute_proposal(&request)
                 .await
                 .map_err(anyhow::Error::from),
             (ZhtpMethod::Post, ["api", "v1", "dao", "registry", "register"]) => self
