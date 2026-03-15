@@ -3,6 +3,7 @@
 //! DAO governance handler backed by canonical blockchain state
 
 use anyhow::Result;
+use bincode::Options;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -41,6 +42,8 @@ fn create_json_response(data: serde_json::Value) -> Result<ZhtpResponse> {
 fn create_error_response(status: ZhtpStatus, message: String) -> ZhtpResponse {
     ZhtpResponse::error(status, message)
 }
+
+const MAX_CANONICAL_TX_BYTES: usize = 512 * 1024;
 
 /// Helper to extract client IP from request
 fn extract_client_ip(request: &ZhtpRequest) -> String {
@@ -268,9 +271,17 @@ impl DaoHandler {
     }
 
     fn decode_signed_tx_raw(&self, signed_tx: &str) -> Result<Transaction> {
+        if signed_tx.len() > MAX_CANONICAL_TX_BYTES * 2 {
+            return Err(anyhow::anyhow!("signed_tx exceeds maximum allowed size"));
+        }
         let tx_bytes =
             hex::decode(signed_tx).map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
-        let tx: Transaction = bincode::deserialize(&tx_bytes)
+        if tx_bytes.len() > MAX_CANONICAL_TX_BYTES {
+            return Err(anyhow::anyhow!("signed_tx exceeds maximum allowed size"));
+        }
+        let tx: Transaction = bincode::DefaultOptions::new()
+            .with_limit(MAX_CANONICAL_TX_BYTES as u64)
+            .deserialize(&tx_bytes)
             .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
         Ok(tx)
     }
@@ -2167,15 +2178,9 @@ impl DaoHandler {
             };
 
         let init_metadata = blockchain
-            .blocks
-            .iter()
-            .flat_map(|block| block.transactions.iter())
-            .find(|tx| {
-                tx.transaction_type
-                    == lib_blockchain::types::transaction_type::TransactionType::InitEntityRegistry
-            })
-            .and_then(|tx| tx.init_entity_registry_data.as_ref())
-            .map(|data| (Some(data.initialized_at), Some(data.initialized_at_height)))
+            .entity_registry
+            .as_ref()
+            .map(|registry| (registry.initialized_at(), registry.initialized_at_height()))
             .unwrap_or((None, None));
 
         create_json_response(json!({

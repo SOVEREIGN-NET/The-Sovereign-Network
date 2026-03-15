@@ -1268,12 +1268,30 @@ impl BlockchainStorageV4 {
     }
 }
 
-/// Stable storage format V5 for blockchain serialization.
+/// Stable storage format V5 for blockchain serialization (LEGACY).
 ///
-/// V5 extends V4 with `onramp_state` for CBE/USD VWAP-based oracle pricing (Mode B).
+/// V5 wrapped V4 and appended `onramp_state`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyBlockchainStorageV5 {
+    pub v4: BlockchainStorageV4,
+    #[serde(default)]
+    pub onramp_state: crate::onramp::OnRampState,
+}
+
+impl LegacyBlockchainStorageV5 {
+    fn to_blockchain(self) -> Blockchain {
+        let mut blockchain = self.v4.to_blockchain();
+        blockchain.onramp_state = self.onramp_state;
+        blockchain
+    }
+}
+
+/// Stable storage format V6 for blockchain serialization.
+///
+/// V6 extends V5 with the current oracle/onramp/entity-registry fields.
 /// Fields must remain append-only after this point — bincode is positional.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct BlockchainStorageV5 {
+struct BlockchainStorageV6 {
     pub v3: BlockchainStorageV3,
     #[serde(default)]
     pub oracle_state: crate::oracle::OracleState,
@@ -1289,12 +1307,11 @@ struct BlockchainStorageV5 {
     pub oracle_banned_validators: std::collections::HashSet<[u8; 32]>,
     #[serde(default)]
     pub last_oracle_epoch_processed: u64,
-    // TSR: entity registry — append-only, defaults to None for old storage files
     #[serde(default)]
     pub entity_registry: Option<crate::contracts::governance::EntityRegistry>,
 }
 
-impl BlockchainStorageV5 {
+impl BlockchainStorageV6 {
     fn from_blockchain(bc: &Blockchain) -> Self {
         Self {
             v3: BlockchainStorageV3::from_blockchain(bc),
@@ -5628,6 +5645,7 @@ impl Blockchain {
                 .map_err(|e| {
                     anyhow::anyhow!("InitEntityRegistry tx {} failed: {}", tx_hash_hex, e)
                 })?;
+            registry.set_initialization_metadata(data.initialized_at, block.header.height);
 
             info!(
                 "EntityRegistry initialized at height {} (tx {})",
@@ -11889,7 +11907,7 @@ impl Blockchain {
     /// File format magic bytes - "ZHTP"
     const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
     /// Current file format version
-    const FILE_VERSION: u16 = 5;
+    const FILE_VERSION: u16 = 6;
 
     #[deprecated(
         since = "0.2.0",
@@ -11915,7 +11933,7 @@ impl Blockchain {
         }
 
         // Convert to stable storage format (V5)
-        let storage = BlockchainStorageV5::from_blockchain(self);
+        let storage = BlockchainStorageV6::from_blockchain(self);
 
         // Serialize to bincode
         let serialized = bincode::serialize(&storage)
@@ -11990,22 +12008,35 @@ impl Blockchain {
             info!("📂 Detected versioned format v{}", version);
 
             match version {
-                5 => {
-                    // V5 format - includes onramp state for CBE/USD VWAP pricing.
-                    match bincode::deserialize::<BlockchainStorageV5>(data) {
-                        Ok(storage) => {
-                            info!("📂 Loaded blockchain storage v5 (onramp-enabled format)");
-                            storage.to_blockchain()
-                        }
-                        Err(storage_err) => {
-                            error!("❌ Failed to deserialize v5 blockchain: {}", storage_err);
-                            return Err(anyhow::anyhow!(
-                                "Failed to deserialize v5 blockchain: {}",
-                                storage_err
-                            ));
-                        }
+                6 => match bincode::deserialize::<BlockchainStorageV6>(data) {
+                    Ok(storage) => {
+                        info!("📂 Loaded blockchain storage v6 (entity-registry format)");
+                        storage.to_blockchain()
                     }
-                }
+                    Err(storage_err) => {
+                        error!("❌ Failed to deserialize v6 blockchain: {}", storage_err);
+                        return Err(anyhow::anyhow!(
+                            "Failed to deserialize v6 blockchain: {}",
+                            storage_err
+                        ));
+                    }
+                },
+                5 => match bincode::deserialize::<LegacyBlockchainStorageV5>(data) {
+                    Ok(storage) => {
+                        info!("📂 Loaded legacy blockchain storage v5 (migrating to v6)");
+                        storage.to_blockchain()
+                    }
+                    Err(storage_err) => {
+                        error!(
+                            "❌ Failed to deserialize legacy v5 blockchain: {}",
+                            storage_err
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Failed to deserialize legacy v5 blockchain: {}",
+                            storage_err
+                        ));
+                    }
+                },
                 4 => {
                     // V4 format - includes Oracle Protocol v1 state.
                     // Migrate to V5 by loading V4 and adding default onramp_state.
@@ -13721,8 +13752,8 @@ mod oracle_storage_migration_tests {
             bc.oracle_state.committee.pending_update()
         );
 
-        // Convert to storage V5 and back
-        let storage = BlockchainStorageV5::from_blockchain(&bc);
+        // Convert to storage V6 and back
+        let storage = BlockchainStorageV6::from_blockchain(&bc);
         println!(
             "Storage: pending_update = {:?}",
             storage.oracle_state.committee.pending_update()
@@ -13736,8 +13767,44 @@ mod oracle_storage_migration_tests {
 
         assert!(
             bc2.oracle_state.committee.pending_update().is_some(),
-            "pending_update should survive V5 round-trip"
+            "pending_update should survive V6 round-trip"
         );
+    }
+
+    #[test]
+    fn load_legacy_v5_file_migrates_to_current_storage_layout() {
+        let mut bc = Blockchain::new().unwrap();
+        bc.onramp_state = crate::onramp::OnRampState::default();
+
+        let storage_v5 = LegacyBlockchainStorageV5 {
+            v4: BlockchainStorageV4 {
+                v3: BlockchainStorageV3::from_blockchain(&bc),
+                oracle_state: bc.oracle_state.clone(),
+                exchange_state: bc.exchange_state.clone(),
+                oracle_slash_events: bc.oracle_slash_events.clone(),
+                oracle_slashing_config: bc.oracle_slashing_config.clone(),
+                oracle_banned_validators: bc.oracle_banned_validators.clone(),
+                last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
+            },
+            onramp_state: bc.onramp_state.clone(),
+        };
+        let serialized = bincode::serialize(&storage_v5).expect("serialize legacy v5 storage");
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("legacy_v5.dat");
+        let mut file_data = Vec::with_capacity(6 + serialized.len());
+        file_data.extend_from_slice(&Blockchain::FILE_MAGIC);
+        file_data.extend_from_slice(&5u16.to_le_bytes());
+        file_data.extend_from_slice(&serialized);
+
+        let mut f = std::fs::File::create(&path).expect("create file");
+        f.write_all(&file_data).expect("write file");
+        f.sync_all().expect("sync file");
+
+        #[allow(deprecated)]
+        let loaded = Blockchain::load_from_file(&path).expect("load legacy v5 file");
+        assert_eq!(loaded.onramp_state, bc.onramp_state);
+        assert!(loaded.entity_registry.is_none());
     }
 
     #[test]

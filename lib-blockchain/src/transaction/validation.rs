@@ -1719,6 +1719,8 @@ impl<'a> StatefulTransactionValidator<'a> {
     }
 
     fn validate_init_entity_registry(&self, transaction: &Transaction) -> ValidationResult {
+        const MIN_TREASURY_DILITHIUM_PK_LEN: usize = 1312;
+
         let data = transaction
             .init_entity_registry_data
             .as_ref()
@@ -1734,11 +1736,15 @@ impl<'a> StatefulTransactionValidator<'a> {
             return Err(ValidationError::InvalidFee);
         }
 
-        let cbe_bytes = data.cbe_treasury.as_bytes();
-        let nonprofit_bytes = data.nonprofit_treasury.as_bytes();
-        let is_all_zero = |bytes: &[u8]| !bytes.is_empty() && bytes.iter().all(|byte| *byte == 0);
+        let cbe_pk = &data.cbe_treasury.dilithium_pk;
+        let nonprofit_pk = &data.nonprofit_treasury.dilithium_pk;
+        let is_all_zero = |bytes: &[u8]| bytes.iter().all(|byte| *byte == 0);
 
-        if is_all_zero(&cbe_bytes) || is_all_zero(&nonprofit_bytes) {
+        if cbe_pk.len() < MIN_TREASURY_DILITHIUM_PK_LEN
+            || nonprofit_pk.len() < MIN_TREASURY_DILITHIUM_PK_LEN
+            || is_all_zero(cbe_pk)
+            || is_all_zero(nonprofit_pk)
+        {
             return Err(ValidationError::InvalidPublicKey);
         }
         if data.cbe_treasury.key_id == data.nonprofit_treasury.key_id {
@@ -2960,6 +2966,24 @@ mod tests {
         let treasury = test_public_key(45);
         let tx =
             create_init_entity_registry_transaction_for_test(&signer, treasury.clone(), treasury);
+
+        let validator = StatefulTransactionValidator::new(&blockchain);
+        assert!(matches!(
+            validator.validate_init_entity_registry(&tx),
+            Err(ValidationError::InvalidPublicKey)
+        ));
+    }
+
+    #[test]
+    fn test_init_entity_registry_rejects_missing_dilithium_key_material() {
+        let blockchain = crate::blockchain::Blockchain::default();
+        let signer = test_public_key(58);
+        let kyber_only = PublicKey::from_kyber_public_key(vec![0xAB; 1568]);
+        let tx = create_init_entity_registry_transaction_for_test(
+            &signer,
+            kyber_only,
+            test_public_key(59),
+        );
 
         let validator = StatefulTransactionValidator::new(&blockchain);
         assert!(matches!(
