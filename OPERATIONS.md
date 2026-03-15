@@ -59,10 +59,11 @@ online to commit blocks. With 4 validators, at most 1 may be offline at any time
 
 ### Storage Format Change
 
-Same procedure as binary update. New fields added to `BlockchainStorageV6` use
-`#[serde(default)]` — the loading node deserializes the old format, restores in-memory
-state, and persists in the new format on the next `save_to_file()`. No manual migration
-required.
+Same procedure as binary update. File-format changes require an explicit storage version
+bump because bincode is positional. This change reads legacy `BlockchainStorageV6` files
+and rewrites them as `BlockchainStorageV7` on the next `save_to_file()`. No manual
+migration is required, but `#[serde(default)]` alone is not sufficient for old snapshot
+compatibility.
 
 ### Server Reference
 
