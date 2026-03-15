@@ -209,6 +209,7 @@ impl TransactionBuilder {
             oracle_config_update_data: None,
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
         };
 
         // Sign the transaction
@@ -698,6 +699,15 @@ pub mod utils {
             }
             TransactionType::CancelOracleUpdate => {
                 // Cancel oracle update - validation handled at consensus layer
+            }
+            TransactionType::InitEntityRegistry => {
+                // Entity registry init - must have no inputs/outputs
+                if !inputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidInputs);
+                }
+                if !outputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidOutputs);
+                }
             }
         }
 

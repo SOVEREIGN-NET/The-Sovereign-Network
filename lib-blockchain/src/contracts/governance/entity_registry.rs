@@ -137,6 +137,12 @@ pub struct EntityRegistry {
 
     /// Initialization flag - once true, registry is immutable
     initialized: bool,
+
+    /// Timestamp recorded from the InitEntityRegistry transaction, if available.
+    initialized_at: Option<u64>,
+
+    /// Inclusion height recorded from the InitEntityRegistry transaction, if available.
+    initialized_at_height: Option<u64>,
 }
 
 /// Error types for EntityRegistry operations
@@ -200,6 +206,8 @@ impl EntityRegistry {
             entity_types: HashMap::new(),
             roles: HashMap::new(),
             initialized: false,
+            initialized_at: None,
+            initialized_at_height: None,
         }
     }
 
@@ -274,9 +282,23 @@ impl EntityRegistry {
         Ok(())
     }
 
+    /// Persist canonical metadata from the InitEntityRegistry transaction.
+    pub fn set_initialization_metadata(&mut self, initialized_at: u64, initialized_at_height: u64) {
+        self.initialized_at = Some(initialized_at);
+        self.initialized_at_height = Some(initialized_at_height);
+    }
+
     /// Check if the registry is initialized
     pub fn is_initialized(&self) -> bool {
         self.initialized
+    }
+
+    pub fn initialized_at(&self) -> Option<u64> {
+        self.initialized_at
+    }
+
+    pub fn initialized_at_height(&self) -> Option<u64> {
+        self.initialized_at_height
     }
 
     /// Get the CBE (for-profit) treasury address
