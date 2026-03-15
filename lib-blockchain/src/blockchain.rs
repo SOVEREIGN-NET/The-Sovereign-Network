@@ -1309,6 +1309,12 @@ struct BlockchainStorageV6 {
     pub last_oracle_epoch_processed: u64,
     #[serde(default)]
     pub entity_registry: Option<crate::contracts::governance::EntityRegistry>,
+    /// CBE corporate equity token state — 100B supply with vesting schedules.
+    /// Append-only field; #[serde(default)] ensures old V6 files load with
+    /// CbeToken::default() (uninitialized) and receive the one-time backfill
+    /// in load_from_file / load_from_store.
+    #[serde(default)]
+    pub cbe_token: crate::contracts::tokens::CbeToken,
 }
 
 impl BlockchainStorageV6 {
@@ -1323,6 +1329,7 @@ impl BlockchainStorageV6 {
             oracle_banned_validators: bc.oracle_banned_validators.clone(),
             last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
             entity_registry: bc.entity_registry.clone(),
+            cbe_token: bc.cbe_token.clone(),
         }
     }
 
@@ -1336,6 +1343,7 @@ impl BlockchainStorageV6 {
         blockchain.oracle_banned_validators = self.oracle_banned_validators;
         blockchain.last_oracle_epoch_processed = self.last_oracle_epoch_processed;
         blockchain.entity_registry = self.entity_registry;
+        blockchain.cbe_token = self.cbe_token;
         blockchain
     }
 }
@@ -1466,17 +1474,30 @@ impl Blockchain {
         blockchain.update_utxo_set(&genesis_block)?;
         blockchain.save_utxo_snapshot(0)?; // Save snapshot for genesis block
         blockchain.ensure_treasury_wallet();
+        // CBE genesis allocation runs here only on a true genesis boot (empty store, no peers).
+        // On restart or sync, cbe_token is loaded from BlockchainStorageV6 — this must not run.
         blockchain.initialize_cbe_genesis();
         Ok(blockchain)
     }
 
-    /// Initialize CBE (Community Bonding Experiment) as a built-in bonding curve token.
+    /// Initialize CBE token and bonding curve at genesis.
     ///
-    /// Uses the document-compliant piecewise linear curve with 4 supply bands.
-    /// Initializes the 100B CBE token allocation with vesting schedules.
+    /// # INVARIANT — READ BEFORE CALLING
     ///
-    /// Issue #1842: Piecewise Linear Bonding Curve Mathematics
-    /// Issue #1843: Genesis Allocation - 100B Supply Distribution
+    /// This function MUST only be called in ONE situation:
+    ///   - The local store is empty AND no peers have chain data (this IS the founding node
+    ///     creating a new network for the first time).
+    ///
+    /// It MUST NOT be called:
+    ///   - On normal node restart (load_from_store / load_from_file handles this via cbe_token
+    ///     persisted in BlockchainStorageV6)
+    ///   - When syncing from peers (the syncing node derives state by replaying blocks)
+    ///   - In any test that loads existing chain state
+    ///
+    /// Genesis ran once on testnet. It will run once on mainnet. Never again otherwise,
+    /// unless a catastrophic fork forces a full chain reset.
+    ///
+    /// Tracked: #1907 (CBE-0), #1909 (GENESIS-1)
     fn initialize_cbe_genesis(&mut self) {
         use crate::contracts::bonding_curve::{
             BondingCurveToken, CurveType, PiecewiseLinearCurve, Threshold,
@@ -2109,6 +2130,16 @@ impl Blockchain {
         blockchain.migrate_sov_key_balances_to_wallets();
         // Repair any balances inflated by the pre-fix backfill bug (minted on every restart).
         blockchain.repair_backfill_inflation();
+
+        // One-time CBE backfill for nodes whose blockchain.dat predates BlockchainStorageV6
+        // gaining the cbe_token field. Once all nodes have been restarted once with a binary
+        // that persists cbe_token, this branch will never be taken again.
+        // Do NOT call initialize_cbe_genesis() here — that is genesis-only. This backfill
+        // only restores the allocation that was already established at genesis.
+        if !blockchain.cbe_token.is_initialized() {
+            info!("CBE token not found in storage — running one-time backfill from genesis allocation");
+            blockchain.initialize_cbe_token_genesis();
+        }
 
         // Sync SOV balances from the authoritative token_balances Sled tree into in-memory
         // token_contracts.balances.  The BlockExecutor updates token_balances on every
@@ -12186,6 +12217,14 @@ impl Blockchain {
         blockchain.ensure_sov_token_contract();
         blockchain.ensure_treasury_wallet();
         blockchain.migrate_sov_key_balances_to_wallets();
+
+        // One-time CBE backfill for nodes whose blockchain.dat predates BlockchainStorageV6
+        // gaining the cbe_token field. Once all nodes have been restarted once with a binary
+        // that persists cbe_token, this branch will never be taken again.
+        if !blockchain.cbe_token.is_initialized() {
+            info!("CBE token not found in storage — running one-time backfill from genesis allocation");
+            blockchain.initialize_cbe_token_genesis();
+        }
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
             info!(
@@ -15014,6 +15053,50 @@ mod cbe_genesis_allocation_tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "Minting is disabled after initialization"
+        );
+    }
+
+    /// Verifies that cbe_token survives a save_to_file / load_from_file round-trip.
+    /// This is the core fix for #1907 — before the fix, cbe_token was missing from
+    /// BlockchainStorageV6 and evaporated on every restart.
+    #[test]
+    fn test_cbe_token_persists_through_save_load() {
+        use std::path::PathBuf;
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("tempdir");
+        let path: PathBuf = dir.path().join("blockchain.dat");
+
+        // Create a fresh blockchain — cbe_token gets initialized via genesis path
+        let blockchain = Blockchain::new().expect("create blockchain");
+        assert!(blockchain.cbe_token.is_initialized(), "must be initialized before save");
+        let supply_before = blockchain.cbe_token.total_supply();
+
+        // Compensation pool balance before save
+        let comp_addr = PublicKey { dilithium_pk: vec![], kyber_pk: vec![], key_id: [0x01; 32] };
+        let comp_balance_before = blockchain.cbe_token.balance_of(&comp_addr);
+
+        // Save to disk
+        #[allow(deprecated)]
+        blockchain.save_to_file(&path).expect("save_to_file");
+
+        // Load back — cbe_token must be restored, not re-initialized
+        #[allow(deprecated)]
+        let loaded = Blockchain::load_from_file(&path).expect("load_from_file");
+
+        assert!(
+            loaded.cbe_token.is_initialized(),
+            "cbe_token must still be initialized after load"
+        );
+        assert_eq!(
+            loaded.cbe_token.total_supply(),
+            supply_before,
+            "total supply must match after round-trip"
+        );
+        assert_eq!(
+            loaded.cbe_token.balance_of(&comp_addr),
+            comp_balance_before,
+            "compensation pool balance must match after round-trip"
         );
     }
 }
