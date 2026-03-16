@@ -1938,6 +1938,72 @@ impl RuntimeOrchestrator {
             bc.ensure_council_bootstrap(&self.config.consensus_config.council);
         }
 
+        // Reload identities from blockchain.identity_registry into IdentityManager.
+        // On node restart the in-memory IdentityManager is empty; identities are
+        // persisted in blockchain.identity_registry (Sled-backed). Without this,
+        // register_domain_simple() returns "Owner identity not found" for all users.
+        {
+            let bc = blockchain_arc.read().await;
+            match crate::runtime::identity_manager_provider::get_global_identity_manager().await {
+                Ok(mgr_arc) => {
+                    let mut mgr = mgr_arc.write().await;
+                    let mut restored: usize = 0;
+                    for itd in bc.identity_registry.values() {
+                        let identity_id =
+                            match lib_identity::did::parse_did_to_identity_id(&itd.did) {
+                                Ok(id) => id,
+                                Err(e) => {
+                                    warn!(
+                                        "Skipping identity with unparseable DID {}: {}",
+                                        itd.did, e
+                                    );
+                                    continue;
+                                }
+                            };
+                        let public_key = lib_crypto::PublicKey::new(itd.public_key.clone());
+                        let identity_type = match itd.identity_type.as_str() {
+                            "Organization" => lib_identity::IdentityType::Organization,
+                            "Agent" => lib_identity::IdentityType::Agent,
+                            "Contract" => lib_identity::IdentityType::Contract,
+                            "Device" => lib_identity::IdentityType::Device,
+                            _ => lib_identity::IdentityType::Human,
+                        };
+                        let display_name = if itd.display_name.is_empty() {
+                            None
+                        } else {
+                            Some(itd.display_name.clone())
+                        };
+                        match mgr.register_external_identity(
+                            identity_id,
+                            itd.did.clone(),
+                            public_key,
+                            identity_type,
+                            "restored".to_string(),
+                            display_name,
+                            itd.created_at,
+                        ) {
+                            Ok(_) => restored += 1,
+                            Err(e) if e.to_string().contains("already registered") => {}
+                            Err(e) => warn!(
+                                "Failed to restore identity {} from blockchain: {}",
+                                itd.did, e
+                            ),
+                        }
+                    }
+                    info!(
+                        "Restored {} identities from blockchain.identity_registry into IdentityManager",
+                        restored
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "IdentityManager not yet initialized during identity restore: {}",
+                        e
+                    );
+                }
+            }
+        }
+
         if let Some(ref net_info) = network_info {
             info!(
                 "✓ Found existing network with {} peers at height {}",

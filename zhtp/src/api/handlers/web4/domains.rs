@@ -795,9 +795,11 @@ impl Web4Handler {
                 "fee_payment_tx must use TransactionType::TokenTransfer"
             ));
         }
-        if fee_payment_tx.chain_id != 0x03 {
+        // Accept chain_id 0x02 (testnet/mobile) and 0x03 (mainnet).
+        // Mobile APK builds from config.ts always use CHAIN_ID=2 (testnet).
+        if fee_payment_tx.chain_id != 0x02 && fee_payment_tx.chain_id != 0x03 {
             return Err(anyhow!(
-                "fee_payment_tx must use chain_id 0x03, got {}",
+                "fee_payment_tx must use chain_id 0x02 or 0x03, got {}",
                 fee_payment_tx.chain_id
             ));
         }
