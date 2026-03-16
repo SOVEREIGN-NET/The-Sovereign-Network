@@ -54,6 +54,7 @@ const QUIC_PORT: u16 = 9334;
 // Import our comprehensive API handlers
 use crate::api::handlers::{
     DhtHandler,
+    MobileAuthHandler,
     ProtocolHandler,
     BlockchainHandler,
     IdentityHandler,
@@ -972,6 +973,16 @@ impl ZhtpUnifiedServer {
             identity_manager.clone(),
         );
         zhtp_router.register_handler("/api/v1/pouw".to_string(), Arc::new(pouw_handler));
+
+        // Mobile + Web App Authentication Delegation (Issue #1877)
+        // All three phases (challenge/verify/session, refresh, delegation certs) share one store.
+        let mobile_auth_store = Arc::new(lib_identity::auth::mobile_delegation::MobileAuthStore::new());
+        let mobile_auth_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
+            crate::api::handlers::MobileAuthHandler::new(mobile_auth_store),
+        );
+        // Prefix routes — the handler's dispatch() does exact matching internally
+        zhtp_router.register_handler("/api/v1/auth/mobile".to_string(), mobile_auth_handler.clone());
+        zhtp_router.register_handler("/api/v1/auth/delegate".to_string(), mobile_auth_handler);
 
         info!("✅ All API handlers registered successfully on ZHTP router");
         Ok((pouw_validator_arc, pouw_calculator))
