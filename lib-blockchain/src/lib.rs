@@ -34,6 +34,7 @@ pub mod storage;
 pub mod sync;
 pub mod transaction;
 pub mod types;
+pub mod genesis;
 pub mod utils;
 pub mod validation;
 pub mod vm;

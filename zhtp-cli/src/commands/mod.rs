@@ -2,6 +2,7 @@
 
 pub mod backup;
 pub mod blockchain;
+pub mod genesis;
 pub mod citizen;
 pub mod common;
 pub mod completion;
@@ -34,6 +35,7 @@ pub mod web4_utils;
 
 pub use backup::handle_backup_command;
 pub use blockchain::handle_blockchain_command;
+pub use genesis::handle_genesis_command;
 pub use citizen::handle_citizen_command;
 pub use completion::handle_completion_command;
 pub use component::handle_component_command;

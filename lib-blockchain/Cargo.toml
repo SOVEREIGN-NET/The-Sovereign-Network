@@ -18,6 +18,7 @@ tokio = { version = "1.0", features = ["full"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 anyhow = "1.0"
 hex = "0.4"
+toml = "0.8"
 blake3 = "1.5"
 rand = "0.8"
 

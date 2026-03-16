@@ -1481,39 +1481,47 @@ impl Blockchain {
         }
     }
 
-    /// Create a new blockchain with genesis block
+    /// Create a new blockchain with genesis block.
+    ///
+    /// Delegates to `GenesisConfig::build_block0()` so that `genesis.toml` is the
+    /// single source of truth for genesis state (GENESIS-1, #1909).
     pub fn new() -> Result<Self> {
-        let genesis_block = crate::block::create_genesis_block();
+        crate::genesis::GenesisConfig::from_embedded()
+            .and_then(|cfg| cfg.build_block0())
+    }
 
-        let mut blockchain = Self::new_runtime_state();
+    /// Create a bare genesis-state blockchain from a pre-built block 0.
+    ///
+    /// Used exclusively by `GenesisConfig::build_block0()`.
+    /// Does NOT call `initialize_cbe_genesis()` — state is managed by the caller.
+    pub fn new_empty_for_genesis(genesis_block: crate::block::Block) -> Result<Self> {
+        let mut bc = Self::new_runtime_state();
+        bc.blocks[0] = genesis_block.clone();
+        bc.update_utxo_set(&genesis_block)?;
+        bc.save_utxo_snapshot(0)?;
+        bc.ensure_treasury_wallet();
+        Ok(bc)
+    }
 
-        blockchain.update_utxo_set(&genesis_block)?;
-        blockchain.save_utxo_snapshot(0)?; // Save snapshot for genesis block
-        blockchain.ensure_treasury_wallet();
-        // CBE genesis allocation runs here only on a true genesis boot (empty store, no peers).
-        // On restart or sync, cbe_token is loaded from BlockchainStorageV7 / replay — this must not run.
-        blockchain.initialize_cbe_genesis();
-        Ok(blockchain)
+    /// Public wrapper around the private `derive_cbe_token_id()`.
+    ///
+    /// Used by `genesis::GenesisConfig::build_block0()` so it can reference the
+    /// canonical CBE token-id without accessing private methods.
+    pub fn derive_cbe_token_id_pub() -> [u8; 32] {
+        Self::derive_cbe_token_id()
     }
 
     /// Initialize CBE token and bonding curve at genesis.
     ///
-    /// # INVARIANT — READ BEFORE CALLING
+    /// # DEPRECATED — superseded by `GenesisConfig::build_block0()` (GENESIS-1, #1909)
     ///
-    /// This function MUST only be called in ONE situation:
-    ///   - The local store is empty AND no peers have chain data (this IS the founding node
-    ///     creating a new network for the first time).
-    ///
-    /// It MUST NOT be called:
-    ///   - On normal node restart (load_from_store / load_from_file handles this via cbe_token
-    ///     persisted in BlockchainStorageV7 or replay backfill)
-    ///   - When syncing from peers (the syncing node derives state by replaying blocks)
-    ///   - In any test that loads existing chain state
-    ///
-    /// Genesis ran once on testnet. It will run once on mainnet. Never again otherwise,
-    /// unless a catastrophic fork forces a full chain reset.
-    ///
-    /// Tracked: #1907 (CBE-0), #1909 (GENESIS-1)
+    /// Retained for compatibility; no longer called by `Blockchain::new()`.
+    /// Use `crate::genesis::GenesisConfig::from_embedded()?.build_block0()` instead.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Superseded by GenesisConfig::build_block0() (GENESIS-1 #1909)"
+    )]
+    #[allow(dead_code)]
     fn initialize_cbe_genesis(&mut self) {
         use crate::contracts::bonding_curve::{
             BondingCurveToken, CurveType, PiecewiseLinearCurve, Threshold,
@@ -1576,11 +1584,12 @@ impl Blockchain {
 
     /// Initialize CBE corporate equity token with 100B genesis allocation and vesting (Issue #1843)
     ///
-    /// Allocations:
-    /// - Compensation Pool: 40% (40B) - No vesting
-    /// - Operational Treasury: 30% (30B) - 12-month cliff, 36-month vest
-    /// - Performance Incentives: 20% (20B) - 6-month cliff, 24-month vest
-    /// - Strategic Reserves: 10% (10B) - 12-month cliff, 48-month vest
+    /// # DEPRECATED — superseded by `GenesisConfig::build_block0()` (GENESIS-1, #1909)
+    #[deprecated(
+        since = "0.2.0",
+        note = "Superseded by GenesisConfig::build_block0() (GENESIS-1 #1909)"
+    )]
+    #[allow(dead_code)]
     fn initialize_cbe_token_genesis(&mut self) {
         use crate::contracts::tokens::VestingPool;
 

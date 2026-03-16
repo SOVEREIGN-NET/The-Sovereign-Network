@@ -1,0 +1,62 @@
+# Sovereign Network Genesis Configuration
+# This file is the single source of truth for genesis state.
+# Any node running `zhtp --genesis genesis.toml` produces bit-for-bit identical block 0.
+# Public keys are empty until the mainnet key ceremony.
+# Tracked: #1909 (GENESIS-1)
+
+[chain]
+chain_id     = 1
+name         = "Sovereign Network Testnet"
+# genesis_time must match the FIXED genesis timestamp in create_genesis_block() = 1730419200
+genesis_time = "2025-11-01T00:00:00Z"
+
+[sov]
+# SOV is minted exclusively via UBI — no initial allocation at genesis
+initial_supply = 0
+
+[cbe_token]
+total_supply           = 100_000_000_000  # 100 billion CBE
+# Dilithium5 public keys (hex-encoded) for each pool.
+# Set to "" until mainnet key ceremony. Nodes use stub key_ids [0x01..0x04] when empty.
+# Issue #1900 (CBE-2): pool key generation ceremony
+compensation_pool_key  = ""   # 40% — no vesting, immediately available under CBE DAO
+operational_pool_key   = ""   # 30% — 12-month cliff, 36-month vest
+performance_pool_key   = ""   # 20% — 6-month cliff, 24-month vest
+strategic_pool_key     = ""   # 10% — 12-month cliff, 48-month vest
+
+[cbe_token.vesting.operational]
+cliff_months = 12
+vest_months  = 36
+
+[cbe_token.vesting.performance]
+cliff_months = 6
+vest_months  = 24
+
+[cbe_token.vesting.strategic]
+cliff_months = 12
+vest_months  = 48
+
+[entity_registry]
+# Dilithium5 public keys (hex-encoded) for treasury addresses.
+# Set to "" until mainnet key ceremony. Issue #1880 (TSR).
+cbe_treasury_key       = ""
+nonprofit_treasury_key = ""
+
+[bootstrap_council]
+# Minimum number of council members required to authorize governance actions
+threshold = 3
+# Council members added at key ceremony — empty until then
+members = []
+
+[bonding_curve]
+# CBE public sale bonding curve parameters
+reserve_ratio_ppm    = 200_000   # 20% reserve ratio
+graduation_threshold = 2_745_966_000
+
+# Testnet state migration allocations — populated by `zhtp-cli genesis migrate-state`.
+# Empty until a migration is performed. Issue #1909 (GENESIS-1).
+[allocations]
+wallets         = []
+identities      = []
+web4_contracts  = []
+sov_balances    = []
