@@ -33,8 +33,9 @@ use lib_identity::auth::mobile_delegation::{
     AuditEventKind, AuditLogEntry, Capability, CrossDeviceSessionBinder, DelegationCertificate,
     MobileAuthChallenge, MobileAuthStore,
 };
-use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
+use rand::RngCore;
 
 const NODE_ENDPOINT: &str = "http://localhost:9334"; // overrideable via config
 
@@ -315,7 +316,7 @@ impl MobileAuthHandler {
 
     async fn handle_session_info(
         &self,
-        headers: &std::collections::HashMap<String, String>,
+        headers: &ZhtpHeaders,
         client_ip: &str,
         user_agent: &str,
     ) -> ZhtpResult<ZhtpResponse> {
@@ -352,7 +353,7 @@ impl MobileAuthHandler {
 
     async fn handle_signout(
         &self,
-        headers: &std::collections::HashMap<String, String>,
+        headers: &ZhtpHeaders,
         client_ip: &str,
         user_agent: &str,
     ) -> ZhtpResult<ZhtpResponse> {
@@ -442,7 +443,7 @@ impl MobileAuthHandler {
     async fn handle_delegate_issue(
         &self,
         body: &[u8],
-        headers: &std::collections::HashMap<String, String>,
+        headers: &ZhtpHeaders,
         client_ip: &str,
         user_agent: &str,
     ) -> ZhtpResult<ZhtpResponse> {
@@ -482,7 +483,7 @@ impl MobileAuthHandler {
 
         // Generate cert ID
         let mut cert_id_bytes = [0u8; 16];
-        rand::rngs::OsRng::default().fill_bytes(&mut cert_id_bytes);
+        rand::rngs::OsRng.fill_bytes(&mut cert_id_bytes);
         let cert_id = hex::encode(cert_id_bytes);
 
         let now = std::time::SystemTime::now()
@@ -549,7 +550,7 @@ impl MobileAuthHandler {
         &self,
         cert_id: &str,
         body: &[u8],
-        headers: &std::collections::HashMap<String, String>,
+        headers: &ZhtpHeaders,
         client_ip: &str,
         user_agent: &str,
     ) -> ZhtpResult<ZhtpResponse> {
@@ -609,7 +610,7 @@ impl MobileAuthHandler {
 
     async fn handle_delegate_list(
         &self,
-        headers: &std::collections::HashMap<String, String>,
+        headers: &ZhtpHeaders,
         client_ip: &str,
         user_agent: &str,
     ) -> ZhtpResult<ZhtpResponse> {
@@ -638,6 +639,11 @@ impl ZhtpRequestHandler for MobileAuthHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         self.dispatch(&request).await
     }
+
+    fn can_handle(&self, request: &ZhtpRequest) -> bool {
+        let uri = request.uri.trim_end_matches('/');
+        uri.starts_with("/api/v1/auth/mobile") || uri.starts_with("/api/v1/auth/delegate")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -645,33 +651,22 @@ impl ZhtpRequestHandler for MobileAuthHandler {
 // ---------------------------------------------------------------------------
 
 fn json_ok(body: Value) -> ZhtpResponse {
-    ZhtpResponse {
-        status: ZhtpStatus::Ok,
-        headers: default_headers(),
-        body: serde_json::to_vec(&body).unwrap_or_default(),
-        ..Default::default()
-    }
+    ZhtpResponse::success_with_content_type(
+        serde_json::to_vec(&body).unwrap_or_default(),
+        "application/json".to_string(),
+        None,
+    )
 }
 
 fn json_error(status: ZhtpStatus, message: &str) -> ZhtpResponse {
-    ZhtpResponse {
-        status,
-        headers: default_headers(),
-        body: serde_json::to_vec(&json!({ "error": message })).unwrap_or_default(),
-        ..Default::default()
-    }
+    ZhtpResponse::error_json(status, &serde_json::json!({ "error": message }))
+        .unwrap_or_else(|_| ZhtpResponse::error(status, message.to_string()))
 }
 
-fn default_headers() -> std::collections::HashMap<String, String> {
-    let mut h = std::collections::HashMap::new();
-    h.insert("Content-Type".to_string(), "application/json".to_string());
-    h
-}
-
-fn extract_bearer(headers: &std::collections::HashMap<String, String>) -> Option<String> {
+fn extract_bearer(headers: &ZhtpHeaders) -> Option<String> {
     headers
-        .get("Authorization")
-        .or_else(|| headers.get("authorization"))
+        .authorization
+        .as_deref()
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::to_string)
 }
@@ -679,19 +674,16 @@ fn extract_bearer(headers: &std::collections::HashMap<String, String>) -> Option
 fn extract_client_ip(request: &ZhtpRequest) -> String {
     request
         .headers
+        .custom
         .get("X-Forwarded-For")
-        .or_else(|| request.headers.get("x-forwarded-for"))
-        .or_else(|| request.headers.get("X-Real-IP"))
+        .or_else(|| request.headers.custom.get("x-forwarded-for"))
+        .or_else(|| request.headers.custom.get("X-Real-IP"))
         .cloned()
         .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn extract_user_agent(request: &ZhtpRequest) -> String {
-    request
-        .headers
-        .get("User-Agent")
-        .or_else(|| request.headers.get("user-agent"))
-        .cloned()
+    request.headers.user_agent.clone()
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -722,9 +714,12 @@ mod tests {
         ZhtpRequest {
             method: ZhtpMethod::Post,
             uri: uri.to_string(),
-            headers: std::collections::HashMap::new(),
+            version: "1.0".to_string(),
+            headers: ZhtpHeaders::new(),
             body: serde_json::to_vec(&body).unwrap(),
-            ..Default::default()
+            timestamp: 0,
+            requester: None,
+            auth_proof: None,
         }
     }
 
@@ -732,9 +727,12 @@ mod tests {
         ZhtpRequest {
             method: ZhtpMethod::Get,
             uri: uri.to_string(),
-            headers: std::collections::HashMap::new(),
+            version: "1.0".to_string(),
+            headers: ZhtpHeaders::new(),
             body: vec![],
-            ..Default::default()
+            timestamp: 0,
+            requester: None,
+            auth_proof: None,
         }
     }
 
