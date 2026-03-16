@@ -1286,10 +1286,11 @@ impl LegacyBlockchainStorageV5 {
     }
 }
 
-/// Stable storage format V6 for blockchain serialization.
+/// Stable storage format V6 for blockchain serialization (LEGACY).
 ///
 /// V6 extends V5 with the current oracle/onramp/entity-registry fields.
-/// Fields must remain append-only after this point — bincode is positional.
+/// This layout is frozen for backward compatibility with existing `blockchain.dat`
+/// files written before CBE state persistence was added.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BlockchainStorageV6 {
     pub v3: BlockchainStorageV3,
@@ -1312,20 +1313,6 @@ struct BlockchainStorageV6 {
 }
 
 impl BlockchainStorageV6 {
-    fn from_blockchain(bc: &Blockchain) -> Self {
-        Self {
-            v3: BlockchainStorageV3::from_blockchain(bc),
-            oracle_state: bc.oracle_state.clone(),
-            exchange_state: bc.exchange_state.clone(),
-            onramp_state: bc.onramp_state.clone(),
-            oracle_slash_events: bc.oracle_slash_events.clone(),
-            oracle_slashing_config: bc.oracle_slashing_config.clone(),
-            oracle_banned_validators: bc.oracle_banned_validators.clone(),
-            last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
-            entity_registry: bc.entity_registry.clone(),
-        }
-    }
-
     fn to_blockchain(self) -> Blockchain {
         let mut blockchain = self.v3.to_blockchain();
         blockchain.oracle_state = self.oracle_state;
@@ -1336,6 +1323,42 @@ impl BlockchainStorageV6 {
         blockchain.oracle_banned_validators = self.oracle_banned_validators;
         blockchain.last_oracle_epoch_processed = self.last_oracle_epoch_processed;
         blockchain.entity_registry = self.entity_registry;
+        blockchain
+    }
+}
+
+/// Stable storage format V7 for blockchain serialization.
+///
+/// V7 extends legacy V6 with persisted `cbe_token` state. Future on-disk changes
+/// must continue to use explicit version bumps because bincode is positional.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BlockchainStorageV7 {
+    pub v6: BlockchainStorageV6,
+    #[serde(default)]
+    pub cbe_token: crate::contracts::tokens::CbeToken,
+}
+
+impl BlockchainStorageV7 {
+    fn from_blockchain(bc: &Blockchain) -> Self {
+        Self {
+            v6: BlockchainStorageV6 {
+                v3: BlockchainStorageV3::from_blockchain(bc),
+                oracle_state: bc.oracle_state.clone(),
+                exchange_state: bc.exchange_state.clone(),
+                onramp_state: bc.onramp_state.clone(),
+                oracle_slash_events: bc.oracle_slash_events.clone(),
+                oracle_slashing_config: bc.oracle_slashing_config.clone(),
+                oracle_banned_validators: bc.oracle_banned_validators.clone(),
+                last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
+                entity_registry: bc.entity_registry.clone(),
+            },
+            cbe_token: bc.cbe_token.clone(),
+        }
+    }
+
+    fn to_blockchain(self) -> Blockchain {
+        let mut blockchain = self.v6.to_blockchain();
+        blockchain.cbe_token = self.cbe_token;
         blockchain
     }
 }
@@ -1363,12 +1386,11 @@ pub struct BlockchainImport {
 
 impl Blockchain {
     const MIN_DILITHIUM_PK_LEN: usize = 1312;
-    /// Create a new blockchain with genesis block
-    pub fn new() -> Result<Self> {
+    fn new_runtime_state() -> Self {
         let genesis_block = crate::block::create_genesis_block();
 
-        let mut blockchain = Blockchain {
-            blocks: vec![genesis_block.clone()],
+        Blockchain {
+            blocks: vec![genesis_block],
             height: 0,
             difficulty: Difficulty::from_bits(crate::INITIAL_DIFFICULTY),
             difficulty_config: DifficultyConfig::default(),
@@ -1405,7 +1427,7 @@ impl Blockchain {
             broadcast_sender: None,
             executed_dao_proposals: HashSet::new(),
             receipts: HashMap::new(),
-            finality_depth: 12, // Default: 12 confirmations for finality
+            finality_depth: 12,
             finalized_blocks: HashSet::new(),
             contract_states: HashMap::new(),
             contract_state_history: std::collections::BTreeMap::new(),
@@ -1433,13 +1455,10 @@ impl Blockchain {
             emergency_activated_by: None,
             emergency_expires_at: None,
             treasury_epoch_start_balance: HashMap::new(),
-
-            // DAO Emergency Treasury Freeze (dao-7)
             treasury_frozen: false,
             treasury_frozen_at: None,
             treasury_freeze_expiry: None,
             treasury_freeze_signatures: Vec::new(),
-
             voting_power_mode: crate::dao::VotingPowerMode::default(),
             vote_delegations: HashMap::new(),
             pending_cosigns: HashMap::new(),
@@ -1455,28 +1474,46 @@ impl Blockchain {
             oracle_slashing_config: crate::oracle::OracleSlashingConfig::default(),
             oracle_banned_validators: std::collections::HashSet::new(),
             last_oracle_epoch_processed: 0,
-
-            // DAO Phase Transitions
             last_decentralization_snapshot: None,
             phase_transition_config: crate::dao::PhaseTransitionConfig::default(),
             governance_cycles_with_quorum: 0,
             last_governance_cycle_height: 0,
-        };
+        }
+    }
+
+    /// Create a new blockchain with genesis block
+    pub fn new() -> Result<Self> {
+        let genesis_block = crate::block::create_genesis_block();
+
+        let mut blockchain = Self::new_runtime_state();
 
         blockchain.update_utxo_set(&genesis_block)?;
         blockchain.save_utxo_snapshot(0)?; // Save snapshot for genesis block
         blockchain.ensure_treasury_wallet();
+        // CBE genesis allocation runs here only on a true genesis boot (empty store, no peers).
+        // On restart or sync, cbe_token is loaded from BlockchainStorageV7 / replay — this must not run.
         blockchain.initialize_cbe_genesis();
         Ok(blockchain)
     }
 
-    /// Initialize CBE (Community Bonding Experiment) as a built-in bonding curve token.
+    /// Initialize CBE token and bonding curve at genesis.
     ///
-    /// Uses the document-compliant piecewise linear curve with 4 supply bands.
-    /// Initializes the 100B CBE token allocation with vesting schedules.
+    /// # INVARIANT — READ BEFORE CALLING
     ///
-    /// Issue #1842: Piecewise Linear Bonding Curve Mathematics
-    /// Issue #1843: Genesis Allocation - 100B Supply Distribution
+    /// This function MUST only be called in ONE situation:
+    ///   - The local store is empty AND no peers have chain data (this IS the founding node
+    ///     creating a new network for the first time).
+    ///
+    /// It MUST NOT be called:
+    ///   - On normal node restart (load_from_store / load_from_file handles this via cbe_token
+    ///     persisted in BlockchainStorageV7 or replay backfill)
+    ///   - When syncing from peers (the syncing node derives state by replaying blocks)
+    ///   - In any test that loads existing chain state
+    ///
+    /// Genesis ran once on testnet. It will run once on mainnet. Never again otherwise,
+    /// unless a catastrophic fork forces a full chain reset.
+    ///
+    /// Tracked: #1907 (CBE-0), #1909 (GENESIS-1)
     fn initialize_cbe_genesis(&mut self) {
         use crate::contracts::bonding_curve::{
             BondingCurveToken, CurveType, PiecewiseLinearCurve, Threshold,
@@ -1891,8 +1928,9 @@ impl Blockchain {
             latest_height
         );
 
-        // Create a fresh blockchain (with genesis)
-        let mut blockchain = Self::new()?;
+        // Create restart state without genesis side effects. Restart reconstruction must
+        // derive canonical state from persisted blocks/snapshots, not constructor mutations.
+        let mut blockchain = Self::new_runtime_state();
         let executor = std::sync::Arc::new(crate::execution::executor::BlockExecutor::with_store(
             store.clone(),
         ));
@@ -1900,7 +1938,7 @@ impl Blockchain {
         blockchain.store = Some(store.clone());
         blockchain.auto_persist_enabled = false;
 
-        // Clear the default genesis - we'll load from store
+        // Clear the placeholder genesis block - we'll load canonical blocks from store.
         blockchain.blocks.clear();
         blockchain.height = 0;
 
@@ -2109,6 +2147,16 @@ impl Blockchain {
         blockchain.migrate_sov_key_balances_to_wallets();
         // Repair any balances inflated by the pre-fix backfill bug (minted on every restart).
         blockchain.repair_backfill_inflation();
+
+        // One-time CBE backfill for nodes restarting from SledStore before CBE token state
+        // is persisted there. Restart constructors intentionally skip genesis side effects,
+        // so this branch is the canonical compatibility path.
+        // Do NOT call initialize_cbe_genesis() here — that is genesis-only. This backfill
+        // only restores the allocation that was already established at genesis.
+        if !blockchain.cbe_token.is_initialized() {
+            info!("CBE token not found in storage — running one-time backfill from genesis allocation");
+            blockchain.initialize_cbe_token_genesis();
+        }
 
         // Sync SOV balances from the authoritative token_balances Sled tree into in-memory
         // token_contracts.balances.  The BlockExecutor updates token_balances on every
@@ -11907,7 +11955,7 @@ impl Blockchain {
     /// File format magic bytes - "ZHTP"
     const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
     /// Current file format version
-    const FILE_VERSION: u16 = 6;
+    const FILE_VERSION: u16 = 7;
 
     #[deprecated(
         since = "0.2.0",
@@ -11932,8 +11980,8 @@ impl Blockchain {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Convert to stable storage format (V5)
-        let storage = BlockchainStorageV6::from_blockchain(self);
+        // Convert to stable storage format (V7)
+        let storage = BlockchainStorageV7::from_blockchain(self);
 
         // Serialize to bincode
         let serialized = bincode::serialize(&storage)
@@ -12008,9 +12056,22 @@ impl Blockchain {
             info!("📂 Detected versioned format v{}", version);
 
             match version {
+                7 => match bincode::deserialize::<BlockchainStorageV7>(data) {
+                    Ok(storage) => {
+                        info!("📂 Loaded blockchain storage v7 (cbe-token persistence format)");
+                        storage.to_blockchain()
+                    }
+                    Err(storage_err) => {
+                        error!("❌ Failed to deserialize v7 blockchain: {}", storage_err);
+                        return Err(anyhow::anyhow!(
+                            "Failed to deserialize v7 blockchain: {}",
+                            storage_err
+                        ));
+                    }
+                },
                 6 => match bincode::deserialize::<BlockchainStorageV6>(data) {
                     Ok(storage) => {
-                        info!("📂 Loaded blockchain storage v6 (entity-registry format)");
+                        info!("📂 Loaded legacy blockchain storage v6 (migrating to v7)");
                         storage.to_blockchain()
                     }
                     Err(storage_err) => {
@@ -12186,6 +12247,13 @@ impl Blockchain {
         blockchain.ensure_sov_token_contract();
         blockchain.ensure_treasury_wallet();
         blockchain.migrate_sov_key_balances_to_wallets();
+
+        // One-time CBE backfill for legacy v6 blockchain.dat files that predate persisted
+        // cbe_token state. Once such a node saves again, it will persist as v7.
+        if !blockchain.cbe_token.is_initialized() {
+            info!("CBE token not found in storage — running one-time backfill from genesis allocation");
+            blockchain.initialize_cbe_token_genesis();
+        }
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
             info!(
@@ -13688,6 +13756,38 @@ mod store_backed_blockchain_tests {
             "store latest_height should be 1 after two committed blocks"
         );
     }
+
+    #[test]
+    fn test_restart_runtime_state_skips_cbe_genesis() {
+        let blockchain = Blockchain::new_runtime_state();
+        assert!(
+            !blockchain.cbe_token.is_initialized(),
+            "restart constructor must not run CBE genesis side effects"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_from_store_backfills_cbe_token_without_constructor_genesis() {
+        let temp = tempfile::tempdir().unwrap();
+        let store_path = temp.path().join("restart_store");
+        let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
+
+        let mut bc = Blockchain::new_with_store(store.clone()).unwrap();
+        let genesis_header = make_header(0, Hash::default());
+        let genesis = Block::new(genesis_header, vec![]);
+        bc.add_block(genesis)
+            .await
+            .expect("genesis should apply without error");
+
+        let reloaded = Blockchain::load_from_store(store)
+            .expect("load_from_store should succeed")
+            .expect("store should contain a chain");
+
+        assert!(
+            reloaded.cbe_token.is_initialized(),
+            "restart reconstruction must restore CBE state even without constructor genesis"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -13752,11 +13852,11 @@ mod oracle_storage_migration_tests {
             bc.oracle_state.committee.pending_update()
         );
 
-        // Convert to storage V6 and back
-        let storage = BlockchainStorageV6::from_blockchain(&bc);
+        // Convert to storage V7 and back
+        let storage = BlockchainStorageV7::from_blockchain(&bc);
         println!(
             "Storage: pending_update = {:?}",
-            storage.oracle_state.committee.pending_update()
+            storage.v6.oracle_state.committee.pending_update()
         );
 
         let bc2 = storage.to_blockchain();
@@ -13767,7 +13867,7 @@ mod oracle_storage_migration_tests {
 
         assert!(
             bc2.oracle_state.committee.pending_update().is_some(),
-            "pending_update should survive V6 round-trip"
+            "pending_update should survive V7 round-trip"
         );
     }
 
@@ -13805,6 +13905,41 @@ mod oracle_storage_migration_tests {
         let loaded = Blockchain::load_from_file(&path).expect("load legacy v5 file");
         assert_eq!(loaded.onramp_state, bc.onramp_state);
         assert!(loaded.entity_registry.is_none());
+        assert!(loaded.cbe_token.is_initialized(), "legacy v5 loads must backfill CBE state");
+    }
+
+    #[test]
+    fn load_legacy_v6_file_migrates_to_current_storage_layout() {
+        let mut bc = Blockchain::new().unwrap();
+        bc.cbe_token = crate::contracts::tokens::CbeToken::new();
+
+        let storage_v6 = BlockchainStorageV6 {
+            v3: BlockchainStorageV3::from_blockchain(&bc),
+            oracle_state: bc.oracle_state.clone(),
+            exchange_state: bc.exchange_state.clone(),
+            onramp_state: bc.onramp_state.clone(),
+            oracle_slash_events: bc.oracle_slash_events.clone(),
+            oracle_slashing_config: bc.oracle_slashing_config.clone(),
+            oracle_banned_validators: bc.oracle_banned_validators.clone(),
+            last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
+            entity_registry: bc.entity_registry.clone(),
+        };
+        let serialized = bincode::serialize(&storage_v6).expect("serialize legacy v6 storage");
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("legacy_v6.dat");
+        let mut file_data = Vec::with_capacity(6 + serialized.len());
+        file_data.extend_from_slice(&Blockchain::FILE_MAGIC);
+        file_data.extend_from_slice(&6u16.to_le_bytes());
+        file_data.extend_from_slice(&serialized);
+
+        let mut f = std::fs::File::create(&path).expect("create file");
+        f.write_all(&file_data).expect("write file");
+        f.sync_all().expect("sync file");
+
+        #[allow(deprecated)]
+        let loaded = Blockchain::load_from_file(&path).expect("load legacy v6 file");
+        assert!(loaded.cbe_token.is_initialized(), "legacy v6 loads must backfill CBE state");
     }
 
     #[test]
@@ -15014,6 +15149,50 @@ mod cbe_genesis_allocation_tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "Minting is disabled after initialization"
+        );
+    }
+
+    /// Verifies that cbe_token survives a save_to_file / load_from_file round-trip.
+    /// This is the core fix for #1907 — before the fix, cbe_token was missing from
+    /// legacy storage formats and evaporated on every restart.
+    #[test]
+    fn test_cbe_token_persists_through_save_load() {
+        use std::path::PathBuf;
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("tempdir");
+        let path: PathBuf = dir.path().join("blockchain.dat");
+
+        // Create a fresh blockchain — cbe_token gets initialized via genesis path
+        let blockchain = Blockchain::new().expect("create blockchain");
+        assert!(blockchain.cbe_token.is_initialized(), "must be initialized before save");
+        let supply_before = blockchain.cbe_token.total_supply();
+
+        // Compensation pool balance before save
+        let comp_addr = PublicKey { dilithium_pk: vec![], kyber_pk: vec![], key_id: [0x01; 32] };
+        let comp_balance_before = blockchain.cbe_token.balance_of(&comp_addr);
+
+        // Save to disk
+        #[allow(deprecated)]
+        blockchain.save_to_file(&path).expect("save_to_file");
+
+        // Load back — cbe_token must be restored, not re-initialized
+        #[allow(deprecated)]
+        let loaded = Blockchain::load_from_file(&path).expect("load_from_file");
+
+        assert!(
+            loaded.cbe_token.is_initialized(),
+            "cbe_token must still be initialized after load"
+        );
+        assert_eq!(
+            loaded.cbe_token.total_supply(),
+            supply_before,
+            "total supply must match after round-trip"
+        );
+        assert_eq!(
+            loaded.cbe_token.balance_of(&comp_addr),
+            comp_balance_before,
+            "compensation pool balance must match after round-trip"
         );
     }
 }
