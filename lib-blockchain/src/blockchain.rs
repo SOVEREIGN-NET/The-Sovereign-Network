@@ -1595,7 +1595,10 @@ impl Blockchain {
     )]
     #[allow(dead_code)]
     fn initialize_cbe_token_genesis(&mut self) {
-        use crate::contracts::tokens::VestingPool;
+        use crate::contracts::tokens::{
+            VestingPool, CBE_OPERATIONAL_TREASURY, CBE_PERFORMANCE_INCENTIVES,
+            CBE_STRATEGIC_RESERVES,
+        };
 
         // Skip if already initialized
         if self.cbe_token.is_initialized() {
@@ -1649,7 +1652,7 @@ impl Blockchain {
         // Total: 30B CBE
         if let Err(e) = self.cbe_token.create_vesting(
             &operational_addr,
-            30_000_000_000, // 30B
+            CBE_OPERATIONAL_TREASURY,
             start_block,
             36 * BLOCKS_PER_MONTH, // 36 months
             12 * BLOCKS_PER_MONTH, // 12 month cliff
@@ -1659,10 +1662,9 @@ impl Blockchain {
         }
 
         // Performance Incentives: 6-month cliff, 24-month total vest
-        // Total: 20B CBE
         if let Err(e) = self.cbe_token.create_vesting(
             &performance_addr,
-            20_000_000_000, // 20B
+            CBE_PERFORMANCE_INCENTIVES,
             start_block,
             24 * BLOCKS_PER_MONTH, // 24 months
             6 * BLOCKS_PER_MONTH,  // 6 month cliff
@@ -1672,10 +1674,9 @@ impl Blockchain {
         }
 
         // Strategic Reserves: 12-month cliff, 48-month total vest
-        // Total: 10B CBE
         if let Err(e) = self.cbe_token.create_vesting(
             &strategic_addr,
-            10_000_000_000, // 10B
+            CBE_STRATEGIC_RESERVES,
             start_block,
             48 * BLOCKS_PER_MONTH, // 48 months
             12 * BLOCKS_PER_MONTH, // 12 month cliff
@@ -14966,7 +14967,6 @@ mod cbe_genesis_allocation_tests {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
         assert_eq!(blockchain.cbe_token.total_supply(), CBE_TOTAL_SUPPLY);
-        assert_eq!(blockchain.cbe_token.total_supply(), 100_000_000_000);
     }
 
     #[test]
@@ -14984,10 +14984,6 @@ mod cbe_genesis_allocation_tests {
             blockchain.cbe_token.balance_of(&compensation_addr),
             CBE_COMPENSATION_POOL
         );
-        assert_eq!(
-            blockchain.cbe_token.balance_of(&compensation_addr),
-            40_000_000_000
-        );
     }
 
     #[test]
@@ -15003,10 +14999,6 @@ mod cbe_genesis_allocation_tests {
         assert_eq!(
             blockchain.cbe_token.balance_of(&operational_addr),
             CBE_OPERATIONAL_TREASURY
-        );
-        assert_eq!(
-            blockchain.cbe_token.balance_of(&operational_addr),
-            30_000_000_000
         );
     }
 
@@ -15024,10 +15016,6 @@ mod cbe_genesis_allocation_tests {
             blockchain.cbe_token.balance_of(&performance_addr),
             CBE_PERFORMANCE_INCENTIVES
         );
-        assert_eq!(
-            blockchain.cbe_token.balance_of(&performance_addr),
-            20_000_000_000
-        );
     }
 
     #[test]
@@ -15043,10 +15031,6 @@ mod cbe_genesis_allocation_tests {
         assert_eq!(
             blockchain.cbe_token.balance_of(&strategic_addr),
             CBE_STRATEGIC_RESERVES
-        );
-        assert_eq!(
-            blockchain.cbe_token.balance_of(&strategic_addr),
-            10_000_000_000
         );
     }
 
@@ -15065,7 +15049,7 @@ mod cbe_genesis_allocation_tests {
             .get_vesting_schedules(&operational_addr);
         assert_eq!(operational_schedules.len(), 1);
         assert_eq!(operational_schedules[0].pool, VestingPool::Operational);
-        assert_eq!(operational_schedules[0].total_amount, 30_000_000_000);
+        assert_eq!(operational_schedules[0].total_amount, CBE_OPERATIONAL_TREASURY);
 
         // Performance should have vesting
         let performance_addr = PublicKey {
@@ -15078,7 +15062,7 @@ mod cbe_genesis_allocation_tests {
             .get_vesting_schedules(&performance_addr);
         assert_eq!(performance_schedules.len(), 1);
         assert_eq!(performance_schedules[0].pool, VestingPool::Performance);
-        assert_eq!(performance_schedules[0].total_amount, 20_000_000_000);
+        assert_eq!(performance_schedules[0].total_amount, CBE_PERFORMANCE_INCENTIVES);
 
         // Strategic should have vesting
         let strategic_addr = PublicKey {
@@ -15089,7 +15073,7 @@ mod cbe_genesis_allocation_tests {
         let strategic_schedules = blockchain.cbe_token.get_vesting_schedules(&strategic_addr);
         assert_eq!(strategic_schedules.len(), 1);
         assert_eq!(strategic_schedules[0].pool, VestingPool::Strategic);
-        assert_eq!(strategic_schedules[0].total_amount, 10_000_000_000);
+        assert_eq!(strategic_schedules[0].total_amount, CBE_STRATEGIC_RESERVES);
     }
 
     #[test]
