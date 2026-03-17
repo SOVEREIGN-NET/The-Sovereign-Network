@@ -303,8 +303,8 @@ impl GenesisConfig {
             let days_since_epoch = days_since_unix_epoch(year, month, day);
             return Ok(days_since_epoch * 86_400 + hour * 3_600 + min * 60 + sec);
         }
-        // Fallback: fixed testnet genesis timestamp
-        Ok(1_730_419_200)
+        // Fallback: fixed genesis timestamp matching "2025-11-01T00:00:00Z"
+        Ok(1_761_955_200)
     }
 
     /// Build a fully-initialized `Blockchain` at block 0 from this config.
