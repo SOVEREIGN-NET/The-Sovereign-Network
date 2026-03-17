@@ -1439,9 +1439,15 @@ pub enum GenesisCommand {
         #[arg(short, long)]
         output: Option<std::path::PathBuf>,
     },
-    /// Export the full blockchain state from a .dat file to a JSON snapshot
+    /// Export the full blockchain state to a JSON snapshot.
+    /// Supports both SledStore directories (live nodes) and legacy blockchain.dat files.
     ExportState {
-        /// Path to blockchain.dat (defaults to ~/.zhtp/data/testnet/blockchain.dat)
+        /// Path to the Sled data directory (e.g. /opt/zhtp/data/testnet/sled).
+        /// Takes priority over --dat-file when both are supplied.
+        #[arg(long)]
+        sled_dir: Option<std::path::PathBuf>,
+        /// Path to blockchain.dat (legacy; used only when --sled-dir is absent).
+        /// Defaults to ~/.zhtp/data/testnet/blockchain.dat.
         #[arg(short, long)]
         dat_file: Option<std::path::PathBuf>,
         /// Output JSON snapshot file
