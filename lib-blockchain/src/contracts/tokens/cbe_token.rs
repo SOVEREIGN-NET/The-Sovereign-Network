@@ -37,22 +37,26 @@ use std::collections::HashMap;
 // CRITICAL CONSTANTS - NEVER CHANGE
 // ============================================================================
 
-/// Total supply of CBE tokens: 100 billion (100,000,000,000)
-pub const CBE_TOTAL_SUPPLY: u64 = 100_000_000_000;
+/// Smallest unit of CBE: 1 CBE = 10^8 atoms.
+/// All balances and supply values are stored in atoms (same convention as SOV).
+pub const CBE_ATOMS_PER_TOKEN: u64 = 100_000_000;
 
-/// Compensation pool allocation: 40% = 40 billion
-pub const CBE_COMPENSATION_POOL: u64 = 40_000_000_000;
+/// Total supply: 100 billion CBE × 10^8 atoms = 10^19 atoms.
+pub const CBE_TOTAL_SUPPLY: u64 = 100_000_000_000 * CBE_ATOMS_PER_TOKEN;
 
-/// Operational treasury allocation: 30% = 30 billion
-pub const CBE_OPERATIONAL_TREASURY: u64 = 30_000_000_000;
+/// Compensation pool: 40 billion CBE × 10^8 atoms (40%)
+pub const CBE_COMPENSATION_POOL: u64 = 40_000_000_000 * CBE_ATOMS_PER_TOKEN;
 
-/// Performance incentives allocation: 20% = 20 billion
-pub const CBE_PERFORMANCE_INCENTIVES: u64 = 20_000_000_000;
+/// Operational treasury: 30 billion CBE × 10^8 atoms (30%)
+pub const CBE_OPERATIONAL_TREASURY: u64 = 30_000_000_000 * CBE_ATOMS_PER_TOKEN;
 
-/// Strategic reserves allocation: 10% = 10 billion
-pub const CBE_STRATEGIC_RESERVES: u64 = 10_000_000_000;
+/// Performance incentives: 20 billion CBE × 10^8 atoms (20%)
+pub const CBE_PERFORMANCE_INCENTIVES: u64 = 20_000_000_000 * CBE_ATOMS_PER_TOKEN;
 
-/// Number of decimal places for CBE token
+/// Strategic reserves: 10 billion CBE × 10^8 atoms (10%)
+pub const CBE_STRATEGIC_RESERVES: u64 = 10_000_000_000 * CBE_ATOMS_PER_TOKEN;
+
+/// Number of decimal places for CBE token (1 CBE = 10^8 atoms)
 pub const CBE_DECIMALS: u8 = 8;
 
 /// Token symbol
@@ -67,19 +71,20 @@ pub const CBE_NAME: &str = "CBE Equity";
 
 /// Distribution allocation structure
 ///
-/// Represents the 40/30/20/10 split of CBE tokens.
+/// Represents the 40/30/20/10 split of CBE tokens. All values are in atoms
+/// (1 CBE = 10^8 atoms, matching SOV convention).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DistributionAllocation {
-    /// Compensation pool: 40 billion (40%)
+    /// Compensation pool: 40 billion CBE in atoms (40%)
     pub compensation: u64,
 
-    /// Operational treasury: 30 billion (30%)
+    /// Operational treasury: 30 billion CBE in atoms (30%)
     pub operational: u64,
 
-    /// Performance incentives: 20 billion (20%)
+    /// Performance incentives: 20 billion CBE in atoms (20%)
     pub performance: u64,
 
-    /// Strategic reserves: 10 billion (10%)
+    /// Strategic reserves: 10 billion CBE in atoms (10%)
     pub strategic: u64,
 }
 
@@ -655,7 +660,8 @@ mod tests {
 
     #[test]
     fn test_cbe_total_supply_is_100_billion() {
-        assert_eq!(CBE_TOTAL_SUPPLY, 100_000_000_000);
+        // 100 billion CBE × 10^8 atoms/CBE
+        assert_eq!(CBE_TOTAL_SUPPLY, 100_000_000_000 * CBE_ATOMS_PER_TOKEN);
     }
 
     #[test]
@@ -669,26 +675,27 @@ mod tests {
 
     #[test]
     fn test_cbe_compensation_is_40_percent() {
-        assert_eq!(CBE_COMPENSATION_POOL, 40_000_000_000);
-        assert_eq!(CBE_COMPENSATION_POOL * 100 / CBE_TOTAL_SUPPLY, 40);
+        assert_eq!(CBE_COMPENSATION_POOL, 40_000_000_000 * CBE_ATOMS_PER_TOKEN);
+        // Avoid overflow: divide total by 100 first, then check ratio
+        assert_eq!(CBE_COMPENSATION_POOL / (CBE_TOTAL_SUPPLY / 100), 40);
     }
 
     #[test]
     fn test_cbe_operational_is_30_percent() {
-        assert_eq!(CBE_OPERATIONAL_TREASURY, 30_000_000_000);
-        assert_eq!(CBE_OPERATIONAL_TREASURY * 100 / CBE_TOTAL_SUPPLY, 30);
+        assert_eq!(CBE_OPERATIONAL_TREASURY, 30_000_000_000 * CBE_ATOMS_PER_TOKEN);
+        assert_eq!(CBE_OPERATIONAL_TREASURY / (CBE_TOTAL_SUPPLY / 100), 30);
     }
 
     #[test]
     fn test_cbe_performance_is_20_percent() {
-        assert_eq!(CBE_PERFORMANCE_INCENTIVES, 20_000_000_000);
-        assert_eq!(CBE_PERFORMANCE_INCENTIVES * 100 / CBE_TOTAL_SUPPLY, 20);
+        assert_eq!(CBE_PERFORMANCE_INCENTIVES, 20_000_000_000 * CBE_ATOMS_PER_TOKEN);
+        assert_eq!(CBE_PERFORMANCE_INCENTIVES / (CBE_TOTAL_SUPPLY / 100), 20);
     }
 
     #[test]
     fn test_cbe_strategic_is_10_percent() {
-        assert_eq!(CBE_STRATEGIC_RESERVES, 10_000_000_000);
-        assert_eq!(CBE_STRATEGIC_RESERVES * 100 / CBE_TOTAL_SUPPLY, 10);
+        assert_eq!(CBE_STRATEGIC_RESERVES, 10_000_000_000 * CBE_ATOMS_PER_TOKEN);
+        assert_eq!(CBE_STRATEGIC_RESERVES / (CBE_TOTAL_SUPPLY / 100), 10);
     }
 
     // ========================================================================
@@ -752,10 +759,10 @@ mod tests {
     #[test]
     fn test_distribution_allocation_invalid() {
         let allocation = DistributionAllocation {
-            compensation: 50_000_000_000, // Wrong!
-            operational: 30_000_000_000,
-            performance: 20_000_000_000,
-            strategic: 10_000_000_000,
+            compensation: 50_000_000_000 * CBE_ATOMS_PER_TOKEN, // Wrong!
+            operational: CBE_OPERATIONAL_TREASURY,
+            performance: CBE_PERFORMANCE_INCENTIVES,
+            strategic: CBE_STRATEGIC_RESERVES,
         };
         assert!(!allocation.verify());
     }
