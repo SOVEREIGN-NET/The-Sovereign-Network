@@ -171,6 +171,21 @@ fn strip_allocations_section(toml: &str) -> String {
 }
 
 /// Serialize allocations as TOML arrays suitable for embedding in genesis.toml.
+fn toml_basic_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
 fn alloc_toml_inline(alloc: &lib_blockchain::genesis::GenesisAllocations) -> String {
     let mut out = String::new();
 
@@ -216,10 +231,7 @@ fn alloc_toml_inline(alloc: &lib_blockchain::genesis::GenesisAllocations) -> Str
         out.push_str(&format!("domain = \"{}\"\n", c.domain));
         out.push_str(&format!("owner = \"{}\"\n", c.owner));
         out.push_str(&format!("created_at = {}\n", c.created_at));
-        let escaped = c
-            .contract_json
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"");
+        let escaped = toml_basic_escape(&c.contract_json);
         out.push_str(&format!("contract_json = \"{}\"\n\n", escaped));
     }
 
