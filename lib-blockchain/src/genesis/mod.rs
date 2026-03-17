@@ -331,7 +331,10 @@ impl GenesisConfig {
         use crate::contracts::bonding_curve::{
             BondingCurveToken, CurveType, PiecewiseLinearCurve, Threshold,
         };
-        use crate::contracts::tokens::{CbeToken, VestingPool, CBE_NAME, CBE_SYMBOL};
+        use crate::contracts::tokens::{
+            CbeToken, VestingPool, CBE_NAME, CBE_OPERATIONAL_TREASURY,
+            CBE_PERFORMANCE_INCENTIVES, CBE_STRATEGIC_RESERVES, CBE_SYMBOL,
+        };
         use crate::integration::crypto_integration::PublicKey;
         use crate::types::Difficulty;
 
@@ -389,7 +392,7 @@ impl GenesisConfig {
         bc.cbe_token
             .create_vesting(
                 &operational_key,
-                30_000_000_000,
+                CBE_OPERATIONAL_TREASURY,
                 0,
                 v.operational.vest_months * BLOCKS_PER_MONTH,
                 v.operational.cliff_months * BLOCKS_PER_MONTH,
@@ -400,7 +403,7 @@ impl GenesisConfig {
         bc.cbe_token
             .create_vesting(
                 &performance_key,
-                20_000_000_000,
+                CBE_PERFORMANCE_INCENTIVES,
                 0,
                 v.performance.vest_months * BLOCKS_PER_MONTH,
                 v.performance.cliff_months * BLOCKS_PER_MONTH,
@@ -411,7 +414,7 @@ impl GenesisConfig {
         bc.cbe_token
             .create_vesting(
                 &strategic_key,
-                10_000_000_000,
+                CBE_STRATEGIC_RESERVES,
                 0,
                 v.strategic.vest_months * BLOCKS_PER_MONTH,
                 v.strategic.cliff_months * BLOCKS_PER_MONTH,
@@ -734,6 +737,7 @@ fn days_since_unix_epoch(year: u64, month: u64, day: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contracts::tokens::CBE_TOTAL_SUPPLY;
 
     #[test]
     fn test_from_embedded_parses() {
@@ -758,7 +762,7 @@ mod tests {
         let config = GenesisConfig::from_embedded().expect("parse");
         let bc = config.build_block0().expect("build_block0");
         assert!(bc.cbe_token.is_initialized(), "CBE token must be initialized");
-        assert_eq!(bc.cbe_token.total_supply(), 100_000_000_000);
+        assert_eq!(bc.cbe_token.total_supply(), CBE_TOTAL_SUPPLY);
     }
 
     #[test]
