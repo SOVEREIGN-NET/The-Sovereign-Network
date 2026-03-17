@@ -115,7 +115,7 @@ pub enum ChallengeStatus {
 pub struct MobileAuthChallenge {
     /// Unique session identifier (UUIDv4-style 16-byte hex)
     pub session_id: String,
-    /// 32-byte CSPRNG challenge nonce (base64-encoded)
+    /// 32-byte CSPRNG challenge nonce (hex-encoded, 64-char string)
     pub challenge_nonce: String,
     /// When this challenge was created (Unix seconds)
     pub created_at: u64,
@@ -127,7 +127,7 @@ pub struct MobileAuthChallenge {
     pub status: ChallengeStatus,
     /// Node endpoint included in QR so mobile knows where to post signature
     pub node_endpoint: String,
-    /// QR-encodable payload (base64 of JSON envelope)
+    /// QR-encodable payload (zhtp://auth?d=<hex-encoded-JSON>)
     pub qr_payload: String,
 }
 
@@ -427,6 +427,7 @@ impl CrossDeviceSessionBinder {
     ///
     /// Uses SOVEREIGN-NET's post-quantum Dilithium algorithm (same as the
     /// rest of the stack) so mobile identities don't need a separate key pair.
+    /// Ed25519 is NOT supported here — only Dilithium keys (min 1312 bytes).
     /// The nonce bytes are the message that was signed.
     pub fn verify_cross_device_binding(
         challenge_nonce_hex: &str,
@@ -495,9 +496,13 @@ impl MobileAuthStore {
     // Challenge lifecycle
     // -----------------------------------------------------------------------
 
-    /// Store a newly generated challenge
+    /// Store a newly generated challenge, pruning any already-expired ones
+    /// so the map doesn't grow unbounded on long-running nodes.
     pub async fn insert_challenge(&self, challenge: MobileAuthChallenge) {
         let mut c = self.challenges.write().await;
+        // Prune expired challenges on each insert (amortised O(1) for hot paths)
+        let now = now_secs();
+        c.retain(|_, ch| ch.expires_at > now && ch.status == ChallengeStatus::Pending);
         c.insert(challenge.session_id.clone(), challenge);
     }
 
@@ -512,16 +517,18 @@ impl MobileAuthStore {
         }
     }
 
-    /// Mark a challenge as used (prevents replay)
+    /// Mark a challenge as used (prevents replay) and remove it from the store to
+    /// prevent unbounded memory growth.
     pub async fn consume_challenge(&self, session_id: &str) -> Result<()> {
         let mut c = self.challenges.write().await;
-        match c.get_mut(session_id) {
+        match c.get(session_id) {
             None => Err(anyhow!("Challenge not found: {}", session_id)),
             Some(ch) => {
                 if ch.status != ChallengeStatus::Pending && ch.status != ChallengeStatus::Signed {
                     return Err(anyhow!("Challenge already used or expired"));
                 }
-                ch.status = ChallengeStatus::Used;
+                // Remove immediately — consumed challenges have no further use.
+                c.remove(session_id);
                 Ok(())
             }
         }
@@ -622,7 +629,8 @@ impl MobileAuthStore {
         }
     }
 
-    /// Rotate refresh token — old token is invalidated, new session issued
+    /// Also removes the consumed old refresh token from the refresh_index so it
+    /// cannot be used again and avoids unbounded index growth.
     pub async fn rotate_refresh_token(
         &self,
         old_refresh_token: &str,
@@ -655,7 +663,7 @@ impl MobileAuthStore {
             return Err(anyhow!("Binding mismatch on refresh attempt"));
         }
 
-        // Revoke old session
+        // Revoke old session (this also cleans up refresh_index and identity_sessions)
         self.revoke_session(&access_token, "refresh_rotation").await?;
 
         // Issue new session with same capabilities
@@ -671,17 +679,44 @@ impl MobileAuthStore {
         .await
     }
 
-    /// Revoke a session by access token
+    /// Revoke a session by access token. Cleans up refresh_index and
+    /// identity_sessions so revoked tokens don't accumulate indefinitely.
     pub async fn revoke_session(&self, access_token: &str, reason: &str) -> Result<()> {
-        let mut sessions = self.sessions.write().await;
-        match sessions.get_mut(access_token) {
-            None => Err(anyhow!("Session not found")),
-            Some(s) => {
-                s.revoked = true;
-                tracing::info!("Session revoked: {} reason={}", &access_token[..16], reason);
-                Ok(())
+        // Capture the refresh_token before dropping the sessions lock.
+        let refresh_token = {
+            let sessions = self.sessions.read().await;
+            sessions.get(access_token).map(|s| s.refresh_token.clone())
+        };
+
+        {
+            let mut sessions = self.sessions.write().await;
+            match sessions.get_mut(access_token) {
+                None => return Err(anyhow!("Session not found")),
+                Some(s) => {
+                    s.revoked = true;
+                    tracing::info!("Session revoked: {} reason={}", &access_token[..16.min(access_token.len())], reason);
+                }
             }
         }
+
+        // Clean up refresh_index
+        if let Some(rt) = refresh_token {
+            self.refresh_index.write().await.remove(&rt);
+        }
+
+        // Remove from identity_sessions
+        let identity_id = {
+            let sessions = self.sessions.read().await;
+            sessions.get(access_token).map(|s| s.identity_id.clone())
+        };
+        if let Some(id) = identity_id {
+            let mut is = self.identity_sessions.write().await;
+            if let Some(tokens) = is.get_mut(&id) {
+                tokens.retain(|t| t != access_token);
+            }
+        }
+
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -742,7 +777,10 @@ impl MobileAuthStore {
     pub async fn append_audit(&self, entry: AuditLogEntry) {
         let mut log = self.audit_log.write().await;
         if log.len() >= 10_000 {
-            log.drain(0..1_000); // keep last 9 000 when buffer full
+            // Bounded ring buffer: drop the oldest 1 000 entries to keep memory bounded.
+            // This is a best-effort in-memory audit cache; for hard retention guarantees
+            // events should be streamed to durable external storage.
+            log.drain(0..1_000);
         }
         log.push(entry);
     }

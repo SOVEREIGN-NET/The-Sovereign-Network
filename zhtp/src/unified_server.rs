@@ -977,8 +977,12 @@ impl ZhtpUnifiedServer {
         // Mobile + Web App Authentication Delegation (Issue #1877)
         // All three phases (challenge/verify/session, refresh, delegation certs) share one store.
         let mobile_auth_store = Arc::new(lib_identity::auth::mobile_delegation::MobileAuthStore::new());
+        // Derive the externally-reachable endpoint from ZHTP_EXTERNAL_URL (set this in production)
+        // so QR codes contain a real URL rather than localhost.
+        let mobile_auth_endpoint = std::env::var("ZHTP_EXTERNAL_URL")
+            .unwrap_or_else(|_| "http://localhost:9334".to_string());
         let mobile_auth_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::MobileAuthHandler::new(mobile_auth_store),
+            crate::api::handlers::MobileAuthHandler::with_endpoint(mobile_auth_store, &mobile_auth_endpoint),
         );
         // Prefix routes — the handler's dispatch() does exact matching internally
         zhtp_router.register_handler("/api/v1/auth/mobile".to_string(), mobile_auth_handler.clone());

@@ -35,7 +35,6 @@ use lib_identity::auth::mobile_delegation::{
 };
 use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
-use rand::RngCore;
 
 const NODE_ENDPOINT: &str = "http://localhost:9334"; // overrideable via config
 
@@ -449,6 +448,8 @@ impl MobileAuthHandler {
     ) -> ZhtpResult<ZhtpResponse> {
         #[derive(Deserialize)]
         struct DelegateRequest {
+            /// Client-generated certificate ID included in signing_bytes() before signing
+            cert_id: String,
             delegate_id: String,
             capabilities: Vec<Capability>,
             expires_in_secs: u64,
@@ -481,16 +482,19 @@ impl MobileAuthHandler {
         // Build delegator DID from session identity
         let delegator_did = format!("did:zhtp:{}", hex::encode(session.identity_id.as_ref()));
 
-        // Generate cert ID
-        let mut cert_id_bytes = [0u8; 16];
-        rand::rngs::OsRng.fill_bytes(&mut cert_id_bytes);
-        let cert_id = hex::encode(cert_id_bytes);
+        // The client generates the cert_id so it can include it in signing_bytes() before
+        // sending the request.  We validate it is a non-empty, printable ASCII string.
+        if req.cert_id.is_empty() || !req.cert_id.chars().all(|c| c.is_ascii_graphic()) {
+            return Ok(json_error(ZhtpStatus::BadRequest, "cert_id must be a non-empty ASCII string"));
+        }
+        let cert_id = req.cert_id.clone();
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
+        // Build the candidate cert (signature_hex not yet verified)
         let cert = DelegationCertificate {
             cert_id: cert_id.clone(),
             delegator_did: delegator_did.clone(),
@@ -498,11 +502,42 @@ impl MobileAuthHandler {
             capabilities: req.capabilities.clone(),
             expires_at: now + req.expires_in_secs,
             nonce: req.nonce,
-            signature_hex: req.signature_hex,
+            signature_hex: req.signature_hex.clone(),
             revoked: false,
             revocation_reason: None,
             registered_at_block: None,
         };
+
+        // SECURITY: Verify the delegator's Dilithium signature over the canonical cert bytes
+        // before persisting the certificate.  The client signs signing_bytes() with its private
+        // key; we verify against the public key stored in the validated session.
+        match CrossDeviceSessionBinder::verify_cross_device_binding(
+            &hex::encode(cert.signing_bytes()),
+            &session.public_key_hex,
+            &req.signature_hex,
+        ) {
+            Err(e) => {
+                return Ok(json_error(
+                    ZhtpStatus::BadRequest,
+                    &format!("Delegation signature verification error: {}", e),
+                ))
+            }
+            Ok(false) => {
+                let entry = AuditLogEntry::new(
+                    AuditEventKind::UnauthorizedCapabilityAccess,
+                    None,
+                    Some(&hex::encode(session.identity_id.as_ref())),
+                    client_ip,
+                    "delegation_cert_invalid_signature",
+                );
+                self.store.append_audit(entry).await;
+                return Ok(json_error(
+                    ZhtpStatus::Unauthorized,
+                    "Delegation certificate signature is invalid",
+                ));
+            }
+            Ok(true) => {} // signature verified
+        }
 
         match self.store.register_delegation_cert(cert).await {
             Err(e) => return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string())),
@@ -672,14 +707,22 @@ fn extract_bearer(headers: &ZhtpHeaders) -> Option<String> {
 }
 
 fn extract_client_ip(request: &ZhtpRequest) -> String {
-    request
-        .headers
-        .custom
-        .get("X-Forwarded-For")
+    // Prefer X-Real-IP (set by trusted reverse-proxy to the true client IP).
+    // Fall back to the first entry in X-Forwarded-For (may be a comma-separated chain).
+    if let Some(real_ip) = request.headers.custom.get("X-Real-IP")
+        .or_else(|| request.headers.custom.get("x-real-ip"))
+    {
+        return real_ip.trim().to_string();
+    }
+    if let Some(forwarded) = request.headers.custom.get("X-Forwarded-For")
         .or_else(|| request.headers.custom.get("x-forwarded-for"))
-        .or_else(|| request.headers.custom.get("X-Real-IP"))
-        .cloned()
-        .unwrap_or_else(|| "unknown".to_string())
+    {
+        // Take only the leftmost (originating client) address
+        if let Some(first) = forwarded.split(',').next() {
+            return first.trim().to_string();
+        }
+    }
+    "unknown".to_string()
 }
 
 fn extract_user_agent(request: &ZhtpRequest) -> String {
@@ -829,6 +872,7 @@ mod tests {
         let req = post(
             "/api/v1/auth/delegate",
             json!({
+                "cert_id": "00112233445566778899aabbccddeeff",
                 "delegate_id": "did:zhtp:bob",
                 "capabilities": [],
                 "expires_in_secs": 3600,
