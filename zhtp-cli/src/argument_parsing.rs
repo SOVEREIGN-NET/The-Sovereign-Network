@@ -129,6 +129,9 @@ pub enum ZhtpCommand {
 
     /// Bonding curve operations (deploy, buy, sell, price)
     Curve(CurveArgs),
+
+    /// Genesis configuration and state migration (GENESIS-1, #1909)
+    Genesis(GenesisArgs),
 }
 
 /// Node management commands
@@ -1418,6 +1421,47 @@ pub enum CurveAction {
     List,
 }
 
+/// Genesis configuration and state migration commands (GENESIS-1, #1909)
+#[derive(Args, Debug, Clone)]
+pub struct GenesisArgs {
+    #[command(subcommand)]
+    pub command: GenesisCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum GenesisCommand {
+    /// Build block 0 from genesis.toml and output its hash
+    Build {
+        /// Path to genesis.toml (uses embedded config if omitted)
+        #[arg(short, long)]
+        config: Option<std::path::PathBuf>,
+        /// Write the hash to this file (in addition to stdout)
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+    },
+    /// Export the full blockchain state from a .dat file to a JSON snapshot
+    ExportState {
+        /// Path to blockchain.dat (defaults to ~/.zhtp/data/testnet/blockchain.dat)
+        #[arg(short, long)]
+        dat_file: Option<std::path::PathBuf>,
+        /// Output JSON snapshot file
+        #[arg(short, long, default_value = "state-snapshot.json")]
+        output: std::path::PathBuf,
+    },
+    /// Merge a state snapshot into genesis.toml for testnet migration
+    MigrateState {
+        /// Path to the state snapshot JSON produced by export-state
+        #[arg(short, long)]
+        snapshot: std::path::PathBuf,
+        /// Base genesis.toml to merge into (uses embedded config if omitted)
+        #[arg(short, long)]
+        config: Option<std::path::PathBuf>,
+        /// Output genesis.toml with allocations embedded
+        #[arg(short, long, default_value = "genesis-with-state.toml")]
+        output: std::path::PathBuf,
+    },
+}
+
 /// Main CLI runner
 pub async fn run_cli() -> Result<()> {
     // Initialize network genesis for replay protection
@@ -1533,6 +1577,11 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Curve(args) => commands::curve::handle_curve_command(args.clone(), &cli)
             .await
             .map_err(anyhow::Error::msg),
+        ZhtpCommand::Genesis(args) => {
+            commands::genesis::handle_genesis_command(args.clone(), &cli)
+                .await
+                .map_err(anyhow::Error::msg)
+        }
     }
 }
 
