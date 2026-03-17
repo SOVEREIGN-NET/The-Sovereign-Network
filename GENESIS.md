@@ -28,10 +28,12 @@ cryptographic keys and lock the genesis configuration.
 Generate 4 Dilithium5 keypairs for the CBE token pools:
 
 ```bash
-zhtp-cli wallet create --type compensation-pool
-zhtp-cli wallet create --type operational-treasury
-zhtp-cli wallet create --type performance-incentives
-zhtp-cli wallet create --type strategic-reserves
+# The CLI accepts --type standard, multisig, or hardware.
+# Wallet purpose is tracked by the operator; the type field is generic.
+zhtp-cli wallet create --type standard
+zhtp-cli wallet create --type standard
+zhtp-cli wallet create --type standard
+zhtp-cli wallet create --type standard
 ```
 
 Record the **public keys only** from each wallet.
@@ -41,8 +43,9 @@ Record the **public keys only** from each wallet.
 Generate 2 Dilithium5 keypairs for entity registry:
 
 ```bash
-zhtp-cli wallet create --type cbe-treasury
-zhtp-cli wallet create --type nonprofit-treasury
+# The CLI accepts --type standard, multisig, or hardware.
+zhtp-cli wallet create --type standard
+zhtp-cli wallet create --type standard
 ```
 
 ### Step 3 — Generate Bootstrap Council Keypairs
