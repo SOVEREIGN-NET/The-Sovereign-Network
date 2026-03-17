@@ -500,10 +500,13 @@ pub trait BlockCommitCallback: Send + Sync {
     ///
     /// # Returns
     /// * `Ok(())` - Block was successfully committed
-    /// * `Err(...)` - Block commit failed (logged but does not affect consensus)
+    /// * `Err(...)` - Block commit failed. The consensus engine treats this as a
+    ///   **fatal error**: it halts this node to prevent it from voting on a stale
+    ///   fork and deadlocking the network. Operators must wipe the sled store and
+    ///   restart to resync: `systemctl stop zhtp && rm -rf /opt/zhtp/data/testnet/sled && systemctl start zhtp`
     ///
     /// # Invariants
-    /// - This callback is best-effort; consensus correctness does not depend on it
+    /// - Commit failure is **not** best-effort — a failed commit halts the node.
     /// - The same block may be committed multiple times (idempotent handling required)
     async fn commit_finalized_block(
         &self,

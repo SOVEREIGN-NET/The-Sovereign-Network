@@ -1,6 +1,6 @@
 # Sovereign Network Genesis Configuration
 # This file is the single source of truth for genesis state.
-# Any node running `zhtp --genesis genesis.toml` produces bit-for-bit identical block 0.
+# Embedded at compile time via include_bytes! in lib-blockchain/src/genesis/mod.rs
 # Public keys are empty until the mainnet key ceremony.
 # Tracked: #1909 (GENESIS-1)
 

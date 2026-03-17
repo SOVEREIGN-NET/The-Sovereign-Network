@@ -1486,15 +1486,18 @@ impl Blockchain {
     /// Delegates to `GenesisConfig::build_block0()` so that `genesis.toml` is the
     /// single source of truth for genesis state (GENESIS-1, #1909).
     pub fn new() -> Result<Self> {
-        crate::genesis::GenesisConfig::from_embedded()
-            .and_then(|cfg| cfg.build_block0())
+        let cfg = crate::genesis::GenesisConfig::from_embedded()?;
+        let bc = cfg.build_block0()?;
+        // TODO(GENESIS-2): call cfg.verify_hash(&bc.blocks[0].header.block_hash.as_bytes().try_into().unwrap())
+        // once CANONICAL_GENESIS_HASH is set to a non-zero value after the key ceremony.
+        Ok(bc)
     }
 
     /// Create a bare genesis-state blockchain from a pre-built block 0.
     ///
     /// Used exclusively by `GenesisConfig::build_block0()`.
     /// Does NOT call `initialize_cbe_genesis()` — state is managed by the caller.
-    pub fn new_empty_for_genesis(genesis_block: crate::block::Block) -> Result<Self> {
+    pub(crate) fn new_empty_for_genesis(genesis_block: crate::block::Block) -> Result<Self> {
         let mut bc = Self::new_runtime_state();
         bc.blocks[0] = genesis_block.clone();
         bc.update_utxo_set(&genesis_block)?;

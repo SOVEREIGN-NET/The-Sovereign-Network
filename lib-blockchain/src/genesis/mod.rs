@@ -288,23 +288,33 @@ impl GenesisConfig {
     pub fn genesis_timestamp(&self) -> Result<u64> {
         // Accept ISO-8601 UTC strings like "2025-11-01T00:00:00Z"
         // Parse manually to avoid a heavy chrono dependency in the hot path.
-        let s = self
-            .chain
-            .genesis_time
-            .trim_end_matches('Z')
-            .trim_end_matches("+00:00");
-        if s.len() >= 19 {
-            let year: u64 = s[..4].parse().unwrap_or(2025);
-            let month: u64 = s[5..7].parse().unwrap_or(11);
-            let day: u64 = s[8..10].parse().unwrap_or(1);
-            let hour: u64 = s[11..13].parse().unwrap_or(0);
-            let min: u64 = s[14..16].parse().unwrap_or(0);
-            let sec: u64 = s[17..19].parse().unwrap_or(0);
-            let days_since_epoch = days_since_unix_epoch(year, month, day);
-            return Ok(days_since_epoch * 86_400 + hour * 3_600 + min * 60 + sec);
+        let s = &self.chain.genesis_time;
+        if s.len() < 19 {
+            anyhow::bail!(
+                "genesis_time '{}' is too short; expected ISO 8601 format YYYY-MM-DDTHH:MM:SSZ",
+                s
+            );
         }
-        // Fallback: fixed genesis timestamp matching "2025-11-01T00:00:00Z"
-        Ok(1_761_955_200)
+        let year: u64 = s[0..4]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid year in genesis_time '{}'", s))?;
+        let month: u64 = s[5..7]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid month in genesis_time '{}'", s))?;
+        let day: u64 = s[8..10]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid day in genesis_time '{}'", s))?;
+        let hour: u64 = s[11..13]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid hour in genesis_time '{}'", s))?;
+        let min: u64 = s[14..16]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid minute in genesis_time '{}'", s))?;
+        let sec: u64 = s[17..19]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid second in genesis_time '{}'", s))?;
+        let days_since_epoch = days_since_unix_epoch(year, month, day);
+        Ok(days_since_epoch * 86_400 + hour * 3_600 + min * 60 + sec)
     }
 
     /// Build a fully-initialized `Blockchain` at block 0 from this config.
@@ -503,8 +513,10 @@ impl GenesisConfig {
 
         // wallets
         for w in &alloc.wallets {
-            let wallet_id_bytes = hex::decode(&w.wallet_id).unwrap_or_default();
-            let pk_bytes = hex::decode(&w.public_key).unwrap_or_default();
+            let wallet_id_bytes = hex::decode(&w.wallet_id)
+                .map_err(|e| anyhow::anyhow!("invalid hex in wallet_id '{}': {}", w.wallet_id, e))?;
+            let pk_bytes = hex::decode(&w.public_key)
+                .map_err(|e| anyhow::anyhow!("invalid hex in public_key '{}': {}", w.public_key, e))?;
             if wallet_id_bytes.len() != 32 {
                 warn!("Skipping wallet with invalid id: {}", w.wallet_id);
                 continue;
@@ -512,6 +524,7 @@ impl GenesisConfig {
             let mut id_arr = [0u8; 32];
             id_arr.copy_from_slice(&wallet_id_bytes);
             let wallet_id_hash = crate::types::Hash::from(id_arr);
+            let wallet_key = hex::encode(id_arr);
             let owner_id = w.owner_identity_id.as_deref().and_then(|hex_str| {
                 let bytes = hex::decode(hex_str).ok()?;
                 if bytes.len() == 32 {
@@ -523,7 +536,7 @@ impl GenesisConfig {
                 }
             });
             bc.wallet_registry.insert(
-                hex::encode(id_arr),
+                wallet_key.clone(),
                 WalletTransactionData {
                     wallet_id: wallet_id_hash,
                     wallet_type: w.wallet_type.clone(),
@@ -538,11 +551,13 @@ impl GenesisConfig {
                     initial_balance: 0,
                 },
             );
+            bc.wallet_blocks.insert(wallet_key, 0u64);
         }
 
         // identities
         for id in &alloc.identities {
-            let pk_bytes = hex::decode(&id.public_key).unwrap_or_default();
+            let pk_bytes = hex::decode(&id.public_key)
+                .map_err(|e| anyhow::anyhow!("invalid hex in identity public_key '{}': {}", id.public_key, e))?;
             bc.identity_registry.insert(
                 id.did.clone(),
                 IdentityTransactionData {
@@ -559,6 +574,7 @@ impl GenesisConfig {
                     owned_wallets: vec![],
                 },
             );
+            bc.identity_blocks.insert(id.did.clone(), 0u64);
         }
 
         // web4 contracts
@@ -566,8 +582,9 @@ impl GenesisConfig {
             if let Ok(contract) =
                 serde_json::from_str::<crate::contracts::web4::Web4Contract>(&c.contract_json)
             {
-                let id_bytes = lib_crypto::hash_blake3(c.contract_id.as_bytes());
+                let id_bytes = lib_crypto::hash_blake3(c.domain.as_bytes());
                 bc.web4_contracts.insert(id_bytes, contract);
+                bc.contract_blocks.insert(id_bytes, 0u64);
             } else {
                 warn!("Failed to deserialize web4 contract: {}", c.contract_id);
             }
@@ -582,8 +599,8 @@ impl GenesisConfig {
                 .entry(sov_id)
                 .or_insert_with(crate::contracts::TokenContract::new_sov_native);
             for entry in &alloc.sov_balances {
-                let pk_bytes = hex::decode(&entry.public_key).unwrap_or_default();
-                let wallet_id_bytes = hex::decode(&entry.wallet_id).unwrap_or_default();
+                let wallet_id_bytes = hex::decode(&entry.wallet_id)
+                    .map_err(|e| anyhow::anyhow!("invalid hex in sov_balance wallet_id '{}': {}", entry.wallet_id, e))?;
                 let key_id = if wallet_id_bytes.len() == 32 {
                     let mut arr = [0u8; 32];
                     arr.copy_from_slice(&wallet_id_bytes);
@@ -591,8 +608,10 @@ impl GenesisConfig {
                 } else {
                     [0u8; 32]
                 };
+                // Use empty dilithium_pk — the SOV balance key is derived solely from
+                // the wallet_id (key_id), matching the pattern in collect_sov_backfill_entries.
                 let pk = PublicKey {
-                    dilithium_pk: pk_bytes,
+                    dilithium_pk: vec![],
                     kyber_pk: vec![],
                     key_id,
                 };
@@ -614,6 +633,12 @@ impl GenesisConfig {
     pub fn verify_hash(&self, block0_hash: &[u8; 32]) -> Result<()> {
         let expected = hex::decode(CANONICAL_GENESIS_HASH)
             .context("CANONICAL_GENESIS_HASH is not valid hex")?;
+        if expected.len() != 32 {
+            anyhow::bail!(
+                "CANONICAL_GENESIS_HASH has wrong length ({} bytes, expected 32)",
+                expected.len()
+            );
+        }
         if expected.iter().all(|&b| b == 0) {
             // Hash not yet set — pre-ceremony, skip verification
             return Ok(());
@@ -678,19 +703,27 @@ fn key_from_hex(
     })
 }
 
-/// Gregorian-calendar days since 1970-01-01. Good enough for genesis timestamps.
+/// Pure-integer proleptic Gregorian calendar → Unix day number (days since 1970-01-01).
+///
+/// Uses the civil calendar algorithm that shifts March to month 0 to simplify
+/// leap-year handling. No floating-point arithmetic.
+///
+/// NOTE: Will underflow (panic in debug) for dates before approximately 1972
+/// because the subtraction of 719468 can exceed the accumulated day count.
+/// For genesis timestamps (year 2025+) this is not a concern.
 fn days_since_unix_epoch(year: u64, month: u64, day: u64) -> u64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let m = if month <= 2 { month + 12 } else { month };
-    let a = (y / 100) as i64;
-    let b = 2 - a + a / 4;
-    let jdn = (365.25 * (y + 4716) as f64) as i64
-        + (30.6001 * (m + 1) as f64) as i64
-        + day as i64
-        + b
-        - 1524;
-    // Julian Day Number for 1970-01-01 is 2440588
-    (jdn - 2_440_588).max(0) as u64
+    // Shift so March = month 0, making leap day (Feb 29) fall at end of "year".
+    let (y, m) = if month <= 2 {
+        (year - 1, month + 9)
+    } else {
+        (year, month - 3)
+    };
+    let era = y / 400;
+    let yoe = y - era * 400; // year-of-era [0, 399]
+    let doy = (153 * m + 2) / 5 + day - 1; // day-of-year [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // day-of-era [0, 146096]
+    // 719468 = days from 0000-03-01 to 1970-01-01
+    era * 146097 + doe - 719468
 }
 
 #[cfg(test)]
