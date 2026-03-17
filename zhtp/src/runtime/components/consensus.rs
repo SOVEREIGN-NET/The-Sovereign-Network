@@ -464,9 +464,9 @@ async fn run_catch_up_sync_task(
     const FAST_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(3);
     const NORMAL_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
     const RETRY_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
-    // How many consecutive sync rounds where every ahead-peer rejects our chain
-    // before we declare an unrecoverable fork and wipe local state. Three rounds
-    // filters out transient rejections while detecting a genuine divergence quickly.
+    // How many consecutive sync rounds in which at least one ahead peer rejects our
+    // chain before we declare an unrecoverable fork and wipe local state. Three rounds
+    // filter out transient rejections while detecting a genuine divergence quickly.
     const WRONG_CHAIN_WIPE_THRESHOLD: u32 = 3;
 
     let mut next_allowed_at = tokio::time::Instant::now();
@@ -539,9 +539,8 @@ async fn run_catch_up_sync_task(
                     break;
                 }
                 Err(e) => {
-                    let err_str = e.to_string();
-                    warn!("Catch-up sync from {} failed: {}", peer.addr, err_str);
-                    if err_str.contains("Invalid previous block hash") {
+                    warn!("Catch-up sync from {} failed: {}", peer.addr, e);
+                    if e.downcast_ref::<HashMismatchError>().is_some() {
                         ahead_peers_rejecting += 1;
                     }
                 }
@@ -601,6 +600,19 @@ async fn run_catch_up_sync_task(
 
     info!("Catch-up sync task exited");
 }
+
+/// Returned by `catchup_sync_from_peer` when a peer that is strictly ahead of us
+/// rejects our chain tip with a hash-mismatch ("Invalid previous block hash"). Using
+/// a typed error instead of a string-contains check makes the detection robust to
+/// message wording changes.
+#[derive(Debug)]
+struct HashMismatchError(String);
+impl std::fmt::Display for HashMismatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for HashMismatchError {}
 
 /// Return socket addresses of all peers currently connected to the QUIC mesh.
 #[derive(Debug, Clone)]
@@ -801,11 +813,13 @@ async fn catchup_sync_from_peer(
                         height, peer_addr, e
                     );
                     if total_applied == 0 {
-                        return Err(anyhow::anyhow!(
-                            "failed first block apply at height {}: {}",
-                            height,
-                            e
-                        ));
+                        let msg = format!("failed first block apply at height {}: {}", height, e);
+                        // Surface hash-mismatch as a typed error so the catch-up loop
+                        // can count ahead-peers-rejecting without brittle string matching.
+                        if e.to_string().contains("Invalid previous block hash") {
+                            return Err(HashMismatchError(msg).into());
+                        }
+                        return Err(anyhow::anyhow!("{}", msg));
                     }
                     drop(bc);
                     break;
