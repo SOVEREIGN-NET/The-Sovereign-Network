@@ -204,32 +204,32 @@ fn alloc_toml_inline(alloc: &lib_blockchain::genesis::GenesisAllocations) -> Str
 
     for w in &alloc.wallets {
         out.push_str("[[allocations.wallets]]\n");
-        out.push_str(&format!("wallet_id = \"{}\"\n", w.wallet_id));
-        out.push_str(&format!("wallet_type = \"{}\"\n", w.wallet_type));
-        out.push_str(&format!("public_key = \"{}\"\n", w.public_key));
+        out.push_str(&format!("wallet_id = \"{}\"\n", toml_basic_escape(&w.wallet_id)));
+        out.push_str(&format!("wallet_type = \"{}\"\n", toml_basic_escape(&w.wallet_type)));
+        out.push_str(&format!("public_key = \"{}\"\n", toml_basic_escape(&w.public_key)));
         if let Some(ref oid) = w.owner_identity_id {
-            out.push_str(&format!("owner_identity_id = \"{}\"\n", oid));
+            out.push_str(&format!("owner_identity_id = \"{}\"\n", toml_basic_escape(oid)));
         }
         out.push_str(&format!("created_at = {}\n\n", w.created_at));
     }
 
     for id in &alloc.identities {
         out.push_str("[[allocations.identities]]\n");
-        out.push_str(&format!("did = \"{}\"\n", id.did));
+        out.push_str(&format!("did = \"{}\"\n", toml_basic_escape(&id.did)));
         out.push_str(&format!(
             "display_name = \"{}\"\n",
-            id.display_name.replace('"', "\\\"")
+            toml_basic_escape(&id.display_name)
         ));
-        out.push_str(&format!("public_key = \"{}\"\n", id.public_key));
-        out.push_str(&format!("identity_type = \"{}\"\n", id.identity_type));
+        out.push_str(&format!("public_key = \"{}\"\n", toml_basic_escape(&id.public_key)));
+        out.push_str(&format!("identity_type = \"{}\"\n", toml_basic_escape(&id.identity_type)));
         out.push_str(&format!("created_at = {}\n\n", id.created_at));
     }
 
     for c in &alloc.web4_contracts {
         out.push_str("[[allocations.web4_contracts]]\n");
-        out.push_str(&format!("contract_id = \"{}\"\n", c.contract_id));
-        out.push_str(&format!("domain = \"{}\"\n", c.domain));
-        out.push_str(&format!("owner = \"{}\"\n", c.owner));
+        out.push_str(&format!("contract_id = \"{}\"\n", toml_basic_escape(&c.contract_id)));
+        out.push_str(&format!("domain = \"{}\"\n", toml_basic_escape(&c.domain)));
+        out.push_str(&format!("owner = \"{}\"\n", toml_basic_escape(&c.owner)));
         out.push_str(&format!("created_at = {}\n", c.created_at));
         let escaped = toml_basic_escape(&c.contract_json);
         out.push_str(&format!("contract_json = \"{}\"\n\n", escaped));
@@ -237,8 +237,8 @@ fn alloc_toml_inline(alloc: &lib_blockchain::genesis::GenesisAllocations) -> Str
 
     for b in &alloc.sov_balances {
         out.push_str("[[allocations.sov_balances]]\n");
-        out.push_str(&format!("wallet_id = \"{}\"\n", b.wallet_id));
-        out.push_str(&format!("public_key = \"{}\"\n", b.public_key));
+        out.push_str(&format!("wallet_id = \"{}\"\n", toml_basic_escape(&b.wallet_id)));
+        out.push_str(&format!("public_key = \"{}\"\n", toml_basic_escape(&b.public_key)));
         out.push_str(&format!("balance = {}\n\n", b.balance));
     }
 
