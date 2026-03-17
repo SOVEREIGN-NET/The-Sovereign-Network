@@ -464,7 +464,15 @@ async fn run_catch_up_sync_task(
     const FAST_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(3);
     const NORMAL_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
     const RETRY_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
+    // How many consecutive sync rounds where every ahead-peer rejects our chain
+    // before we declare an unrecoverable fork and wipe local state. Three rounds
+    // filters out transient rejections while detecting a genuine divergence quickly.
+    const WRONG_CHAIN_WIPE_THRESHOLD: u32 = 3;
+
     let mut next_allowed_at = tokio::time::Instant::now();
+    // Counts consecutive sync rounds in which ≥1 ahead peer returned a hash
+    // mismatch and zero blocks were successfully applied. Resets on any success.
+    let mut consecutive_wrong_chain_rounds: u32 = 0;
 
     while let Some(_trigger_height) = rx.recv().await {
         // Drain any duplicate triggers buffered while we were processing.
@@ -506,7 +514,12 @@ async fn run_catch_up_sync_task(
 
         let prioritized_peers = prioritize_catchup_peers(peers, &blockchain_slot).await;
         let mut synced_blocks = 0usize;
-        let mut wrong_chain_peers = 0usize;
+        // Peers that were strictly ahead of us but returned "Invalid previous block hash".
+        // `catchup_sync_from_peer` returns Ok(0) for peers that are NOT ahead, so any
+        // hash-mismatch Err came from a peer that was genuinely ahead — unlike the old
+        // `wrong_chain_peers == prioritized_peers.len()` check, this correctly excludes
+        // same-height peers (e.g. other nodes on the same stale fork) from the count.
+        let mut ahead_peers_rejecting: u32 = 0;
         for peer in &prioritized_peers {
             match catchup_sync_from_peer(&peer.addr, from_height, &blockchain_slot).await {
                 Ok(0) => {
@@ -529,27 +542,51 @@ async fn run_catch_up_sync_task(
                     let err_str = e.to_string();
                     warn!("Catch-up sync from {} failed: {}", peer.addr, err_str);
                     if err_str.contains("Invalid previous block hash") {
-                        wrong_chain_peers += 1;
+                        ahead_peers_rejecting += 1;
                     }
                 }
             }
         }
 
-        // If every peer reports a chain mismatch at the first block, we're on the
-        // wrong chain entirely. Wipe local state and restart — systemd will bring
-        // us back up and we'll sync the correct chain from genesis.
-        if wrong_chain_peers > 0 && wrong_chain_peers == prioritized_peers.len() && from_height > 0
-        {
-            error!(
-                "❌ WRONG CHAIN DETECTED: all {} peer(s) reject our block {} — local chain is incompatible. Wiping sled and restarting.",
-                wrong_chain_peers, from_height + 1
+        if synced_blocks > 0 {
+            // Successful sync — reset the divergence counter.
+            consecutive_wrong_chain_rounds = 0;
+        } else if ahead_peers_rejecting > 0 && from_height > 0 {
+            // At least one ahead peer rejected our chain this round.
+            consecutive_wrong_chain_rounds += 1;
+            warn!(
+                "⚠️  Wrong-chain signal: {}/{} ahead peer(s) reject height {} \
+                ({}/{} consecutive round(s))",
+                ahead_peers_rejecting,
+                prioritized_peers.len(),
+                from_height + 1,
+                consecutive_wrong_chain_rounds,
+                WRONG_CHAIN_WIPE_THRESHOLD,
             );
-            if let Err(e) = std::fs::remove_dir_all(&sled_path) {
-                error!("Failed to wipe sled at {:?}: {}", sled_path, e);
-            } else {
-                info!("🗑️  Sled wiped at {:?}", sled_path);
+
+            if consecutive_wrong_chain_rounds >= WRONG_CHAIN_WIPE_THRESHOLD {
+                // Unrecoverable fork: our local chain state diverged from every
+                // ahead peer we can reach. Wipe the sled store and exit so systemd
+                // restarts us — on restart the node will sync the canonical chain
+                // from peers from block 0.
+                error!(
+                    "❌ UNRECOVERABLE FORK at height {}: {} consecutive round(s) of hash \
+                    mismatch from {} ahead peer(s). Wiping sled at {:?} and restarting.",
+                    from_height + 1,
+                    consecutive_wrong_chain_rounds,
+                    ahead_peers_rejecting,
+                    sled_path,
+                );
+                if let Err(e) = std::fs::remove_dir_all(&sled_path) {
+                    error!("Failed to wipe sled at {:?}: {}", sled_path, e);
+                } else {
+                    info!("🗑️  Sled wiped at {:?}", sled_path);
+                }
+                std::process::exit(1);
             }
-            std::process::exit(1);
+        } else {
+            // No hash mismatches this round — reset.
+            consecutive_wrong_chain_rounds = 0;
         }
 
         next_allowed_at = tokio::time::Instant::now()
