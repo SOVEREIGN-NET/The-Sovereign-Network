@@ -325,7 +325,7 @@ impl GenesisConfig {
             self.chain.chain_id
         );
 
-        let genesis_timestamp = self.genesis_timestamp().unwrap_or(1_730_419_200);
+        let genesis_timestamp = self.genesis_timestamp()?;
 
         // ── block 0 header ──────────────────────────────────────────────────
         let genesis_difficulty = Difficulty::from_bits(0x1fffffff);
