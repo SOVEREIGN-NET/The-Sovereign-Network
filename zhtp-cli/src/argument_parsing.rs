@@ -1743,4 +1743,62 @@ mod tests {
             other => panic!("unexpected command parsed: {other:?}"),
         }
     }
+
+    #[test]
+    fn parse_genesis_build_command() {
+        let parsed = ZhtpCli::try_parse_from(["zhtp-cli", "genesis", "build"])
+            .expect("genesis build should parse");
+        match parsed.command {
+            ZhtpCommand::Genesis(GenesisArgs {
+                command: GenesisCommand::Build { config, output },
+            }) => {
+                assert!(config.is_none());
+                assert!(output.is_none());
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_genesis_export_state_command() {
+        let parsed = ZhtpCli::try_parse_from([
+            "zhtp-cli",
+            "genesis",
+            "export-state",
+            "--output",
+            "snapshot.json",
+        ])
+        .expect("genesis export-state should parse");
+        match parsed.command {
+            ZhtpCommand::Genesis(GenesisArgs {
+                command: GenesisCommand::ExportState { output, .. },
+            }) => {
+                assert_eq!(output.to_str().unwrap(), "snapshot.json");
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_genesis_migrate_state_command() {
+        let parsed = ZhtpCli::try_parse_from([
+            "zhtp-cli",
+            "genesis",
+            "migrate-state",
+            "--snapshot",
+            "state.json",
+            "--output",
+            "genesis-out.toml",
+        ])
+        .expect("genesis migrate-state should parse");
+        match parsed.command {
+            ZhtpCommand::Genesis(GenesisArgs {
+                command: GenesisCommand::MigrateState { snapshot, output, .. },
+            }) => {
+                assert_eq!(snapshot.to_str().unwrap(), "state.json");
+                assert_eq!(output.to_str().unwrap(), "genesis-out.toml");
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
 }

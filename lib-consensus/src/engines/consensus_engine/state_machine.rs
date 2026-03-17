@@ -1227,7 +1227,7 @@ impl ConsensusEngine {
                     //
                     // We must NOT continue. Return an error so the consensus engine halts this
                     // node. Operators should wipe the sled store and restart to resync from peers:
-                    //   systemctl stop zhtp && rm -rf /opt/zhtp/data/testnet/sled && systemctl start zhtp
+                    //   systemctl stop zhtp && rm -rf <data-dir>/sled && systemctl start zhtp
                     tracing::error!(
                         "⚠️ Failed to commit BFT finalized block to blockchain: {} (height: {}, proposal: {:?}). \
                         Local chain state has diverged from consensus. Halting to prevent network deadlock.",
@@ -1238,7 +1238,7 @@ impl ConsensusEngine {
                     return Err(ConsensusError::ValidatorError(format!(
                         "BFT safety violation: committed block at height {} could not be applied \
                         locally: {}. Node halted to prevent network deadlock. Recovery: \
-                        systemctl stop zhtp && rm -rf /opt/zhtp/data/testnet/sled && systemctl start zhtp",
+                        systemctl stop zhtp && rm -rf <data-dir>/sled && systemctl start zhtp",
                         proposal.height, e
                     )));
                 }

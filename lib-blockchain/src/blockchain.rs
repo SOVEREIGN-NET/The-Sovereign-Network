@@ -1488,8 +1488,9 @@ impl Blockchain {
     pub fn new() -> Result<Self> {
         let cfg = crate::genesis::GenesisConfig::from_embedded()?;
         let bc = cfg.build_block0()?;
-        // TODO(GENESIS-2): call cfg.verify_hash(&bc.blocks[0].header.block_hash.as_bytes().try_into().unwrap())
-        // once CANONICAL_GENESIS_HASH is set to a non-zero value after the key ceremony.
+        // Verify block 0 hash against CANONICAL_GENESIS_HASH. No-ops while the
+        // constant is all-zeros (pre-key-ceremony); becomes a hard check post-ceremony.
+        cfg.verify_hash(&bc.blocks[0].header.block_hash.as_array())?;
         Ok(bc)
     }
 
