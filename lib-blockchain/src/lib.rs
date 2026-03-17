@@ -22,6 +22,7 @@ pub mod execution;
 pub mod onramp;
 pub mod fees;
 mod fork_recovery; // gutted in Issue #936; kept as private to avoid orphan module errors
+pub mod genesis;
 pub mod integration;
 pub mod mempool;
 pub mod oracle;
@@ -34,7 +35,6 @@ pub mod storage;
 pub mod sync;
 pub mod transaction;
 pub mod types;
-pub mod genesis;
 pub mod utils;
 pub mod validation;
 pub mod vm;
