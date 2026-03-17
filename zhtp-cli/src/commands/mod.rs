@@ -2,7 +2,6 @@
 
 pub mod backup;
 pub mod blockchain;
-pub mod genesis;
 pub mod citizen;
 pub mod common;
 pub mod completion;
@@ -13,6 +12,7 @@ pub mod dao;
 pub mod deploy;
 pub mod diagnostics;
 pub mod domain;
+pub mod genesis;
 pub mod identity;
 pub mod interactive;
 pub mod isolation;
@@ -35,7 +35,6 @@ pub mod web4_utils;
 
 pub use backup::handle_backup_command;
 pub use blockchain::handle_blockchain_command;
-pub use genesis::handle_genesis_command;
 pub use citizen::handle_citizen_command;
 pub use completion::handle_completion_command;
 pub use component::handle_component_command;
@@ -45,6 +44,7 @@ pub use dao::handle_dao_command;
 pub use deploy::handle_deploy_command;
 pub use diagnostics::handle_diagnostics_command;
 pub use domain::handle_domain_command;
+pub use genesis::handle_genesis_command;
 pub use identity::handle_identity_command;
 pub use interactive::handle_interactive_command;
 pub use isolation::handle_isolation_command;
