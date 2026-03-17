@@ -2153,6 +2153,11 @@ impl Blockchain {
             );
         }
 
+        // Evict any Phase-2-invalid pending transactions that were persisted before
+        // the fee=0 rule was enforced at intake. Must run before the node starts
+        // proposing blocks, otherwise BlockExecutor rejects every proposed block.
+        blockchain.evict_phase2_invalid_transactions("load_from_store");
+
         // NOTE: Do not mint SOV in-memory here. SledStore requires writes inside
         // an active block transaction. Missing or underfunded balances are
         // repaired via TokenMint backfill after startup.
@@ -4026,6 +4031,23 @@ impl Blockchain {
             transaction.inputs.len(),
             transaction.outputs.len()
         );
+
+        // Phase 2 invariant: TokenMint and TokenTransfer must have fee=0.
+        // Reject at intake so these never enter the mempool and poison proposed blocks.
+        use crate::types::transaction_type::TransactionType;
+        if transaction.fee != 0
+            && matches!(
+                transaction.transaction_type,
+                TransactionType::TokenMint | TransactionType::TokenTransfer
+            )
+        {
+            return Err(anyhow::anyhow!(
+                "Phase 2: {:?} transaction must have fee=0, got fee={}",
+                transaction.transaction_type,
+                transaction.fee
+            ));
+        }
+
         if !self.verify_transaction(&transaction)? {
             return Err(anyhow::anyhow!("Transaction verification failed"));
         }
