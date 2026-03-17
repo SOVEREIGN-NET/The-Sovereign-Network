@@ -7,7 +7,7 @@
 [chain]
 chain_id     = 1
 name         = "Sovereign Network Testnet"
-# genesis_time must match the FIXED genesis timestamp in create_genesis_block() = 1761955200
+# genesis_time is parsed by GenesisConfig::genesis_timestamp(); Unix value = 1761955200
 genesis_time = "2025-11-01T00:00:00Z"
 
 [sov]
