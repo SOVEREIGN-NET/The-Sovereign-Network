@@ -1220,14 +1220,26 @@ impl ConsensusEngine {
                     info!("Issue #938: Block persisted ONLY after 2/3+1 commit votes");
                 }
                 Err(e) => {
-                    // Log but don't fail consensus - block commit is best-effort
-                    // The block is still finalized in consensus, storage is a side effect
+                    // A BFT-finalized block that fails to apply locally means our chain state
+                    // has diverged from consensus. Continuing to vote would permanently deadlock
+                    // the network (Issue #1914): the node stays on a stale fork, BFT splits 2+2,
+                    // no new blocks can be committed, and all mempool transactions are stuck.
+                    //
+                    // We must NOT continue. Return an error so the consensus engine halts this
+                    // node. Operators should wipe the sled store and restart to resync from peers:
+                    //   systemctl stop zhtp && rm -rf /opt/zhtp/data/testnet/sled && systemctl start zhtp
                     tracing::error!(
-                        "⚠️ Failed to commit BFT finalized block to blockchain: {} (height: {}, proposal: {:?})",
+                        "⚠️ Failed to commit BFT finalized block to blockchain: {} (height: {}, proposal: {:?}). \
+                        Local chain state has diverged from consensus. Halting to prevent network deadlock.",
                         e,
                         proposal.height,
                         proposal.id
                     );
+                    return Err(ConsensusError::ValidatorError(format!(
+                        "BFT safety violation: committed block at height {} could not be applied locally: {}. \
+                        Node halted. Wipe sled and restart to resync.",
+                        proposal.height, e
+                    )));
                 }
             }
         } else {
