@@ -195,8 +195,8 @@ impl GenesisStateSnapshot {
             .unwrap_or_default()
             .as_secs();
 
-        // --- wallets ---
-        let wallets = bc
+        // --- wallets (sorted by wallet_id for deterministic output) ---
+        let mut wallets: Vec<WalletAllocation> = bc
             .wallet_registry
             .values()
             .map(|w| WalletAllocation {
@@ -209,9 +209,10 @@ impl GenesisStateSnapshot {
                 created_at: w.created_at,
             })
             .collect();
+        wallets.sort_by(|a, b| a.wallet_id.cmp(&b.wallet_id));
 
-        // --- identities ---
-        let identities = bc
+        // --- identities (sorted by DID for deterministic output) ---
+        let mut identities: Vec<IdentityAllocation> = bc
             .identity_registry
             .values()
             .filter(|id| id.identity_type != "revoked")
@@ -223,9 +224,10 @@ impl GenesisStateSnapshot {
                 created_at: id.created_at,
             })
             .collect();
+        identities.sort_by(|a, b| a.did.cmp(&b.did));
 
-        // --- web4 contracts ---
-        let web4_contracts = bc
+        // --- web4 contracts (sorted by domain for deterministic output) ---
+        let mut web4_contracts: Vec<Web4Allocation> = bc
             .web4_contracts
             .values()
             .map(|c| Web4Allocation {
@@ -236,11 +238,12 @@ impl GenesisStateSnapshot {
                 contract_json: serde_json::to_string(c).unwrap_or_default(),
             })
             .collect();
+        web4_contracts.sort_by(|a, b| a.domain.cmp(&b.domain));
 
-        // --- SOV balances ---
+        // --- SOV balances (sorted by wallet_id for deterministic output) ---
         let sov_id = generate_lib_token_id();
         let sov_balances = if let Some(token) = bc.token_contracts.get(&sov_id) {
-            token
+            let mut balances: Vec<SovBalanceAllocation> = token
                 .balances
                 .iter()
                 .filter(|(_, &bal)| bal > 0)
@@ -249,7 +252,9 @@ impl GenesisStateSnapshot {
                     public_key: hex::encode(&pk.dilithium_pk),
                     balance: bal,
                 })
-                .collect()
+                .collect();
+            balances.sort_by(|a, b| a.wallet_id.cmp(&b.wallet_id));
+            balances
         } else {
             Vec::new()
         };
