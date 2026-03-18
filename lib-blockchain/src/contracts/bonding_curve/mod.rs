@@ -40,8 +40,7 @@ pub use amm_pool::{
 pub use canonical::{
     Band as CanonicalBand, BondingCurveBuyReceipt, BondingCurveBuyTx, BondingCurveSellReceipt,
     BondingCurveSellTx, BAND_COUNT as CANONICAL_BAND_COUNT, BANDS as CANONICAL_BANDS,
-    MAX_DELTA_S_PER_TX, MAX_GROSS_SOV_PER_TX, MAX_SUPPLY as CANONICAL_MAX_SUPPLY,
-    P_START_0,
+    INTERCEPT_0, MAX_DELTA_S_PER_TX, MAX_GROSS_SOV_PER_TX, MAX_SUPPLY as CANONICAL_MAX_SUPPLY,
     SCALE as CANONICAL_SCALE, integer_sqrt,
 };
 // Issue #1849: Re-export POL pool
