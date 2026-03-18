@@ -38,7 +38,7 @@ use lib_protocols::zhtp::ZhtpRequestHandler;
 
 // Blockchain imports
 use lib_blockchain::contracts::bonding_curve::{
-    BondingCurveToken, ConfidenceLevel, CurveType, Phase, PriceSource, Threshold, Valuation,
+    BondingCurveToken, ConfidenceLevel, CurveType, Phase, PriceSource, Threshold,
 };
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::Blockchain;
@@ -81,17 +81,17 @@ pub struct DeployCurveTokenRequest {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CurveTypeRequest {
     Linear {
-        base_price: u64,
-        slope: u64,
+        base_price: u128,
+        slope: u128,
     },
     Exponential {
-        base_price: u64,
+        base_price: u128,
         growth_rate_bps: u64,
     },
     Sigmoid {
-        max_price: u64,
-        midpoint_supply: u64,
-        steepness: u64,
+        max_price: u128,
+        midpoint_supply: u128,
+        steepness: u128,
     },
     /// Piecewise linear curve (CBE token default)
     /// Uses predefined 4-band configuration with document-compliant slopes
@@ -109,7 +109,7 @@ impl From<CurveTypeRequest> for CurveType {
                 growth_rate_bps,
             } => CurveType::Exponential {
                 base_price,
-                growth_rate_bps,
+                growth_rate_bps: growth_rate_bps as u128,
             },
             CurveTypeRequest::Sigmoid {
                 max_price,
@@ -134,18 +134,18 @@ impl From<CurveTypeRequest> for CurveType {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ThresholdRequest {
     ReserveAmount {
-        min_reserve: u64,
+        min_reserve: u128,
     },
     SupplyAmount {
-        min_supply: u64,
+        min_supply: u128,
     },
     TimeAndReserve {
         min_time_seconds: u64,
-        min_reserve: u64,
+        min_reserve: u128,
     },
     TimeAndSupply {
         min_time_seconds: u64,
-        min_supply: u64,
+        min_supply: u128,
     },
 }
 
@@ -180,7 +180,7 @@ pub struct BuyTokensRequest {
     /// Token ID (hex)
     pub token_id: String,
     /// Amount of stablecoin to spend (atomic units)
-    pub stable_amount: u64,
+    pub stable_amount: u128,
 }
 
 /// Sell tokens to curve request
@@ -189,7 +189,7 @@ pub struct SellTokensRequest {
     /// Token ID (hex)
     pub token_id: String,
     /// Amount of tokens to sell (atomic units)
-    pub token_amount: u64,
+    pub token_amount: u128,
 }
 
 /// AMM swap request
@@ -257,9 +257,9 @@ pub struct CurveTokenInfoResponse {
     pub symbol: String,
     pub decimals: u8,
     pub phase: String,
-    pub total_supply: u64,
-    pub reserve_balance: u64,
-    pub current_price: u64,
+    pub total_supply: u128,
+    pub reserve_balance: u128,
+    pub current_price: u128,
     pub curve_type: String,
     pub sell_enabled: bool,
     pub can_graduate: bool,
@@ -407,7 +407,7 @@ impl CurveHandler {
         let curve_type: CurveType = deploy_req.curve_type.into();
         let threshold: Threshold = deploy_req.threshold.into();
 
-        let mut token = BondingCurveToken::deploy(
+        let token = BondingCurveToken::deploy(
             token_id,
             deploy_req.name.clone(),
             deploy_req.symbol.clone(),
@@ -474,7 +474,7 @@ impl CurveHandler {
             .map(|fp| {
                 // Approximate price timestamp as the end of the epoch it was finalized in.
                 let price_ts = (fp.epoch_id + 1).saturating_mul(epoch_duration);
-                (fp.sov_usd_price as u64, price_ts)
+                (fp.sov_usd_price as u128, price_ts)
             });
 
         let token = blockchain
@@ -1212,12 +1212,16 @@ impl ValuationHandler {
     // Stable price schema helpers
     // -------------------------------------------------------------------------
 
-    /// Convert an 8-decimal atomic price to f64 USD and integer 4-decimal cents.
-    /// price_usd_cents = round(price_usd * 10_000) — i.e. units of 0.0001 USD.
-    fn atomic_to_price(atomic: u64) -> (f64, u64) {
+    /// Convert an 8-decimal SRV atomic price to f64 USD and integer 4-decimal cents.
+    fn srv_atomic_to_price(atomic: u64) -> (f64, u64) {
         let price_usd = atomic as f64 / 100_000_000.0;
         let price_usd_cents = (price_usd * 10_000.0).round() as u64;
         (price_usd, price_usd_cents)
+    }
+
+    /// Convert an 18-decimal bonding-curve price to SOV display units.
+    fn curve_atomic_to_price(atomic: u128) -> f64 {
+        atomic as f64 / lib_types::TOKEN_SCALE_18 as f64
     }
 
     /// Build stable SOV price response (Issue #1852: SRV only, no oracle-derived pricing).
@@ -1233,7 +1237,7 @@ impl ValuationHandler {
         } else {
             2_180_000u64 // $0.0218 genesis SRV
         };
-        let (srv_usd, srv_cents) = Self::atomic_to_price(srv_atomic);
+        let (srv_usd, srv_cents) = Self::srv_atomic_to_price(srv_atomic);
 
         let last_updated = blockchain.last_committed_timestamp();
 
@@ -1265,7 +1269,7 @@ impl ValuationHandler {
     ) -> Result<serde_json::Value> {
         if let Some(token) = bc_token {
             let curve_price_atomic = token.current_price();
-            let (curve_price_sov, _) = Self::atomic_to_price(curve_price_atomic);
+            let curve_price_sov = Self::curve_atomic_to_price(curve_price_atomic);
             let price_usd = curve_price_sov * srv_usd;
             let price_usd_cents = (price_usd * 10_000.0).round() as u64;
 
@@ -1337,7 +1341,7 @@ impl ValuationHandler {
         } else {
             2_180_000u64
         };
-        let (srv_usd, _) = Self::atomic_to_price(srv_atomic);
+        let (srv_usd, _) = Self::srv_atomic_to_price(srv_atomic);
 
         let bc_token = blockchain.bonding_curve_registry.get(&token_id);
         let reg_token = if bc_token.is_none() {
@@ -1371,7 +1375,7 @@ impl ValuationHandler {
         } else {
             2_180_000u64
         };
-        let (srv_usd, _) = Self::atomic_to_price(srv_atomic);
+        let (srv_usd, _) = Self::srv_atomic_to_price(srv_atomic);
 
         // Check bonding curve registry first.
         let bc_token = blockchain
@@ -1482,7 +1486,7 @@ impl ValuationHandler {
                 } else {
                     2_180_000u64
                 };
-                let (srv_usd, srv_cents) = Self::atomic_to_price(srv_atomic);
+                let (srv_usd, srv_cents) = Self::srv_atomic_to_price(srv_atomic);
                 json!({
                     "token_id": "sov",
                     "symbol": "SOV",
