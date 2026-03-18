@@ -1767,7 +1767,7 @@ impl Blockchain {
     ///
     /// Returns `None` if the CBE token is not initialized or has no supply.
     /// Price is in 8-decimal fixed-point (same scale as ORACLE_PRICE_SCALE).
-    pub fn get_cbe_curve_price_atomic(&self) -> Option<u64> {
+    pub fn get_cbe_curve_price_atomic(&self) -> Option<u128> {
         let cbe_token_id = Self::derive_cbe_token_id();
         self.bonding_curve_registry
             .get(&cbe_token_id)
@@ -4940,6 +4940,8 @@ impl Blockchain {
                     let snap = self.compute_decentralization_snapshot();
                     self.last_decentralization_snapshot = Some(snap);
                     self.governance_phase = crate::dao::GovernancePhase::FullDao;
+                    self.council_members.clear();
+                    self.council_threshold = 0;
                     info!(
                         "🏛 Governance advanced to Full DAO phase at height {}",
                         self.height
@@ -6669,306 +6671,24 @@ impl Blockchain {
                 }
                 // Bonding curve transactions - Issue #1820
                 TransactionType::BondingCurveDeploy => {
-                    let deploy = transaction
-                        .bonding_curve_deploy_data
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("BondingCurveDeploy missing data"))?;
-
-                    // Validate symbol uniqueness across both token_contracts and bonding_curve_registry
-                    let symbol_upper = deploy.symbol.to_uppercase();
-                    for existing in self.token_contracts.values() {
-                        if existing.symbol.to_uppercase() == symbol_upper {
-                            return Err(anyhow::anyhow!(
-                                "Token symbol '{}' already exists in token_contracts",
-                                deploy.symbol
-                            ));
-                        }
-                    }
-                    for existing in self.bonding_curve_registry.get_all() {
-                        if existing.symbol.to_uppercase() == symbol_upper {
-                            return Err(anyhow::anyhow!(
-                                "Token symbol '{}' already exists in bonding_curve_registry",
-                                deploy.symbol
-                            ));
-                        }
-                    }
-
-                    // Build CurveType from deploy data
-                    let curve_type = match deploy.curve_type {
-                        0 => crate::contracts::bonding_curve::CurveType::Linear {
-                            base_price: deploy.base_price,
-                            slope: deploy.curve_param,
-                        },
-                        1 => crate::contracts::bonding_curve::CurveType::Exponential {
-                            base_price: deploy.base_price,
-                            growth_rate_bps: deploy.curve_param,
-                        },
-                        2 => crate::contracts::bonding_curve::CurveType::Sigmoid {
-                            max_price: deploy.base_price,
-                            midpoint_supply: deploy.midpoint_supply.unwrap_or(0),
-                            steepness: deploy.curve_param,
-                        },
-                        3 => crate::contracts::bonding_curve::CurveType::PiecewiseLinear(
-                            crate::contracts::bonding_curve::PiecewiseLinearCurve::cbe_default(),
-                        ),
-                        _ => {
-                            return Err(anyhow::anyhow!(
-                                "Invalid curve type: {}",
-                                deploy.curve_type
-                            ))
-                        }
-                    };
-
-                    // Build Threshold from deploy data
-                    let threshold = match deploy.threshold_type {
-                        0 => crate::contracts::bonding_curve::Threshold::ReserveAmount(
-                            deploy.threshold_value,
-                        ),
-                        1 => crate::contracts::bonding_curve::Threshold::SupplyAmount(
-                            deploy.threshold_value,
-                        ),
-                        2 => crate::contracts::bonding_curve::Threshold::TimeAndReserve {
-                            min_time_seconds: deploy.threshold_time_seconds.unwrap_or(0),
-                            min_reserve: deploy.threshold_value,
-                        },
-                        3 => crate::contracts::bonding_curve::Threshold::TimeAndSupply {
-                            min_time_seconds: deploy.threshold_time_seconds.unwrap_or(0),
-                            min_supply: deploy.threshold_value,
-                        },
-                        _ => {
-                            return Err(anyhow::anyhow!(
-                                "Invalid threshold type: {}",
-                                deploy.threshold_type
-                            ))
-                        }
-                    };
-
-                    // Generate deterministic token_id
-                    let token_id_input = format!(
-                        "{}:{}:{}",
-                        deploy.name,
-                        deploy.symbol,
-                        hex::encode(&deploy.creator)
-                    );
-                    let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
-
-                    // Check for duplicate token_id
-                    if self.bonding_curve_registry.contains(&token_id) {
-                        return Err(anyhow::anyhow!("Bonding curve token already exists"));
-                    }
-
-                    // Get creator public key from transaction signature
-                    let creator_pk = transaction.signature.public_key.clone();
-
-                    // Get creator DID from identity registry
-                    let creator_did = self
-                        .get_identity_by_public_key(&creator_pk.dilithium_pk)
-                        .map(|id| id.did.clone())
-                        .unwrap_or_default();
-
-                    // Create the bonding curve token
-                    let token = crate::contracts::bonding_curve::BondingCurveToken::deploy(
-                        token_id,
-                        deploy.name.clone(),
-                        deploy.symbol.clone(),
-                        curve_type,
-                        threshold,
-                        deploy.sell_enabled,
-                        creator_pk,
-                        creator_did,
-                        block.height(),
-                        block.header.timestamp,
-                    )
-                    .map_err(|e| anyhow::anyhow!("BondingCurveDeploy failed: {}", e))?;
-
-                    // Register in bonding curve registry
-                    self.bonding_curve_registry.register(token).map_err(|e| {
-                        anyhow::anyhow!("BondingCurveDeploy registration failed: {}", e)
-                    })?;
-
-                    // Persist to storage if available
-                    if let Some(store) = &self.store {
-                        if let Some(registered) = self.bonding_curve_registry.get(&token_id) {
-                            let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
-                            let storage_token_id = crate::storage::TokenId(token_id);
-                            if let Err(e) =
-                                store_ref.put_bonding_curve_token(&storage_token_id, registered)
-                            {
-                                warn!("Failed to persist bonding curve token after deploy: {}", e);
-                            }
-                        }
-                    }
+                    return Err(anyhow::anyhow!(
+                        "BondingCurveDeploy requires BlockExecutor; legacy bonding-curve mutation path is disabled"
+                    ));
                 }
                 TransactionType::BondingCurveBuy => {
-                    let buy = transaction
-                        .bonding_curve_buy_data
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("BondingCurveBuy missing data"))?;
-
-                    if buy.stable_amount == 0 {
-                        return Err(anyhow::anyhow!("BondingCurveBuy amount must be > 0"));
-                    }
-
-                    // Get buyer public key from transaction signature
-                    let buyer_pk = transaction.signature.public_key.clone();
-                    if buyer_pk.key_id != buy.buyer {
-                        return Err(anyhow::anyhow!("BondingCurveBuy buyer key mismatch"));
-                    }
-
-                    // Get mutable reference to token
-                    let token = self
-                        .bonding_curve_registry
-                        .get_mut(&buy.token_id)
-                        .ok_or_else(|| anyhow::anyhow!("Bonding curve token not found"))?;
-
-                    // Execute buy
-                    let (token_amount, _event) = token
-                        .buy(
-                            buyer_pk.clone(),
-                            buy.stable_amount,
-                            block.height(),
-                            block.header.timestamp,
-                        )
-                        .map_err(|e| anyhow::anyhow!("BondingCurveBuy failed: {}", e))?;
-
-                    // Validate slippage protection
-                    if token_amount < buy.min_tokens_out {
-                        return Err(anyhow::anyhow!(
-                            "BondingCurveBuy slippage exceeded: expected at least {}, got {}",
-                            buy.min_tokens_out,
-                            token_amount
-                        ));
-                    }
-
-                    // Persist to storage if available
-                    if let Some(store) = &self.store {
-                        let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
-                        let storage_token_id = crate::storage::TokenId(buy.token_id);
-                        if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, token)
-                        {
-                            warn!("Failed to persist bonding curve token after buy: {}", e);
-                        }
-                    }
+                    return Err(anyhow::anyhow!(
+                        "BondingCurveBuy requires BlockExecutor; legacy bonding-curve mutation path is disabled"
+                    ));
                 }
                 TransactionType::BondingCurveSell => {
-                    let sell = transaction
-                        .bonding_curve_sell_data
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("BondingCurveSell missing data"))?;
-
-                    if sell.token_amount == 0 {
-                        return Err(anyhow::anyhow!("BondingCurveSell amount must be > 0"));
-                    }
-
-                    // Get seller public key from transaction signature
-                    let seller_pk = transaction.signature.public_key.clone();
-                    if seller_pk.key_id != sell.seller {
-                        return Err(anyhow::anyhow!("BondingCurveSell seller key mismatch"));
-                    }
-
-                    // Get mutable reference to token
-                    let token = self
-                        .bonding_curve_registry
-                        .get_mut(&sell.token_id)
-                        .ok_or_else(|| anyhow::anyhow!("Bonding curve token not found"))?;
-
-                    // Execute sell
-                    let (stable_amount, _event) = token
-                        .sell(
-                            seller_pk.clone(),
-                            sell.token_amount,
-                            block.height(),
-                            block.header.timestamp,
-                        )
-                        .map_err(|e| anyhow::anyhow!("BondingCurveSell failed: {}", e))?;
-
-                    // Validate slippage protection
-                    if stable_amount < sell.min_stable_out {
-                        return Err(anyhow::anyhow!(
-                            "BondingCurveSell slippage exceeded: expected at least {}, got {}",
-                            sell.min_stable_out,
-                            stable_amount
-                        ));
-                    }
-
-                    // Persist to storage if available
-                    if let Some(store) = &self.store {
-                        let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
-                        let storage_token_id = crate::storage::TokenId(sell.token_id);
-                        if let Err(e) = store_ref.put_bonding_curve_token(&storage_token_id, token)
-                        {
-                            warn!("Failed to persist bonding curve token after sell: {}", e);
-                        }
-                    }
+                    return Err(anyhow::anyhow!(
+                        "BondingCurveSell requires BlockExecutor; legacy bonding-curve mutation path is disabled"
+                    ));
                 }
                 TransactionType::BondingCurveGraduate => {
-                    let graduate = transaction
-                        .bonding_curve_graduate_data
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("BondingCurveGraduate missing data"))?;
-
-                    // Get graduator public key from transaction signature
-                    let graduator_pk = transaction.signature.public_key.clone();
-                    if graduator_pk.key_id != graduate.graduator {
-                        return Err(anyhow::anyhow!(
-                            "BondingCurveGraduate graduator key mismatch"
-                        ));
-                    }
-
-                    // For CBE token, validate oracle graduation gate BEFORE mutable borrow
-                    use crate::contracts::tokens::CBE_SYMBOL;
-                    let is_cbe = self
-                        .bonding_curve_registry
-                        .get(&graduate.token_id)
-                        .map(|t| t.symbol == CBE_SYMBOL && !t.phase.is_graduated())
-                        .unwrap_or(false);
-
-                    if is_cbe {
-                        self.validate_cbe_graduation_oracle_gate(
-                            graduate.token_id,
-                            block.header.timestamp,
-                        )
-                        .map_err(|e| anyhow::anyhow!("CBE graduation gate check failed: {}", e))?;
-                    }
-
-                    // Get mutable reference to token
-                    let token = self
-                        .bonding_curve_registry
-                        .get_mut(&graduate.token_id)
-                        .ok_or_else(|| anyhow::anyhow!("Bonding curve token not found"))?;
-
-                    // Execute graduation (updates phase to Graduated)
-                    let _event = token
-                        .graduate(block.header.timestamp, block.height())
-                        .map_err(|e| anyhow::anyhow!("BondingCurveGraduate failed: {}", e))?;
-
-                    // Update registry phase
-                    self.bonding_curve_registry
-                        .update_phase(
-                            &graduate.token_id,
-                            crate::contracts::bonding_curve::Phase::Graduated,
-                        )
-                        .map_err(|e| {
-                            anyhow::anyhow!("BondingCurveGraduate phase update failed: {}", e)
-                        })?;
-
-                    // Persist to storage if available
-                    if let Some(store) = &self.store {
-                        if let Some(updated_token) =
-                            self.bonding_curve_registry.get(&graduate.token_id)
-                        {
-                            let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
-                            let storage_token_id = crate::storage::TokenId(graduate.token_id);
-                            if let Err(e) =
-                                store_ref.put_bonding_curve_token(&storage_token_id, updated_token)
-                            {
-                                warn!(
-                                    "Failed to persist bonding curve token after graduate: {}",
-                                    e
-                                );
-                            }
-                        }
-                    }
+                    return Err(anyhow::anyhow!(
+                        "BondingCurveGraduate requires BlockExecutor; legacy bonding-curve mutation path is disabled"
+                    ));
                 }
                 _ => {}
             }
@@ -8082,6 +7802,10 @@ impl Blockchain {
         recipient_wallet_id: String,
         amount: u64,
     ) -> Result<Hash> {
+        if self.treasury_frozen {
+            return Err(anyhow::anyhow!("Treasury is frozen"));
+        }
+
         if amount == 0 {
             return Err(anyhow::anyhow!(
                 "Execution amount must be greater than zero"
@@ -8916,6 +8640,18 @@ impl Blockchain {
                     self.emergency_activated_by = None;
                     self.emergency_expires_at = None;
                     info!("🔓 Emergency state expired at block height {}", self.height);
+                }
+            }
+        }
+
+        if self.treasury_frozen {
+            if let Some(expiry) = self.treasury_freeze_expiry {
+                if self.height >= expiry {
+                    self.treasury_frozen = false;
+                    self.treasury_frozen_at = None;
+                    self.treasury_freeze_expiry = None;
+                    self.treasury_freeze_signatures.clear();
+                    info!("🔓 Treasury freeze expired at block height {}", self.height);
                 }
             }
         }
@@ -10614,6 +10350,12 @@ impl Blockchain {
         &mut self,
         data: Vec<u8>,
     ) -> Result<lib_consensus::ChainMergeResult> {
+        if !self.finalized_blocks.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Post-commit reorg forbidden: local chain contains finalized blocks"
+            ));
+        }
+
         let import: BlockchainImport = bincode::deserialize(&data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize blockchain: {}", e))?;
 
@@ -14500,19 +14242,26 @@ impl Blockchain {
         _reason: String,
     ) -> Result<()> {
         let validator_count = self.validator_registry.len();
+        if validator_count == 0 {
+            return Err(anyhow::anyhow!(
+                "Insufficient validator signatures: got 0, need at least 1 validator"
+            ));
+        }
+
+        let unique_validator_dids: HashSet<String> = validator_dids.into_iter().collect();
         let threshold = (validator_count * 8 + 9) / 10; // ceil(80%)
 
-        if validator_dids.len() < threshold {
+        if unique_validator_dids.len() < threshold {
             return Err(anyhow::anyhow!(
-                "Insufficient validator signatures: got {}, need {} (80% of {})",
-                validator_dids.len(),
+                "Insufficient validator signatures: got {} valid, need {} (80% of {})",
+                unique_validator_dids.len(),
                 threshold,
                 validator_count
             ));
         }
 
         // Verify all signers are active validators
-        for did in &validator_dids {
+        for did in &unique_validator_dids {
             match self.validator_registry.get(did) {
                 Some(v) if v.status == "active" => continue,
                 _ => return Err(anyhow::anyhow!("Invalid or inactive validator: {}", did)),
@@ -14523,7 +14272,7 @@ impl Blockchain {
         self.treasury_frozen_at = Some(self.height);
         self.treasury_freeze_expiry = Some(self.height + 10_080); // ~1 week at 10s blocks
                                                                   // Store validator DIDs with empty signatures (signatures verified separately)
-        self.treasury_freeze_signatures = validator_dids
+        self.treasury_freeze_signatures = unique_validator_dids
             .into_iter()
             .map(|d| (d, Vec::new()))
             .collect();
@@ -14552,11 +14301,8 @@ impl Blockchain {
             .entry(proposal_id.as_array())
             .or_default();
 
-        // Check for duplicate veto
         if vetoes.iter().any(|(did, _)| did == &signer_did) {
-            return Err(anyhow::anyhow!(
-                "Council member already vetoed this proposal"
-            ));
+            return Ok(());
         }
 
         vetoes.push((signer_did, reason));
@@ -14584,11 +14330,8 @@ impl Blockchain {
             .entry(proposal_id.as_array())
             .or_default();
 
-        // Check for duplicate cosign
         if cosigns.iter().any(|(did, _)| did == &signer_did) {
-            return Err(anyhow::anyhow!(
-                "Council member already cosigned this proposal"
-            ));
+            return Ok(());
         }
 
         cosigns.push((signer_did, signature));
@@ -14755,21 +14498,21 @@ mod cbe_graduation_oracle_gate_tests {
     use crate::contracts::bonding_curve::{BondingCurveToken, Phase};
     use crate::contracts::tokens::CBE_SYMBOL;
 
-    fn create_test_cbe_token(reserve_micro_usd: u64) -> BondingCurveToken {
+    fn create_test_cbe_token(reserve_micro_usd: u128) -> BondingCurveToken {
         BondingCurveToken {
             token_id: [1u8; 32],
             name: "Test CBE".to_string(),
             symbol: CBE_SYMBOL.to_string(),
-            decimals: 8,
+            decimals: 18,
             phase: Phase::Curve,
-            total_supply: 1_000_000_000,
+            total_supply: 1_000_000_000u128,
             reserve_balance: reserve_micro_usd,
-            treasury_balance: 0,
+            treasury_balance: 0u128,
             curve_type: crate::contracts::bonding_curve::CurveType::Linear {
-                base_price: 1,
-                slope: 1,
+                base_price: 1u128,
+                slope: 1u128,
             },
-            threshold: crate::contracts::bonding_curve::Threshold::ReserveAmount(1_000_000),
+            threshold: crate::contracts::bonding_curve::Threshold::ReserveAmount(1_000_000u128),
             sell_enabled: true,
             amm_pool_id: None,
             creator: PublicKey::new(vec![1u8; 32]),

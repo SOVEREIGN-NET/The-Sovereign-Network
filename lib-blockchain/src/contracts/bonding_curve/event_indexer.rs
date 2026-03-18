@@ -260,7 +260,7 @@ impl EventIndexer for SledEventIndexer {
 
 #[cfg(test)]
 mod tests {
-    use super::super::events::{BondingCurveEvent, ReserveUpdateReason};
+    use super::super::events::BondingCurveEvent;
     use super::*;
     use tempfile::TempDir;
 

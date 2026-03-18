@@ -9,11 +9,12 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use lib_blockchain::block::{Block, BlockHeader};
+use lib_blockchain::execution::executor::FeeModelV2;
 use lib_blockchain::execution::{BlockExecutor, ExecutorConfig};
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::integration::zk_integration::ZkTransactionProof;
 use lib_blockchain::protocol::ProtocolParams;
-use lib_blockchain::storage::{Address, BlockchainStore, OutPoint, SledStore, TxHash};
+use lib_blockchain::storage::{Address, BlockchainStore, SledStore};
 use lib_blockchain::transaction::{Transaction, TransactionInput, TransactionOutput};
 use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 use lib_proofs::types::ZkProof;
@@ -67,14 +68,6 @@ fn create_dummy_tx_proof() -> ZkTransactionProof {
         create_dummy_zk_proof(),
         create_dummy_zk_proof(),
     )
-}
-
-fn pk_to_address(pk: &PublicKey) -> Address {
-    let mut bytes = [0u8; 32];
-    let key_data = pk.as_bytes();
-    let len = std::cmp::min(key_data.len(), 32);
-    bytes[..len].copy_from_slice(&key_data[..len]);
-    Address::new(bytes)
 }
 
 /// Create a coinbase transaction with block reward + fees to fee sink
@@ -156,6 +149,29 @@ fn create_genesis_with_coinbase(coinbase: Transaction) -> Block {
     Block::new(header, vec![coinbase])
 }
 
+fn create_empty_genesis() -> Block {
+    let mut hash_bytes = [0u8; 32];
+    hash_bytes[0] = 0x01;
+    let block_hash = Hash::new(hash_bytes);
+
+    let header = BlockHeader {
+        version: 1,
+        previous_block_hash: Hash::default(),
+        merkle_root: Hash::default(),
+        state_root: Hash::default(),
+        timestamp: 1000,
+        difficulty: Difficulty::minimum(),
+        nonce: 0,
+        cumulative_difficulty: Difficulty::minimum(),
+        height: 0,
+        block_hash,
+        transaction_count: 0,
+        block_size: 0,
+        fee_model_version: 2,
+    };
+    Block::new(header, vec![])
+}
+
 /// Create a transfer transaction that spends a UTXO
 fn create_transfer_tx(
     prev_tx_hash: Hash,
@@ -202,6 +218,10 @@ fn create_transfer_tx(
         cancel_oracle_update_data: None,
         init_entity_registry_data: None,
     }
+}
+
+fn canonical_transfer_fee(tx: &Transaction) -> u64 {
+    FeeModelV2::default().calculate_min_fee(&FeeModelV2::tx_to_fee_input(tx))
 }
 
 /// Create a block with coinbase and other transactions
@@ -273,33 +293,30 @@ fn test_fee_sink_receives_collected_fees() {
     let (_dir, store) = create_test_store();
     let executor = create_executor_with_fee_sink(store.clone(), fee_sink.clone());
 
-    // Genesis with coinbase - gives miner 50M tokens
+    // Empty genesis, then a funded block to create the spendable coinbase UTXO.
     let miner_pk = create_recipient_pk(1);
-    let genesis_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, 0);
-    let genesis = create_genesis_with_coinbase(genesis_coinbase.clone());
+    let genesis = create_empty_genesis();
+    executor.apply_block(&genesis).expect("Genesis should succeed");
 
+    let funded_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, 0);
+    let funded_block =
+        create_block_with_txs(1, genesis.header.block_hash, funded_coinbase.clone(), vec![]);
     executor
-        .apply_block(&genesis)
-        .expect("Genesis should succeed");
+        .apply_block(&funded_block)
+        .expect("Funded block should succeed");
 
-    // Get coinbase tx hash for spending
-    let coinbase_hash = hash_transaction(&genesis_coinbase);
+    let coinbase_hash = hash_transaction(&funded_coinbase);
 
-    // Create block 1 with a transfer that pays 1000 fee
-    let transfer_fee = 1000u64;
     let recipient_pk = create_recipient_pk(2);
-    let transfer = create_transfer_tx(coinbase_hash, 0, recipient_pk, transfer_fee);
+    let mut transfer = create_transfer_tx(coinbase_hash, 0, recipient_pk, 0);
+    let transfer_fee = canonical_transfer_fee(&transfer);
+    transfer.fee = transfer_fee;
 
     // Coinbase for block 1: reward + fees to fee sink
     let block1_coinbase =
         create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, transfer_fee);
 
-    let block1 = create_block_with_txs(
-        1,
-        genesis.header.block_hash,
-        block1_coinbase,
-        vec![transfer],
-    );
+    let block1 = create_block_with_txs(2, funded_block.header.block_hash, block1_coinbase, vec![transfer]);
 
     let outcome = executor
         .apply_block(&block1)
@@ -446,17 +463,22 @@ fn test_coinbase_without_fee_sink_rejected() {
     let (_dir, store) = create_test_store();
     let executor = create_executor_with_fee_sink(store.clone(), fee_sink.clone());
 
-    // Genesis
+    // Empty genesis, then a funded block to create the spendable coinbase UTXO.
     let miner_pk = create_recipient_pk(1);
-    let genesis_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, 0);
-    let genesis = create_genesis_with_coinbase(genesis_coinbase.clone());
+    let genesis = create_empty_genesis();
     executor.apply_block(&genesis).unwrap();
 
-    let coinbase_hash = hash_transaction(&genesis_coinbase);
+    let funded_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, 0);
+    let funded_block =
+        create_block_with_txs(1, genesis.header.block_hash, funded_coinbase.clone(), vec![]);
+    executor.apply_block(&funded_block).unwrap();
+
+    let coinbase_hash = hash_transaction(&funded_coinbase);
 
     // Block 1 with transfer that pays fee
-    let transfer_fee = 1000u64;
-    let transfer = create_transfer_tx(coinbase_hash, 0, create_recipient_pk(2), transfer_fee);
+    let mut transfer = create_transfer_tx(coinbase_hash, 0, create_recipient_pk(2), 0);
+    let transfer_fee = canonical_transfer_fee(&transfer);
+    transfer.fee = transfer_fee;
 
     // BAD coinbase: doesn't include fee sink output
     let bad_coinbase = Transaction {
@@ -569,22 +591,27 @@ fn test_executor_outcome_reports_fee_routing() {
     let (_dir, store) = create_test_store();
     let executor = create_executor_with_fee_sink(store.clone(), fee_sink.clone());
 
-    // Genesis
+    // Empty genesis, then a funded block to create the spendable coinbase UTXO.
     let miner_pk = create_recipient_pk(1);
-    let genesis_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, 0);
-    let genesis = create_genesis_with_coinbase(genesis_coinbase.clone());
+    let genesis = create_empty_genesis();
     executor.apply_block(&genesis).unwrap();
 
-    let coinbase_hash = hash_transaction(&genesis_coinbase);
+    let funded_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, 0);
+    let funded_block =
+        create_block_with_txs(1, genesis.header.block_hash, funded_coinbase.clone(), vec![]);
+    executor.apply_block(&funded_block).unwrap();
+
+    let coinbase_hash = hash_transaction(&funded_coinbase);
 
     // Block 1 with known fee
-    let expected_fee = 5000u64;
-    let transfer = create_transfer_tx(coinbase_hash, 0, create_recipient_pk(2), expected_fee);
+    let mut transfer = create_transfer_tx(coinbase_hash, 0, create_recipient_pk(2), 0);
+    let expected_fee = canonical_transfer_fee(&transfer);
+    transfer.fee = expected_fee;
     let block1_coinbase =
         create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, expected_fee);
     let block1 = create_block_with_txs(
-        1,
-        genesis.header.block_hash,
+        2,
+        funded_block.header.block_hash,
         block1_coinbase,
         vec![transfer],
     );
@@ -596,7 +623,7 @@ fn test_executor_outcome_reports_fee_routing() {
         outcome.fees_collected, expected_fee,
         "Outcome should report correct fees"
     );
-    assert_eq!(outcome.height, 1, "Height should be 1");
+    assert_eq!(outcome.height, 2, "Height should be 2");
     assert_eq!(
         outcome.tx_count, 2,
         "Should have 2 txs (coinbase + transfer)"

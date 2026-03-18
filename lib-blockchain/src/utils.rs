@@ -37,6 +37,11 @@ pub mod time {
         CONSENSUS_VALIDATION_ACTIVE.load(Ordering::SeqCst) > 0
     }
 
+    #[cfg(test)]
+    pub fn reset_consensus_validation_for_tests() {
+        CONSENSUS_VALIDATION_ACTIVE.store(0, Ordering::SeqCst);
+    }
+
     /// Get current UNIX timestamp
     ///
     /// # Panics

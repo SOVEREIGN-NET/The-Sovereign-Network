@@ -16,9 +16,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Token scale: 1 whole token = 10^8 atomic units (8 decimals).
-/// Matches `pricing::SUPPLY_SCALE`; defined here to avoid cross-module imports.
-const TOKEN_SCALE: u64 = 100_000_000;
+use super::canonical::SCALE;
+
+/// Token scale: 1 whole token = 10^18 atomic units (18 decimals).
+const TOKEN_SCALE: u128 = SCALE;
 
 /// Basis points denominator (10_000 bps = 100%)
 const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
@@ -31,7 +32,7 @@ const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
 /// 
 /// Per CBE Token Launch specification: $269,000 USD reserve value triggers graduation.
 /// This constant ensures the threshold is defined in one place and used consistently.
-pub const GRADUATION_THRESHOLD_USD: u64 = 269_000;
+pub const GRADUATION_THRESHOLD_USD: u128 = 269_000;
 
 /// Maximum acceptable age for oracle price data (in seconds).
 /// 
@@ -53,7 +54,7 @@ pub use crate::oracle::ORACLE_PRICE_SCALE as USD_PRICE_SCALE;
 const MAX_BUY_ITERATIONS: u32 = 1_000;
 
 /// Maximum supply-in-whole-tokens fed into growth-rate exponential to prevent overflow
-const MAX_SUPPLY_WHOLE_FOR_GROWTH: u64 = 100;
+const MAX_SUPPLY_WHOLE_FOR_GROWTH: u128 = 100;
 
 /// Sigmoid: divisor that produces half-max price at midpoint supply
 /// = 2 × TOKEN_SCALE, derived from: ratio(midpoint) × max_price / (2 × TOKEN_SCALE) = max_price / 2
@@ -115,25 +116,25 @@ pub enum CurveType {
     /// Linear: price = base_price + slope × supply
     Linear {
         /// Initial price at zero supply (in stablecoin atomic units)
-        base_price: u64,
+        base_price: u128,
         /// Price increase per token (in stablecoin atomic units)
-        slope: u64,
+        slope: u128,
     },
     /// Exponential: price = base_price × (1 + growth_rate)^supply
     Exponential {
         /// Initial price (in stablecoin atomic units)
-        base_price: u64,
+        base_price: u128,
         /// Growth rate per token (in basis points, e.g., 100 = 1%)
-        growth_rate_bps: u64,
+        growth_rate_bps: u128,
     },
     /// Sigmoid: price = max_price / (1 + e^(-steepness × (supply - midpoint)))
     Sigmoid {
         /// Maximum price at saturation (in stablecoin atomic units)
-        max_price: u64,
+        max_price: u128,
         /// Supply at which price is 50% of max
-        midpoint_supply: u64,
+        midpoint_supply: u128,
         /// Steepness of the curve (higher = steeper)
-        steepness: u64,
+        steepness: u128,
     },
     /// Piecewise Linear: Document-compliant 4-band curve
     /// See: lib-blockchain/src/contracts/bonding_curve/pricing.rs
@@ -148,7 +149,7 @@ impl CurveType {
     ///
     /// # Returns
     /// Price per token in stablecoin atomic units
-    pub fn calculate_price(&self, supply: u64) -> u64 {
+    pub fn calculate_price(&self, supply: u128) -> u128 {
         match self {
             CurveType::Linear { base_price, slope } => {
                 // price = base_price + slope × supply
@@ -164,12 +165,12 @@ impl CurveType {
                 // price = base_price × (1 + rate)^supply
                 // Simplified: linear approximation for small supplies
                 let supply_whole = supply / TOKEN_SCALE;
-                let multiplier = BASIS_POINTS_DENOMINATOR.saturating_add(
+                let multiplier = (BASIS_POINTS_DENOMINATOR as u128).saturating_add(
                     growth_rate_bps.saturating_mul(supply_whole.min(MAX_SUPPLY_WHOLE_FOR_GROWTH)),
                 );
-                (*base_price as u128)
-                    .saturating_mul(multiplier as u128)
-                    .saturating_div(BASIS_POINTS_DENOMINATOR as u128) as u64
+                (*base_price)
+                    .saturating_mul(multiplier)
+                    .saturating_div(BASIS_POINTS_DENOMINATOR as u128)
             }
             CurveType::Sigmoid {
                 max_price,
@@ -181,25 +182,25 @@ impl CurveType {
                 // For supply ≈ midpoint: price ≈ max_price / 2
                 // For supply >> midpoint: price ≈ max_price
                 if supply <= *midpoint_supply {
-                    let ratio = (supply as u128)
-                        .saturating_mul(TOKEN_SCALE as u128)
-                        .saturating_div(*midpoint_supply as u128);
-                    (*max_price as u128)
+                    let ratio = supply
+                        .saturating_mul(TOKEN_SCALE)
+                        .saturating_div(*midpoint_supply);
+                    (*max_price)
                         .saturating_mul(ratio)
-                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR) as u64
+                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR)
                 } else {
                     let excess = supply.saturating_sub(*midpoint_supply);
                     let approach_factor = excess.saturating_mul(*steepness).min(TOKEN_SCALE);
                     let half_max = (*max_price).saturating_div(2);
                     let remaining = (*max_price).saturating_sub(half_max);
-                    let additional = (remaining as u128)
-                        .saturating_mul(approach_factor as u128)
-                        .saturating_div(TOKEN_SCALE as u128) as u64;
+                    let additional = remaining
+                        .saturating_mul(approach_factor)
+                        .saturating_div(TOKEN_SCALE);
                     half_max.saturating_add(additional)
                 }
             }
             CurveType::PiecewiseLinear(curve) => {
-                curve.price_at(supply).min(u64::MAX as u128) as u64
+                curve.price_at(u64::try_from(supply).unwrap_or(u64::MAX))
             }
         }
     }
@@ -225,10 +226,13 @@ impl CurveType {
     ///
     /// # Returns
     /// Tokens to mint (in atomic units)
-    pub fn calculate_buy_tokens(&self, current_supply: u64, stable_amount: u64) -> u64 {
+    pub fn calculate_buy_tokens(&self, current_supply: u128, stable_amount: u128) -> u128 {
         match self {
             CurveType::PiecewiseLinear(curve) => {
-                curve.quote_buy(current_supply, stable_amount)
+                curve.quote_buy(
+                    u64::try_from(current_supply).unwrap_or(u64::MAX),
+                    u64::try_from(stable_amount).unwrap_or(u64::MAX),
+                ) as u128
             }
             CurveType::Linear { base_price, slope } => {
                 // For linear curve: price = base + slope × supply
@@ -240,14 +244,13 @@ impl CurveType {
 
                 if *slope == 0 {
                     // Constant price: tokens = stable / base
-                    return (stable_amount as u128)
-                        .saturating_mul(TOKEN_SCALE as u128)
-                        .saturating_div((*base_price).max(1) as u128)
-                        as u64;
+                    return stable_amount
+                        .saturating_mul(TOKEN_SCALE)
+                        .saturating_div((*base_price).max(1));
                 }
 
                 let supply_whole = current_supply / TOKEN_SCALE;
-                let mut tokens_out: u64 = 0;
+                let mut tokens_out: u128 = 0;
                 let mut remaining_stable = stable_amount;
                 let mut current_price =
                     (*base_price).saturating_add((*slope).saturating_mul(supply_whole));
@@ -268,9 +271,9 @@ impl CurveType {
 
                     tokens_out = tokens_out.saturating_add(token_chunk);
                     remaining_stable = remaining_stable.saturating_sub(
-                        (token_chunk as u128)
-                            .saturating_mul(current_price as u128)
-                            .saturating_div(TOKEN_SCALE as u128) as u64,
+                        token_chunk
+                            .saturating_mul(current_price)
+                            .saturating_div(TOKEN_SCALE),
                     );
 
                     // Update price for next iteration
@@ -290,12 +293,10 @@ impl CurveType {
                 let current_price = (*base_price).saturating_add(
                     (*base_price)
                         .saturating_mul((*growth_rate_bps).saturating_mul(supply_whole.min(MAX_SUPPLY_WHOLE_FOR_GROWTH)))
-                        / BASIS_POINTS_DENOMINATOR,
+                        / BASIS_POINTS_DENOMINATOR as u128,
                 );
 
-                (stable_amount as u128)
-                    .saturating_mul(TOKEN_SCALE as u128)
-                    .saturating_div(current_price.max(1) as u128) as u64
+                stable_amount.saturating_mul(TOKEN_SCALE).saturating_div(current_price.max(1))
             }
             CurveType::Sigmoid {
                 max_price,
@@ -304,19 +305,19 @@ impl CurveType {
             } => {
                 // Approximate based on current price level
                 let current_price = if current_supply <= *midpoint_supply {
-                    let ratio = (current_supply as u128)
-                        .saturating_mul(TOKEN_SCALE as u128)
-                        .saturating_div(*midpoint_supply as u128);
-                    (*max_price as u128)
+                    let ratio = current_supply
+                        .saturating_mul(TOKEN_SCALE)
+                        .saturating_div(*midpoint_supply);
+                    (*max_price)
                         .saturating_mul(ratio)
-                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR) as u64
+                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR)
                 } else {
                     (*max_price).saturating_div(2)
                 };
 
-                (stable_amount as u128)
-                    .saturating_mul(TOKEN_SCALE as u128)
-                    .saturating_div(current_price.max(1) as u128) as u64
+                stable_amount
+                    .saturating_mul(TOKEN_SCALE)
+                    .saturating_div(current_price.max(1))
             }
         }
     }
@@ -329,10 +330,13 @@ impl CurveType {
     ///
     /// # Returns
     /// Stablecoin to return (in atomic units)
-    pub fn calculate_sell_stable(&self, current_supply: u64, token_amount: u64) -> u64 {
+    pub fn calculate_sell_stable(&self, current_supply: u128, token_amount: u128) -> u128 {
         match self {
             CurveType::PiecewiseLinear(curve) => {
-                curve.quote_sell(current_supply, token_amount)
+                curve.quote_sell(
+                    u64::try_from(current_supply).unwrap_or(u64::MAX),
+                    u64::try_from(token_amount).unwrap_or(u64::MAX),
+                ) as u128
             }
             CurveType::Linear { base_price, slope } => {
                 // Area under curve from (supply - tokens) to supply
@@ -361,12 +365,10 @@ impl CurveType {
 
                 let avg_price = (*base_price).saturating_add(
                     (*base_price).saturating_mul((*growth_rate_bps).saturating_mul(avg_supply.min(MAX_SUPPLY_WHOLE_FOR_GROWTH)))
-                        / BASIS_POINTS_DENOMINATOR,
+                        / BASIS_POINTS_DENOMINATOR as u128,
                 );
 
-                (token_amount as u128)
-                    .saturating_mul(avg_price as u128)
-                    .saturating_div(TOKEN_SCALE as u128) as u64
+                token_amount.saturating_mul(avg_price).saturating_div(TOKEN_SCALE)
             }
             CurveType::Sigmoid {
                 max_price,
@@ -378,19 +380,17 @@ impl CurveType {
                 let avg_supply = supply_whole.saturating_sub(tokens_whole / 2);
 
                 let avg_price = if avg_supply <= *midpoint_supply {
-                    let ratio = (avg_supply as u128)
-                        .saturating_mul(TOKEN_SCALE as u128)
-                        .saturating_div(*midpoint_supply as u128);
-                    (*max_price as u128)
+                    let ratio = avg_supply
+                        .saturating_mul(TOKEN_SCALE)
+                        .saturating_div(*midpoint_supply);
+                    (*max_price)
                         .saturating_mul(ratio)
-                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR) as u64
+                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR)
                 } else {
                     (*max_price).saturating_div(2)
                 };
 
-                (token_amount as u128)
-                    .saturating_mul(avg_price as u128)
-                    .saturating_div(TOKEN_SCALE as u128) as u64
+                token_amount.saturating_mul(avg_price).saturating_div(TOKEN_SCALE)
             }
         }
     }
@@ -403,18 +403,18 @@ impl CurveType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Threshold {
     /// Minimum reserve amount in stablecoin
-    ReserveAmount(u64),
+    ReserveAmount(u128),
     /// Minimum token supply
-    SupplyAmount(u64),
+    SupplyAmount(u128),
     /// Time elapsed AND minimum reserve
     TimeAndReserve {
         min_time_seconds: u64,
-        min_reserve: u64,
+        min_reserve: u128,
     },
     /// Time elapsed AND minimum supply
     TimeAndSupply {
         min_time_seconds: u64,
-        min_supply: u64,
+        min_supply: u128,
     },
     /// Issue #1846: Reserve value in USD using oracle price.
     /// 
@@ -422,7 +422,7 @@ pub enum Threshold {
     /// Requires oracle price data that is not stale (within MAX_ORACLE_PRICE_AGE_SECONDS).
     ReserveValueUsd {
         /// Minimum reserve value in USD (whole dollars, e.g., 269_000 for $269K)
-        threshold_usd: u64,
+        threshold_usd: u128,
         /// Maximum age of oracle price (seconds) - safety mechanism
         max_price_age_seconds: u64,
         /// Required confirmation blocks - safety mechanism
@@ -437,7 +437,7 @@ impl Threshold {
     /// * `reserve` - Current reserve balance
     /// * `supply` - Current token supply
     /// * `elapsed_seconds` - Time since deployment
-    pub fn is_met(&self, reserve: u64, supply: u64, elapsed_seconds: u64) -> bool {
+    pub fn is_met(&self, reserve: u128, supply: u128, elapsed_seconds: u64) -> bool {
         match self {
             Threshold::ReserveAmount(min_reserve) => reserve >= *min_reserve,
             Threshold::SupplyAmount(min_supply) => supply >= *min_supply,
@@ -471,8 +471,8 @@ impl Threshold {
     /// `true` if threshold is met and all safety checks pass
     pub fn is_met_with_oracle(
         &self,
-        reserve_sov: u64,
-        sov_usd_price: u64,
+        reserve_sov: u128,
+        sov_usd_price: u128,
         price_age_seconds: u64,
         pending_blocks: u64,
     ) -> bool {
@@ -504,15 +504,15 @@ impl Threshold {
         // price, causing off-by-one threshold decisions near the graduation boundary.
         //
         // Use checked arithmetic: on overflow, conservatively treat threshold as not met.
-        let numerator = match (reserve_sov as u128).checked_mul(sov_usd_price as u128) {
+        let numerator = match reserve_sov.checked_mul(sov_usd_price) {
             Some(v) => v,
             None => return false,
         };
-        let denominator = TOKEN_SCALE as u128 * USD_PRICE_SCALE;
+        let denominator = TOKEN_SCALE * USD_PRICE_SCALE;
         let reserve_value_usd = numerator / denominator;
 
         // Check if threshold is met
-        reserve_value_usd >= *threshold_usd as u128
+        reserve_value_usd >= *threshold_usd
     }
 
     /// Get human-readable description
@@ -548,7 +548,7 @@ impl Threshold {
     }
 
     /// Get the USD threshold value (if applicable)
-    pub fn threshold_usd(&self) -> Option<u64> {
+    pub fn threshold_usd(&self) -> Option<u128> {
         match self {
             Threshold::ReserveValueUsd { threshold_usd, .. } => Some(*threshold_usd),
             _ => None,
@@ -590,9 +590,9 @@ impl ConfidenceLevel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Valuation {
     /// Price per token in USD cents
-    pub price_usd_cents: u64,
+    pub price_usd_cents: u128,
     /// Value of queried amount in USD cents
-    pub value_usd_cents: u64,
+    pub value_usd_cents: u128,
     /// Price source
     pub source: PriceSource,
     /// Confidence level
@@ -629,11 +629,11 @@ impl PriceSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurveStats {
     /// Current token supply
-    pub total_supply: u64,
+    pub total_supply: u128,
     /// Current reserve balance in stablecoin (20% of purchases)
-    pub reserve_balance: u64,
+    pub reserve_balance: u128,
     /// Current price in stablecoin
-    pub current_price: u64,
+    pub current_price: u128,
     /// Time since deployment (seconds)
     pub elapsed_seconds: u64,
     /// Graduation threshold progress (0-100)
@@ -644,7 +644,7 @@ pub struct CurveStats {
     /// Issue #1844: Reserve and Treasury 20/80 Split
     /// NOTE: Field is at end of struct intentionally — bincode is positional.
     #[serde(default)]
-    pub treasury_balance: u64,
+    pub treasury_balance: u128,
 }
 
 /// Errors for bonding curve operations
@@ -725,11 +725,11 @@ mod tests {
         assert_eq!(curve.calculate_price(0), 10_000_000);
 
         // At 1000 tokens: price = $0.10 + $0.0001 × 1000 = $0.20
-        let price_1000 = curve.calculate_price(1_000 * 100_000_000);
+        let price_1000 = curve.calculate_price(1_000 * TOKEN_SCALE);
         assert_eq!(price_1000, 20_000_000);
 
         // At 5000 tokens: price = $0.10 + $0.0001 × 5000 = $0.60
-        let price_5000 = curve.calculate_price(5_000 * 100_000_000);
+        let price_5000 = curve.calculate_price(5_000 * TOKEN_SCALE);
         assert_eq!(price_5000, 60_000_000);
     }
 

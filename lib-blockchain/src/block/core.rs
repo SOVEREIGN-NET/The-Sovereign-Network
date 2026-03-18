@@ -342,17 +342,18 @@ pub struct BlockHeader {
     /// Nodes reject blocks whose timestamp is more than 2 hours in the future.
     pub timestamp: u64,
 
-    /// Proof-of-work difficulty target for this block.
+    /// Legacy proof-of-work difficulty target.
     ///
-    /// **Consensus-critical.** Encodes the minimum work required. The block
-    /// hash must be numerically less than or equal to the target derived from
-    /// this field.
+    /// Retained in-memory for compatibility helpers only. BFT serialization
+    /// drops this field and restores `Difficulty::default()` on decode.
+    #[serde(skip, default)]
     pub difficulty: Difficulty,
 
-    /// Proof-of-work nonce found by the miner.
+    /// Legacy proof-of-work nonce.
     ///
-    /// **Consensus-critical.** The value that, when combined with the other
-    /// header fields, produces a block hash satisfying the difficulty target.
+    /// Retained in-memory for compatibility helpers only. BFT serialization
+    /// drops this field and restores `0` on decode.
+    #[serde(skip, default)]
     pub nonce: u64,
 
     /// Zero-based block height in the canonical chain.
@@ -382,11 +383,10 @@ pub struct BlockHeader {
     /// **Consensus-critical.** Used to enforce `MAX_BLOCK_SIZE` limits.
     pub block_size: u32,
 
-    /// Cumulative proof-of-work difficulty from genesis to this block.
+    /// Legacy cumulative proof-of-work difficulty.
     ///
-    /// **Informational.** Used for chain-selection (heaviest chain wins) but
-    /// not included in the block hash itself. Can be recomputed by summing
-    /// `difficulty` across all ancestors.
+    /// This field is informational only and is omitted from BFT serialization.
+    #[serde(skip, default)]
     pub cumulative_difficulty: Difficulty,
 
     /// Fee model version active at this block height (Phase 3B).

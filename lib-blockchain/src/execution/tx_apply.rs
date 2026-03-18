@@ -696,8 +696,8 @@ pub fn apply_bonding_curve_buy(
     _mutator: &StateMutator<'_>,
     _token_id: &TokenId,
     _buyer: &Address,
-    _stable_amount: u64,
-    _tokens_out: u64,
+    _stable_amount: u128,
+    _tokens_out: u128,
 ) -> TxApplyResult<()> {
     // BondingCurveBuy is disabled: the reserve asset (stablecoin) is not yet
     // modeled as consensus state, so we cannot atomically debit the buyer's
@@ -714,8 +714,8 @@ pub fn apply_bonding_curve_sell(
     _mutator: &StateMutator<'_>,
     _token_id: &TokenId,
     _seller: &Address,
-    _token_amount: u64,
-    _stable_out: u64,
+    _token_amount: u128,
+    _stable_out: u128,
 ) -> TxApplyResult<()> {
     // BondingCurveSell is disabled: the reserve asset (stablecoin) is not yet
     // modeled as consensus state, so we cannot atomically credit the seller's

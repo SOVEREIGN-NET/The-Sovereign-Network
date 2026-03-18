@@ -19,27 +19,27 @@ fn create_test_blockchain_legacy() -> Blockchain {
 }
 
 /// Create a CBE token for testing
-fn create_test_cbe_token(reserve_micro_usd: u64) -> BondingCurveToken {
+fn create_test_cbe_token(reserve_micro_usd: u128) -> BondingCurveToken {
     BondingCurveToken {
         token_id: [1u8; 32],
         name: "Test CBE".to_string(),
         symbol: CBE_SYMBOL.to_string(),
-        decimals: 8,
+        decimals: 18,
         phase: Phase::Curve,
-        total_supply: 1_000_000_000,
+        total_supply: 1_000_000_000u128,
         reserve_balance: reserve_micro_usd,
         curve_type: lib_blockchain::contracts::bonding_curve::CurveType::Linear {
-            base_price: 1,
-            slope: 1,
+            base_price: 1u128,
+            slope: 1u128,
         },
-        threshold: lib_blockchain::contracts::bonding_curve::Threshold::ReserveAmount(1_000_000),
+        threshold: lib_blockchain::contracts::bonding_curve::Threshold::ReserveAmount(1_000_000u128),
         sell_enabled: true,
         amm_pool_id: None,
         creator: PublicKey::new(vec![1u8; 32]),
         creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
-        treasury_balance: 0,
+        treasury_balance: 0u128,
         // Issue #1846-1847: Oracle-related fields
         graduation_pending_since_block: None,
         last_oracle_price: None,

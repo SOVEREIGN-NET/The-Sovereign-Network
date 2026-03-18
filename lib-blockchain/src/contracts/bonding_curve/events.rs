@@ -15,11 +15,11 @@ pub enum BondingCurveEvent {
         /// Buyer address
         buyer: [u8; 32],
         /// Amount of stablecoin paid
-        stable_amount: u64,
+        stable_amount: u128,
         /// Amount of tokens received
-        token_amount: u64,
+        token_amount: u128,
         /// Price per token at time of purchase
-        price: u64,
+        price: u128,
         /// Block height
         block_height: u64,
         /// Timestamp
@@ -33,11 +33,11 @@ pub enum BondingCurveEvent {
         /// Seller address
         seller: [u8; 32],
         /// Amount of tokens sold
-        token_amount: u64,
+        token_amount: u128,
         /// Amount of stablecoin received
-        stable_amount: u64,
+        stable_amount: u128,
         /// Price per token at time of sale
-        price: u64,
+        price: u128,
         /// Block height
         block_height: u64,
         /// Timestamp
@@ -49,9 +49,9 @@ pub enum BondingCurveEvent {
         /// Token identifier
         token_id: [u8; 32],
         /// Final reserve amount
-        final_reserve: u64,
+        final_reserve: u128,
         /// Final token supply
-        final_supply: u64,
+        final_supply: u128,
         /// Graduation threshold that was met
         threshold_met: String,
         /// Block height
@@ -65,7 +65,7 @@ pub enum BondingCurveEvent {
         /// Token identifier
         token_id: [u8; 32],
         /// New reserve balance
-        new_reserve: u64,
+        new_reserve: u128,
         /// Change amount (positive for buy, negative for sell)
         delta: i64,
         /// Reason for update
@@ -83,11 +83,11 @@ pub enum BondingCurveEvent {
         /// AMM pool identifier
         pool_id: [u8; 32],
         /// SOV amount seeded
-        sov_amount: u64,
+        sov_amount: u128,
         /// Token amount seeded
-        token_amount: u64,
+        token_amount: u128,
         /// Stable amount remaining (sent to treasury)
-        stable_to_treasury: u64,
+        stable_to_treasury: u128,
         /// Block height
         block_height: u64,
         /// Timestamp

@@ -3,6 +3,7 @@
 //!
 //! Rule: No String identifiers in consensus state. Ever.
 
+pub mod bonding_curve;
 pub mod chunk;
 pub mod consensus;
 pub mod dht;
@@ -14,11 +15,16 @@ pub mod node_id;
 pub mod peer;
 pub mod primitives;
 pub mod storage;
+pub mod tokenomics;
 
 // Canonical consensus types (Phase 1)
 pub use primitives::{Address, Amount, BlockHash, BlockHeight, Bps, TokenId, TxHash};
 
 pub use chunk::*;
+pub use bonding_curve::{
+    BondingCurveBand, BondingCurveBuyReceipt, BondingCurveBuyTx, BondingCurveSellReceipt,
+    BondingCurveSellTx,
+};
 pub use consensus::{
     ConsensusConfig, ConsensusStep, ConsensusType, FeeDistributionResult, SlashType,
     UsefulWorkType, ValidatorStatus, VoteType, MIN_BFT_VALIDATORS,
@@ -41,3 +47,7 @@ pub use fees::{FeeDeficit, FeeInput, FeeParams, SigScheme, TxKind};
 pub use node_id::NodeId;
 pub use peer::PeerId;
 pub use storage::ProtocolStorageStats;
+pub use tokenomics::{
+    CBE_DECIMALS, CBE_MAX_SUPPLY, CBE_TOTAL_SUPPLY_TOKENS, SOV_DECIMALS, SOV_MAX_SUPPLY,
+    SOV_TOTAL_SUPPLY_TOKENS, TOKEN_SCALE_18,
+};

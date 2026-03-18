@@ -29,9 +29,9 @@ fn test_hybrid_fields_default() {
     let bc = Blockchain::new().expect("genesis");
     assert!(bc.pending_cosigns.is_empty());
     assert!(bc.pending_vetoes.is_empty());
-    assert_eq!(bc.veto_window_blocks, 576);
+    assert_eq!(bc.veto_window_blocks, 8_640);
     assert!(bc.treasury_epoch_execution_count.is_empty());
-    assert_eq!(bc.max_executions_per_epoch, 3);
+    assert_eq!(bc.max_executions_per_epoch, 10);
 }
 
 // ── council_cosign_proposal ───────────────────────────────────────────────────
@@ -143,6 +143,7 @@ fn test_veto_deduplicates_same_did() {
 // ── hybrid field persistence ───────────────────────────────────────────────────
 
 #[test]
+#[allow(deprecated)]
 fn test_hybrid_fields_survive_dat_round_trip() -> Result<()> {
     use lib_blockchain::types::Hash;
     use tempfile::NamedTempFile;

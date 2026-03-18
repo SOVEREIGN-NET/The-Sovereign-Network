@@ -434,7 +434,7 @@ impl GenesisConfig {
         if !bc.bonding_curve_registry.contains(&token_id) {
             let curve = CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default());
             let threshold =
-                Threshold::ReserveAmount(self.bonding_curve.graduation_threshold);
+                Threshold::ReserveAmount(self.bonding_curve.graduation_threshold as u128);
             match BondingCurveToken::deploy(
                 token_id,
                 CBE_NAME.to_string(),
