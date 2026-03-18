@@ -168,8 +168,8 @@ fn build_signed_curve_deploy_tx(
 fn build_signed_curve_buy_tx(
     keypair: &KeyPair,
     token_id: [u8; 32],
-    stable_amount: u64,
-    min_tokens_out: u64,
+    stable_amount: u128,
+    min_tokens_out: u128,
 ) -> CliResult<Transaction> {
     let buy_data = BondingCurveBuyData {
         token_id,
@@ -195,8 +195,8 @@ fn build_signed_curve_buy_tx(
 fn build_signed_curve_sell_tx(
     keypair: &KeyPair,
     token_id: [u8; 32],
-    token_amount: u64,
-    min_stable_out: u64,
+    token_amount: u128,
+    min_stable_out: u128,
 ) -> CliResult<Transaction> {
     let sell_data = BondingCurveSellData {
         token_id,
@@ -223,8 +223,8 @@ fn build_signed_curve_graduate_tx(
     keypair: &KeyPair,
     token_id: [u8; 32],
     pool_id: [u8; 32],
-    sov_seed_amount: u64,
-    token_seed_amount: u64,
+    sov_seed_amount: u128,
+    token_seed_amount: u128,
 ) -> CliResult<Transaction> {
     let graduate_data = BondingCurveGraduateData {
         token_id,
@@ -287,17 +287,39 @@ pub async fn handle_curve_command_with_output<O: Output>(
             token_id,
             stable_amount,
             min_tokens_out,
-        } => handle_buy(cli, output, &token_id, stable_amount, min_tokens_out).await,
+        } => handle_buy(
+            cli,
+            output,
+            &token_id,
+            stable_amount.into(),
+            min_tokens_out.map(Into::into),
+        )
+        .await,
         CurveAction::Sell {
             token_id,
             token_amount,
             min_stable_out,
-        } => handle_sell(cli, output, &token_id, token_amount, min_stable_out).await,
+        } => handle_sell(
+            cli,
+            output,
+            &token_id,
+            token_amount.into(),
+            min_stable_out.map(Into::into),
+        )
+        .await,
         CurveAction::Info { token_id } => handle_info(cli, output, &token_id).await,
         CurveAction::Price { token_id } => handle_price(cli, output, &token_id).await,
         CurveAction::CanGraduate { token_id } => handle_can_graduate(cli, output, &token_id).await,
         CurveAction::Graduate { token_id, pool_id, sov_seed, token_seed } => {
-            handle_graduate(cli, output, &token_id, &pool_id, sov_seed, token_seed).await
+            handle_graduate(
+                cli,
+                output,
+                &token_id,
+                &pool_id,
+                sov_seed.into(),
+                token_seed.into(),
+            )
+            .await
         }
         CurveAction::Valuation { token_id } => handle_valuation(cli, output, &token_id).await,
         CurveAction::List => handle_list(cli, output).await,
@@ -390,8 +412,8 @@ async fn handle_buy<O: Output>(
     cli: &ZhtpCli,
     output: &O,
     token_id: &str,
-    stable_amount: u64,
-    min_tokens_out: Option<u64>,
+    stable_amount: u128,
+    min_tokens_out: Option<u128>,
 ) -> CliResult<()> {
     output.info(&format!(
         "Buying tokens: {} with {} stablecoins",
@@ -463,8 +485,8 @@ async fn handle_sell<O: Output>(
     cli: &ZhtpCli,
     output: &O,
     token_id: &str,
-    token_amount: u64,
-    min_stable_out: Option<u64>,
+    token_amount: u128,
+    min_stable_out: Option<u128>,
 ) -> CliResult<()> {
     output.info(&format!("Selling {} tokens: {}", token_amount, token_id))?;
     output.info("Signing sell transaction with local keypair")?;
@@ -600,8 +622,8 @@ async fn handle_graduate<O: Output>(
     output: &O,
     token_id: &str,
     pool_id: &str,
-    sov_seed: u64,
-    token_seed: u64,
+    sov_seed: u128,
+    token_seed: u128,
 ) -> CliResult<()> {
     output.info(&format!("Graduating token to AMM: {}", token_id))?;
     output.info(&format!("Pool ID: {}, SOV seed: {}, Token seed: {}", pool_id, sov_seed, token_seed))?;
@@ -611,7 +633,13 @@ async fn handle_graduate<O: Output>(
     let token_id_bytes = parse_token_id(token_id)?;
     let pool_id_bytes = parse_token_id(pool_id)?;
 
-    let tx = build_signed_curve_graduate_tx(&keypair, token_id_bytes, pool_id_bytes, sov_seed, token_seed)?;
+    let tx = build_signed_curve_graduate_tx(
+        &keypair,
+        token_id_bytes,
+        pool_id_bytes,
+        sov_seed,
+        token_seed,
+    )?;
     let tx_bytes = bincode::serialize(&tx)
         .map_err(|e| CliError::ConfigError(format!("Failed to serialize tx: {}", e)))?;
     let request_body = json!({ "signed_tx": hex::encode(tx_bytes) });
