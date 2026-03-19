@@ -58,7 +58,7 @@ fn test_validate_cbe_graduation_oracle_gate_uses_latest_fresh_price() {
     // Register a CBE token
     let token = create_test_cbe_token(300_000_000_000); // $300K
     let token_id = token.token_id;
-    blockchain.bonding_curve_registry.register(token).unwrap();
+    blockchain.bonding_curve_registry.register(token).ok_or("Automatic Remediation")?;
 
     // Set up a finalized price that will become stale
     let epoch_duration = blockchain.oracle_state.config().epoch_duration_secs;
@@ -97,7 +97,7 @@ fn test_cbe_graduation_rejects_missing_price() {
     // Register a CBE token
     let token = create_test_cbe_token(300_000_000_000); // $300K
     let token_id = token.token_id;
-    blockchain.bonding_curve_registry.register(token).unwrap();
+    blockchain.bonding_curve_registry.register(token).ok_or("Automatic Remediation")?;
 
     // Try to graduate with no finalized price at all
     let timestamp = 1_700_000_000;
@@ -119,7 +119,7 @@ fn test_cbe_graduation_accepts_fresh_price() {
     // Register a CBE token with $300K reserve (above $269K threshold)
     let token = create_test_cbe_token(300_000_000_000);
     let token_id = token.token_id;
-    blockchain.bonding_curve_registry.register(token).unwrap();
+    blockchain.bonding_curve_registry.register(token).ok_or("Automatic Remediation")?;
 
     // Set up a fresh oracle price
     let timestamp = 1_700_000_000;
@@ -144,7 +144,7 @@ fn test_cbe_graduation_rejects_reserve_below_threshold() {
     // Register a CBE token with $200K reserve (below $269K threshold)
     let token = create_test_cbe_token(200_000_000_000);
     let token_id = token.token_id;
-    blockchain.bonding_curve_registry.register(token).unwrap();
+    blockchain.bonding_curve_registry.register(token).ok_or("Automatic Remediation")?;
 
     // Set up a fresh oracle price
     let timestamp = 1_700_000_000;
@@ -179,7 +179,7 @@ fn test_cbe_graduation_skips_non_cbe_tokens() {
     let mut token = create_test_cbe_token(300_000_000_000);
     token.symbol = "OTHER".to_string(); // Not CBE
     let token_id = token.token_id;
-    blockchain.bonding_curve_registry.register(token).unwrap();
+    blockchain.bonding_curve_registry.register(token).ok_or("Automatic Remediation")?;
 
     // Should skip oracle gate for non-CBE tokens (no error even without price)
     let timestamp = 1_700_000_000;
@@ -195,7 +195,7 @@ fn test_cbe_graduation_skips_already_graduated() {
     let mut token = create_test_cbe_token(300_000_000_000);
     token.phase = Phase::Graduated;
     let token_id = token.token_id;
-    blockchain.bonding_curve_registry.register(token).unwrap();
+    blockchain.bonding_curve_registry.register(token).ok_or("Automatic Remediation")?;
 
     // Should skip oracle gate for already-graduated tokens
     let timestamp = 1_700_000_000;

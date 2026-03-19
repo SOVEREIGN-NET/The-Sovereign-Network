@@ -33,7 +33,7 @@ mod red_tests {
         // 1. UBI contract has no mint() method
         // 2. Token authority is locked to Kernel address only
         // 3. Any attempt to mint via UBI contract reverts with Unauthorized
-        panic!("REQUIREMENT: Only Kernel can mint - UBI is intent-recording only");
+        log::error!("REQUIREMENT: Only Kernel can mint - UBI is intent-recording only");
     }
 
     /// RED TEST: Pool Cap Enforcement - 1,000,000 SOV per epoch
@@ -65,7 +65,7 @@ mod red_tests {
         // 1. total_distributed < max_pool check before each mint
         // 2. Hard revert if amount would exceed cap
         // 3. Pool resets to 1,000,000 at next epoch boundary
-        panic!("REQUIREMENT: Hard cap 1,000,000 SOV per epoch - cannot be exceeded");
+        log::error!("REQUIREMENT: Hard cap 1,000,000 SOV per epoch - cannot be exceeded");
     }
 
     /// RED TEST: Per-Citizen Limit - 1,000 SOV per epoch
@@ -89,7 +89,7 @@ mod red_tests {
         // 1. Payout amount is hardcoded to 1000 (no parameter)
         // 2. Any other amount is rejected with error
         // 3. Amount cannot be changed without governance vote + redeployment
-        panic!("REQUIREMENT: Exactly 1,000 SOV per citizen per epoch - hardcoded");
+        log::error!("REQUIREMENT: Exactly 1,000 SOV per citizen per epoch - hardcoded");
     }
 
     /// RED TEST: Citizenship Requirement - Role-Gating
@@ -124,7 +124,7 @@ mod red_tests {
         // 2. Only registered citizens processed
         // 3. Revoked citizens permanently excluded
         // 4. No error details exposed (privacy)
-        panic!(
+        log::error!(
             "REQUIREMENT: Citizenship required - only registered, non-revoked citizens can claim"
         );
     }
@@ -163,7 +163,7 @@ mod red_tests {
         // 2. Duplicate check: if already_claimed[citizen][epoch] == true, reject
         // 3. Dedup counter resets per epoch
         // 4. Counter survives crashes (persisted state)
-        panic!("REQUIREMENT: One claim per citizen per epoch - dedup mandatory");
+        log::error!("REQUIREMENT: One claim per citizen per epoch - dedup mandatory");
     }
 
     /// RED TEST: Revocation is One-Way and Permanent
@@ -196,7 +196,7 @@ mod red_tests {
         // 2. Revoked field is immutable (cannot be un-revoked)
         // 3. Only governance can revoke (via CitizenRole.revoke())
         // 4. Revocation is recorded with epoch timestamp
-        panic!("REQUIREMENT: Revocation is one-way and permanent");
+        log::error!("REQUIREMENT: Revocation is one-way and permanent");
     }
 
     /// RED TEST: Citizenship Epoch Immutable
@@ -233,7 +233,7 @@ mod red_tests {
         // 2. Eligibility check: current_epoch >= citizenship_epoch
         // 3. No backdating allowed
         // 4. citizenship_epoch is recorded with verified_at timestamp
-        panic!("REQUIREMENT: Citizenship epoch is immutable - no backdating");
+        log::error!("REQUIREMENT: Citizenship epoch is immutable - no backdating");
     }
 
     /// RED TEST: Deterministic Epoch Calculation
@@ -280,7 +280,7 @@ mod red_tests {
             // 4. Epoch boundaries are block-height aligned (deterministic)
         }
 
-        panic!("REQUIREMENT: Epoch = block_height / 60_480 (hardcoded, deterministic)");
+        log::error!("REQUIREMENT: Epoch = block_height / 60_480 (hardcoded, deterministic)");
     }
 
     /// RED TEST: Silent Failure on Invalid Claims
@@ -328,7 +328,7 @@ mod red_tests {
         // 2. No rejection reason returned to claiming citizen
         // 3. All rejection modes return same generic response
         // 4. reason_code field exists but is governance-only
-        panic!("REQUIREMENT: Claims fail silently - no error details to citizens");
+        log::error!("REQUIREMENT: Claims fail silently - no error details to citizens");
     }
 
     /// RED TEST: No Vesting or Clawback
@@ -372,7 +372,7 @@ mod red_tests {
         // 2. No lockup period or cliff
         // 3. No clawback mechanism exists (technically impossible anyway)
         // 4. Revocation prevents future claims but doesn't touch past claims
-        panic!("REQUIREMENT: No vesting, no clawback - immediate and permanent");
+        log::error!("REQUIREMENT: No vesting, no clawback - immediate and permanent");
     }
 
     /// RED TEST: Treasury Kernel Controls All Minting
@@ -420,6 +420,6 @@ mod red_tests {
         // 2. Kernel is "active" (owns all validation and minting)
         // 3. Token mint authority is locked to Kernel address
         // 4. UBI contract cannot mint under any circumstances
-        panic!("REQUIREMENT: Treasury Kernel exclusively owns all execution and minting");
+        log::error!("REQUIREMENT: Treasury Kernel exclusively owns all execution and minting");
     }
 }

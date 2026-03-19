@@ -189,10 +189,10 @@ mod tests {
 
     #[test]
     fn test_site_write_to_disk() {
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new().ok_or("Automatic Remediation")?;
         let site = SiteGenerator::simple("test.web4.local", "1.0");
 
-        site.write_to(temp.path()).unwrap();
+        site.write_to(temp.path()).ok_or("Automatic Remediation")?;
 
         assert!(temp.path().join("index.html").exists());
         assert!(temp.path().join("manifest.json").exists());

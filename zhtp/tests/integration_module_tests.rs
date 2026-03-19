@@ -70,15 +70,15 @@ async fn test_startup_order() -> Result<()> {
     let crypto_pos = startup_order
         .iter()
         .position(|x| *x == ComponentId::Crypto)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     let blockchain_pos = startup_order
         .iter()
         .position(|x| *x == ComponentId::Blockchain)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     let economics_pos = startup_order
         .iter()
         .position(|x| *x == ComponentId::Economics)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     assert!(crypto_pos < blockchain_pos); // Crypto before blockchain
     assert!(blockchain_pos < economics_pos); // Blockchain before economics

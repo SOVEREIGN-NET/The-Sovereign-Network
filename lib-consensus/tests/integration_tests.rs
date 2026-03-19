@@ -189,7 +189,7 @@ async fn test_byzantine_fault_handling() -> Result<()> {
     let initial_stake = consensus_engine
         .validator_manager()
         .get_validator(&malicious_validator)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .stake;
 
     // Simulate slashing for double signing
@@ -220,7 +220,7 @@ async fn test_byzantine_fault_handling() -> Result<()> {
     let validator = consensus_engine
         .validator_manager()
         .get_validator(&malicious_validator)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     assert_eq!(validator.stake, initial_stake);
     assert_eq!(validator.status, ValidatorStatus::Active);
 

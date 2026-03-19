@@ -32,12 +32,12 @@ mod tests {
         // Test token minting
         let minted = economic_model
             .mint_operational_tokens(50000, "test infrastructure")
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
         assert_eq!(minted, 50000);
         assert_eq!(economic_model.current_supply, 50000);
 
         // Test DAO fee processing
-        let dao_fees_processed = economic_model.process_dao_fees(1000).unwrap();
+        let dao_fees_processed = economic_model.process_dao_fees(1000).ok_or("Automatic Remediation")?;
         assert_eq!(dao_fees_processed, 1000);
         assert_eq!(economic_model.dao_treasury.treasury_balance, 2_501_000); // 2.5M + 1K
     }
@@ -45,21 +45,21 @@ mod tests {
     #[test]
     fn test_transaction_creation_and_validation() {
         // Test normal payment transaction
-        let tx = Transaction::new_payment([1u8; 32], [2u8; 32], 5000, Priority::High).unwrap();
+        let tx = Transaction::new_payment([1u8; 32], [2u8; 32], 5000, Priority::High).ok_or("Automatic Remediation")?;
         assert_eq!(tx.amount, 5000);
         assert!(tx.dao_fee > 0); // Should have DAO fee
         assert!(tx.base_fee > 0); // Should have network fee
         assert_eq!(tx.tx_type, TransactionType::Payment);
 
         // Test UBI distribution (should be fee-free)
-        let ubi_tx = Transaction::new_ubi_distribution([3u8; 32], 1000).unwrap();
+        let ubi_tx = Transaction::new_ubi_distribution([3u8; 32], 1000).ok_or("Automatic Remediation")?;
         assert_eq!(ubi_tx.amount, 1000);
         assert_eq!(ubi_tx.dao_fee, 0); // UBI distributions are fee-free
         assert_eq!(ubi_tx.base_fee, 0);
         assert_eq!(ubi_tx.tx_type, TransactionType::UbiDistribution);
 
         // Test welfare distribution (should be fee-free)
-        let welfare_tx = Transaction::new_welfare_distribution([4u8; 32], 2000).unwrap();
+        let welfare_tx = Transaction::new_welfare_distribution([4u8; 32], 2000).ok_or("Automatic Remediation")?;
         assert_eq!(welfare_tx.amount, 2000);
         assert_eq!(welfare_tx.dao_fee, 0);
         assert_eq!(welfare_tx.base_fee, 0);
@@ -86,11 +86,11 @@ mod tests {
             currency: "SOV".to_string(),
         };
 
-        wallet.add_reward(&reward).unwrap();
+        wallet.add_reward(&reward).ok_or("Automatic Remediation")?;
         assert_eq!(wallet.pending_rewards, 400);
 
         // Test reward claiming
-        let claimed = wallet.claim_rewards().unwrap();
+        let claimed = wallet.claim_rewards().ok_or("Automatic Remediation")?;
         assert_eq!(claimed, 400);
         assert_eq!(wallet.available_balance, 400);
         assert_eq!(wallet.pending_rewards, 0);
@@ -113,7 +113,7 @@ mod tests {
         };
 
         // Calculate rewards using the current infrastructure reward model
-        let rewards = InfrastructureRewards::calculate_isp_bypass(&bypass_work).unwrap();
+        let rewards = InfrastructureRewards::calculate_isp_bypass(&bypass_work).ok_or("Automatic Remediation")?;
         let expected_base = (10 * ISP_BYPASS_CONNECTIVITY_RATE)
             + (500 * ISP_BYPASS_MESH_RATE)
             + (24 * ISP_BYPASS_UPTIME_BONUS);
@@ -123,7 +123,7 @@ mod tests {
 
         // Update cost savings statistics
         let mut cost_savings = CostSavings::new();
-        cost_savings.update_from_work(&bypass_work).unwrap();
+        cost_savings.update_from_work(&bypass_work).ok_or("Automatic Remediation")?;
         assert_eq!(cost_savings.users_benefiting, bypass_work.users_served);
         assert!(cost_savings.total_usd_savings >= bypass_work.cost_savings_provided);
     }
@@ -172,7 +172,7 @@ mod tests {
         // Add DAO fees
         treasury
             .apply_fee_distribution(calculate_dao_fee_distribution(1000))
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
 
         // Check automatic allocation (45/30/15/10)
         assert_eq!(treasury.treasury_balance, 1000);
@@ -214,7 +214,7 @@ mod tests {
             total_transactions: 100000,
         };
 
-        model.adjust_parameters(&high_util_stats).unwrap();
+        model.adjust_parameters(&high_util_stats).ok_or("Automatic Remediation")?;
         assert!(model.base_routing_rate > initial_routing_rate); // Should increase
 
         // Reset for low utilization test
@@ -228,7 +228,7 @@ mod tests {
             total_transactions: 10000,
         };
 
-        model.adjust_parameters(&low_util_stats).unwrap();
+        model.adjust_parameters(&low_util_stats).ok_or("Automatic Remediation")?;
         assert!(model.base_routing_rate < initial_routing_rate); // Should decrease
     }
 
@@ -243,7 +243,7 @@ mod tests {
             uptime_hours: 24,    // Above bonus threshold
         };
 
-        let reward = TokenReward::calculate(&work_metrics, &model).unwrap();
+        let reward = TokenReward::calculate(&work_metrics, &model).ok_or("Automatic Remediation")?;
 
         // Check base rewards
         assert_eq!(reward.routing_reward, 1); // 1 MB * 1 token/MB
@@ -381,7 +381,7 @@ mod tests {
     #[test]
     fn test_cross_platform_compatibility() {
         // Test WASM compatibility functions
-        let timestamp = crate::wasm::compatibility::current_timestamp().unwrap();
+        let timestamp = crate::wasm::compatibility::current_timestamp().ok_or("Automatic Remediation")?;
         assert!(timestamp > 0);
 
         // Test hash function

@@ -63,7 +63,7 @@ impl PendingChange {
 
         // Serialize ConfigField deterministically
         let field_bytes =
-            bincode::serialize(&self.field)// REMEDIATED PANIC: // REMEDIATED: .expect("ConfigField must be serializable");
+            bincode::serialize(&self.field)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         hasher.update(&field_bytes);
 
         *hasher.finalize().as_bytes()

@@ -1630,12 +1630,12 @@ mod tests {
         let mut manager = RecoveryPhraseManager::new();
         let phrase = generate_valid_phrase(&mut manager, "identity-123")
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("phrase");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let phrase_id = manager
             .store_recovery_phrase("identity-123", &phrase, Some("auth"))
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("store");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Corrupt the ciphertext to invalidate the tag
         if let Some(record) = manager.phrases.get_mut(&phrase_id) {

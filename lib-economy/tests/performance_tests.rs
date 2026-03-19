@@ -51,7 +51,7 @@ mod benchmarks {
                 quality_score: (i % 100) as f64 / 100.0,
                 uptime_hours: (i % 25) as u64,
             };
-            let _ = TokenReward::calculate(&work, &model).unwrap();
+            let _ = TokenReward::calculate(&work, &model).ok_or("Automatic Remediation")?;
         }
         let duration = start.elapsed();
 
@@ -74,7 +74,7 @@ mod benchmarks {
             let to = [((i + 1) % 256) as u8; 32];
             let amount = (i % 50000) as u64 + 100;
 
-            let _ = Transaction::new_payment(from, to, amount, Priority::Normal).unwrap();
+            let _ = Transaction::new_payment(from, to, amount, Priority::Normal).ok_or("Automatic Remediation")?;
         }
         let duration = start.elapsed();
 
@@ -101,7 +101,7 @@ mod benchmarks {
                 users_served: (i % 20) as u64,
                 cost_savings_provided: (i % 500) as u64,
             };
-            let _ = InfrastructureRewards::calculate_isp_bypass(&work).unwrap();
+            let _ = InfrastructureRewards::calculate_isp_bypass(&work).ok_or("Automatic Remediation")?;
         }
         let duration = start.elapsed();
 
@@ -138,7 +138,7 @@ mod benchmarks {
 
         // Benchmark claim operation
         let start = Instant::now();
-        let _ = wallet.claim_rewards().unwrap();
+        let _ = wallet.claim_rewards().ok_or("Automatic Remediation")?;
         let claim_duration = start.elapsed();
 
         println!(
@@ -297,7 +297,7 @@ mod benchmarks {
                     1000,
                     Priority::Normal,
                 )
-                .unwrap(),
+                .ok_or("Automatic Remediation")?,
             );
         }
 

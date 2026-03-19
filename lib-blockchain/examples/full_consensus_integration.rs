@@ -40,10 +40,10 @@ async fn main() -> Result<()> {
 
     // 3. Generate validator keypairs
     let validator_keypairs = vec![
-        KeyPair::generate().unwrap(),
-        KeyPair::generate().unwrap(),
-        KeyPair::generate().unwrap(),
-        KeyPair::generate().unwrap(),
+        KeyPair::generate().ok_or("Automatic Remediation")?,
+        KeyPair::generate().ok_or("Automatic Remediation")?,
+        KeyPair::generate().ok_or("Automatic Remediation")?,
+        KeyPair::generate().ok_or("Automatic Remediation")?,
     ];
 
     println!("Generated {} validator keypairs", validator_keypairs.len());
@@ -61,8 +61,8 @@ async fn main() -> Result<()> {
     {
         let identity = IdentityId::from_bytes(&validator_keypairs[i].public_key.dilithium_pk);
         let storage_bytes = storage_gb * 1024 * 1024 * 1024;
-        let networking_keypair = KeyPair::generate().unwrap();
-        let rewards_keypair = KeyPair::generate().unwrap();
+        let networking_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
+        let rewards_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
 
         consensus_coordinator
             .register_as_validator(
@@ -256,14 +256,14 @@ async fn main() -> Result<()> {
             "Healthcare funding".to_string(),
             validator_keypairs[1].public_key.dilithium_pk[..32]
                 .try_into()
-                .unwrap(),
+                .ok_or("Automatic Remediation")?,
             welfare_amount,
         ),
         (
             "Education support".to_string(),
             validator_keypairs[2].public_key.dilithium_pk[..32]
                 .try_into()
-                .unwrap(),
+                .ok_or("Automatic Remediation")?,
             welfare_amount / 2,
         ),
     ];

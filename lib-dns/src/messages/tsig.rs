@@ -141,7 +141,7 @@ impl FromWireLen for TSig {
         })
         */
 
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 }
 

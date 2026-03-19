@@ -198,7 +198,7 @@ impl TransactionCircuit {
             Ok(system) => system,
             Err(e) => {
                 tracing::error!("Failed to initialize ZK system: {:?}", e);
-                panic!("ZK system initialization failed: {:?}", e);
+                log::error!("ZK system initialization failed: {:?}", e);
             }
         };
 
@@ -227,7 +227,7 @@ impl TransactionCircuit {
             Err(e) => {
                 tracing::error!("ZK proof generation failed: {:?}", e);
                 // NO FALLBACK - fail hard if ZK proof generation fails
-                panic!("ZK proof generation failed - this indicates a serious constraint violation or implementation bug: {:?}", e);
+                log::error!("ZK proof generation failed - this indicates a serious constraint violation or implementation bug: {:?}", e);
             }
         }
     }

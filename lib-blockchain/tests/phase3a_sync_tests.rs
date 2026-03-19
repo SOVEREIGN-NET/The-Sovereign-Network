@@ -21,7 +21,7 @@ use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 // =============================================================================
 
 fn create_test_store(dir: &TempDir) -> Arc<dyn BlockchainStore> {
-    Arc::new(SledStore::open(dir.path()).unwrap())
+    Arc::new(SledStore::open(dir.path()).ok_or("Automatic Remediation")?)
 }
 
 fn create_dummy_public_key() -> PublicKey {
@@ -160,8 +160,8 @@ fn create_token_transfer_tx(
 /// Test: Import/export roundtrip for N blocks
 #[test]
 fn test_roundtrip_n_blocks() {
-    let dir1 = TempDir::new().unwrap();
-    let dir2 = TempDir::new().unwrap();
+    let dir1 = TempDir::new().ok_or("Automatic Remediation")?;
+    let dir2 = TempDir::new().ok_or("Automatic Remediation")?;
 
     let store1 = create_test_store(&dir1);
     let store2 = create_test_store(&dir2);
@@ -174,28 +174,28 @@ fn test_roundtrip_n_blocks() {
     let mut blocks = vec![genesis.clone()];
 
     for height in 1..20 {
-        let prev_hash = blocks.last().unwrap().header.block_hash;
+        let prev_hash = blocks.last().ok_or("Automatic Remediation")?.header.block_hash;
         let block = create_block_at_height(height, prev_hash);
         blocks.push(block);
     }
 
     // Import to store1
-    let result = sync1.import_blocks(blocks.clone()).unwrap();
+    let result = sync1.import_blocks(blocks.clone()).ok_or("Automatic Remediation")?;
     assert_eq!(result.blocks_imported, 20);
     assert_eq!(result.final_height, Some(19));
 
     // Export all blocks
-    let exported = sync1.export_all_blocks().unwrap();
+    let exported = sync1.export_all_blocks().ok_or("Automatic Remediation")?;
     assert_eq!(exported.len(), 20);
 
     // Import to store2
-    let result2 = sync2.import_blocks(exported).unwrap();
+    let result2 = sync2.import_blocks(exported).ok_or("Automatic Remediation")?;
     assert_eq!(result2.blocks_imported, 20);
 
     // Verify chains are identical
     for height in 0..20 {
-        let block1 = store1.get_block_by_height(height).unwrap().unwrap();
-        let block2 = store2.get_block_by_height(height).unwrap().unwrap();
+        let block1 = store1.get_block_by_height(height).ok_or("Automatic Remediation")?.ok_or("Automatic Remediation")?;
+        let block2 = store2.get_block_by_height(height).ok_or("Automatic Remediation")?.ok_or("Automatic Remediation")?;
         assert_eq!(
             block1.header.block_hash, block2.header.block_hash,
             "Block hash mismatch at height {}",
@@ -207,7 +207,7 @@ fn test_roundtrip_n_blocks() {
 /// Test: Partial export range
 #[test]
 fn test_partial_export_range() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let sync = ChainSync::new(Arc::clone(&store));
 
@@ -216,15 +216,15 @@ fn test_partial_export_range() {
     let mut blocks = vec![genesis.clone()];
 
     for height in 1..15 {
-        let prev_hash = blocks.last().unwrap().header.block_hash;
+        let prev_hash = blocks.last().ok_or("Automatic Remediation")?.header.block_hash;
         let block = create_block_at_height(height, prev_hash);
         blocks.push(block);
     }
 
-    sync.import_blocks(blocks).unwrap();
+    sync.import_blocks(blocks).ok_or("Automatic Remediation")?;
 
     // Export subset [5, 10]
-    let exported = sync.export_blocks(5, 10).unwrap();
+    let exported = sync.export_blocks(5, 10).ok_or("Automatic Remediation")?;
     assert_eq!(exported.len(), 6);
     assert_eq!(exported[0].header.height, 5);
     assert_eq!(exported[5].header.height, 10);
@@ -233,7 +233,7 @@ fn test_partial_export_range() {
 /// Test: Crash simulation - state reflects last committed block only
 #[test]
 fn test_crash_no_partial_state() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let sync = ChainSync::new(Arc::clone(&store));
 
@@ -244,10 +244,10 @@ fn test_crash_no_partial_state() {
 
     // Import first 3 valid blocks
     sync.import_blocks(vec![genesis.clone(), block1.clone(), block2.clone()])
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Verify at height 2
-    assert_eq!(store.latest_height().unwrap(), 2);
+    assert_eq!(store.latest_height().ok_or("Automatic Remediation")?, 2);
 
     // Create invalid block 3 (wrong previous hash)
     let invalid_block3 = create_block_at_height(3, Hash::new([99u8; 32]));
@@ -260,13 +260,13 @@ fn test_crash_no_partial_state() {
     ));
 
     // Verify state is EXACTLY at height 2 - no partial state from failed block
-    assert_eq!(store.latest_height().unwrap(), 2);
+    assert_eq!(store.latest_height().ok_or("Automatic Remediation")?, 2);
 
     // Verify we can continue with valid block
     let valid_block3 = create_block_at_height(3, block2.header.block_hash);
-    sync.import_blocks(vec![valid_block3]).unwrap();
+    sync.import_blocks(vec![valid_block3]).ok_or("Automatic Remediation")?;
 
-    assert_eq!(store.latest_height().unwrap(), 3);
+    assert_eq!(store.latest_height().ok_or("Automatic Remediation")?, 3);
 }
 
 /// Test: Blocks with token transfers (token balance state)
@@ -282,8 +282,8 @@ fn test_crash_no_partial_state() {
 /// correctly; full state sync would require separate balance transfer mechanisms.
 #[test]
 fn test_token_transfer_state_sync() {
-    let dir1 = TempDir::new().unwrap();
-    let dir2 = TempDir::new().unwrap();
+    let dir1 = TempDir::new().ok_or("Automatic Remediation")?;
+    let dir2 = TempDir::new().ok_or("Automatic Remediation")?;
 
     let store1 = create_test_store(&dir1);
     let store2 = create_test_store(&dir2);
@@ -299,28 +299,28 @@ fn test_token_transfer_state_sync() {
     // === STORE 1: Build chain with token transfer ===
 
     // Set up initial balance for Alice in store1 before genesis
-    store1.begin_block(0).unwrap();
+    store1.begin_block(0).ok_or("Automatic Remediation")?;
     store1
         .set_token_balance(&TokenId::new(token_id), &Address::new(alice), 1_000_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     let genesis = create_genesis_block();
-    store1.append_block(&genesis).unwrap();
-    store1.commit_block().unwrap();
+    store1.append_block(&genesis).ok_or("Automatic Remediation")?;
+    store1.commit_block().ok_or("Automatic Remediation")?;
 
     // Create and apply block 1 with token transfer: Alice -> Bob, 100 tokens
     let transfer_tx = create_token_transfer_tx(token_id, alice, bob, 100);
     let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![transfer_tx]);
 
     let executor1 = BlockExecutor::from_config(Arc::clone(&store1), ExecutorConfig::default());
-    executor1.apply_block(&block1).unwrap();
+    executor1.apply_block(&block1).ok_or("Automatic Remediation")?;
 
     // Verify balances in store1
     let alice_balance_1 = store1
         .get_token_balance(&TokenId::new(token_id), &Address::new(alice))
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     let bob_balance_1 = store1
         .get_token_balance(&TokenId::new(token_id), &Address::new(bob))
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     assert_eq!(
         alice_balance_1, 999_900,
         "Alice should have 1M - 100 = 999900"
@@ -330,26 +330,26 @@ fn test_token_transfer_state_sync() {
     // === STORE 2: Import blocks and verify structure ===
 
     // Export all blocks from store1
-    let exported = sync1.export_all_blocks().unwrap();
+    let exported = sync1.export_all_blocks().ok_or("Automatic Remediation")?;
     assert_eq!(exported.len(), 2, "Should export genesis + block1");
 
     // Set up identical initial balance state in store2 and import genesis
     // Note: We manually set up genesis + balance, then apply block 1 via executor
-    store2.begin_block(0).unwrap();
+    store2.begin_block(0).ok_or("Automatic Remediation")?;
     store2
         .set_token_balance(&TokenId::new(token_id), &Address::new(alice), 1_000_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     // Append the exported genesis block to store2
-    store2.append_block(&exported[0]).unwrap();
-    store2.commit_block().unwrap();
+    store2.append_block(&exported[0]).ok_or("Automatic Remediation")?;
+    store2.commit_block().ok_or("Automatic Remediation")?;
 
     // Now apply block 1 via executor (which will replay the token transfer)
     let executor2 = BlockExecutor::from_config(Arc::clone(&store2), ExecutorConfig::default());
-    executor2.apply_block(&exported[1]).unwrap();
+    executor2.apply_block(&exported[1]).ok_or("Automatic Remediation")?;
 
     // Verify block hashes match
-    let block1_store1 = store1.get_block_by_height(1).unwrap().unwrap();
-    let block1_store2 = store2.get_block_by_height(1).unwrap().unwrap();
+    let block1_store1 = store1.get_block_by_height(1).ok_or("Automatic Remediation")?.ok_or("Automatic Remediation")?;
+    let block1_store2 = store2.get_block_by_height(1).ok_or("Automatic Remediation")?.ok_or("Automatic Remediation")?;
     assert_eq!(
         block1_store1.header.block_hash, block1_store2.header.block_hash,
         "Block 1 hash should match between stores"
@@ -358,10 +358,10 @@ fn test_token_transfer_state_sync() {
     // Verify balances match after re-execution
     let alice_balance_2 = store2
         .get_token_balance(&TokenId::new(token_id), &Address::new(alice))
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     let bob_balance_2 = store2
         .get_token_balance(&TokenId::new(token_id), &Address::new(bob))
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     assert_eq!(
         alice_balance_2, alice_balance_1,
         "Alice balance should match"
@@ -372,7 +372,7 @@ fn test_token_transfer_state_sync() {
 /// Test: Import with progress tracking
 #[test]
 fn test_import_progress_tracking() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let sync = ChainSync::new(Arc::clone(&store));
 
@@ -381,7 +381,7 @@ fn test_import_progress_tracking() {
     let mut blocks = vec![genesis.clone()];
 
     for height in 1..10 {
-        let prev_hash = blocks.last().unwrap().header.block_hash;
+        let prev_hash = blocks.last().ok_or("Automatic Remediation")?.header.block_hash;
         let block = create_block_at_height(height, prev_hash);
         blocks.push(block);
     }
@@ -391,7 +391,7 @@ fn test_import_progress_tracking() {
     sync.import_blocks_with_progress(blocks, |height, total| {
         progress_log.push((height, total));
     })
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     assert_eq!(progress_log.len(), 10);
     assert_eq!(progress_log[0], (0, 1)); // Genesis
@@ -401,7 +401,7 @@ fn test_import_progress_tracking() {
 /// Test: Multiple sequential imports
 #[test]
 fn test_sequential_imports() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let sync = ChainSync::new(Arc::clone(&store));
 
@@ -410,17 +410,17 @@ fn test_sequential_imports() {
     let mut blocks = vec![genesis.clone()];
 
     for height in 1..5 {
-        let prev_hash = blocks.last().unwrap().header.block_hash;
+        let prev_hash = blocks.last().ok_or("Automatic Remediation")?.header.block_hash;
         let block = create_block_at_height(height, prev_hash);
         blocks.push(block);
     }
 
-    sync.import_blocks(blocks.clone()).unwrap();
-    assert_eq!(store.latest_height().unwrap(), 4);
+    sync.import_blocks(blocks.clone()).ok_or("Automatic Remediation")?;
+    assert_eq!(store.latest_height().ok_or("Automatic Remediation")?, 4);
 
     // Second batch: blocks 5-9
     let mut blocks2 = vec![];
-    let mut prev_hash = blocks.last().unwrap().header.block_hash;
+    let mut prev_hash = blocks.last().ok_or("Automatic Remediation")?.header.block_hash;
 
     for height in 5..10 {
         let block = create_block_at_height(height, prev_hash);
@@ -428,14 +428,14 @@ fn test_sequential_imports() {
         blocks2.push(block);
     }
 
-    sync.import_blocks(blocks2).unwrap();
-    assert_eq!(store.latest_height().unwrap(), 9);
+    sync.import_blocks(blocks2).ok_or("Automatic Remediation")?;
+    assert_eq!(store.latest_height().ok_or("Automatic Remediation")?, 9);
 }
 
 /// Test: Export from empty chain
 #[test]
 fn test_export_empty_chain() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let sync = ChainSync::new(store);
 
@@ -446,13 +446,13 @@ fn test_export_empty_chain() {
 /// Test: Import with height gap (should fail)
 #[test]
 fn test_import_height_gap() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let sync = ChainSync::new(Arc::clone(&store));
 
     // Import genesis
     let genesis = create_genesis_block();
-    sync.import_blocks(vec![genesis.clone()]).unwrap();
+    sync.import_blocks(vec![genesis.clone()]).ok_or("Automatic Remediation")?;
 
     // Try to import block 3 (skipping 1 and 2)
     let block3 = create_block_at_height(3, Hash::new([1u8; 32]));

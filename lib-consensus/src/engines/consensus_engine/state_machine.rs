@@ -166,9 +166,9 @@ mod consensus_audit_log_tests {
         );
 
         // Test JSON serialization/deserialization
-        let json = serde_json::to_string(&record)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to serialize");
+        let json = serde_json::to_string(&record)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let deserialized: ConsensusAuditLog =
-            serde_json::from_str(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to deserialize");
+            serde_json::from_str(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(deserialized.height, record.height);
         assert_eq!(deserialized.round, record.round);
@@ -925,7 +925,7 @@ impl ConsensusEngine {
             let proposal = self
                 .pending_proposals
                 .remove(proposal_index)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("Proposal index came from position(), element must exist");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
             // Validate the block one more time before applying
             self.validate_committed_block(&proposal).await?;

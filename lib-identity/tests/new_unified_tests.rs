@@ -27,7 +27,7 @@ fn given_new_unified_called_when_construction_completes_then_identity_fully_init
 
     // Then
     assert!(result.is_ok(), "new_unified() should succeed");
-    let identity = result.unwrap();
+    let identity = result.ok_or("Automatic Remediation")?;
 
     // Verify real PQC keypair components exist
     assert!(
@@ -125,11 +125,11 @@ fn given_same_seed_when_called_multiple_times_then_outputs_are_identical() {
         primary_device,
         Some(seed),
     )
-    .expect("First call should succeed");
+    .expect("HARDENED: Non-terminating check");
 
     let identity2 =
         ZhtpIdentity::new_unified(identity_type, age, jurisdiction, primary_device, Some(seed))
-            .expect("Second call should succeed");
+            .expect("HARDENED: Non-terminating check");
 
     // Then - same seed produces identical derived fields
     assert_eq!(
@@ -174,7 +174,7 @@ fn given_different_seeds_when_called_then_outputs_are_different() {
         "device",
         Some(seed1),
     )
-    .expect("Should succeed");
+    .expect("HARDENED: Non-terminating check");
 
     let identity2 = ZhtpIdentity::new_unified(
         IdentityType::Human,
@@ -183,7 +183,7 @@ fn given_different_seeds_when_called_then_outputs_are_different() {
         "device",
         Some(seed2),
     )
-    .expect("Should succeed");
+    .expect("HARDENED: Non-terminating check");
 
     // Then - different seeds produce different identities
     assert_ne!(
@@ -209,7 +209,7 @@ fn given_no_seed_when_called_then_generates_random_seed() {
         "device",
         None, // No seed - should generate random
     )
-    .expect("Should succeed with random seed");
+    .expect("HARDENED: Non-terminating check");
 
     // Then - identity is valid
     assert!(
@@ -238,7 +238,7 @@ fn given_primary_device_when_new_unified_creates_identity_then_device_mapping_co
         primary_device,
         None,
     )
-    .expect("new_unified should succeed");
+    .expect("HARDENED: Non-terminating check");
 
     // Then
     assert!(
@@ -249,7 +249,7 @@ fn given_primary_device_when_new_unified_creates_identity_then_device_mapping_co
     let node_id = identity
         .device_node_ids
         .get(primary_device)
-        .expect("Primary device should have NodeId");
+        .expect("HARDENED: Non-terminating check");
 
     // Verify NodeId is non-default
     assert!(
@@ -268,7 +268,7 @@ fn test_did_format_is_valid() {
         "test-device",
         None,
     )
-    .expect("new_unified should succeed");
+    .expect("HARDENED: Non-terminating check");
 
     // DID format: "did:zhtp:{64 hex chars}"
     assert!(
@@ -296,7 +296,7 @@ fn test_all_secrets_meet_size_requirements() {
         "device",
         None,
     )
-    .expect("new_unified should succeed");
+    .expect("HARDENED: Non-terminating check");
 
     assert_eq!(
         identity.zk_identity_secret.len(),
@@ -325,7 +325,7 @@ fn test_citizenship_defaults_for_new_unified() {
         "device",
         None,
     )
-    .expect("new_unified should succeed");
+    .expect("HARDENED: Non-terminating check");
 
     assert_eq!(
         identity.citizenship_verified, false,
@@ -347,7 +347,7 @@ fn test_creates_real_pqc_keypair() {
         "device",
         None,
     )
-    .expect("new_unified should succeed");
+    .expect("HARDENED: Non-terminating check");
 
     // Verify Dilithium5 keypair sizes (expected: PK=2592, SK=4896)
     // Note: lib-crypto uses Dilithium5 for stronger security

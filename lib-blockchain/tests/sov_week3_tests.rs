@@ -57,7 +57,7 @@ fn test_dao_treasury_cannot_init_twice() {
     let mut treasury = DaoTreasury::new();
     treasury
         .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     let result = treasury.init("EducationDAO Treasury".to_string(), ADMIN, GOVERNANCE);
     assert_eq!(result, Err(DaoTreasuryError::AlreadyInitialized));
@@ -68,7 +68,7 @@ fn test_dao_treasury_receive_allocation() {
     let mut treasury = DaoTreasury::new();
     treasury
         .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     let result = treasury.receive_allocation(1_000_000, GOVERNANCE);
     assert!(result.is_ok());
@@ -81,11 +81,11 @@ fn test_dao_treasury_multiple_allocations() {
     let mut treasury = DaoTreasury::new();
     treasury
         .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
-    treasury.receive_allocation(500_000, GOVERNANCE).unwrap();
-    treasury.receive_allocation(300_000, GOVERNANCE).unwrap();
-    treasury.receive_allocation(200_000, GOVERNANCE).unwrap();
+    treasury.receive_allocation(500_000, GOVERNANCE).ok_or("Automatic Remediation")?;
+    treasury.receive_allocation(300_000, GOVERNANCE).ok_or("Automatic Remediation")?;
+    treasury.receive_allocation(200_000, GOVERNANCE).ok_or("Automatic Remediation")?;
 
     assert_eq!(treasury.balance(), 1_000_000);
     assert_eq!(treasury.total_received(), 1_000_000);
@@ -96,8 +96,8 @@ fn test_dao_treasury_create_proposal() {
     let mut treasury = DaoTreasury::new();
     treasury
         .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
-    treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
+        .ok_or("Automatic Remediation")?;
+    treasury.receive_allocation(1_000_000, GOVERNANCE).ok_or("Automatic Remediation")?;
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
     treasury.set_current_timestamp(0);
 
@@ -112,8 +112,8 @@ fn test_dao_treasury_create_proposal() {
     );
 
     assert!(result.is_ok());
-    let proposal_id = result.unwrap();
-    let proposal = treasury.get_proposal(proposal_id).unwrap();
+    let proposal_id = result.ok_or("Automatic Remediation")?;
+    let proposal = treasury.get_proposal(proposal_id).ok_or("Automatic Remediation")?;
     assert_eq!(proposal.amount, 100_000);
     assert_eq!(proposal.category, SpendingCategory::Research);
 }
@@ -123,8 +123,8 @@ fn test_dao_treasury_cannot_create_proposal_without_voting_power() {
     let mut treasury = DaoTreasury::new();
     treasury
         .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
-    treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
+        .ok_or("Automatic Remediation")?;
+    treasury.receive_allocation(1_000_000, GOVERNANCE).ok_or("Automatic Remediation")?;
 
     let result = treasury.create_proposal(
         PROPOSER,
@@ -144,8 +144,8 @@ fn test_dao_treasury_cannot_spend_more_than_balance() {
     let mut treasury = DaoTreasury::new();
     treasury
         .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
-    treasury.receive_allocation(500_000, GOVERNANCE).unwrap();
+        .ok_or("Automatic Remediation")?;
+    treasury.receive_allocation(500_000, GOVERNANCE).ok_or("Automatic Remediation")?;
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
 
     let result = treasury.create_proposal(
@@ -166,8 +166,8 @@ fn test_dao_treasury_voting_workflow() {
     let mut treasury = DaoTreasury::new();
     treasury
         .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
-    treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
+        .ok_or("Automatic Remediation")?;
+    treasury.receive_allocation(1_000_000, GOVERNANCE).ok_or("Automatic Remediation")?;
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
     treasury.set_current_timestamp(0);
 
@@ -181,19 +181,19 @@ fn test_dao_treasury_voting_workflow() {
             RECIPIENT,
             MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Vote for
     treasury
         .vote(proposal_id, VOTER1, true, DAO_VOTING_POWER)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Vote against
     treasury
         .vote(proposal_id, VOTER2, false, DAO_VOTING_POWER / 2)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
-    let proposal = treasury.get_proposal(proposal_id).unwrap();
+    let proposal = treasury.get_proposal(proposal_id).ok_or("Automatic Remediation")?;
     assert_eq!(proposal.votes_for, DAO_VOTING_POWER);
     assert_eq!(proposal.votes_against, DAO_VOTING_POWER / 2);
 }
@@ -203,8 +203,8 @@ fn test_dao_treasury_finalize_voting_passes() {
     let mut treasury = DaoTreasury::new();
     treasury
         .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
-    treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
+        .ok_or("Automatic Remediation")?;
+    treasury.receive_allocation(1_000_000, GOVERNANCE).ok_or("Automatic Remediation")?;
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
     treasury.set_current_timestamp(0);
 
@@ -218,17 +218,17 @@ fn test_dao_treasury_finalize_voting_passes() {
             RECIPIENT,
             MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Vote: 60% for, 40% against (should pass)
-    treasury.vote(proposal_id, VOTER1, true, 600_000).unwrap();
-    treasury.vote(proposal_id, VOTER2, false, 400_000).unwrap();
+    treasury.vote(proposal_id, VOTER1, true, 600_000).ok_or("Automatic Remediation")?;
+    treasury.vote(proposal_id, VOTER2, false, 400_000).ok_or("Automatic Remediation")?;
 
     // Finalize after 7 days
     treasury.set_current_timestamp(7 * 24 * 60 * 60 + 1);
-    treasury.finalize_voting(proposal_id).unwrap();
+    treasury.finalize_voting(proposal_id).ok_or("Automatic Remediation")?;
 
-    let proposal = treasury.get_proposal(proposal_id).unwrap();
+    let proposal = treasury.get_proposal(proposal_id).ok_or("Automatic Remediation")?;
     assert_eq!(proposal.status, DaoProposalStatus::Approved);
 }
 
@@ -237,8 +237,8 @@ fn test_dao_treasury_spending_categories() {
     let mut treasury = DaoTreasury::new();
     treasury
         .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
-    treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
+        .ok_or("Automatic Remediation")?;
+    treasury.receive_allocation(1_000_000, GOVERNANCE).ok_or("Automatic Remediation")?;
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
 
     // Test all spending categories
@@ -261,7 +261,7 @@ fn test_dao_treasury_spending_categories() {
         );
 
         assert!(result.is_ok());
-        let proposal = treasury.get_proposal(result.unwrap()).unwrap();
+        let proposal = treasury.get_proposal(result.ok_or("Automatic Remediation")?).ok_or("Automatic Remediation")?;
         assert_eq!(proposal.category, *category);
     }
 }
@@ -271,8 +271,8 @@ fn test_dao_treasury_execute_proposal() {
     let mut treasury = DaoTreasury::new();
     treasury
         .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
-    treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
+        .ok_or("Automatic Remediation")?;
+    treasury.receive_allocation(1_000_000, GOVERNANCE).ok_or("Automatic Remediation")?;
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
     treasury.set_current_timestamp(0);
 
@@ -286,14 +286,14 @@ fn test_dao_treasury_execute_proposal() {
             RECIPIENT,
             MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Vote and finalize
     treasury
         .vote(proposal_id, VOTER1, true, DAO_VOTING_POWER)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     treasury.set_current_timestamp(7 * 24 * 60 * 60 + 1);
-    treasury.finalize_voting(proposal_id).unwrap();
+    treasury.finalize_voting(proposal_id).ok_or("Automatic Remediation")?;
 
     // Wait for 7-day timelock
     treasury.set_current_timestamp(7 * 24 * 60 * 60 + DAO_TIMELOCK_SECONDS + 1);
@@ -309,8 +309,8 @@ fn test_dao_treasury_timelock_enforcement() {
     let mut treasury = DaoTreasury::new();
     treasury
         .init("HealthcareDAO Treasury".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
-    treasury.receive_allocation(1_000_000, GOVERNANCE).unwrap();
+        .ok_or("Automatic Remediation")?;
+    treasury.receive_allocation(1_000_000, GOVERNANCE).ok_or("Automatic Remediation")?;
     treasury.update_total_voting_power(DAO_VOTING_POWER * 10);
     treasury.set_current_timestamp(0);
 
@@ -324,13 +324,13 @@ fn test_dao_treasury_timelock_enforcement() {
             RECIPIENT,
             MIN_DAO_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     treasury
         .vote(proposal_id, VOTER1, true, DAO_VOTING_POWER)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     treasury.set_current_timestamp(7 * 24 * 60 * 60 + 1);
-    treasury.finalize_voting(proposal_id).unwrap();
+    treasury.finalize_voting(proposal_id).ok_or("Automatic Remediation")?;
 
     // Try to execute before timelock
     let result = treasury.execute_proposal(proposal_id, ADMIN);
@@ -360,7 +360,7 @@ fn test_sunset_initialization() {
 #[test]
 fn test_sunset_cannot_init_twice() {
     let mut sunset = Sunset::new();
-    sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    sunset.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     let result = sunset.init(ADMIN, NONPROFIT_TREASURY);
     assert_eq!(result, Err(SunsetError::AlreadyInitialized));
@@ -369,7 +369,7 @@ fn test_sunset_cannot_init_twice() {
 #[test]
 fn test_sunset_spending_policies() {
     let mut sunset = Sunset::new();
-    sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    sunset.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     assert_eq!(sunset.get_spending_policy(), SpendingPolicy::Unrestricted);
     assert_eq!(
@@ -381,7 +381,7 @@ fn test_sunset_spending_policies() {
 #[test]
 fn test_sunset_propose_valid_transitions() {
     let mut sunset = Sunset::new();
-    sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    sunset.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
     sunset.set_current_timestamp(0);
 
     // Valid: NORMAL → RESTRICTED
@@ -405,7 +405,7 @@ fn test_sunset_propose_valid_transitions() {
 #[test]
 fn test_sunset_reject_invalid_transitions() {
     let mut sunset = Sunset::new();
-    sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    sunset.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     // Invalid: NORMAL → DISSOLVED
     let result =
@@ -421,20 +421,20 @@ fn test_sunset_reject_invalid_transitions() {
 #[test]
 fn test_sunset_state_transition_with_timelock() {
     let mut sunset = Sunset::new();
-    sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    sunset.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
     sunset.set_current_timestamp(0);
 
     let proposal_id = sunset
         .propose_state_transition(SunsetState::Normal, SunsetState::Restricted, ADMIN)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Vote on proposal
     sunset
         .vote_on_transition(proposal_id, VOTER1, true, 100_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     sunset
         .vote_on_transition(proposal_id, VOTER2, true, 100_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Try to execute before timelock (14 days)
     let result = sunset.execute_state_transition(proposal_id);
@@ -451,22 +451,22 @@ fn test_sunset_state_transition_with_timelock() {
 #[test]
 fn test_sunset_minimum_duration_restricted() {
     let mut sunset = Sunset::new();
-    sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    sunset.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
     sunset.set_current_timestamp(0);
 
     // Transition to RESTRICTED
     let proposal1 = sunset
         .propose_state_transition(SunsetState::Normal, SunsetState::Restricted, ADMIN)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     sunset.set_current_timestamp(SUNSET_STATE_TRANSITION_TIMELOCK + 1);
-    sunset.execute_state_transition(proposal1).unwrap();
+    sunset.execute_state_transition(proposal1).ok_or("Automatic Remediation")?;
     assert_eq!(sunset.get_state(), SunsetState::Restricted);
 
     // Try to transition to WIND_DOWN before 90 days
     let proposal2 = sunset
         .propose_state_transition(SunsetState::Restricted, SunsetState::WindDown, ADMIN)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     sunset.set_current_timestamp(SUNSET_STATE_TRANSITION_TIMELOCK + RESTRICTED_MIN_DURATION - 1);
     let result = sunset.execute_state_transition(proposal2);
@@ -482,15 +482,15 @@ fn test_sunset_minimum_duration_restricted() {
 #[test]
 fn test_sunset_state_transition_audit_trail() {
     let mut sunset = Sunset::new();
-    sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    sunset.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
     sunset.set_current_timestamp(0);
 
     let proposal_id = sunset
         .propose_state_transition(SunsetState::Normal, SunsetState::Restricted, ADMIN)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     sunset.set_current_timestamp(SUNSET_STATE_TRANSITION_TIMELOCK + 1);
-    sunset.execute_state_transition(proposal_id).unwrap();
+    sunset.execute_state_transition(proposal_id).ok_or("Automatic Remediation")?;
 
     let transitions = sunset.get_state_transitions();
     assert_eq!(transitions.len(), 1);
@@ -501,33 +501,33 @@ fn test_sunset_state_transition_audit_trail() {
 #[test]
 fn test_sunset_complete_lifecycle() {
     let mut sunset = Sunset::new();
-    sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    sunset.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
     sunset.set_current_timestamp(0);
 
     // NORMAL → RESTRICTED
     let p1 = sunset
         .propose_state_transition(SunsetState::Normal, SunsetState::Restricted, ADMIN)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     sunset.set_current_timestamp(SUNSET_STATE_TRANSITION_TIMELOCK + 1);
-    sunset.execute_state_transition(p1).unwrap();
+    sunset.execute_state_transition(p1).ok_or("Automatic Remediation")?;
     assert_eq!(sunset.get_state(), SunsetState::Restricted);
 
     // RESTRICTED → WIND_DOWN
     let p2 = sunset
         .propose_state_transition(SunsetState::Restricted, SunsetState::WindDown, ADMIN)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     sunset.set_current_timestamp(SUNSET_STATE_TRANSITION_TIMELOCK + RESTRICTED_MIN_DURATION + 1);
-    sunset.execute_state_transition(p2).unwrap();
+    sunset.execute_state_transition(p2).ok_or("Automatic Remediation")?;
     assert_eq!(sunset.get_state(), SunsetState::WindDown);
 
     // WIND_DOWN → DISSOLVED
     let p3 = sunset
         .propose_state_transition(SunsetState::WindDown, SunsetState::Dissolved, ADMIN)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     sunset.set_current_timestamp(
         SUNSET_STATE_TRANSITION_TIMELOCK + RESTRICTED_MIN_DURATION + WIND_DOWN_MIN_DURATION + 1,
     );
-    sunset.execute_state_transition(p3).unwrap();
+    sunset.execute_state_transition(p3).ok_or("Automatic Remediation")?;
     assert_eq!(sunset.get_state(), SunsetState::Dissolved);
 }
 
@@ -556,8 +556,8 @@ fn test_week3_all_contracts_initialized() {
 
     dao_treasury
         .init("TestDAO".to_string(), ADMIN, GOVERNANCE)
-        .unwrap();
-    sunset.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+        .ok_or("Automatic Remediation")?;
+    sunset.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     assert!(dao_treasury.is_initialized());
     assert!(sunset.is_initialized());

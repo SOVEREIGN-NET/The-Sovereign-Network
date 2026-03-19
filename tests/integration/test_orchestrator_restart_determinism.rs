@@ -64,7 +64,7 @@ fn example_dht_peer(node_id: [u8; 32]) -> DhtPeerInfo {
         capabilities: vec!["mesh".to_string()],
         last_seen: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok_or("Automatic Remediation")?
             .as_secs(),
         reputation: 1.0,
     }

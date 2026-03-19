@@ -62,7 +62,7 @@ fn test_treasury_balance_uses_token_contract() {
     let (mut blockchain, treasury_pubkey) = setup_blockchain_with_treasury();
 
     // Initially treasury should have 0 balance
-    let balance_before = blockchain.get_dao_treasury_balance().unwrap();
+    let balance_before = blockchain.get_dao_treasury_balance().ok_or("Automatic Remediation")?;
     assert_eq!(balance_before, 0, "Initial treasury balance should be 0");
 
     // Credit the treasury with SOV tokens
@@ -76,7 +76,7 @@ fn test_treasury_balance_uses_token_contract() {
     }
 
     // Query treasury balance - should reflect the credited amount
-    let balance_after = blockchain.get_dao_treasury_balance().unwrap();
+    let balance_after = blockchain.get_dao_treasury_balance().ok_or("Automatic Remediation")?;
     assert_eq!(
         balance_after, treasury_amount,
         "Treasury balance should be {} from TokenContract, got {}",
@@ -101,7 +101,7 @@ fn test_treasury_balance_not_placeholder() {
 
     // Query balance multiple times - should always return the exact amount
     for _ in 0..5 {
-        let balance = blockchain.get_dao_treasury_balance().unwrap();
+        let balance = blockchain.get_dao_treasury_balance().ok_or("Automatic Remediation")?;
         assert_eq!(
             balance, expected_amount,
             "Balance should be exact amount {}, not placeholder count",
@@ -138,7 +138,7 @@ fn test_treasury_balance_returns_zero_without_token_contract() {
     blockchain.dao_treasury_wallet_id = Some("dao_treasury".to_string());
 
     // No SOV token contract registered - should return 0 (not panic)
-    let balance = blockchain.get_dao_treasury_balance().unwrap();
+    let balance = blockchain.get_dao_treasury_balance().ok_or("Automatic Remediation")?;
     assert_eq!(
         balance, 0,
         "Treasury balance should be 0 when token contract not initialized"
@@ -151,7 +151,7 @@ fn test_treasury_balance_updates_after_transactions() {
     let sov_token_id = generate_lib_token_id();
 
     // Initial balance
-    let balance1 = blockchain.get_dao_treasury_balance().unwrap();
+    let balance1 = blockchain.get_dao_treasury_balance().ok_or("Automatic Remediation")?;
     assert_eq!(balance1, 0);
 
     // Add some tokens
@@ -159,7 +159,7 @@ fn test_treasury_balance_updates_after_transactions() {
         token.balances.insert(treasury_pubkey.clone(), 100_000);
     }
 
-    let balance2 = blockchain.get_dao_treasury_balance().unwrap();
+    let balance2 = blockchain.get_dao_treasury_balance().ok_or("Automatic Remediation")?;
     assert_eq!(balance2, 100_000);
 
     // Add more tokens
@@ -167,7 +167,7 @@ fn test_treasury_balance_updates_after_transactions() {
         token.balances.insert(treasury_pubkey.clone(), 250_000);
     }
 
-    let balance3 = blockchain.get_dao_treasury_balance().unwrap();
+    let balance3 = blockchain.get_dao_treasury_balance().ok_or("Automatic Remediation")?;
     assert_eq!(balance3, 250_000);
 
     // Reduce tokens (simulating spending)
@@ -175,6 +175,6 @@ fn test_treasury_balance_updates_after_transactions() {
         token.balances.insert(treasury_pubkey.clone(), 150_000);
     }
 
-    let balance4 = blockchain.get_dao_treasury_balance().unwrap();
+    let balance4 = blockchain.get_dao_treasury_balance().ok_or("Automatic Remediation")?;
     assert_eq!(balance4, 150_000);
 }

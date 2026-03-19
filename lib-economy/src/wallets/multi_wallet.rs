@@ -937,7 +937,7 @@ mod tests {
     use lib_proofs::ZeroKnowledgeProof;
 
     fn create_test_identity() -> Identity {
-        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("keypair");
+        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let public_key: PublicKey = keypair.public_key.clone();
         let private_key = Some(keypair.private_key.clone());
         let did = "did:zhtp:test_identity".to_string();

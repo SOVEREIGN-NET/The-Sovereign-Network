@@ -30,10 +30,10 @@ fn test_zone_controller_scope_rejected_for_wrong_issuer() {
 
     let food_hash = registry
         .register_reserved_root("food.dao.sov", food_owner.clone(), 0, 100, None)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register food root");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     let health_hash = registry
         .register_reserved_root("health.dao.sov", health_owner.clone(), 0, 100, None)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register health root");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     registry
         .set_zone_controller(
@@ -45,7 +45,7 @@ fn test_zone_controller_scope_rejected_for_wrong_issuer() {
             },
             &food_owner,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("set food controller");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     registry
         .set_zone_controller(
@@ -57,7 +57,7 @@ fn test_zone_controller_scope_rejected_for_wrong_issuer() {
             },
             &health_owner,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("set health controller");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let result = registry.register_under_zone_controller(
         "clinic.health.dao.sov",
@@ -77,7 +77,7 @@ fn test_dao_prefixed_requires_parent_ownership() {
 
     registry
         .register_commercial_unverified("shoes.sov", owner.clone(), 0, 100)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register parent");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let result = registry.register_commercial_unverified("dao.shoes.sov", intruder, 0, 100);
     assert!(result.is_err());
@@ -97,19 +97,19 @@ fn test_parent_expiry_propagates_suspension() {
             current_height,
             duration_blocks,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register parent");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     let child_hash = registry
         .register_commercial_unverified("child.parent.sov", owner, current_height, duration_blocks)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register child");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Expire at a height after the expiry period
     let past_expiry = current_height + duration_blocks + 1;
     #[allow(deprecated)]
     registry
         .expire_name(&parent_hash, past_expiry)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("expire parent");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
-    let child = registry.get_record(&child_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("child record");
+    let child = registry.get_record(&child_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert_eq!(child.status, NameStatus::SuspendedByParent);
 }
 
@@ -121,7 +121,7 @@ fn test_zone_controller_scope_allows_mint_within_scope() {
 
     let root_hash = registry
         .register_reserved_root("food.dao.sov", owner.clone(), 0, 100, None)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register root");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     registry
         .set_zone_controller(
@@ -133,7 +133,7 @@ fn test_zone_controller_scope_allows_mint_within_scope() {
             },
             &owner,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("set controller");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let result = registry.register_under_zone_controller(
         "aid.food.dao.sov",
@@ -153,7 +153,7 @@ fn test_expired_zone_controller_rejected() {
 
     let root_hash = registry
         .register_reserved_root("health.dao.sov", owner.clone(), 0, 100, None)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register root");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     registry
         .set_zone_controller(
@@ -165,7 +165,7 @@ fn test_expired_zone_controller_rejected() {
             },
             &owner,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("set controller");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let result = registry.register_under_zone_controller(
         "clinic.health.dao.sov",
@@ -208,7 +208,7 @@ fn test_phase2_dao_prefix_registration_even_with_ownership_rejected() {
     // First register shoes.sov
     registry
         .register_commercial_unverified("shoes.sov", owner.clone(), 0, 100)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register parent");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Now try to register dao.shoes.sov as the owner - should still fail!
     let result = registry.register_commercial_unverified("dao.shoes.sov", owner, 0, 100);
@@ -320,7 +320,7 @@ fn test_touch_commercial_past_grace_releases() {
     // Register a commercial domain at height 0 with 100 block duration
     let name_hash = registry
         .register_commercial_unverified("mystore.sov", owner.clone(), 0, 100)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Before grace: should return Some
     let record = registry.touch(&name_hash, 50);
@@ -339,7 +339,7 @@ fn test_touch_commercial_past_grace_releases() {
     );
 
     // After release, the record should still exist but be Released
-    let final_record = registry.get_record(&name_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("record exists");
+    let final_record = registry.get_record(&name_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(matches!(final_record.status, NameStatus::Released));
 }
 
@@ -355,7 +355,7 @@ fn test_touch_welfare_returns_to_governance() {
     // Register a welfare root
     let root_hash = registry
         .register_reserved_root("food.dao.sov", owner.clone(), 0, 100, Some(dao_id))
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register root");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Link the sector DAO
     registry
@@ -370,7 +370,7 @@ fn test_touch_welfare_returns_to_governance() {
     );
 
     // Check custodian is set
-    let final_record = registry.get_record(&root_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("record exists");
+    let final_record = registry.get_record(&root_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(
         final_record.custodian.is_some(),
         "Custodian should be set for welfare domain"
@@ -385,14 +385,14 @@ fn test_touch_active_domain_unchanged() {
 
     let name_hash = registry
         .register_commercial_unverified("active.sov", owner.clone(), 0, 100)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Touch within active period
-    let record = registry.touch(&name_hash, 50)// REMEDIATED PANIC: // REMEDIATED: .expect("record exists");
+    let record = registry.touch(&name_hash, 50)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(matches!(record.status, NameStatus::Active));
 
     // Should still be active
-    let record2 = registry.get_record(&name_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("record exists");
+    let record2 = registry.get_record(&name_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(matches!(record2.status, NameStatus::Active));
 }
 
@@ -405,7 +405,7 @@ fn test_renew_name_success() {
     // Register at height 0 with 1000 block duration
     let name_hash = registry
         .register_commercial_unverified("renewable.sov", owner.clone(), 0, 1000)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Renew during active period (within renewal window)
     let result = registry.renew_name(&name_hash, &owner, 900, 500, 100);
@@ -414,7 +414,7 @@ fn test_renew_name_success() {
     assert_eq!(fee, 100, "Base fee should be charged before expiry");
 
     // Verify expiry was extended
-    let record = registry.get_record(&name_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("record exists");
+    let record = registry.get_record(&name_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(record.expires_at_height > 1000, "Expiry should be extended");
 }
 
@@ -427,7 +427,7 @@ fn test_renew_name_late_penalty() {
     // Register at height 0 with 100 block duration
     let name_hash = registry
         .register_commercial_unverified("late.sov", owner.clone(), 0, 100)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Renew during grace period (past 100, within grace)
     // Default late penalty is 20% (timing::DEFAULT_LATE_RENEWAL_PENALTY_PERCENT)
@@ -447,7 +447,7 @@ fn test_renew_name_non_owner_fails() {
 
     let name_hash = registry
         .register_commercial_unverified("owned.sov", owner.clone(), 0, 100)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let result = registry.renew_name(&name_hash, &other, 50, 500, 100);
     assert!(result.is_err());
@@ -462,7 +462,7 @@ fn test_renew_name_past_grace_fails() {
 
     let name_hash = registry
         .register_commercial_unverified("expired.sov", owner.clone(), 0, 100)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("register");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Way past grace period
     let result = registry.renew_name(&name_hash, &owner, 500_000, 500, 100);
@@ -619,7 +619,7 @@ fn test_phase5_l2_verified_entity_succeeds() {
     );
 
     let name_hash = result.ok();
-    let record = registry.get_record(&name_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("record exists");
+    let record = registry.get_record(&name_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert_eq!(
         record.verification_level,
         VerificationLevel::L2VerifiedEntity
@@ -724,7 +724,7 @@ fn test_phase5_verification_level_stored_in_record() {
     assert!(result.is_ok());
 
     let name_hash = result.ok();
-    let record = registry.get_record(&name_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("record exists");
+    let record = registry.get_record(&name_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert_eq!(
         record.verification_level,
         VerificationLevel::L2VerifiedEntity,

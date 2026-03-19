@@ -49,7 +49,7 @@ pub fn unpack_nodes(buf: &[u8], addr_type: AddressTypes) -> Vec<Node> {
 
         let bid: [u8; ID_LENGTH] = buf[position..position + ID_LENGTH]
             .try_into()
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Slice with incorrect length");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         position += ID_LENGTH;
 
         let addr_bytes = &buf[position..position + addr_length];
@@ -61,12 +61,12 @@ pub fn unpack_nodes(buf: &[u8], addr_type: AddressTypes) -> Vec<Node> {
         let address = match addr_type {
             AddressTypes::Ipv4 => {
                 let octets: [u8; IPV4_LENGTH] =
-                    addr_bytes.try_into()// REMEDIATED PANIC: // REMEDIATED: .expect("Slice with incorrect length");
+                    addr_bytes.try_into()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
                 IpAddr::V4(Ipv4Addr::from(octets))
             }
             AddressTypes::Ipv6 => {
                 let octets: [u8; IPV6_LENGTH] =
-                    addr_bytes.try_into()// REMEDIATED PANIC: // REMEDIATED: .expect("Slice with incorrect length");
+                    addr_bytes.try_into()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
                 IpAddr::V6(Ipv6Addr::from(octets))
             }
         };

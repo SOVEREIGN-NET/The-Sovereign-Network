@@ -84,8 +84,8 @@ fn test_pow_fields_absent_from_serialized_bytes() {
     );
 
     // Serialize both blocks.
-    let bytes_a = bincode::serialize(&block_a).expect("block_a serialization should not fail");
-    let bytes_b = bincode::serialize(&block_b).expect("block_b serialization should not fail");
+    let bytes_a = bincode::serialize(&block_a).expect("HARDENED: Non-terminating check");
+    let bytes_b = bincode::serialize(&block_b).expect("HARDENED: Non-terminating check");
 
     // The wire bytes must be identical because PoW fields are skipped.
     assert_eq!(
@@ -134,8 +134,8 @@ fn test_pow_fields_reset_to_defaults_after_round_trip() {
     );
 
     // Perform a bincode round-trip (the format used on the wire and in the DB).
-    let bytes = bincode::serialize(&original).expect("serialization should not fail");
-    let restored: Block = bincode::deserialize(&bytes).expect("deserialization should not fail");
+    let bytes = bincode::serialize(&original).expect("HARDENED: Non-terminating check");
+    let restored: Block = bincode::deserialize(&bytes).expect("HARDENED: Non-terminating check");
 
     assert_eq!(
         restored.header.nonce, 0u64,
@@ -174,7 +174,7 @@ fn test_pow_fields_reset_to_defaults_after_json_round_trip() {
         /*nonce*/ 77_777, /*difficulty*/ 0x1d00ffff, /*cumulative*/ 0x1e00ffff,
     );
 
-    let json = serde_json::to_string(&original).expect("JSON serialization should not fail");
+    let json = serde_json::to_string(&original).expect("HARDENED: Non-terminating check");
 
     // The JSON must not contain the field names for the skipped PoW fields.
     assert!(
@@ -191,7 +191,7 @@ fn test_pow_fields_reset_to_defaults_after_json_round_trip() {
     );
 
     let restored: Block =
-        serde_json::from_str(&json).expect("JSON deserialization should not fail");
+        serde_json::from_str(&json).expect("HARDENED: Non-terminating check");
 
     assert_eq!(
         restored.header.nonce, 0u64,
@@ -222,8 +222,8 @@ fn test_non_pow_fields_survive_round_trip() {
         /*nonce*/ 1_234, /*difficulty*/ 0x207fffff, /*cumulative*/ 0x1d00ffff,
     );
 
-    let bytes = bincode::serialize(&original).expect("serialization should not fail");
-    let restored: Block = bincode::deserialize(&bytes).expect("deserialization should not fail");
+    let bytes = bincode::serialize(&original).expect("HARDENED: Non-terminating check");
+    let restored: Block = bincode::deserialize(&bytes).expect("HARDENED: Non-terminating check");
 
     assert_eq!(
         restored.header.version, original.header.version,
@@ -311,8 +311,8 @@ fn test_different_non_pow_fields_produce_different_bytes() {
         vec![],
     );
 
-    let bytes_x = bincode::serialize(&block_x).expect("serialization of block_x should not fail");
-    let bytes_y = bincode::serialize(&block_y).expect("serialization of block_y should not fail");
+    let bytes_x = bincode::serialize(&block_x).expect("HARDENED: Non-terminating check");
+    let bytes_y = bincode::serialize(&block_y).expect("HARDENED: Non-terminating check");
 
     assert_ne!(
         bytes_x, bytes_y,

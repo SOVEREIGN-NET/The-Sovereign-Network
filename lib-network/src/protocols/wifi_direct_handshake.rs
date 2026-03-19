@@ -674,7 +674,7 @@ mod tests {
             device_name,
             None,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test identity")
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
     }
 
     fn net_tests_disabled() -> bool {

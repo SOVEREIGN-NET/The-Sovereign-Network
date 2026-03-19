@@ -30,7 +30,7 @@ fn add_validator(bc: &mut Blockchain, did: &str) {
 
 #[test]
 fn test_freeze_defaults() {
-    let bc = Blockchain::new().expect("genesis");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     assert!(!bc.treasury_frozen);
     assert!(bc.treasury_frozen_at.is_none());
     assert!(bc.treasury_freeze_expiry.is_none());
@@ -41,7 +41,7 @@ fn test_freeze_defaults() {
 
 #[test]
 fn test_freeze_requires_80pct_validators() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     add_validator(&mut bc, "did:zhtp:val1");
     add_validator(&mut bc, "did:zhtp:val2");
     add_validator(&mut bc, "did:zhtp:val3");
@@ -61,7 +61,7 @@ fn test_freeze_requires_80pct_validators() {
 
 #[test]
 fn test_freeze_succeeds_with_80pct_validators() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     add_validator(&mut bc, "did:zhtp:val1");
     add_validator(&mut bc, "did:zhtp:val2");
     add_validator(&mut bc, "did:zhtp:val3");
@@ -84,14 +84,14 @@ fn test_freeze_succeeds_with_80pct_validators() {
 
 #[test]
 fn test_freeze_fails_with_no_validators() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     let err = bc.activate_treasury_freeze(vec![], "test".to_string());
     assert!(err.is_err(), "no validators registered → should fail");
 }
 
 #[test]
 fn test_freeze_rejects_duplicate_validator_entries() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     add_validator(&mut bc, "did:zhtp:val1");
     add_validator(&mut bc, "did:zhtp:val2");
     add_validator(&mut bc, "did:zhtp:val3");
@@ -125,13 +125,13 @@ fn test_freeze_rejects_duplicate_validator_entries() {
 #[test]
 fn test_freeze_blocks_treasury_spending() {
     use lib_blockchain::types::Hash;
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     add_validator(&mut bc, "did:zhtp:val1");
     bc.activate_treasury_freeze(
         vec!["did:zhtp:val1".to_string()],
         "block all spending".to_string(),
     )
-    .expect("single validator should suffice for 100% >= 80%");
+    .expect("HARDENED: Non-terminating check");
     assert!(bc.treasury_frozen);
 
     let fake_id = Hash::new([1u8; 32]);
@@ -161,7 +161,7 @@ fn test_freeze_auto_expires_at_height() -> Result<()> {
     bc.activate_treasury_freeze(vec!["did:zhtp:val1".to_string()], "test expire".to_string())?;
     assert!(bc.treasury_frozen);
 
-    let expiry = bc.treasury_freeze_expiry.unwrap();
+    let expiry = bc.treasury_freeze_expiry.ok_or("Automatic Remediation")?;
     bc.height = expiry;
     bc.process_approved_governance_proposals()?;
     assert!(!bc.treasury_frozen, "freeze should have auto-expired");

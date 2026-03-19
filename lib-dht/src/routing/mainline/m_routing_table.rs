@@ -217,27 +217,27 @@ impl RoutingTable for MRoutingTable {
     }
 
     fn has_queried(&self, _n: &Node, _now: u128) -> bool {
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 
     fn bucket_uid(&self, _k: &UID) -> usize {
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 
     fn all_nodes(&self) -> Vec<Node> {
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 
     fn find_closest(&self, _k: &UID, _r: usize) -> Vec<Node> {
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 
     fn bucket_size(&self, _i: usize) -> usize {
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 
     fn all_unqueried_nodes(&self) -> Vec<Node> {
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 
     fn get_restart(&self) -> fn(Arc<Mutex<dyn RoutingTable>>) {

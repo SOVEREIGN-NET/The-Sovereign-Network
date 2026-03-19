@@ -53,7 +53,7 @@ fn test_governance_initialization() {
 #[test]
 fn test_governance_cannot_init_twice() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
 
     let result = governance.init(ADMIN);
     assert_eq!(result, Err(GovernanceError::AlreadyInitialized));
@@ -74,7 +74,7 @@ fn test_governance_voting_period_constant() {
 #[test]
 fn test_governance_create_proposal_requires_voting_power() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(VOTING_POWER_BASE * 10);
 
     // Insufficient voting power
@@ -91,7 +91,7 @@ fn test_governance_create_proposal_requires_voting_power() {
 #[test]
 fn test_governance_create_proposal_success() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(VOTING_POWER_BASE * 10);
 
     let result = governance.create_proposal(
@@ -103,10 +103,10 @@ fn test_governance_create_proposal_success() {
     );
 
     assert!(result.is_ok());
-    let proposal_id = result.unwrap();
+    let proposal_id = result.ok_or("Automatic Remediation")?;
     assert_eq!(proposal_id, 1);
 
-    let proposal = governance.get_proposal(proposal_id).unwrap();
+    let proposal = governance.get_proposal(proposal_id).ok_or("Automatic Remediation")?;
     assert_eq!(proposal.title, "Test Proposal");
     assert_eq!(proposal.status, ProposalStatus::Active);
 }
@@ -114,7 +114,7 @@ fn test_governance_create_proposal_success() {
 #[test]
 fn test_governance_cannot_create_proposal_with_empty_title() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(VOTING_POWER_BASE * 10);
 
     let result = governance.create_proposal(
@@ -130,7 +130,7 @@ fn test_governance_cannot_create_proposal_with_empty_title() {
 #[test]
 fn test_governance_cannot_create_proposal_with_empty_description() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(VOTING_POWER_BASE * 10);
 
     let result = governance.create_proposal(
@@ -146,7 +146,7 @@ fn test_governance_cannot_create_proposal_with_empty_description() {
 #[test]
 fn test_governance_voting_flow() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(VOTING_POWER_BASE * 10);
     governance.set_current_timestamp(0);
 
@@ -158,20 +158,20 @@ fn test_governance_voting_flow() {
             ProposalCategory::Regular,
             MIN_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Vote during voting period
     let vote_result = governance.vote(proposal_id, VOTER1, VoteType::For, VOTING_POWER_BASE);
     assert!(vote_result.is_ok());
 
-    let proposal = governance.get_proposal(proposal_id).unwrap();
+    let proposal = governance.get_proposal(proposal_id).ok_or("Automatic Remediation")?;
     assert_eq!(proposal.votes_for, VOTING_POWER_BASE);
 }
 
 #[test]
 fn test_governance_cannot_vote_twice() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(VOTING_POWER_BASE * 10);
     governance.set_current_timestamp(0);
 
@@ -183,11 +183,11 @@ fn test_governance_cannot_vote_twice() {
             ProposalCategory::Regular,
             MIN_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     governance
         .vote(proposal_id, VOTER1, VoteType::For, VOTING_POWER_BASE)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     let result = governance.vote(proposal_id, VOTER1, VoteType::For, VOTING_POWER_BASE);
     assert_eq!(result, Err(GovernanceError::AlreadyVoted));
@@ -196,7 +196,7 @@ fn test_governance_cannot_vote_twice() {
 #[test]
 fn test_governance_voting_period_check() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(VOTING_POWER_BASE * 10);
     governance.set_current_timestamp(0);
 
@@ -208,7 +208,7 @@ fn test_governance_voting_period_check() {
             ProposalCategory::Regular,
             MIN_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Try to vote before voting starts
     governance.set_current_timestamp(0);
@@ -224,7 +224,7 @@ fn test_governance_voting_period_check() {
 #[test]
 fn test_governance_finalize_voting_majority_passes() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
@@ -236,28 +236,28 @@ fn test_governance_finalize_voting_majority_passes() {
             ProposalCategory::Regular,
             MIN_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Vote: 60% for, 40% against (total = 100% meets quorum)
     governance
         .vote(proposal_id, VOTER1, VoteType::For, 600_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     governance
         .vote(proposal_id, VOTER2, VoteType::Against, 400_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Finalize after voting period
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
-    governance.finalize_voting(proposal_id).unwrap();
+    governance.finalize_voting(proposal_id).ok_or("Automatic Remediation")?;
 
-    let proposal = governance.get_proposal(proposal_id).unwrap();
+    let proposal = governance.get_proposal(proposal_id).ok_or("Automatic Remediation")?;
     assert_eq!(proposal.status, ProposalStatus::Approved);
 }
 
 #[test]
 fn test_governance_finalize_voting_majority_fails() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
@@ -269,27 +269,27 @@ fn test_governance_finalize_voting_majority_fails() {
             ProposalCategory::Regular,
             MIN_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Vote: 40% for, 60% against (fails majority, total = 100% meets quorum)
     governance
         .vote(proposal_id, VOTER1, VoteType::For, 400_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     governance
         .vote(proposal_id, VOTER2, VoteType::Against, 600_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
-    governance.finalize_voting(proposal_id).unwrap();
+    governance.finalize_voting(proposal_id).ok_or("Automatic Remediation")?;
 
-    let proposal = governance.get_proposal(proposal_id).unwrap();
+    let proposal = governance.get_proposal(proposal_id).ok_or("Automatic Remediation")?;
     assert_eq!(proposal.status, ProposalStatus::Rejected);
 }
 
 #[test]
 fn test_governance_timelock_enforcement() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
@@ -301,14 +301,14 @@ fn test_governance_timelock_enforcement() {
             ProposalCategory::Regular,
             MIN_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Vote with enough power to meet quorum (>50% of 1M = >500K)
     governance
         .vote(proposal_id, VOTER1, VoteType::For, 600_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
-    governance.finalize_voting(proposal_id).unwrap();
+    governance.finalize_voting(proposal_id).ok_or("Automatic Remediation")?;
 
     // Try to execute before timelock
     let result = governance.execute_proposal(proposal_id);
@@ -319,14 +319,14 @@ fn test_governance_timelock_enforcement() {
     let result = governance.execute_proposal(proposal_id);
     assert!(result.is_ok());
 
-    let proposal = governance.get_proposal(proposal_id).unwrap();
+    let proposal = governance.get_proposal(proposal_id).ok_or("Automatic Remediation")?;
     assert_eq!(proposal.status, ProposalStatus::Executed);
 }
 
 #[test]
 fn test_governance_supermajority_threshold() {
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
@@ -338,20 +338,20 @@ fn test_governance_supermajority_threshold() {
             ProposalCategory::Constitutional,
             MIN_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Vote: 65% for (below 66.67% supermajority), total = 100% meets quorum
     governance
         .vote(proposal_id, VOTER1, VoteType::For, 650_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     governance
         .vote(proposal_id, VOTER2, VoteType::Against, 350_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
-    governance.finalize_voting(proposal_id).unwrap();
+    governance.finalize_voting(proposal_id).ok_or("Automatic Remediation")?;
 
-    let proposal = governance.get_proposal(proposal_id).unwrap();
+    let proposal = governance.get_proposal(proposal_id).ok_or("Automatic Remediation")?;
     assert_eq!(proposal.status, ProposalStatus::Rejected);
 
     // Vote: 67% for (meets supermajority)
@@ -364,19 +364,19 @@ fn test_governance_supermajority_threshold() {
             ProposalCategory::Constitutional,
             MIN_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     governance
         .vote(proposal_id2, VOTER1, VoteType::For, 670_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     governance
         .vote(proposal_id2, VOTER2, VoteType::Against, 330_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
-    governance.finalize_voting(proposal_id2).unwrap();
+    governance.finalize_voting(proposal_id2).ok_or("Automatic Remediation")?;
 
-    let proposal2 = governance.get_proposal(proposal_id2).unwrap();
+    let proposal2 = governance.get_proposal(proposal_id2).ok_or("Automatic Remediation")?;
     assert_eq!(proposal2.status, ProposalStatus::Approved);
 }
 
@@ -397,7 +397,7 @@ fn test_nonprofit_treasury_initialization() {
 #[test]
 fn test_nonprofit_treasury_cannot_init_twice() {
     let mut treasury = NonprofitTreasury::new();
-    treasury.init(ADMIN, FOR_PROFIT_TREASURY).unwrap();
+    treasury.init(ADMIN, FOR_PROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     let result = treasury.init(ADMIN, FOR_PROFIT_TREASURY);
     assert_eq!(result, Err(NonprofitTreasuryError::AlreadyInitialized));
@@ -406,7 +406,7 @@ fn test_nonprofit_treasury_cannot_init_twice() {
 #[test]
 fn test_nonprofit_treasury_receive_funds() {
     let mut treasury = NonprofitTreasury::new();
-    treasury.init(ADMIN, FOR_PROFIT_TREASURY).unwrap();
+    treasury.init(ADMIN, FOR_PROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     let result = treasury.receive(FOR_PROFIT_TREASURY, 1_000_000);
     assert!(result.is_ok());
@@ -417,7 +417,7 @@ fn test_nonprofit_treasury_receive_funds() {
 #[test]
 fn test_nonprofit_treasury_rejects_unauthorized_source() {
     let mut treasury = NonprofitTreasury::new();
-    treasury.init(ADMIN, FOR_PROFIT_TREASURY).unwrap();
+    treasury.init(ADMIN, FOR_PROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     let result = treasury.receive(ADMIN, 1_000_000);
     assert_eq!(result, Err(NonprofitTreasuryError::UnauthorizedSource));
@@ -427,11 +427,11 @@ fn test_nonprofit_treasury_rejects_unauthorized_source() {
 #[test]
 fn test_nonprofit_treasury_multiple_deposits() {
     let mut treasury = NonprofitTreasury::new();
-    treasury.init(ADMIN, FOR_PROFIT_TREASURY).unwrap();
+    treasury.init(ADMIN, FOR_PROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
-    treasury.receive(FOR_PROFIT_TREASURY, 500_000).unwrap();
-    treasury.receive(FOR_PROFIT_TREASURY, 300_000).unwrap();
-    treasury.receive(FOR_PROFIT_TREASURY, 200_000).unwrap();
+    treasury.receive(FOR_PROFIT_TREASURY, 500_000).ok_or("Automatic Remediation")?;
+    treasury.receive(FOR_PROFIT_TREASURY, 300_000).ok_or("Automatic Remediation")?;
+    treasury.receive(FOR_PROFIT_TREASURY, 200_000).ok_or("Automatic Remediation")?;
 
     assert_eq!(treasury.balance(), 1_000_000);
     assert_eq!(treasury.total_received(), 1_000_000);
@@ -440,14 +440,14 @@ fn test_nonprofit_treasury_multiple_deposits() {
 #[test]
 fn test_nonprofit_treasury_withdrawal_request() {
     let mut treasury = NonprofitTreasury::new();
-    treasury.init(ADMIN, FOR_PROFIT_TREASURY).unwrap();
-    treasury.receive(FOR_PROFIT_TREASURY, 1_000_000).unwrap();
+    treasury.init(ADMIN, FOR_PROFIT_TREASURY).ok_or("Automatic Remediation")?;
+    treasury.receive(FOR_PROFIT_TREASURY, 1_000_000).ok_or("Automatic Remediation")?;
 
     let result = treasury.request_withdrawal(ADMIN, 500_000, 1);
     assert!(result.is_ok());
 
-    let request_id = result.unwrap();
-    let request = treasury.get_withdrawal_request(request_id).unwrap();
+    let request_id = result.ok_or("Automatic Remediation")?;
+    let request = treasury.get_withdrawal_request(request_id).ok_or("Automatic Remediation")?;
     assert_eq!(request.status, WithdrawalStatus::Pending);
     assert_eq!(request.amount, 500_000);
 }
@@ -455,8 +455,8 @@ fn test_nonprofit_treasury_withdrawal_request() {
 #[test]
 fn test_nonprofit_treasury_cannot_withdraw_more_than_balance() {
     let mut treasury = NonprofitTreasury::new();
-    treasury.init(ADMIN, FOR_PROFIT_TREASURY).unwrap();
-    treasury.receive(FOR_PROFIT_TREASURY, 500_000).unwrap();
+    treasury.init(ADMIN, FOR_PROFIT_TREASURY).ok_or("Automatic Remediation")?;
+    treasury.receive(FOR_PROFIT_TREASURY, 500_000).ok_or("Automatic Remediation")?;
 
     let result = treasury.request_withdrawal(ADMIN, 600_000, 1);
     assert_eq!(result, Err(NonprofitTreasuryError::InsufficientBalance));
@@ -465,10 +465,10 @@ fn test_nonprofit_treasury_cannot_withdraw_more_than_balance() {
 #[test]
 fn test_nonprofit_treasury_withdrawal_approval_and_execution() {
     let mut treasury = NonprofitTreasury::new();
-    treasury.init(ADMIN, FOR_PROFIT_TREASURY).unwrap();
-    treasury.receive(FOR_PROFIT_TREASURY, 1_000_000).unwrap();
+    treasury.init(ADMIN, FOR_PROFIT_TREASURY).ok_or("Automatic Remediation")?;
+    treasury.receive(FOR_PROFIT_TREASURY, 1_000_000).ok_or("Automatic Remediation")?;
 
-    let request_id = treasury.request_withdrawal(ADMIN, 500_000, 1).unwrap();
+    let request_id = treasury.request_withdrawal(ADMIN, 500_000, 1).ok_or("Automatic Remediation")?;
 
     // Approve
     let result = treasury.approve_withdrawal(request_id, ADMIN);
@@ -478,7 +478,7 @@ fn test_nonprofit_treasury_withdrawal_approval_and_execution() {
     let result = treasury.execute_withdrawal(request_id, ADMIN);
     assert!(result.is_ok());
 
-    let request = treasury.get_withdrawal_request(request_id).unwrap();
+    let request = treasury.get_withdrawal_request(request_id).ok_or("Automatic Remediation")?;
     assert_eq!(request.status, WithdrawalStatus::Executed);
     assert_eq!(treasury.balance(), 500_000);
     assert_eq!(treasury.total_withdrawn(), 500_000);
@@ -487,13 +487,13 @@ fn test_nonprofit_treasury_withdrawal_approval_and_execution() {
 #[test]
 fn test_nonprofit_treasury_audit_trail() {
     let mut treasury = NonprofitTreasury::new();
-    treasury.init(ADMIN, FOR_PROFIT_TREASURY).unwrap();
-    treasury.receive(FOR_PROFIT_TREASURY, 1_000_000).unwrap();
+    treasury.init(ADMIN, FOR_PROFIT_TREASURY).ok_or("Automatic Remediation")?;
+    treasury.receive(FOR_PROFIT_TREASURY, 1_000_000).ok_or("Automatic Remediation")?;
 
     let transactions = treasury.get_transactions();
     assert_eq!(transactions.len(), 1);
 
-    let tx = transactions.get(&1).unwrap();
+    let tx = transactions.get(&1).ok_or("Automatic Remediation")?;
     assert_eq!(tx.transaction_type, TransactionType::Deposit);
     assert_eq!(tx.amount, 1_000_000);
 }
@@ -515,13 +515,13 @@ fn test_forprofit_treasury_initialization() {
 #[test]
 fn test_forprofit_treasury_profit_declaration() {
     let mut treasury = ForProfitTreasury::new();
-    treasury.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    treasury.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     let result = treasury.declare_profit(1_000_000, ADMIN, None);
     assert!(result.is_ok());
 
-    let declaration_id = result.unwrap();
-    let declaration = treasury.get_profit_declaration(declaration_id).unwrap();
+    let declaration_id = result.ok_or("Automatic Remediation")?;
+    let declaration = treasury.get_profit_declaration(declaration_id).ok_or("Automatic Remediation")?;
 
     // Verify tribute calculation (20%)
     assert_eq!(declaration.profit_amount, 1_000_000);
@@ -531,14 +531,14 @@ fn test_forprofit_treasury_profit_declaration() {
 #[test]
 fn test_forprofit_treasury_tribute_enforcement() {
     let mut treasury = ForProfitTreasury::new();
-    treasury.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    treasury.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
-    let declaration_id = treasury.declare_profit(1_000_000, ADMIN, None).unwrap();
+    let declaration_id = treasury.declare_profit(1_000_000, ADMIN, None).ok_or("Automatic Remediation")?;
 
     // Verify tribute cannot be paid twice
     let result = treasury.settle_tribute(declaration_id, ADMIN);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), 200_000);
+    assert_eq!(result.ok_or("Automatic Remediation")?, 200_000);
 
     let result = treasury.settle_tribute(declaration_id, ADMIN);
     assert_eq!(result, Err(ForProfitTreasuryError::TributePending));
@@ -547,9 +547,9 @@ fn test_forprofit_treasury_tribute_enforcement() {
 #[test]
 fn test_forprofit_treasury_no_dividend_before_tribute() {
     let mut treasury = ForProfitTreasury::new();
-    treasury.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    treasury.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
-    let _declaration_id = treasury.declare_profit(1_000_000, ADMIN, None).unwrap();
+    let _declaration_id = treasury.declare_profit(1_000_000, ADMIN, None).ok_or("Automatic Remediation")?;
 
     // Try to pay dividend before tribute
     let result = treasury.spend(
@@ -565,10 +565,10 @@ fn test_forprofit_treasury_no_dividend_before_tribute() {
 #[test]
 fn test_forprofit_treasury_spending_after_tribute() {
     let mut treasury = ForProfitTreasury::new();
-    treasury.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    treasury.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
-    let declaration_id = treasury.declare_profit(1_000_000, ADMIN, None).unwrap();
-    treasury.settle_tribute(declaration_id, ADMIN).unwrap();
+    let declaration_id = treasury.declare_profit(1_000_000, ADMIN, None).ok_or("Automatic Remediation")?;
+    treasury.settle_tribute(declaration_id, ADMIN).ok_or("Automatic Remediation")?;
 
     // Now dividend should work
     let result = treasury.spend(
@@ -584,9 +584,9 @@ fn test_forprofit_treasury_spending_after_tribute() {
 #[test]
 fn test_forprofit_treasury_operations_spending() {
     let mut treasury = ForProfitTreasury::new();
-    treasury.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    treasury.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
-    let _declaration_id = treasury.declare_profit(1_000_000, ADMIN, None).unwrap();
+    let _declaration_id = treasury.declare_profit(1_000_000, ADMIN, None).ok_or("Automatic Remediation")?;
 
     // Operations spending should work anytime
     let result = treasury.spend(
@@ -602,9 +602,9 @@ fn test_forprofit_treasury_operations_spending() {
 #[test]
 fn test_forprofit_treasury_spending_guards() {
     let mut treasury = ForProfitTreasury::new();
-    treasury.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    treasury.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
-    let _declaration_id = treasury.declare_profit(1_000_000, ADMIN, None).unwrap();
+    let _declaration_id = treasury.declare_profit(1_000_000, ADMIN, None).ok_or("Automatic Remediation")?;
 
     // Large dividend without tribute should fail
     let result = treasury.spend(
@@ -620,15 +620,15 @@ fn test_forprofit_treasury_spending_guards() {
 #[test]
 fn test_forprofit_treasury_accurate_balance() {
     let mut treasury = ForProfitTreasury::new();
-    treasury.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    treasury.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
-    treasury.declare_profit(1_000_000, ADMIN, None).unwrap();
+    treasury.declare_profit(1_000_000, ADMIN, None).ok_or("Automatic Remediation")?;
     assert_eq!(treasury.balance(), 1_000_000);
 
-    let declaration_id = treasury.declare_profit(500_000, ADMIN, None).unwrap();
+    let declaration_id = treasury.declare_profit(500_000, ADMIN, None).ok_or("Automatic Remediation")?;
     assert_eq!(treasury.balance(), 1_500_000);
 
-    treasury.settle_tribute(declaration_id, ADMIN).unwrap();
+    treasury.settle_tribute(declaration_id, ADMIN).ok_or("Automatic Remediation")?;
     assert_eq!(treasury.balance(), 1_500_000 - 100_000); // 500k * 20%
     assert_eq!(treasury.total_tribute_paid(), 100_000);
 }
@@ -650,27 +650,27 @@ fn test_tribute_router_initialization() {
 #[test]
 fn test_tribute_router_profit_declaration() {
     let mut router = TributeRouter::new();
-    router.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    router.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     let result = router.declare_profit(ADMIN, 1_000_000, None, "Q1 Profit".to_string());
 
     assert!(result.is_ok());
-    let settlement = router.get_settlement(result.unwrap()).unwrap();
+    let settlement = router.get_settlement(result.ok_or("Automatic Remediation")?).ok_or("Automatic Remediation")?;
     assert_eq!(settlement.tribute_amount, 200_000);
 }
 
 #[test]
 fn test_tribute_router_tribute_routing() {
     let mut router = TributeRouter::new();
-    router.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    router.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     let settlement_id = router
         .declare_profit(ADMIN, 1_000_000, None, "Profit".to_string())
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     let result = router.settle_tribute(settlement_id);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), 200_000);
+    assert_eq!(result.ok_or("Automatic Remediation")?, 200_000);
 
     assert!(router.is_tribute_settled(settlement_id));
     assert_eq!(router.total_tribute_collected(), 200_000);
@@ -679,22 +679,22 @@ fn test_tribute_router_tribute_routing() {
 #[test]
 fn test_tribute_router_multiple_profits() {
     let mut router = TributeRouter::new();
-    router.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    router.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     // Declare multiple profits
     router.set_current_timestamp(0);
     let id1 = router
         .declare_profit(ADMIN, 1_000_000, None, "Q1".to_string())
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Advance time to avoid anti-circumvention rule
     router.set_current_timestamp(86400 + 1);
     let id2 = router
         .declare_profit(ADMIN, 500_000, None, "Q2".to_string())
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
-    router.settle_tribute(id1).unwrap();
-    router.settle_tribute(id2).unwrap();
+    router.settle_tribute(id1).ok_or("Automatic Remediation")?;
+    router.settle_tribute(id2).ok_or("Automatic Remediation")?;
 
     assert_eq!(router.total_profit_declared(), 1_500_000);
     assert_eq!(router.total_tribute_collected(), 300_000); // 20% of 1.5M
@@ -703,7 +703,7 @@ fn test_tribute_router_multiple_profits() {
 #[test]
 fn test_tribute_router_zero_profit_rejected() {
     let mut router = TributeRouter::new();
-    router.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    router.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     let result = router.declare_profit(ADMIN, 0, None, "No Profit".to_string());
     assert_eq!(result, Err(TributeRouterError::ZeroProfit));
@@ -712,13 +712,13 @@ fn test_tribute_router_zero_profit_rejected() {
 #[test]
 fn test_tribute_router_anti_circumvention_min_interval() {
     let mut router = TributeRouter::new();
-    router.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    router.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
     router.set_current_timestamp(0);
 
     // First declaration at timestamp 0
     let _id1 = router
         .declare_profit(ADMIN, 1_000_000, None, "Profit 1".to_string())
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Try declaration before minimum interval (1 day)
     router.set_current_timestamp(43200); // 12 hours later
@@ -734,7 +734,7 @@ fn test_tribute_router_anti_circumvention_min_interval() {
 #[test]
 fn test_tribute_router_consistent_20_percent_calculation() {
     let mut router = TributeRouter::new();
-    router.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    router.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     // Test various profit amounts
     let test_cases = vec![
@@ -750,9 +750,9 @@ fn test_tribute_router_consistent_20_percent_calculation() {
 
         let settlement_id = router
             .declare_profit(ADMIN, *profit, None, format!("Test {}", i))
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
 
-        let settlement = router.get_settlement(settlement_id).unwrap();
+        let settlement = router.get_settlement(settlement_id).ok_or("Automatic Remediation")?;
         assert_eq!(
             settlement.tribute_amount, *expected_tribute,
             "Tribute calculation failed for profit {}",
@@ -769,29 +769,29 @@ fn test_tribute_router_consistent_20_percent_calculation() {
 fn test_week2_complete_flow() {
     // Initialize all contracts
     let mut governance = Governance::new();
-    governance.init(ADMIN).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
     governance.update_total_voting_power(TEST_TOTAL_VOTING_POWER);
     governance.set_current_timestamp(0);
 
     let mut nonprofit = NonprofitTreasury::new();
-    nonprofit.init(ADMIN, FOR_PROFIT_TREASURY).unwrap();
+    nonprofit.init(ADMIN, FOR_PROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     let mut forprofit = ForProfitTreasury::new();
-    forprofit.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    forprofit.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     let mut router = TributeRouter::new();
-    router.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    router.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     // 1. For-profit declares profit
-    let forprofit_declaration = forprofit.declare_profit(1_000_000, ADMIN, None).unwrap();
+    let forprofit_declaration = forprofit.declare_profit(1_000_000, ADMIN, None).ok_or("Automatic Remediation")?;
 
     // 2. Tribute is settled
     forprofit
         .settle_tribute(forprofit_declaration, ADMIN)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // 3. Simulate transfer of tribute to nonprofit (in real system, this is enforced by contract calls)
-    nonprofit.receive(FOR_PROFIT_TREASURY, 200_000).unwrap();
+    nonprofit.receive(FOR_PROFIT_TREASURY, 200_000).ok_or("Automatic Remediation")?;
 
     // 4. Create governance proposal to spend nonprofit funds
     let proposal_id = governance
@@ -802,23 +802,23 @@ fn test_week2_complete_flow() {
             ProposalCategory::Regular,
             MIN_VOTING_POWER_FOR_PROPOSAL,
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // 5. Vote on proposal (>50% of TEST_TOTAL_VOTING_POWER to meet quorum)
     governance
         .vote(proposal_id, VOTER1, VoteType::For, 600_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // 6. Finalize voting
     governance.set_current_timestamp(VOTING_PERIOD_SECONDS + 1);
-    governance.finalize_voting(proposal_id).unwrap();
+    governance.finalize_voting(proposal_id).ok_or("Automatic Remediation")?;
 
     // 7. Request withdrawal from nonprofit (after proposal approval)
     let withdrawal = nonprofit
         .request_withdrawal(ADMIN, 100_000, proposal_id)
-        .unwrap();
-    nonprofit.approve_withdrawal(withdrawal, ADMIN).unwrap();
-    nonprofit.execute_withdrawal(withdrawal, ADMIN).unwrap();
+        .ok_or("Automatic Remediation")?;
+    nonprofit.approve_withdrawal(withdrawal, ADMIN).ok_or("Automatic Remediation")?;
+    nonprofit.execute_withdrawal(withdrawal, ADMIN).ok_or("Automatic Remediation")?;
 
     // Verify final state
     assert_eq!(nonprofit.balance(), 100_000); // 200k received - 100k withdrawn
@@ -826,7 +826,7 @@ fn test_week2_complete_flow() {
     assert_eq!(forprofit.total_tribute_paid(), 200_000);
     assert_eq!(router.total_tribute_collected(), 0); // Router is separate layer
     assert_eq!(
-        governance.get_proposal(proposal_id).unwrap().status,
+        governance.get_proposal(proposal_id).ok_or("Automatic Remediation")?.status,
         ProposalStatus::Approved
     );
 }
@@ -855,10 +855,10 @@ fn test_week2_all_contracts_initialized() {
     assert!(!forprofit.is_initialized());
     assert!(!router.is_initialized());
 
-    governance.init(ADMIN).unwrap();
-    nonprofit.init(ADMIN, FOR_PROFIT_TREASURY).unwrap();
-    forprofit.init(ADMIN, NONPROFIT_TREASURY).unwrap();
-    router.init(ADMIN, NONPROFIT_TREASURY).unwrap();
+    governance.init(ADMIN).ok_or("Automatic Remediation")?;
+    nonprofit.init(ADMIN, FOR_PROFIT_TREASURY).ok_or("Automatic Remediation")?;
+    forprofit.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
+    router.init(ADMIN, NONPROFIT_TREASURY).ok_or("Automatic Remediation")?;
 
     assert!(governance.is_initialized());
     assert!(nonprofit.is_initialized());

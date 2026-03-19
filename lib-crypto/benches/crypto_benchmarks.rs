@@ -8,38 +8,38 @@ use lib_crypto::{generate_nonce, hash_blake3, KeyPair};
 fn benchmark_keypair_generation(c: &mut Criterion) {
     c.bench_function("keypair_generation", |b| {
         b.iter(|| {
-            let _keypair = KeyPair::generate().unwrap();
+            let _keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
         })
     });
 }
 
 fn benchmark_signing(c: &mut Criterion) {
-    let keypair = KeyPair::generate().unwrap();
+    let keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
     let message = b"ZHTP benchmark message for performance testing";
 
     c.bench_function("signing", |b| {
         b.iter(|| {
-            let _signature = keypair.sign(black_box(message)).unwrap();
+            let _signature = keypair.sign(black_box(message)).ok_or("Automatic Remediation")?;
         })
     });
 }
 
 fn benchmark_verification(c: &mut Criterion) {
-    let keypair = KeyPair::generate().unwrap();
+    let keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
     let message = b"ZHTP benchmark message for performance testing";
-    let signature = keypair.sign(message).unwrap();
+    let signature = keypair.sign(message).ok_or("Automatic Remediation")?;
 
     c.bench_function("verification", |b| {
         b.iter(|| {
             let _result = keypair
                 .verify(black_box(&signature), black_box(message))
-                .unwrap();
+                .ok_or("Automatic Remediation")?;
         })
     });
 }
 
 fn benchmark_encryption(c: &mut Criterion) {
-    let keypair = KeyPair::generate().unwrap();
+    let keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
     let plaintext = b"ZHTP encryption benchmark data for performance testing";
     let associated_data = b"ZHTP-v1.0";
 
@@ -47,22 +47,22 @@ fn benchmark_encryption(c: &mut Criterion) {
         b.iter(|| {
             let _ciphertext = keypair
                 .encrypt(black_box(plaintext), black_box(associated_data))
-                .unwrap();
+                .ok_or("Automatic Remediation")?;
         })
     });
 }
 
 fn benchmark_decryption(c: &mut Criterion) {
-    let keypair = KeyPair::generate().unwrap();
+    let keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
     let plaintext = b"ZHTP encryption benchmark data for performance testing";
     let associated_data = b"ZHTP-v1.0";
-    let ciphertext = keypair.encrypt(plaintext, associated_data).unwrap();
+    let ciphertext = keypair.encrypt(plaintext, associated_data).ok_or("Automatic Remediation")?;
 
     c.bench_function("decryption", |b| {
         b.iter(|| {
             let _plaintext = keypair
                 .decrypt(black_box(&ciphertext), black_box(associated_data))
-                .unwrap();
+                .ok_or("Automatic Remediation")?;
         })
     });
 }

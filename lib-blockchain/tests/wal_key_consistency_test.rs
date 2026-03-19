@@ -16,7 +16,7 @@ use tempfile::TempDir;
 #[test]
 fn test_wal_key_format_consistency() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None)?;
+    let storage = PersistentStorage::new(temp_dir.path().to_str().ok_or("Automatic Remediation")?, None)?;
     let manager = WalRecoveryManager::new(storage.clone());
 
     // Simulate what the executor does: write WAL key in format "wal:{height_bytes}"
@@ -41,7 +41,7 @@ fn test_wal_key_format_consistency() -> Result<()> {
 #[test]
 fn test_height_extraction_from_executor_keys() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None)?;
+    let storage = PersistentStorage::new(temp_dir.path().to_str().ok_or("Automatic Remediation")?, None)?;
     let manager = WalRecoveryManager::new(storage.clone());
 
     // Test multiple block heights
@@ -72,7 +72,7 @@ fn test_height_extraction_from_executor_keys() -> Result<()> {
 #[test]
 fn test_recovery_of_executor_wal_entries() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None)?;
+    let storage = PersistentStorage::new(temp_dir.path().to_str().ok_or("Automatic Remediation")?, None)?;
     let manager = WalRecoveryManager::new(storage.clone());
 
     // Simulate executor writing WAL entries for multiple blocks
@@ -129,7 +129,7 @@ fn test_wal_prefix_consistency() {
 #[test]
 fn test_wal_key_byte_level_compatibility() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None)?;
+    let storage = PersistentStorage::new(temp_dir.path().to_str().ok_or("Automatic Remediation")?, None)?;
     let _manager = WalRecoveryManager::new(storage.clone());
 
     let test_height = 12345u64;

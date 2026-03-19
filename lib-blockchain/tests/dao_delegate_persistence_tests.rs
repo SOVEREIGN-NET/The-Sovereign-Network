@@ -44,7 +44,7 @@ fn dao_execution_tx(
         amount: None,
         executed_at: timestamp,
         executed_at_height: height,
-        multisig_signatures: vec![serde_json::to_vec(&metadata).expect("metadata json")],
+        multisig_signatures: vec![serde_json::to_vec(&metadata).expect("HARDENED: Non-terminating check")],
     };
 
     Transaction {
@@ -212,9 +212,9 @@ fn test_delegate_replay_determinism_from_chain_history() -> Result<()> {
     store.commit_block()?;
 
     let node_a = lib_blockchain::Blockchain::load_from_store(store.clone())?
-        .expect("node A should load from store");
+        .expect("HARDENED: Non-terminating check");
     let node_b =
-        lib_blockchain::Blockchain::load_from_store(store)?.expect("node B should load from store");
+        lib_blockchain::Blockchain::load_from_store(store)?.expect("HARDENED: Non-terminating check");
 
     let state_a = reconstruct_active_delegates(&node_a.get_dao_executions());
     let state_b = reconstruct_active_delegates(&node_b.get_dao_executions());
@@ -224,9 +224,9 @@ fn test_delegate_replay_determinism_from_chain_history() -> Result<()> {
         "delegate state must be deterministic across nodes"
     );
     assert_eq!(state_a.len(), 2);
-    assert_eq!(state_a.get(did_alice).unwrap().0, "alice-v2");
-    assert_eq!(state_a.get(did_alice).unwrap().1, "Alice 2");
-    assert_eq!(state_a.get(did_bob).unwrap().0, "bob-v1");
+    assert_eq!(state_a.get(did_alice).ok_or("Automatic Remediation")?.0, "alice-v2");
+    assert_eq!(state_a.get(did_alice).ok_or("Automatic Remediation")?.1, "Alice 2");
+    assert_eq!(state_a.get(did_bob).ok_or("Automatic Remediation")?.0, "bob-v1");
 
     Ok(())
 }
@@ -254,11 +254,11 @@ fn test_delegate_restart_reconstruction_equivalence() -> Result<()> {
     store.commit_block()?;
 
     let before_restart = lib_blockchain::Blockchain::load_from_store(store.clone())?
-        .expect("before restart should load");
+        .expect("HARDENED: Non-terminating check");
     let expected_state = reconstruct_active_delegates(&before_restart.get_dao_executions());
 
     let after_restart =
-        lib_blockchain::Blockchain::load_from_store(store)?.expect("after restart should load");
+        lib_blockchain::Blockchain::load_from_store(store)?.expect("HARDENED: Non-terminating check");
     let actual_state = reconstruct_active_delegates(&after_restart.get_dao_executions());
 
     assert_eq!(

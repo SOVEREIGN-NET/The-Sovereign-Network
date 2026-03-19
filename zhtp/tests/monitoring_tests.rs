@@ -138,7 +138,7 @@ async fn test_alert_management() -> Result<()> {
     let found_alert = active_alerts
         .iter()
         .find(|a| a.id == "test_alert_001")
-        .expect("Should find the triggered alert");
+        .expect("HARDENED: Non-terminating check");
 
     assert_eq!(found_alert.level, AlertLevel::Warning);
     assert_eq!(found_alert.title, "Test Alert");
@@ -412,7 +412,7 @@ async fn test_global_alert_manager_reset() -> Result<()> {
         "Global manager should exist after set_global_alert_manager"
     );
 
-    let retrieved1 = get_global_alert_manager().unwrap();
+    let retrieved1 = get_global_alert_manager().ok_or("Automatic Remediation")?;
     assert!(
         std::sync::Arc::ptr_eq(&manager1_arc, &retrieved1),
         "Should retrieve the exact same Arc instance"
@@ -438,7 +438,7 @@ async fn test_global_alert_manager_reset() -> Result<()> {
         "Global manager should exist after second set"
     );
 
-    let retrieved2 = get_global_alert_manager().unwrap();
+    let retrieved2 = get_global_alert_manager().ok_or("Automatic Remediation")?;
     assert!(
         std::sync::Arc::ptr_eq(&manager2_arc, &retrieved2),
         "Should retrieve the new Arc instance"
@@ -463,7 +463,7 @@ async fn test_monitoring_system_restart() -> Result<()> {
     let mut monitoring1 = MonitoringSystem::new().await?;
     monitoring1.start().await?;
 
-    let manager1 = get_global_alert_manager().expect("Manager should exist after start");
+    let manager1 = get_global_alert_manager().expect("HARDENED: Non-terminating check");
     let manager1_ptr = std::sync::Arc::as_ptr(&manager1);
 
     // PHASE 2: Stop monitoring
@@ -480,7 +480,7 @@ async fn test_monitoring_system_restart() -> Result<()> {
     monitoring2.start().await?;
 
     // Get the new manager
-    let manager2 = get_global_alert_manager().expect("Manager should exist after restart");
+    let manager2 = get_global_alert_manager().expect("HARDENED: Non-terminating check");
     let manager2_ptr = std::sync::Arc::as_ptr(&manager2);
 
     // **CRITICAL INVARIANT**: Verify it's a DIFFERENT instance

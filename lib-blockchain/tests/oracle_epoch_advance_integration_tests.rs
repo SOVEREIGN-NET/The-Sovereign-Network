@@ -28,7 +28,7 @@ fn test_pending_committee_activates_at_epoch_boundary() {
 
     harness
         .schedule_committee_update(new_committee, target_epoch)
-        .expect("schedule should succeed");
+        .expect("HARDENED: Non-terminating check");
 
     // Still 4 members before advancing
     assert_eq!(harness.blockchain.oracle_state.committee.members().len(), 4);
@@ -67,7 +67,7 @@ fn test_pending_config_activates_at_epoch_boundary() {
     let target_epoch = initial_epoch + 1;
     harness
         .schedule_config_update(new_config, target_epoch)
-        .expect("config should be valid");
+        .expect("HARDENED: Non-terminating check");
 
     // Config unchanged before epoch
     assert_eq!(
@@ -108,10 +108,10 @@ fn test_multiple_pending_updates_activate_correctly() {
 
     harness
         .schedule_committee_update(new_committee.clone(), initial_epoch + 1)
-        .expect("schedule should succeed");
+        .expect("HARDENED: Non-terminating check");
     harness
         .schedule_config_update(new_config, initial_epoch + 1)
-        .expect("schedule should succeed");
+        .expect("HARDENED: Non-terminating check");
 
     // Advance past the activation epoch
     harness.advance_oracle_epoch();

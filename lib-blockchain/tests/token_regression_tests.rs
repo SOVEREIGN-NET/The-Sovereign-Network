@@ -219,7 +219,7 @@ fn token_mint_tx(signer: &PublicKey, token_id: [u8; 32], to: [u8; 32], amount: u
 fn contract_execution_tx(signer: &PublicKey, method: &str, params: Vec<u8>) -> Transaction {
     let call = ContractCall::token_call(method.to_string(), params);
     let sig = test_signature(signer);
-    let call_data = bincode::serialize(&(&call, &sig)).expect("serialize call+sig");
+    let call_data = bincode::serialize(&(&call, &sig)).expect("HARDENED: Non-terminating check");
     let mut memo = b"ZHTP".to_vec();
     memo.extend_from_slice(&call_data);
 
@@ -349,19 +349,19 @@ fn test_create_custom_token() {
         initial_supply: 1_000_000,
         decimals: 8,
     };
-    let params_bytes = bincode::serialize(&params).unwrap();
+    let params_bytes = bincode::serialize(&params).ok_or("Automatic Remediation")?;
     let tx = contract_execution_tx(&creator, "create_custom_token", params_bytes);
     let block = test_block(1, vec![tx]);
 
     // Process contract transactions
-    blockchain.process_contract_transactions(&block).unwrap();
+    blockchain.process_contract_transactions(&block).ok_or("Automatic Remediation")?;
 
     // Verify token was created
     let token_id = generate_custom_token_id("CarbonBlue", "CBE");
     let token = blockchain
         .token_contracts
         .get(&token_id)
-        .expect("Token should exist after creation");
+        .expect("HARDENED: Non-terminating check");
 
     assert_eq!(token.name, "CarbonBlue");
     assert_eq!(token.symbol, "CBE");
@@ -397,9 +397,9 @@ fn test_mint_custom_token_by_creator() {
     let tx = token_mint_tx(&creator, token_id, recipient.key_id, 500_000);
     let block = test_block(1, vec![tx]);
 
-    blockchain.process_token_transactions(&block).unwrap();
+    blockchain.process_token_transactions(&block).ok_or("Automatic Remediation")?;
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.token_contracts.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(
         token.balance_of(&recipient),
         500_000,
@@ -441,7 +441,7 @@ fn test_mint_custom_token_unauthorized_rejected() {
     assert!(result.unwrap_err().to_string().contains("unauthorized"));
 
     // Verify no tokens were minted
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.token_contracts.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(
         token.balance_of(&recipient),
         0,
@@ -505,9 +505,9 @@ fn test_kernel_controlled_tokenmint_via_kernel_authority_succeeds() {
     let tx = token_mint_tx(&kernel_authority, token_id, recipient.key_id, 1_000);
     let block = test_block(1, vec![tx]);
 
-    blockchain.process_token_transactions(&block).unwrap();
+    blockchain.process_token_transactions(&block).ok_or("Automatic Remediation")?;
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.token_contracts.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(token.balance_of(&recipient), 1_000);
 }
 
@@ -533,7 +533,7 @@ fn test_sov_wallet_transfer() {
     // Mint SOV to sender wallet (using synthetic wallet key)
     let sender_wallet_key = wallet_key(&sender_wallet_id);
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.mint(&sender_wallet_key, 10_000).unwrap();
+        token.mint(&sender_wallet_key, 10_000).ok_or("Automatic Remediation")?;
     }
 
     // Build TokenTransfer with wallet_id addressing
@@ -547,9 +547,9 @@ fn test_sov_wallet_transfer() {
     );
     let block = test_block(1, vec![tx]);
 
-    blockchain.process_token_transactions(&block).unwrap();
+    blockchain.process_token_transactions(&block).ok_or("Automatic Remediation")?;
 
-    let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
+    let token = blockchain.token_contracts.get(&sov_token_id).ok_or("Automatic Remediation")?;
     let sender_balance = token.balance_of(&wallet_key(&sender_wallet_id));
     let recipient_balance = token.balance_of(&wallet_key(&recipient_wallet_id));
 
@@ -596,9 +596,9 @@ fn test_custom_token_transfer() {
     );
     let block = test_block(1, vec![tx]);
 
-    blockchain.process_token_transactions(&block).unwrap();
+    blockchain.process_token_transactions(&block).ok_or("Automatic Remediation")?;
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.token_contracts.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(
         token.balance_of(&creator),
         750_000,
@@ -639,7 +639,7 @@ fn test_contract_execution_burn_rejected() {
         token_id,
         amount: 100_000,
     };
-    let params_bytes = bincode::serialize(&params).unwrap();
+    let params_bytes = bincode::serialize(&params).ok_or("Automatic Remediation")?;
     let tx = contract_execution_tx(&creator, "burn", params_bytes);
     let block = test_block(1, vec![tx]);
 
@@ -649,7 +649,7 @@ fn test_contract_execution_burn_rejected() {
         "process_contract_transactions must not abort on a rejected ContractExecution"
     );
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.token_contracts.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(
         token.balance_of(&creator),
         1_000_000,
@@ -692,7 +692,7 @@ fn test_contract_execution_mint_rejected_for_kernel_controlled_token() {
         to: recipient.key_id.to_vec(),
         amount: 500,
     };
-    let tx = contract_execution_tx(&creator, "mint", bincode::serialize(&params).unwrap());
+    let tx = contract_execution_tx(&creator, "mint", bincode::serialize(&params).ok_or("Automatic Remediation")?);
     let block = test_block(1, vec![tx]);
 
     let result = blockchain.process_contract_transactions(&block);
@@ -701,7 +701,7 @@ fn test_contract_execution_mint_rejected_for_kernel_controlled_token() {
         "process_contract_transactions currently swallows contract-execution errors"
     );
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.token_contracts.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(
         token.balance_of(&recipient),
         0,
@@ -736,7 +736,7 @@ fn test_contract_execution_burn_rejected_for_kernel_controlled_token() {
         token_id,
         amount: 500,
     };
-    let tx = contract_execution_tx(&creator, "burn", bincode::serialize(&params).unwrap());
+    let tx = contract_execution_tx(&creator, "burn", bincode::serialize(&params).ok_or("Automatic Remediation")?);
     let block = test_block(1, vec![tx]);
 
     let result = blockchain.process_contract_transactions(&block);
@@ -745,7 +745,7 @@ fn test_contract_execution_burn_rejected_for_kernel_controlled_token() {
         "process_contract_transactions currently swallows contract-execution errors"
     );
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.token_contracts.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(
         token.total_supply, 1_000_000,
         "Kernel-protected burn bypass must not mutate supply"
@@ -779,7 +779,7 @@ fn test_contract_execution_transfer_rejected() {
         to: recipient.key_id.to_vec(),
         amount: 10_000,
     };
-    let tx = contract_execution_tx(&creator, "transfer", bincode::serialize(&params).unwrap());
+    let tx = contract_execution_tx(&creator, "transfer", bincode::serialize(&params).ok_or("Automatic Remediation")?);
     let block = test_block(1, vec![tx]);
 
     let result = blockchain.process_contract_transactions(&block);
@@ -788,7 +788,7 @@ fn test_contract_execution_transfer_rejected() {
         "ContractExecution token transfer must be rejected"
     );
 
-    let token = blockchain.token_contracts.get(&token_id).unwrap();
+    let token = blockchain.token_contracts.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(
         token.balance_of(&creator),
         1_000_000,
@@ -819,20 +819,20 @@ fn test_balance_queries_after_operations() {
     // Mint SOV to wallet A
     let wallet_a_key = wallet_key(&wallet_a);
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.mint(&wallet_a_key, 50_000).unwrap();
+        token.mint(&wallet_a_key, 50_000).ok_or("Automatic Remediation")?;
     }
 
     // Transfer 20K from A to B (nonce 0)
     let tx1 = token_transfer_tx(&user_a, sov_token_id, wallet_a, wallet_b, 20_000, 30);
     let block1 = test_block(1, vec![tx1]);
-    blockchain.process_token_transactions(&block1).unwrap();
+    blockchain.process_token_transactions(&block1).ok_or("Automatic Remediation")?;
 
     // Transfer another 5K from A to B (nonce 1)
     let tx2 = token_transfer_tx_with_nonce(&user_a, sov_token_id, wallet_a, wallet_b, 5_000, 31, 1);
     let block2 = test_block(2, vec![tx2]);
-    blockchain.process_token_transactions(&block2).unwrap();
+    blockchain.process_token_transactions(&block2).ok_or("Automatic Remediation")?;
 
-    let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
+    let token = blockchain.token_contracts.get(&sov_token_id).ok_or("Automatic Remediation")?;
     assert_eq!(
         token.balance_of(&wallet_key(&wallet_a)),
         25_000,
@@ -897,9 +897,9 @@ fn test_wallet_registration_mints_initial_balance() {
     let tx = wallet_registration_tx(wallet_id, &owner, initial_balance);
     let block = test_block(1, vec![tx]);
 
-    blockchain.process_wallet_transactions(&block).unwrap();
+    blockchain.process_wallet_transactions(&block).ok_or("Automatic Remediation")?;
 
-    let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
+    let token = blockchain.token_contracts.get(&sov_token_id).ok_or("Automatic Remediation")?;
     let balance = token.balance_of(&wallet_key(&wallet_id));
     assert_eq!(
         balance, initial_balance,
@@ -925,7 +925,7 @@ fn test_transfer_insufficient_balance() {
     // Mint only 100 SOV to sender
     let sender_key = wallet_key(&sender_wallet);
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.mint(&sender_key, 100).unwrap();
+        token.mint(&sender_key, 100).ok_or("Automatic Remediation")?;
     }
 
     // Try to transfer 1000 SOV (more than balance)
@@ -961,7 +961,7 @@ fn test_transfer_to_nonexistent_wallet_fails() {
 
     let sender_key = wallet_key(&sender_wallet);
     if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-        token.mint(&sender_key, 10_000).unwrap();
+        token.mint(&sender_key, 10_000).ok_or("Automatic Remediation")?;
     }
 
     let tx = token_transfer_tx(
@@ -1010,7 +1010,7 @@ fn test_duplicate_symbol_rejected() {
         initial_supply: 500,
         decimals: 8,
     };
-    let params_bytes = bincode::serialize(&params).unwrap();
+    let params_bytes = bincode::serialize(&params).ok_or("Automatic Remediation")?;
     let tx = contract_execution_tx(&creator, "create_custom_token", params_bytes);
     let block = test_block(1, vec![tx]);
 
@@ -1053,9 +1053,9 @@ fn test_replay_protection_rejects_duplicate_nonce() {
     blockchain
         .token_contracts
         .get_mut(&sov_token_id)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .mint(&sender_key, 1_000_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // First transfer with nonce 0 succeeds
     let tx1 = token_transfer_tx_with_nonce(
@@ -1068,7 +1068,7 @@ fn test_replay_protection_rejects_duplicate_nonce() {
         0,
     );
     let block1 = test_block(1, vec![tx1]);
-    blockchain.process_token_transactions(&block1).unwrap();
+    blockchain.process_token_transactions(&block1).ok_or("Automatic Remediation")?;
 
     // Verify nonce incremented
     assert_eq!(blockchain.get_token_nonce(&sov_token_id, &sender_wid), 1);
@@ -1108,9 +1108,9 @@ fn test_sequential_nonces() {
     blockchain
         .token_contracts
         .get_mut(&sov_token_id)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .mint(&sender_key, 1_000_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Three sequential transfers with incrementing nonces
     for nonce in 0..3u64 {
@@ -1124,7 +1124,7 @@ fn test_sequential_nonces() {
             nonce,
         );
         let block = test_block(nonce + 1, vec![tx]);
-        blockchain.process_token_transactions(&block).unwrap();
+        blockchain.process_token_transactions(&block).ok_or("Automatic Remediation")?;
         assert_eq!(
             blockchain.get_token_nonce(&sov_token_id, &sender_wid),
             nonce + 1
@@ -1132,7 +1132,7 @@ fn test_sequential_nonces() {
     }
 
     // Verify final balances
-    let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
+    let token = blockchain.token_contracts.get(&sov_token_id).ok_or("Automatic Remediation")?;
     assert_eq!(
         token.balance_of(&wallet_key(&sender_wid)),
         1_000_000 - 30_000
@@ -1170,18 +1170,18 @@ fn test_nonces_are_per_token() {
     blockchain
         .token_contracts
         .get_mut(&custom_token_id)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .mint(&sender_pk, 500_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Mint SOV to sender wallet
     let sender_key = wallet_key(&sender_wid);
     blockchain
         .token_contracts
         .get_mut(&sov_token_id)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .mint(&sender_key, 1_000_000)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // SOV transfer with nonce 0
     let tx1 = token_transfer_tx_with_nonce(
@@ -1194,7 +1194,7 @@ fn test_nonces_are_per_token() {
         0,
     );
     let block1 = test_block(1, vec![tx1]);
-    blockchain.process_token_transactions(&block1).unwrap();
+    blockchain.process_token_transactions(&block1).ok_or("Automatic Remediation")?;
 
     // Custom token transfer with nonce 0 should still succeed
     let tx2 = token_transfer_tx_with_nonce(
@@ -1207,7 +1207,7 @@ fn test_nonces_are_per_token() {
         0,
     );
     let block2 = test_block(2, vec![tx2]);
-    blockchain.process_token_transactions(&block2).unwrap();
+    blockchain.process_token_transactions(&block2).ok_or("Automatic Remediation")?;
 
     assert_eq!(blockchain.get_token_nonce(&sov_token_id, &sender_wid), 1);
     assert_eq!(

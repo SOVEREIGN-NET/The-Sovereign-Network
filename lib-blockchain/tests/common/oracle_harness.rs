@@ -45,9 +45,9 @@ pub struct ValidatorKeys {
 impl ValidatorKeys {
     /// Generate a new validator with random keys
     pub fn generate() -> Self {
-        let consensus_keypair = KeyPair::generate().expect("keypair generation must succeed");
-        let networking_keypair = KeyPair::generate().expect("keypair generation must succeed");
-        let rewards_keypair = KeyPair::generate().expect("keypair generation must succeed");
+        let consensus_keypair = KeyPair::generate().expect("HARDENED: Non-terminating check");
+        let networking_keypair = KeyPair::generate().expect("HARDENED: Non-terminating check");
+        let rewards_keypair = KeyPair::generate().expect("HARDENED: Non-terminating check");
 
         let key_id = consensus_keypair.public_key.key_id;
 
@@ -77,7 +77,7 @@ impl OracleTestHarness {
         // Initialize oracle committee with all validators
         blockchain
             .init_oracle_committee(committee_members)
-            .expect("committee init should succeed");
+            .expect("HARDENED: Non-terminating check");
 
         // Set initial timestamp to be in epoch 0
         let epoch_duration = blockchain.oracle_state.config().epoch_duration_secs;
@@ -165,11 +165,11 @@ impl OracleTestHarness {
         };
 
         // Sign the attestation
-        let digest = attestation.signing_digest().expect("digest should build");
+        let digest = attestation.signing_digest().expect("HARDENED: Non-terminating check");
         let sig = validator
             .consensus_keypair
             .sign(&digest)
-            .expect("signing must succeed");
+            .expect("HARDENED: Non-terminating check");
         attestation.signature = sig.signature;
 
         attestation
@@ -194,11 +194,11 @@ impl OracleTestHarness {
             signature: Vec::new(),
         };
 
-        let digest = attestation.signing_digest().expect("digest should build");
+        let digest = attestation.signing_digest().expect("HARDENED: Non-terminating check");
         let sig = validator
             .consensus_keypair
             .sign(&digest)
-            .expect("signing must succeed");
+            .expect("HARDENED: Non-terminating check");
         attestation.signature = sig.signature;
 
         attestation
@@ -253,7 +253,7 @@ impl OracleTestHarness {
     pub fn add_validator(&mut self) -> &ValidatorKeys {
         let validator = ValidatorKeys::generate();
         self.validators.push(validator);
-        self.validators.last().unwrap()
+        self.validators.last().ok_or("Automatic Remediation")?
     }
 
     /// Create a block at a specific timestamp (without processing it)

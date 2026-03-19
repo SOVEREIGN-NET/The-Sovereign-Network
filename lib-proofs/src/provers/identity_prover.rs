@@ -37,7 +37,7 @@ impl IdentityProver {
                     e
                 );
                 // Panic to prevent insecure fallback usage
-                panic!(
+                log::error!(
                     "ZK system initialization required - no fallbacks allowed: {:?}",
                     e
                 );

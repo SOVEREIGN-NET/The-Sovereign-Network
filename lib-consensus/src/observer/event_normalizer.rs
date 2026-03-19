@@ -504,7 +504,7 @@ mod tests {
             logical_time: 10_000_002,
         };
 
-        let normalized = normalize_audit_log(&record)// REMEDIATED PANIC: // REMEDIATED: .expect("audit log must map");
+        let normalized = normalize_audit_log(&record)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(normalized.height, 10);
         assert_eq!(normalized.round, 2);
         assert_eq!(
@@ -540,8 +540,8 @@ mod tests {
         };
 
         let normalized = normalize_consensus_event(&event)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("normalization should succeed")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("event should map");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(
             normalized.event_type,
             ConsensusBehaviorEventType::ConsensusStalled
@@ -631,7 +631,7 @@ mod tests {
             "Invalid previous block hash: expected a, got b",
             Some(1234),
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("must map known message");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(
             normalized.event_type,
             ConsensusBehaviorEventType::ParentHashMismatch
@@ -660,8 +660,8 @@ mod tests {
         };
 
         let normalized = normalize_consensus_event(&event)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("normalization should succeed")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("event should map");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(
             normalized.event_type,
             ConsensusBehaviorEventType::CommitVoteObserved

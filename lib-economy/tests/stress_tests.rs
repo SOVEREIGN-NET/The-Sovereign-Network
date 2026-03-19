@@ -33,7 +33,7 @@ mod stress_tests {
                 _ => Priority::Urgent,
             };
 
-            let tx = Transaction::new_payment(from, to, amount, priority).unwrap();
+            let tx = Transaction::new_payment(from, to, amount, priority).ok_or("Automatic Remediation")?;
             total_fees += tx.total_fee;
             transactions.push(tx);
         }
@@ -69,7 +69,7 @@ mod stress_tests {
                 uptime_hours: ((i * 13) % 8760) as u64, // Up to 1 year
             };
 
-            let reward = TokenReward::calculate(&work, &model).unwrap();
+            let reward = TokenReward::calculate(&work, &model).ok_or("Automatic Remediation")?;
             total_rewards += reward.total_reward;
         }
 
@@ -92,7 +92,7 @@ mod stress_tests {
             let fee = ((i % 10000) + 1) as u64; // 1-10,000 tokens per transaction
             treasury
                 .apply_fee_distribution(calculate_dao_fee_distribution(fee))
-                .unwrap();
+                .ok_or("Automatic Remediation")?;
             total_fees_added += fee;
 
             // Periodically distribute UBI
@@ -105,7 +105,7 @@ mod stress_tests {
                     let timestamp = current_timestamp() + i as u64;
                     treasury
                         .record_ubi_distribution(total_distributed, timestamp)
-                        .unwrap();
+                        .ok_or("Automatic Remediation")?;
                 }
             }
         }
@@ -164,7 +164,7 @@ mod stress_tests {
                 cost_savings_provided: ((i % 50000) + 1000) as u64,
             };
 
-            let reward = InfrastructureRewards::calculate_isp_bypass(&work).unwrap();
+            let reward = InfrastructureRewards::calculate_isp_bypass(&work).ok_or("Automatic Remediation")?;
             total_rewards += reward.total_infrastructure_rewards;
             total_bandwidth_shared += work.bandwidth_shared_gb;
         }
@@ -205,11 +205,11 @@ mod stress_tests {
                             total_reward: (op % 450) as u64 + 1,
                             currency: "SOV".to_string(),
                         };
-                        wallets[wallet_idx].add_reward(&reward).unwrap();
+                        wallets[wallet_idx].add_reward(&reward).ok_or("Automatic Remediation")?;
                     }
                     1 => {
                         // Claim rewards
-                        wallets[wallet_idx].claim_rewards().unwrap();
+                        wallets[wallet_idx].claim_rewards().ok_or("Automatic Remediation")?;
                     }
                     2 => {
                         // Stake tokens (simulate by moving from available to staked)
@@ -273,7 +273,7 @@ mod stress_tests {
                 total_transactions: transactions,
             };
 
-            model.adjust_parameters(&stats).unwrap();
+            model.adjust_parameters(&stats).ok_or("Automatic Remediation")?;
 
             // Verify parameters remain reasonable
             assert!(model.base_routing_rate > 0);
@@ -284,7 +284,7 @@ mod stress_tests {
             let mint_amount = ((i % 10000) + 1) as u64;
             model
                 .mint_operational_tokens(mint_amount, "stress test")
-                .unwrap();
+                .ok_or("Automatic Remediation")?;
         }
 
         assert!(model.current_supply > 0);
@@ -306,7 +306,7 @@ mod stress_tests {
                     let operations_per_thread = 1_000;
 
                     for i in 0..operations_per_thread {
-                        let mut model = model_clone.lock().unwrap();
+                        let mut model = model_clone.lock().ok_or("Automatic Remediation")?;
 
                         // Different threads do different operations
                         match thread_id % 3 {
@@ -315,12 +315,12 @@ mod stress_tests {
                                 let amount = ((thread_id * 100 + i) % 10000 + 1) as u64;
                                 model
                                     .mint_operational_tokens(amount, "concurrent test")
-                                    .unwrap();
+                                    .ok_or("Automatic Remediation")?;
                             }
                             1 => {
                                 // Process DAO fees
                                 let fees = ((thread_id * 50 + i) % 5000 + 1) as u64;
-                                model.process_dao_fees(fees).unwrap();
+                                model.process_dao_fees(fees).ok_or("Automatic Remediation")?;
                             }
                             _ => {
                                 // Adjust parameters
@@ -331,7 +331,7 @@ mod stress_tests {
                                     total_nodes: 10000,
                                     total_transactions: 100000,
                                 };
-                                model.adjust_parameters(&stats).unwrap();
+                                model.adjust_parameters(&stats).ok_or("Automatic Remediation")?;
                             }
                         }
                     }
@@ -341,10 +341,10 @@ mod stress_tests {
 
         // Wait for all threads to complete
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().ok_or("Automatic Remediation")?;
         }
 
-        let final_model = model.lock().unwrap();
+        let final_model = model.lock().ok_or("Automatic Remediation")?;
         assert!(final_model.current_supply > 0);
         assert!(final_model.dao_treasury.treasury_balance > 0);
 
@@ -474,7 +474,7 @@ mod load_tests {
             let amount = (i % 10000 + 1) as u64;
             let priority = Priority::Normal;
 
-            let _tx = Transaction::new_payment(from, to, amount, priority).unwrap();
+            let _tx = Transaction::new_payment(from, to, amount, priority).ok_or("Automatic Remediation")?;
         }
 
         let duration = start.elapsed();
@@ -503,7 +503,7 @@ mod load_tests {
                 uptime_hours: (i % 8760) as u64,
             };
 
-            let _reward = TokenReward::calculate(&work, &model).unwrap();
+            let _reward = TokenReward::calculate(&work, &model).ok_or("Automatic Remediation")?;
         }
 
         let duration = start.elapsed();
@@ -535,14 +535,14 @@ mod load_tests {
                     let amount = (i % 10000 + 1) as u64;
                     model
                         .mint_operational_tokens(amount, "stability test")
-                        .unwrap();
+                        .ok_or("Automatic Remediation")?;
                 }
                 4..=6 => {
                     // Process fees
                     let fees = (i % 5000 + 1) as u64;
                     treasury
                         .apply_fee_distribution(calculate_dao_fee_distribution(fees))
-                        .unwrap();
+                        .ok_or("Automatic Remediation")?;
                 }
                 7..=8 => {
                     // Calculate rewards
@@ -553,7 +553,7 @@ mod load_tests {
                         quality_score: 0.75,
                         uptime_hours: (i % 720) as u64,
                     };
-                    let _reward = TokenReward::calculate(&work, &model).unwrap();
+                    let _reward = TokenReward::calculate(&work, &model).ok_or("Automatic Remediation")?;
                 }
                 _ => {
                     // Adjust parameters
@@ -563,7 +563,7 @@ mod load_tests {
                         total_nodes: 10000,
                         total_transactions: 50000,
                     };
-                    model.adjust_parameters(&stats).unwrap();
+                    model.adjust_parameters(&stats).ok_or("Automatic Remediation")?;
                 }
             }
         }

@@ -39,14 +39,14 @@ fn test_governance_phase_default_survives_round_trip() -> Result<()> {
 
 #[test]
 fn test_treasury_epoch_spend_default_is_empty() {
-    let bc = Blockchain::new().expect("genesis");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     assert!(bc.treasury_epoch_spend.is_empty());
     assert_eq!(bc.treasury_epoch_length_blocks, 10_080);
 }
 
 #[test]
 fn test_emergency_state_default_is_false() {
-    let bc = Blockchain::new().expect("genesis");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     assert!(!bc.emergency_state);
     assert!(bc.emergency_activated_at.is_none());
     assert!(bc.emergency_expires_at.is_none());
@@ -54,7 +54,7 @@ fn test_emergency_state_default_is_false() {
 
 #[test]
 fn test_emergency_activation_requires_threshold() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     bc.ensure_council_bootstrap(&council_config());
 
     // Only one signature — below threshold of 2
@@ -76,7 +76,7 @@ fn test_emergency_activation_requires_threshold() {
 
 #[test]
 fn test_emergency_activation_rejects_non_council_sigs() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     bc.ensure_council_bootstrap(&council_config());
 
     // Two signatures but from non-council members
@@ -99,7 +99,7 @@ fn test_emergency_auto_expire_in_block_processing() -> Result<()> {
     assert!(bc.emergency_state);
 
     // Simulate block advancement past expiry
-    let expiry = bc.emergency_expires_at.unwrap();
+    let expiry = bc.emergency_expires_at.ok_or("Automatic Remediation")?;
     bc.height = expiry;
     bc.process_approved_governance_proposals()?;
     assert!(!bc.emergency_state, "emergency should have expired");

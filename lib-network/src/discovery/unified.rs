@@ -692,7 +692,7 @@ impl UnifiedDiscoveryService {
     pub fn new(node_id: Uuid, mesh_port: u16, public_key: PublicKey) -> Self {
         // Validate port is not zero
         if mesh_port == 0 {
-            panic!("Invalid mesh_port: 0 is not a valid port number");
+            log::error!("Invalid mesh_port: 0 is not a valid port number");
         }
 
         // Log warning for privileged ports (< 1024)

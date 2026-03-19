@@ -22,7 +22,7 @@ mod tests {
         };
         
         let phrase = manager.generate_recovery_phrase("test_identity", options)
-            .await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to generate recovery phrase");
+            .await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         assert_eq!(phrase.words.len(), 12);
         assert_eq!(phrase.language, "english");
@@ -45,7 +45,7 @@ mod tests {
         };
         
         let validation = manager.validate_phrase(&valid_phrase)
-            .await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to validate phrase");
+            .await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         assert!(validation.valid);
         assert!(validation.word_count_valid);
@@ -63,7 +63,7 @@ mod tests {
         };
         
         let invalid_validation = manager.validate_phrase(&invalid_phrase)
-            .await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to validate phrase");
+            .await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         assert!(!invalid_validation.valid);
         assert!(!invalid_validation.word_count_valid);
@@ -86,14 +86,14 @@ mod tests {
         };
         
         let phrase = manager.generate_recovery_phrase("test_user", options)
-            .await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to generate phrase");
+            .await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         // Store phrase
         let phrase_id = manager.store_recovery_phrase(
             "test_user",
             &phrase,
             Some("additional_password"),
-        ).await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to store phrase");
+        ).await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         assert!(!phrase_id.is_empty());
         
@@ -101,7 +101,7 @@ mod tests {
         let recovered_identity = manager.recover_identity_with_phrase(
             &phrase.words,
             Some("additional_password"),
-        ).await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to recover identity");
+        ).await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         assert_eq!(recovered_identity, "test_user");
     }
@@ -113,7 +113,7 @@ mod tests {
         let key = manager
             .derive_encryption_key("id_kat", Some("auth"), &salt)
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("kdf");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let derived_hex = hex::encode(&key);
         // Deterministic KAT for Argon2id params (64 MiB, t=3, p=1)
         assert_eq!(
@@ -132,7 +132,7 @@ mod tests {
         let phrase_id = manager
             .store_recovery_phrase("tamper_user", &phrase, Some("auth"))
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("store");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Tamper with ciphertext
         if let Some(record) = manager.phrases.get_mut(&phrase_id) {
@@ -157,7 +157,7 @@ mod tests {
         let phrase_id = manager
             .store_recovery_phrase("tag_user", &phrase, Some("auth"))
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("store");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Tamper with tag
         if let Some(record) = manager.phrases.get_mut(&phrase_id) {
@@ -184,11 +184,11 @@ mod tests {
         let id1 = manager
             .store_recovery_phrase("nonce_user1", &phrase, Some("auth"))
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("store1");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let id2 = manager
             .store_recovery_phrase("nonce_user2", &phrase, Some("auth"))
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("store2");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let iv1 = manager.phrases.get(&id1).ok().iv.clone();
         let iv2 = manager.phrases.get(&id2).ok().iv.clone();
@@ -234,7 +234,7 @@ mod tests {
         let key = manager
             .derive_encryption_key(&legacy.identity_id, Some("auth"), &legacy.salt)
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("kdf");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         // Legacy XOR encrypt
         let mut enc = Vec::new();
         for (i, b) in phrase_text.as_bytes().iter().enumerate() {
@@ -271,7 +271,7 @@ mod tests {
         };
         
         let system_phrase = manager.generate_recovery_phrase("user1", system_options)
-            .await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed with system random");
+            .await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         // Test user provided entropy
         let user_entropy = vec![42u8; 32];
@@ -284,7 +284,7 @@ mod tests {
         };
         
         let user_phrase = manager.generate_recovery_phrase("user2", user_options)
-            .await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed with user entropy");
+            .await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         // Test combined entropy
         let combined_options = PhraseGenerationOptions {
@@ -299,7 +299,7 @@ mod tests {
         };
         
         let combined_phrase = manager.generate_recovery_phrase("user3", combined_options)
-            .await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed with combined entropy");
+            .await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         // All should be different
         assert_ne!(system_phrase.words, user_phrase.words);
@@ -325,7 +325,7 @@ mod tests {
             let phrase = manager.generate_recovery_phrase(
                 &format!("user_{}", language),
                 options
-            ).await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to generate phrase");
+            ).await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             
             assert_eq!(phrase.language, language);
             assert_eq!(phrase.words.len(), 12);
@@ -374,14 +374,14 @@ mod tests {
         };
         
         let phrase = manager.generate_recovery_phrase("secure_user", options)
-            .await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to generate phrase");
+            .await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         // Store with password
         let _phrase_id = manager.store_recovery_phrase(
             "secure_user",
             &phrase,
             Some("correct_password"),
-        ).await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to store phrase");
+        ).await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         // Try to recover with wrong password
         let recovery_result = manager.recover_identity_with_phrase(
@@ -408,13 +408,13 @@ mod tests {
         };
         
         let phrase = manager.generate_recovery_phrase("expiring_user", options)
-            .await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to generate phrase");
+            .await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         let _phrase_id = manager.store_recovery_phrase(
             "expiring_user",
             &phrase,
             None,
-        ).await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to store phrase");
+        ).await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         // Wait a moment and try to recover (should fail due to expiration)
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -458,7 +458,7 @@ mod tests {
         };
         
         let validation = manager.validate_phrase(&phrase_with_banned_words)
-            .await// REMEDIATED PANIC: // REMEDIATED: .expect("Validation should complete");
+            .await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         assert!(!validation.valid);
         assert_eq!(validation.banned_words_found.len(), 2);
@@ -493,7 +493,7 @@ mod tests {
         // Verify all succeeded and are unique
         let mut phrase_sets = std::collections::HashSet::new();
         for result in results {
-            let phrase = result// REMEDIATED PANIC: // REMEDIATED: .expect("Task failed")// REMEDIATED PANIC: // REMEDIATED: .expect("Phrase generation failed");
+            let phrase = result// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             assert!(phrase_sets.insert(phrase.words)); // Should be unique
         }
         

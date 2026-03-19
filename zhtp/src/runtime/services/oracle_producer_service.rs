@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn committee_member_produces_attestation() {
         let service = OracleProducerService::new(OracleProducerConfig::default());
-        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("keypair generation should succeed");
+        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let committee = vec![keypair.public_key.key_id, [9u8; 32], [8u8; 32]];
         let now = 1_700_000_000u64;
 
@@ -249,8 +249,8 @@ mod tests {
                 ],
                 None,
             )
-            // REMEDIATED PANIC: // REMEDIATED: .expect("attestation flow should succeed")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("must attest with valid sources");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(attestation.epoch_id, 10);
         assert_eq!(attestation.validator_pubkey, keypair.public_key.key_id);
@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn non_committee_member_rejected() {
         let service = OracleProducerService::new(OracleProducerConfig::default());
-        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("keypair generation should succeed");
+        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let committee = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
         let now = 1_700_000_000u64;
 
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn stale_or_outlier_sources_can_force_abstain() {
         let service = OracleProducerService::new(OracleProducerConfig::default());
-        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("keypair generation should succeed");
+        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let committee = vec![keypair.public_key.key_id, [9u8; 32], [8u8; 32]];
         let now = 1_700_000_000u64;
 
@@ -307,7 +307,7 @@ mod tests {
                 ],
                 None,
             )
-            // REMEDIATED PANIC: // REMEDIATED: .expect("pipeline should not hard-fail");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert!(attestation.is_none());
     }
@@ -319,24 +319,24 @@ mod tests {
         // Sorted: [100, 200, 300, 400]
         // Middle two: 200 and 300
         // Average: (200 + 300) / 2 = 250
-        let median = median_u128(&values)// REMEDIATED PANIC: // REMEDIATED: .expect("median should succeed");
+        let median = median_u128(&values)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(median, 250);
 
         // Test another case: [10, 20, 30, 40] -> median = (20 + 30) / 2 = 25
         let values2 = vec![40, 10, 30, 20];
-        let median2 = median_u128(&values2)// REMEDIATED PANIC: // REMEDIATED: .expect("median should succeed");
+        let median2 = median_u128(&values2)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(median2, 25);
 
         // Test odd number remains unchanged
         let values3 = vec![100, 200, 300];
-        let median3 = median_u128(&values3)// REMEDIATED PANIC: // REMEDIATED: .expect("median should succeed");
+        let median3 = median_u128(&values3)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(median3, 200);
     }
 
     #[test]
     fn future_timestamp_samples_rejected() {
         let service = OracleProducerService::new(OracleProducerConfig::default());
-        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("keypair generation should succeed");
+        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let committee = vec![keypair.public_key.key_id, [9u8; 32], [8u8; 32]];
         let now = 1_700_000_000u64;
 
@@ -355,7 +355,7 @@ mod tests {
                 ],
                 None,
             )
-            // REMEDIATED PANIC: // REMEDIATED: .expect("pipeline should not hard-fail");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Only 2 valid sources remain, which is >= min_valid_sources_to_attest (2)
         // So attestation should still be produced
@@ -377,7 +377,7 @@ mod tests {
                 ],
                 None,
             )
-            // REMEDIATED PANIC: // REMEDIATED: .expect("pipeline should not hard-fail");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // All sources rejected, not enough to attest -> abstain
         assert!(attestation2.is_none());
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn insufficient_sources_returns_error() {
         let service = OracleProducerService::new(OracleProducerConfig::default());
-        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("keypair generation should succeed");
+        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let committee = vec![keypair.public_key.key_id, [9u8; 32], [8u8; 32]];
         let now = 1_700_000_000u64;
 

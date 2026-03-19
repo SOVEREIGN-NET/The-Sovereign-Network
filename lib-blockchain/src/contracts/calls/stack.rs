@@ -61,7 +61,7 @@ impl CallStack {
     /// Panics if stack is empty (indicates protocol violation)
     pub fn pop(&mut self) {
         if self.chain.is_empty() {
-            panic!("CallStack::pop() called on empty stack - protocol violation");
+            log::error!("CallStack::pop() called on empty stack - protocol violation");
         }
 
         self.chain.pop();

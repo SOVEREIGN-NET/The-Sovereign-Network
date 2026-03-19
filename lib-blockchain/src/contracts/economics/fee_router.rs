@@ -121,10 +121,10 @@ impl FeeDistribution {
             .checked_add(dao_pool)
             .and_then(|sum| sum.checked_add(emergency_reserve))
             .and_then(|sum| sum.checked_add(dev_grants))
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Fee distribution overflow: allocated pools exceed u64 max");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let remainder = total_fees
             .checked_sub(distributed)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Fee distribution error: distributed exceeds total fees");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         Self {
             ubi_pool,

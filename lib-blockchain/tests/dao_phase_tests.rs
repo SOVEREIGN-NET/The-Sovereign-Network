@@ -41,7 +41,7 @@ fn test_phase_transition_config_defaults() {
 
 #[test]
 fn test_snapshot_citizen_count() {
-    let bc = Blockchain::new().expect("genesis");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     let snap = bc.compute_decentralization_snapshot();
     // Genesis may have some identities; just check it doesn't panic and is >= 0
     let _ = snap.verified_citizen_count;
@@ -50,7 +50,7 @@ fn test_snapshot_citizen_count() {
 
 #[test]
 fn test_snapshot_max_wallet_pct_bps_is_bounded() {
-    let bc = Blockchain::new().expect("genesis");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     let snap = bc.compute_decentralization_snapshot();
     // Basis points are 0..10_000; max_wallet_pct_bps must fit u16 (≤ 65535)
     assert!(snap.max_wallet_pct_bps <= 10_000 || snap.max_wallet_pct_bps == 0);
@@ -60,7 +60,7 @@ fn test_snapshot_max_wallet_pct_bps_is_bounded() {
 
 #[test]
 fn test_phase0_to_phase1_time_window_trigger() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     // Set a small duration so it triggers immediately at height 0
     bc.phase_transition_config.phase0_max_duration_blocks = Some(0);
 
@@ -72,7 +72,7 @@ fn test_phase0_to_phase1_time_window_trigger() {
 
 #[test]
 fn test_phase0_to_phase1_no_trigger_when_conditions_not_met() {
-    let bc = Blockchain::new().expect("genesis");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     // Default config: 10_000 citizens required; genesis has far fewer.
     // Also no time window set, so condition C is false.
     // Condition B (concentration) might still be false if there are large holders.
@@ -84,7 +84,7 @@ fn test_phase0_to_phase1_no_trigger_when_conditions_not_met() {
 
 #[test]
 fn test_try_advance_phase_bootstrap_to_hybrid_via_time() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     bc.ensure_council_bootstrap(&two_member_council());
     bc.phase_transition_config.phase0_max_duration_blocks = Some(0);
 
@@ -95,7 +95,7 @@ fn test_try_advance_phase_bootstrap_to_hybrid_via_time() {
 
 #[test]
 fn test_try_advance_phase_hybrid_to_fullDao_requires_all_conditions() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     bc.ensure_council_bootstrap(&two_member_council());
 
     // Advance to Hybrid first
@@ -115,7 +115,7 @@ fn test_try_advance_phase_hybrid_to_fullDao_requires_all_conditions() {
 
 #[test]
 fn test_full_dao_phase_is_terminal() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     bc.governance_phase = GovernancePhase::FullDao;
     bc.try_advance_governance_phase(); // should be a no-op
     assert_eq!(bc.governance_phase, GovernancePhase::FullDao);
@@ -156,7 +156,7 @@ fn test_decentralization_snapshot_persists() -> Result<()> {
 
     let saved = loaded
         .last_decentralization_snapshot
-        .expect("snapshot should persist");
+        .expect("HARDENED: Non-terminating check");
     assert_eq!(saved.snapshot_height, snap.snapshot_height);
     Ok(())
 }

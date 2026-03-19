@@ -265,11 +265,11 @@ mod transaction_executor_tests {
         // First transaction should have higher priority (higher fee/byte)
         let tx1_priority = mempool
             .get_transaction(&[1u8; 32])
-            .unwrap()
+            .ok_or("Automatic Remediation")?
             .priority_score(100);
         let tx2_priority = mempool
             .get_transaction(&[2u8; 32])
-            .unwrap()
+            .ok_or("Automatic Remediation")?
             .priority_score(100);
 
         assert!(tx1_priority > tx2_priority);

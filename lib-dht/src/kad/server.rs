@@ -91,7 +91,7 @@ impl Server {
                 let mut buf = [0u8; 65535];
                 let mut last_decay_time = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    // REMEDIATED PANIC: // REMEDIATED: .expect("Time went backwards")
+                    // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
                     .as_millis();
 
                 while running.load(Ordering::Relaxed) {
@@ -127,7 +127,7 @@ impl Server {
 
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        // REMEDIATED PANIC: // REMEDIATED: .expect("Time went backwards")
+                        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
                         .as_millis();
 
                     if now - last_decay_time >= 1000 {

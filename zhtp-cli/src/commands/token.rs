@@ -714,15 +714,15 @@ mod tests {
     #[test]
     fn test_build_signed_token_mint_tx_fields() {
         use lib_blockchain::types::TransactionType;
-        let keypair = lib_crypto::keypair::KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("keygen");
+        let keypair = lib_crypto::keypair::KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let token_id = [0x01u8; 32];
         let to = [0x02u8; 32];
         let amount = 1_000u64;
 
-        let tx = build_signed_token_mint_tx(&keypair, token_id, to, amount)// REMEDIATED PANIC: // REMEDIATED: .expect("build mint tx");
+        let tx = build_signed_token_mint_tx(&keypair, token_id, to, amount)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(tx.transaction_type, TransactionType::TokenMint);
-        let mint_data = tx.token_mint_data// REMEDIATED PANIC: // REMEDIATED: .expect("must have mint data");
+        let mint_data = tx.token_mint_data// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(mint_data.token_id, token_id);
         assert_eq!(mint_data.to, to);
         assert_eq!(mint_data.amount, amount as u128);
@@ -731,17 +731,17 @@ mod tests {
     #[test]
     fn test_build_signed_token_transfer_tx_fields() {
         use lib_blockchain::types::TransactionType;
-        let keypair = lib_crypto::keypair::KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("keygen");
+        let keypair = lib_crypto::keypair::KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let token_id = [0x01u8; 32];
         let to = [0x03u8; 32];
         let amount = 500u64;
         let nonce = 7u64;
 
         let tx = build_signed_token_transfer_tx(&keypair, token_id, to, amount, nonce)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("build transfer tx");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(tx.transaction_type, TransactionType::TokenTransfer);
-        let transfer_data = tx.token_transfer_data// REMEDIATED PANIC: // REMEDIATED: .expect("must have transfer data");
+        let transfer_data = tx.token_transfer_data// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(transfer_data.token_id, token_id);
         assert_eq!(transfer_data.from, keypair.public_key.key_id);
         assert_eq!(transfer_data.to, to);

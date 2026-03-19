@@ -48,12 +48,12 @@ fn create_funded_ubi(
     num_months: u64,
 ) -> UbiDistributor {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let total = (num_citizens as u64) * amount_per_citizen * num_months;
-    ubi.receive_funds(&gov, total).unwrap();
+    ubi.receive_funds(&gov, total).ok_or("Automatic Remediation")?;
     ubi.set_amount_range(&gov, 0, num_months - 1, amount_per_citizen)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     ubi
 }
@@ -81,7 +81,7 @@ fn test_get_monthly_ubi_returns_current_rate() {
 
 #[test]
 fn test_get_monthly_ubi_returns_zero_for_unset_month() {
-    let ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // No schedule set, should return 0
     let rate = ubi.get_monthly_ubi(0);
@@ -93,7 +93,7 @@ fn test_get_monthly_ubi_returns_zero_for_unset_month() {
 
 #[test]
 fn test_is_registered_returns_correct_status() {
-    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let citizen1 = test_citizen(100);
     let citizen2 = test_citizen(200);
@@ -101,7 +101,7 @@ fn test_is_registered_returns_correct_status() {
     assert!(!ubi.is_registered(&citizen1));
     assert!(!ubi.is_registered(&citizen2));
 
-    ubi.register(&citizen1).unwrap();
+    ubi.register(&citizen1).ok_or("Automatic Remediation")?;
 
     assert!(ubi.is_registered(&citizen1));
     assert!(!ubi.is_registered(&citizen2));
@@ -111,7 +111,7 @@ fn test_is_registered_returns_correct_status() {
 fn test_has_claimed_this_month_tracks_claims() {
     // This test would require claim_ubi to work, which needs token context
     // For now, test that has_claimed returns false for non-registered
-    let ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
     let citizen = test_citizen(100);
 
     let claimed = ubi.has_claimed_this_month(&citizen, 0);
@@ -121,7 +121,7 @@ fn test_has_claimed_this_month_tracks_claims() {
 #[test]
 fn test_initialize_ubi_pool_alias_works() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // initialize_ubi_pool is alias for receive_funds
     let result = ubi.initialize_ubi_pool(&gov, 100_000);
@@ -135,12 +135,12 @@ fn test_initialize_ubi_pool_alias_works() {
 
 #[test]
 fn test_register_100_citizens_sequentially() {
-    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let start = Instant::now();
     for i in 0..100 {
         let citizen = test_citizen(i);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
     let duration = start.elapsed();
 
@@ -166,7 +166,7 @@ fn test_double_claim_protection_100_citizens() {
     // Register 100 citizens
     for i in 0..100 {
         let citizen = test_citizen(i);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     assert_eq!(ubi.registered_count(), 100);
@@ -175,20 +175,20 @@ fn test_double_claim_protection_100_citizens() {
 #[test]
 fn test_100_citizens_across_3_months() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Configure 3 months with different amounts
-    ubi.set_month_amount(&gov, 0, 4_500).unwrap();
-    ubi.set_month_amount(&gov, 1, 4_500).unwrap();
-    ubi.set_month_amount(&gov, 2, 4_500).unwrap();
+    ubi.set_month_amount(&gov, 0, 4_500).ok_or("Automatic Remediation")?;
+    ubi.set_month_amount(&gov, 1, 4_500).ok_or("Automatic Remediation")?;
+    ubi.set_month_amount(&gov, 2, 4_500).ok_or("Automatic Remediation")?;
 
     // Fund for all
-    ubi.receive_funds(&gov, 100 * 4_500 * 3).unwrap();
+    ubi.receive_funds(&gov, 100 * 4_500 * 3).ok_or("Automatic Remediation")?;
 
     // Register 100 citizens
     for i in 0..100 {
         let citizen = test_citizen(i);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     // Verify amounts are set correctly
@@ -201,15 +201,15 @@ fn test_100_citizens_across_3_months() {
 fn test_100_citizens_year1_financial_accuracy() {
     // Year 1: 100 citizens × $0.45 = $45.00 per month
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
-    ubi.set_amount_range(&gov, 0, 11, 4_500).unwrap();
-    ubi.receive_funds(&gov, 100 * 4_500 * 12).unwrap();
+    ubi.set_amount_range(&gov, 0, 11, 4_500).ok_or("Automatic Remediation")?;
+    ubi.receive_funds(&gov, 100 * 4_500 * 12).ok_or("Automatic Remediation")?;
 
     // Register 100 citizens
     for i in 0..100 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     assert_eq!(ubi.registered_count(), 100);
@@ -231,13 +231,13 @@ fn test_100_citizens_year1_financial_accuracy() {
 #[test]
 fn test_100_citizens_balance_tracking() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     assert_eq!(ubi.balance(), 0);
     assert_eq!(ubi.total_received(), 0);
     assert_eq!(ubi.total_paid(), 0);
 
-    ubi.receive_funds(&gov, 100_000).unwrap();
+    ubi.receive_funds(&gov, 100_000).ok_or("Automatic Remediation")?;
 
     assert_eq!(ubi.balance(), 100_000);
     assert_eq!(ubi.total_received(), 100_000);
@@ -247,16 +247,16 @@ fn test_100_citizens_balance_tracking() {
 #[test]
 fn test_100_citizens_schedule_transitions() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Set Year 1
-    ubi.set_amount_range(&gov, 0, 11, 4_500).unwrap();
+    ubi.set_amount_range(&gov, 0, 11, 4_500).ok_or("Automatic Remediation")?;
 
     // Set Year 2
-    ubi.set_amount_range(&gov, 12, 23, 40_000).unwrap();
+    ubi.set_amount_range(&gov, 12, 23, 40_000).ok_or("Automatic Remediation")?;
 
     // Set Year 3
-    ubi.set_amount_range(&gov, 24, 35, 450_000).unwrap();
+    ubi.set_amount_range(&gov, 24, 35, 450_000).ok_or("Automatic Remediation")?;
 
     // Verify transitions
     assert_eq!(ubi.amount_for(11), 4_500); // Last month of Year 1
@@ -271,7 +271,7 @@ fn test_100_citizens_schedule_transitions() {
 
 #[test]
 fn test_register_10k_citizens() {
-    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let start = Instant::now();
 
@@ -291,15 +291,15 @@ fn test_register_10k_citizens() {
 fn test_10k_citizens_claim_year1() {
     // Year 1: 10K citizens × $0.45 = $4,500 per citizen monthly
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
-    ubi.set_amount_range(&gov, 0, 11, 4_500).unwrap();
-    ubi.receive_funds(&gov, 10_000 * 4_500 * 12).unwrap();
+    ubi.set_amount_range(&gov, 0, 11, 4_500).ok_or("Automatic Remediation")?;
+    ubi.receive_funds(&gov, 10_000 * 4_500 * 12).ok_or("Automatic Remediation")?;
 
     // Register 10K citizens
     for i in 0..10_000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     assert_eq!(ubi.amount_for(0), 4_500);
@@ -315,10 +315,10 @@ fn test_10k_citizens_year1_full_year() {
     // Verify annual cost: Per-citizen $4,500 × 12 months = $54,000 per citizen
     // For 10K citizens: $4,500 × 12 × 10K
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
-    ubi.set_amount_range(&gov, 0, 11, 4_500).unwrap();
-    ubi.receive_funds(&gov, 10_000 * 4_500 * 12).unwrap();
+    ubi.set_amount_range(&gov, 0, 11, 4_500).ok_or("Automatic Remediation")?;
+    ubi.receive_funds(&gov, 10_000 * 4_500 * 12).ok_or("Automatic Remediation")?;
 
     // Verify schedule is set
     assert_eq!(ubi.amount_for(0), 4_500);
@@ -330,7 +330,7 @@ fn test_10k_citizens_year1_full_year() {
 
 #[test]
 fn test_10k_citizens_month_paid_count_accuracy() {
-    let ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // No one paid yet
     for month in 0..12 {
@@ -341,20 +341,20 @@ fn test_10k_citizens_month_paid_count_accuracy() {
 #[test]
 fn test_10k_citizens_staggered_claims() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Set schedule for 3 months
-    ubi.set_month_amount(&gov, 0, 4_500).unwrap();
-    ubi.set_month_amount(&gov, 1, 4_500).unwrap();
-    ubi.set_month_amount(&gov, 2, 4_500).unwrap();
+    ubi.set_month_amount(&gov, 0, 4_500).ok_or("Automatic Remediation")?;
+    ubi.set_month_amount(&gov, 1, 4_500).ok_or("Automatic Remediation")?;
+    ubi.set_month_amount(&gov, 2, 4_500).ok_or("Automatic Remediation")?;
 
     // Fund for all scenarios
-    ubi.receive_funds(&gov, 10_000 * 4_500 * 3).unwrap();
+    ubi.receive_funds(&gov, 10_000 * 4_500 * 3).ok_or("Automatic Remediation")?;
 
     // Register 10K citizens
     for i in 0..10_000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     assert_eq!(ubi.registered_count(), 10_000);
@@ -369,16 +369,16 @@ fn test_10k_citizens_staggered_claims() {
 #[test]
 fn test_10k_citizens_insufficient_funds_handling() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Fund for only 50% of registrations
-    ubi.receive_funds(&gov, 5_000 * 4_500).unwrap();
-    ubi.set_month_amount(&gov, 0, 4_500).unwrap();
+    ubi.receive_funds(&gov, 5_000 * 4_500).ok_or("Automatic Remediation")?;
+    ubi.set_month_amount(&gov, 0, 4_500).ok_or("Automatic Remediation")?;
 
     // Register 10K citizens
     for i in 0..10_000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     assert_eq!(ubi.registered_count(), 10_000);
@@ -402,18 +402,18 @@ fn test_10k_citizens_get_monthly_ubi_lookup() {
 #[test]
 fn test_10k_citizens_concurrent_months() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Set amounts for 12 months
-    ubi.set_amount_range(&gov, 0, 11, 4_500).unwrap();
+    ubi.set_amount_range(&gov, 0, 11, 4_500).ok_or("Automatic Remediation")?;
 
     // Fund for all
-    ubi.receive_funds(&gov, 10_000 * 4_500 * 12).unwrap();
+    ubi.receive_funds(&gov, 10_000 * 4_500 * 12).ok_or("Automatic Remediation")?;
 
     // Register 10K citizens
     for i in 0..10_000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     // Verify all months have same amount
@@ -428,7 +428,7 @@ fn test_10k_citizens_concurrent_months() {
 
 #[test]
 fn test_register_500k_citizens() {
-    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let start = Instant::now();
 
@@ -479,11 +479,11 @@ fn test_500k_citizens_year3_annual() {
 
 #[test]
 fn test_500k_citizens_memory_tracking() {
-    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Approximate memory usage
     // HashSet: 500K × 32 bytes = ~16MB
-    ubi.register(&test_key(1)).unwrap();
+    ubi.register(&test_key(1)).ok_or("Automatic Remediation")?;
 
     assert_eq!(ubi.registered_count(), 1);
 }
@@ -491,15 +491,15 @@ fn test_500k_citizens_memory_tracking() {
 #[test]
 fn test_500k_citizens_random_subset_claims() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
-    ubi.set_month_amount(&gov, 0, 450_000).unwrap();
-    ubi.receive_funds(&gov, 500_000 * 450_000).unwrap();
+    ubi.set_month_amount(&gov, 0, 450_000).ok_or("Automatic Remediation")?;
+    ubi.receive_funds(&gov, 500_000 * 450_000).ok_or("Automatic Remediation")?;
 
     // Only register 250K out of 500K possible
     for i in 0..250_000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     assert_eq!(ubi.registered_count(), 250_000);
@@ -509,10 +509,10 @@ fn test_500k_citizens_random_subset_claims() {
 #[test]
 fn test_500k_citizens_balance_accuracy() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let funding = 500_000 * 450_000;
-    ubi.receive_funds(&gov, funding).unwrap();
+    ubi.receive_funds(&gov, funding).ok_or("Automatic Remediation")?;
 
     assert_eq!(ubi.balance(), funding);
     assert_eq!(ubi.total_received(), funding);
@@ -520,12 +520,12 @@ fn test_500k_citizens_balance_accuracy() {
 
 #[test]
 fn test_500k_citizens_is_registered_lookup_performance() {
-    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Register a few thousand for sanity check
     for i in 0..1000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     // Check is_registered works
@@ -546,7 +546,7 @@ fn test_500k_citizens_is_registered_lookup_performance() {
 #[test]
 #[ignore] // Run manually: cargo test --release -- --ignored
 fn test_register_1m_citizens() {
-    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let start = Instant::now();
 
@@ -602,12 +602,12 @@ fn test_1m_citizens_memory_estimate() {
     // HashMap<MonthIndex, HashSet>: additional per-month tracking
     // Total estimate: < 100MB with safe margins
 
-    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Register a representative sample
     for i in 0..10_000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     assert_eq!(ubi.registered_count(), 10_000);
@@ -617,15 +617,15 @@ fn test_1m_citizens_memory_estimate() {
 #[ignore]
 fn test_1m_citizens_concurrent_month_tracking() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Set amounts for 12 months
-    ubi.set_amount_range(&gov, 0, 11, 2_250_000).unwrap();
+    ubi.set_amount_range(&gov, 0, 11, 2_250_000).ok_or("Automatic Remediation")?;
 
     // Register 100K sample
     for i in 0..100_000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     // Verify all months are configured
@@ -637,13 +637,13 @@ fn test_1m_citizens_concurrent_month_tracking() {
 #[test]
 #[ignore]
 fn test_1m_citizens_hashset_performance() {
-    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Register 100K citizens
     let start = Instant::now();
     for i in 0..100_000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
     let registration_time = start.elapsed();
 
@@ -665,7 +665,7 @@ fn test_1m_citizens_hashset_performance() {
 #[ignore]
 fn test_1m_citizens_schedule_scaling() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Set amounts for 60 months (5 years)
     let start = Instant::now();
@@ -680,7 +680,7 @@ fn test_1m_citizens_schedule_scaling() {
         };
 
         if amount > 0 {
-            ubi.set_month_amount(&gov, month, amount).unwrap();
+            ubi.set_month_amount(&gov, month, amount).ok_or("Automatic Remediation")?;
         }
     }
     let setup_time = start.elapsed();
@@ -761,16 +761,16 @@ fn test_year5_1m_annual_calculation() {
 #[test]
 fn test_mixed_scale_year_transitions() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Year 1: $0.45 per citizen
-    ubi.set_amount_range(&gov, 0, 11, 4_500).unwrap();
+    ubi.set_amount_range(&gov, 0, 11, 4_500).ok_or("Automatic Remediation")?;
 
     // Year 2: $0.60 per citizen
-    ubi.set_amount_range(&gov, 12, 23, 6_000).unwrap();
+    ubi.set_amount_range(&gov, 12, 23, 6_000).ok_or("Automatic Remediation")?;
 
     // Year 3: $4.50 per citizen
-    ubi.set_amount_range(&gov, 24, 35, 450_000).unwrap();
+    ubi.set_amount_range(&gov, 24, 35, 450_000).ok_or("Automatic Remediation")?;
 
     // Verify transitions
     assert_eq!(ubi.amount_for(11), 4_500);
@@ -782,7 +782,7 @@ fn test_mixed_scale_year_transitions() {
 #[test]
 fn test_audit_trail_accuracy() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Initial state
     assert_eq!(ubi.balance(), 0);
@@ -790,12 +790,12 @@ fn test_audit_trail_accuracy() {
     assert_eq!(ubi.total_paid(), 0);
 
     // Receive funds
-    ubi.receive_funds(&gov, 500_000).unwrap();
+    ubi.receive_funds(&gov, 500_000).ok_or("Automatic Remediation")?;
     assert_eq!(ubi.balance(), 500_000);
     assert_eq!(ubi.total_received(), 500_000);
 
     // More funds
-    ubi.receive_funds(&gov, 300_000).unwrap();
+    ubi.receive_funds(&gov, 300_000).ok_or("Automatic Remediation")?;
     assert_eq!(ubi.balance(), 800_000);
     assert_eq!(ubi.total_received(), 800_000);
 }
@@ -803,7 +803,7 @@ fn test_audit_trail_accuracy() {
 #[test]
 fn test_balance_never_negative() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Attempting to receive 0 should fail
     let result = ubi.receive_funds(&gov, 0);
@@ -816,10 +816,10 @@ fn test_balance_never_negative() {
 #[test]
 fn test_total_accounting_consistency() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let funding = 100_000_000;
-    ubi.receive_funds(&gov, funding).unwrap();
+    ubi.receive_funds(&gov, funding).ok_or("Automatic Remediation")?;
 
     assert_eq!(ubi.balance(), funding);
     assert_eq!(ubi.total_received(), funding);
@@ -835,14 +835,14 @@ fn test_total_accounting_consistency() {
 
 #[test]
 fn bench_registration_throughput() {
-    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let count = 10_000;
     let start = Instant::now();
 
     for i in 0..count {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     let elapsed = start.elapsed();
@@ -857,12 +857,12 @@ fn bench_registration_throughput() {
 
 #[test]
 fn bench_lookup_performance() {
-    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Register 5K citizens
     for i in 0..5_000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     // Benchmark lookups
@@ -885,7 +885,7 @@ fn bench_lookup_performance() {
 
 #[test]
 fn bench_month_calculation_overhead() {
-    let ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).unwrap();
+    let ubi = UbiDistributor::new(test_key(1), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let iterations = 1_000_000;
     let start = Instant::now();
@@ -906,7 +906,7 @@ fn bench_month_calculation_overhead() {
 #[test]
 fn bench_schedule_lookup_scaling() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Create schedule with 60 months
     for month in 0..60 {
@@ -920,7 +920,7 @@ fn bench_schedule_lookup_scaling() {
         };
 
         if amount > 0 {
-            ubi.set_month_amount(&gov, month, amount).unwrap();
+            ubi.set_month_amount(&gov, month, amount).ok_or("Automatic Remediation")?;
         }
     }
 
@@ -945,20 +945,20 @@ fn bench_schedule_lookup_scaling() {
 #[test]
 fn bench_full_operation_cycle() {
     let gov = test_key(1);
-    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(gov.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let start = Instant::now();
 
     // Setup: set schedule
-    ubi.set_amount_range(&gov, 0, 11, 4_500).unwrap();
+    ubi.set_amount_range(&gov, 0, 11, 4_500).ok_or("Automatic Remediation")?;
 
     // Funding
-    ubi.initialize_ubi_pool(&gov, 1_000_000).unwrap();
+    ubi.initialize_ubi_pool(&gov, 1_000_000).ok_or("Automatic Remediation")?;
 
     // Registration
     for i in 0..1_000 {
         let citizen = test_citizen(i as u32);
-        ubi.register(&citizen).unwrap();
+        ubi.register(&citizen).ok_or("Automatic Remediation")?;
     }
 
     // Queries

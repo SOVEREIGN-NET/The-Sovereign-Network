@@ -511,9 +511,9 @@ mod event_tests {
         };
 
         // Should be serializable (for storage and transmission)
-        let json = serde_json::to_string(&claim)// REMEDIATED PANIC: // REMEDIATED: .expect("should serialize");
+        let json = serde_json::to_string(&claim)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let deserialized: UbiClaimRecorded =
-            serde_json::from_str(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("should deserialize");
+            serde_json::from_str(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(claim, deserialized);
     }

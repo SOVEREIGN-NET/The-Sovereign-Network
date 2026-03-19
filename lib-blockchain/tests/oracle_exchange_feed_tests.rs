@@ -40,9 +40,9 @@ fn exchange_provides_three_independent_price_sources() {
     assert!(vwap.is_some(), "vwap should be available");
 
     // All 3 sources should be independent (different calculation methods)
-    let last_trade_price = last_trade.unwrap().price_atomic;
-    let mid_price = mid.unwrap();
-    let vwap_price = vwap.unwrap();
+    let last_trade_price = last_trade.ok_or("Automatic Remediation")?.price_atomic;
+    let mid_price = mid.ok_or("Automatic Remediation")?;
+    let vwap_price = vwap.ok_or("Automatic Remediation")?;
 
     // They should generally be close but can differ slightly
     // Verify they're all in reasonable ranges ($0.50 - $2.00 at 1e8 scale)
@@ -73,7 +73,7 @@ fn exchange_prices_use_oracle_scale() {
     let price_150 = 150_000_000u128;
     exchange.record_trade(&pair, price_150, 1_000_000, 1000);
 
-    let last_trade = exchange.last_trade_price_sov_usdc().unwrap();
+    let last_trade = exchange.last_trade_price_sov_usdc().ok_or("Automatic Remediation")?;
     assert_eq!(last_trade.price_atomic, price_150);
     assert_eq!(last_trade.price_atomic, 150 * ORACLE_PRICE_SCALE / 100);
 }
@@ -89,7 +89,7 @@ fn order_book_mid_is_average_of_best_bid_and_ask() {
     exchange.update_bid(&pair, 99_000_000, 1_000_000);
     exchange.update_ask(&pair, 101_000_000, 1_000_000);
 
-    let mid = exchange.order_book_mid_sov_usdc().unwrap();
+    let mid = exchange.order_book_mid_sov_usdc().ok_or("Automatic Remediation")?;
     assert_eq!(mid, 100_000_000); // ($0.99 + $1.01) / 2 = $1.00
 }
 
@@ -108,7 +108,7 @@ fn vwap_is_volume_weighted_average() {
     exchange.record_trade(&pair, 120_000_000, 30_000_000, now - 600);
 
     // VWAP = (10*1.00 + 20*1.10 + 30*1.20) / (10+20+30) = 68/60 = $1.1333...
-    let vwap = exchange.vwap_sov_usdc(now - 3600, now).unwrap();
+    let vwap = exchange.vwap_sov_usdc(now - 3600, now).ok_or("Automatic Remediation")?;
 
     // Expected: 68,000,000 / 60 = 1,133,333.33... (at 1e8 scale)
     let expected =
@@ -149,7 +149,7 @@ fn last_trade_returns_most_recent() {
     // Record newer trade at higher price
     exchange.record_trade(&pair, 110_000_000, 2_000_000, 2000);
 
-    let last_trade = exchange.last_trade_price_sov_usdc().unwrap();
+    let last_trade = exchange.last_trade_price_sov_usdc().ok_or("Automatic Remediation")?;
     assert_eq!(last_trade.price_atomic, 110_000_000);
     assert_eq!(last_trade.timestamp, 2000);
 }

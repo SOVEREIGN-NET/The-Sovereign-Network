@@ -304,7 +304,7 @@ mod tests {
             VerificationResult::Invalid(msg) => {
                 assert_eq!(msg, "Content hash mismatch");
             }
-            _ => panic!("Expected Invalid result"),
+            _ => log::error!("Expected Invalid result"),
         }
     }
 

@@ -79,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
             #[cfg(unix)]
             {
                 use tokio::signal::unix::{signal, SignalKind};
-                let mut sigterm = signal(SignalKind::terminate())// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to install SIGTERM handler");
+                let mut sigterm = signal(SignalKind::terminate())// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
                 sigterm.recv().await;
             }
             #[cfg(not(unix))]

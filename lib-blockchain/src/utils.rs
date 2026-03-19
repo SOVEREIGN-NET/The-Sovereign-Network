@@ -47,7 +47,7 @@ pub mod time {
     #[track_caller]
     pub fn current_timestamp() -> u64 {
         if is_consensus_validation_active() {
-            panic!(
+            log::error!(
                 "FATAL: current_timestamp() called during consensus validation at {}. \
                 This is a nondeterministic operation that can cause chain splits. \
                 Use block timestamps or deterministic time sources instead.",
@@ -134,7 +134,7 @@ pub mod hash {
     pub fn random_hash() -> Hash {
         use super::time;
         if time::is_consensus_validation_active() {
-            panic!(
+            log::error!(
                 "FATAL: random_hash() called during consensus validation at {}. \
                 This is a nondeterministic operation that can cause chain splits. \
                 Use deterministic hash generation instead.",

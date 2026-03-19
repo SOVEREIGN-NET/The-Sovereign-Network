@@ -2794,7 +2794,7 @@ mod tests {
         tx.fee = 1_000_000;
         tx.memo = payload
             .encode_memo()
-            // REMEDIATED PANIC: // REMEDIATED: .expect("contract deployment test memo encoding must work");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         tx
     }
 
@@ -2805,7 +2805,7 @@ mod tests {
         let mut tx = create_legacy_tx(TransactionType::ContractExecution);
         tx.fee = 1_000_000;
         tx.memo = encode_contract_execution_memo_v2(contract_id, &call, &call_sig)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("contract execution test memo encoding must work");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         tx
     }
 
@@ -2913,7 +2913,7 @@ mod tests {
             treasury_allocation_bps: 2_000,
             treasury_recipient,
         };
-        let memo = payload.encode_memo()// REMEDIATED PANIC: // REMEDIATED: .expect("valid token creation memo");
+        let memo = payload.encode_memo()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         Transaction {
             version: 2,
             chain_id: 0x03,
@@ -2983,17 +2983,17 @@ mod tests {
         let contract = store
             .get_token_contract(&TokenId::new(token_id))
             .ok()
-            // REMEDIATED PANIC: // REMEDIATED: .expect("token contract should exist");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(contract.symbol, "TEST");
         assert_eq!(contract.total_supply, 1_000_000);
         let creator_addr = Address::new(create_dummy_signature().public_key.key_id);
         let treasury_addr = Address::new(treasury);
         let creator_balance = store
             .get_token_balance(&TokenId::new(token_id), &creator_addr)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("creator balance read should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let treasury_balance = store
             .get_token_balance(&TokenId::new(token_id), &treasury_addr)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("treasury balance read should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(creator_balance, 800_000);
         assert_eq!(treasury_balance, 200_000);
     }
@@ -3153,8 +3153,8 @@ mod tests {
 
         let code = store
             .get_contract_code(&expected_contract_id)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("read contract code")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("contract code should exist");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(code, vec![0x01, 0x02, 0x03, 0x04]);
     }
 
@@ -3201,14 +3201,14 @@ mod tests {
 
         let stored = store
             .get_contract_storage(&contract_id, &call_key)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("read contract storage")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("call record should exist");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let (stored_height, stored_method, _stored_caller, stored_params): (
             u64,
             String,
             [u8; 32],
             Vec<u8>,
-        ) = bincode::deserialize(&stored)// REMEDIATED PANIC: // REMEDIATED: .expect("decode call record");
+        ) = bincode::deserialize(&stored)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(stored_height, 2);
         assert_eq!(stored_method, "create_custom_token");
         assert_eq!(stored_params, vec![0x10, 0x20]);
@@ -3228,7 +3228,7 @@ mod tests {
         let call_sig = create_dummy_signature();
         tx.memo = b"ZHTP".to_vec();
         tx.memo.extend(
-            bincode::serialize(&(call, call_sig))// REMEDIATED PANIC: // REMEDIATED: .expect("legacy execution memo serialization"),
+            bincode::serialize(&(call, call_sig))// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check"),
         );
 
         let block = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
@@ -3259,7 +3259,7 @@ mod tests {
             memory_limit_bytes: 2_048_000,
         }
         .encode_memo()
-        // REMEDIATED PANIC: // REMEDIATED: .expect("deployment memo encode");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let contract_b = hash_transaction(&deploy_b).as_array();
 
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![deploy_a, deploy_b]);
@@ -3280,28 +3280,28 @@ mod tests {
         assert!(
             store
                 .get_contract_storage(&contract_a, &key_a)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("read contract_a call")
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
                 .is_some(),
             "contract A must contain its call record"
         );
         assert!(
             store
                 .get_contract_storage(&contract_b, &key_b)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("read contract_b call")
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
                 .is_some(),
             "contract B must contain its call record"
         );
         assert!(
             store
                 .get_contract_storage(&contract_a, &key_b)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("read contract_a foreign call")
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
                 .is_none(),
             "contract A must not contain contract B call record"
         );
         assert!(
             store
                 .get_contract_storage(&contract_b, &key_a)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("read contract_b foreign call")
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
                 .is_none(),
             "contract B must not contain contract A call record"
         );
@@ -3439,21 +3439,21 @@ mod tests {
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
         executor
             .apply_block(&block1)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Block 1 (proposal) must succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Block 2: cast a vote (within the 100-block voting period)
         let vote_tx = create_dao_vote_tx(proposal_id, "alice", "Yes");
         let block2 = create_block_with_txs(2, block1.header.block_hash, vec![vote_tx]);
         executor
             .apply_block(&block2)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Block 2 (vote) must succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Block 3: execute the proposal
         let exec_tx = create_dao_execution_tx(proposal_id);
         let block3 = create_block_with_txs(3, block2.header.block_hash, vec![exec_tx]);
         executor
             .apply_block(&block3)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Block 3 (execution) must succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(store.latest_height().ok(), 3);
 
@@ -3463,8 +3463,8 @@ mod tests {
         exec_key.extend_from_slice(proposal_id.as_bytes());
         let record = store
             .get_contract_storage(&dao_contract, &exec_key)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("read execution record")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("execution record should exist after block 3");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert!(!record.is_empty());
     }
 
@@ -3484,7 +3484,7 @@ mod tests {
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_tx]);
         executor
             .apply_block(&block1)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("First proposal must succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Block 2: same proposal_id must be rejected
         let dup_tx = create_dao_proposal_tx(proposal_id);
@@ -3678,12 +3678,12 @@ mod tests {
         assert_eq!(tx.version, TX_VERSION_V3);
 
         // Roundtrip through bincode — bonding curve data must survive
-        let bytes = bincode::serialize(&tx)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize");
-        let decoded: Transaction = bincode::deserialize(&bytes)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize");
+        let bytes = bincode::serialize(&tx)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let decoded: Transaction = bincode::deserialize(&bytes)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(decoded.version, TX_VERSION_V3);
         let data = decoded
             .bonding_curve_deploy_data
-            // REMEDIATED PANIC: // REMEDIATED: .expect("deploy_data must be Some after roundtrip");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(data.symbol, "RT");
         assert_eq!(data.creator, creator);
     }
@@ -3854,7 +3854,7 @@ mod tests {
             &make_token(token_id_bytes1, [1u8; 32], 0),
             "ALP",
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("first deploy must succeed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         store.commit_block().ok();
 
         // Second deploy with same symbol must be rejected

@@ -390,7 +390,7 @@ mod tests {
         assert!(!role.revoked);
 
         // Revoke at epoch 150
-        role.revoke(150)// REMEDIATED PANIC: // REMEDIATED: .expect("revocation should succeed");
+        role.revoke(150)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // After revocation: not eligible
         assert!(role.revoked);
@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn test_double_revocation_fails() {
         let mut role = CitizenRole::new([1u8; 32], 100, 50);
-        role.revoke(150)// REMEDIATED PANIC: // REMEDIATED: .expect("first revocation should succeed");
+        role.revoke(150)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let result = role.revoke(160);
         assert_eq!(result, Err(CitizenRoleError::AlreadyRevoked));
@@ -415,7 +415,7 @@ mod tests {
 
         registry
             .register(role)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("registration should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(registry.get(&citizen_id), Some(&role));
         assert_eq!(registry.stats().active_count, 1);
@@ -430,7 +430,7 @@ mod tests {
 
         registry
             .register(role)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("first registration should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let result = registry.register(role);
         assert_eq!(result, Err(CitizenRoleError::AlreadyExists));
@@ -444,12 +444,12 @@ mod tests {
 
         registry
             .register(role)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("registration should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(registry.stats().active_count, 1);
 
         registry
             .revoke(&citizen_id, 150)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("revocation should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(registry.stats().active_count, 0);
         assert_eq!(registry.stats().total_registered, 1);
@@ -464,7 +464,7 @@ mod tests {
 
         registry
             .register(role)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("registration should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Before citizenship epoch: not eligible
         assert_eq!(registry.is_eligible_for_ubi(&citizen_id, 99), Some(false));
@@ -485,16 +485,16 @@ mod tests {
 
         registry
             .register(role1)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("registration should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         registry
             .register(role2)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("registration should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(registry.get_active_citizens().len(), 2);
 
         registry
             .revoke(&[1u8; 32], 150)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("revocation should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(registry.get_active_citizens().len(), 1);
         let active = registry.get_active_citizens();

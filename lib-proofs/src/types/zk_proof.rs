@@ -345,7 +345,7 @@ mod tests {
             vec![7, 8, 9],
             None,
         );
-        let json = serde_json::to_string(&proof)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize");
+        let json = serde_json::to_string(&proof)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert!(json.contains("\"version\":\"v0\""));
         assert!(json.contains("\"proof_system\":\"Plonky2\""));
     }
@@ -360,7 +360,7 @@ mod tests {
             "plonky2_proof":null,
             "proof":[]
         }"#;
-        let proof: ZkProof = serde_json::from_str(legacy)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize legacy");
+        let proof: ZkProof = serde_json::from_str(legacy)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(proof.proof_system, "Plonky2");
     }
 }

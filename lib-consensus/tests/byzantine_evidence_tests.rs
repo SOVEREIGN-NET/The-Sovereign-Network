@@ -27,7 +27,7 @@ fn create_unique_identity() -> IdentityId {
 fn current_timestamp() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .as_secs()
 }
 
@@ -187,7 +187,7 @@ fn test_equivocation_all_vote_types() {
             "Equivocation should be detected for {:?}",
             vote_type
         );
-        assert_eq!(evidence.unwrap().vote_type, *vote_type);
+        assert_eq!(evidence.ok_or("Automatic Remediation")?.vote_type, *vote_type);
     }
 }
 

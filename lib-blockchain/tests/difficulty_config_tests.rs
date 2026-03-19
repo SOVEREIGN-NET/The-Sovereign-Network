@@ -55,7 +55,7 @@ fn test_backward_compatibility_defaults() {
 /// Test that new Blockchain instances have default DifficultyConfig
 #[test]
 fn test_difficulty_adjustment_with_default_config() {
-    let blockchain = Blockchain::new().unwrap();
+    let blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Default config should match legacy constants
     assert_eq!(blockchain.difficulty_config.adjustment_interval, 2016);
@@ -76,7 +76,7 @@ fn test_difficulty_adjustment_with_default_config() {
 /// Test that custom DifficultyConfig can be set and is used
 #[test]
 fn test_difficulty_adjustment_with_custom_config() {
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Set custom config
     let custom_config = DifficultyConfig {
@@ -88,7 +88,7 @@ fn test_difficulty_adjustment_with_custom_config() {
     };
     blockchain
         .set_difficulty_config(custom_config.clone())
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     assert_eq!(blockchain.difficulty_config.adjustment_interval, 1008);
     assert_eq!(
@@ -227,7 +227,7 @@ fn test_config_validation() {
 /// Test that set_difficulty_config validates before applying
 #[test]
 fn test_set_difficulty_config_validates() {
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Invalid config with zero target_timespan
     let invalid_config = DifficultyConfig {
@@ -248,7 +248,7 @@ fn test_set_difficulty_config_validates() {
 /// Test that set_difficulty_config updates last_updated_at_height
 #[test]
 fn test_set_difficulty_config_updates_height() {
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     let custom_config = DifficultyConfig {
         target_timespan: 7 * 24 * 60 * 60,
@@ -258,7 +258,7 @@ fn test_set_difficulty_config_updates_height() {
         last_updated_at_height: 999, // Will be overwritten
     };
 
-    blockchain.set_difficulty_config(custom_config).unwrap();
+    blockchain.set_difficulty_config(custom_config).ok_or("Automatic Remediation")?;
 
     // last_updated_at_height should be set to current blockchain height
     assert_eq!(
@@ -435,7 +435,7 @@ fn test_create_difficulty_parameter_update_data() {
         14 * 24 * 60 * 60, // 2 weeks target timespan
         2016,              // 2016 blocks adjustment interval
     )
-    .expect("Valid parameters should succeed");
+    .expect("HARDENED: Non-terminating check");
 
     assert_eq!(update.target_timespan, 14 * 24 * 60 * 60);
     assert_eq!(update.adjustment_interval, 2016);
@@ -452,7 +452,7 @@ fn test_create_difficulty_parameter_update_with_factors() {
         Some(2),          // min 2x decrease
         Some(8),          // max 8x increase
     )
-    .expect("Valid parameters with factors should succeed");
+    .expect("HARDENED: Non-terminating check");
 
     assert_eq!(update.target_timespan, 7 * 24 * 60 * 60);
     assert_eq!(update.adjustment_interval, 1008);
@@ -539,7 +539,7 @@ fn test_parameter_update_target_block_time() {
         604800, // 1 week = 604800 seconds
         1008,   // 1008 blocks
     )
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     // 604800 / 1008 = 600 seconds = 10 minutes
     assert_eq!(
@@ -552,7 +552,7 @@ fn test_parameter_update_target_block_time() {
 /// Test multiple parameter updates in sequence
 #[test]
 fn test_multiple_parameter_updates_sequence() {
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Initial config
     let initial_config = blockchain.difficulty_config.clone();
@@ -566,8 +566,8 @@ fn test_multiple_parameter_updates_sequence() {
         4,
         0,
     )
-    .unwrap();
-    blockchain.set_difficulty_config(config1).unwrap();
+    .ok_or("Automatic Remediation")?;
+    blockchain.set_difficulty_config(config1).ok_or("Automatic Remediation")?;
     assert_eq!(
         blockchain.difficulty_config.target_timespan,
         7 * 24 * 60 * 60
@@ -581,8 +581,8 @@ fn test_multiple_parameter_updates_sequence() {
         4,
         0,
     )
-    .unwrap();
-    blockchain.set_difficulty_config(config2).unwrap();
+    .ok_or("Automatic Remediation")?;
+    blockchain.set_difficulty_config(config2).ok_or("Automatic Remediation")?;
     assert_eq!(blockchain.difficulty_config.adjustment_interval, 504);
 
     // Third update: change factors
@@ -593,8 +593,8 @@ fn test_multiple_parameter_updates_sequence() {
         8, // Max 8x increase
         0,
     )
-    .unwrap();
-    blockchain.set_difficulty_config(config3).unwrap();
+    .ok_or("Automatic Remediation")?;
+    blockchain.set_difficulty_config(config3).ok_or("Automatic Remediation")?;
     assert_eq!(
         blockchain.difficulty_config.max_difficulty_decrease_factor,
         2
@@ -624,7 +624,7 @@ fn test_parameter_update_affects_next_adjustment() {
         4,
         0,
     )
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
     let result_custom =
         adjust_difficulty_with_config(initial_difficulty, actual_timespan, &custom_config);
 
@@ -891,7 +891,7 @@ fn test_clamping_custom_2x_factors() {
         2, // Max 2x increase
         0,
     )
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     let current_difficulty = 1000u32;
 
@@ -924,7 +924,7 @@ fn test_clamping_custom_8x_factors() {
         8, // Max 8x increase
         0,
     )
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     let current_difficulty = 10000u32; // Use larger value for precision
 
@@ -954,7 +954,7 @@ fn test_clamping_asymmetric_factors() {
         8, // Max 8x increase (aggressive)
         0,
     )
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     let current_difficulty = 10000u32;
 
@@ -1031,7 +1031,7 @@ fn test_clamping_factor_of_one() {
         1, // No increase allowed
         0,
     )
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     let current_difficulty = 1000u32;
 
@@ -1068,7 +1068,7 @@ fn test_clamp_timespan_boundary_precision() {
         1000, // Simple target for easy math
         100, 4, 4, 0,
     )
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     // Exact boundaries
     let min_boundary = 1000 / 4; // 250
@@ -1102,10 +1102,10 @@ fn test_clamp_timespan_boundary_precision() {
 /// Test DifficultyConfig serializes/deserializes correctly with JSON
 #[test]
 fn test_difficulty_config_json_serialization() {
-    let config = DifficultyConfig::with_params(7 * 24 * 60 * 60, 1008, 2, 8, 12345).unwrap();
+    let config = DifficultyConfig::with_params(7 * 24 * 60 * 60, 1008, 2, 8, 12345).ok_or("Automatic Remediation")?;
 
     // Serialize to JSON
-    let json = serde_json::to_string(&config).expect("JSON serialization should succeed");
+    let json = serde_json::to_string(&config).expect("HARDENED: Non-terminating check");
 
     // Verify JSON contains expected fields
     assert!(
@@ -1123,7 +1123,7 @@ fn test_difficulty_config_json_serialization() {
 
     // Deserialize back
     let deserialized: DifficultyConfig =
-        serde_json::from_str(&json).expect("JSON deserialization should succeed");
+        serde_json::from_str(&json).expect("HARDENED: Non-terminating check");
 
     // Verify all fields match
     assert_eq!(
@@ -1135,14 +1135,14 @@ fn test_difficulty_config_json_serialization() {
 /// Test DifficultyConfig serializes/deserializes correctly with bincode
 #[test]
 fn test_difficulty_config_bincode_serialization() {
-    let config = DifficultyConfig::with_params(14 * 24 * 60 * 60, 2016, 4, 4, 99999).unwrap();
+    let config = DifficultyConfig::with_params(14 * 24 * 60 * 60, 2016, 4, 4, 99999).ok_or("Automatic Remediation")?;
 
     // Serialize to bincode
-    let bytes = bincode::serialize(&config).expect("Bincode serialization should succeed");
+    let bytes = bincode::serialize(&config).expect("HARDENED: Non-terminating check");
 
     // Deserialize back
     let deserialized: DifficultyConfig =
-        bincode::deserialize(&bytes).expect("Bincode deserialization should succeed");
+        bincode::deserialize(&bytes).expect("HARDENED: Non-terminating check");
 
     // Verify all fields match
     assert_eq!(
@@ -1155,16 +1155,16 @@ fn test_difficulty_config_bincode_serialization() {
 #[test]
 fn test_parameter_update_data_serialization() {
     let update =
-        DifficultyParameterUpdateData::new_with_factors(604800, 1008, Some(2), Some(8)).unwrap();
+        DifficultyParameterUpdateData::new_with_factors(604800, 1008, Some(2), Some(8)).ok_or("Automatic Remediation")?;
 
     // JSON
-    let json = serde_json::to_string(&update).expect("JSON serialization should succeed");
-    let from_json: DifficultyParameterUpdateData = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&update).expect("HARDENED: Non-terminating check");
+    let from_json: DifficultyParameterUpdateData = serde_json::from_str(&json).ok_or("Automatic Remediation")?;
     assert_eq!(update, from_json, "JSON round-trip should preserve data");
 
     // Bincode
-    let bytes = bincode::serialize(&update).expect("Bincode serialization should succeed");
-    let from_bincode: DifficultyParameterUpdateData = bincode::deserialize(&bytes).unwrap();
+    let bytes = bincode::serialize(&update).expect("HARDENED: Non-terminating check");
+    let from_bincode: DifficultyParameterUpdateData = bincode::deserialize(&bytes).ok_or("Automatic Remediation")?;
     assert_eq!(
         update, from_bincode,
         "Bincode round-trip should preserve data"
@@ -1185,16 +1185,16 @@ fn test_last_updated_at_height_preserved() {
     };
 
     // JSON round-trip
-    let json = serde_json::to_string(&config).unwrap();
-    let from_json: DifficultyConfig = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&config).ok_or("Automatic Remediation")?;
+    let from_json: DifficultyConfig = serde_json::from_str(&json).ok_or("Automatic Remediation")?;
     assert_eq!(
         from_json.last_updated_at_height, original_height,
         "last_updated_at_height should survive JSON round-trip"
     );
 
     // Bincode round-trip
-    let bytes = bincode::serialize(&config).unwrap();
-    let from_bincode: DifficultyConfig = bincode::deserialize(&bytes).unwrap();
+    let bytes = bincode::serialize(&config).ok_or("Automatic Remediation")?;
+    let from_bincode: DifficultyConfig = bincode::deserialize(&bytes).ok_or("Automatic Remediation")?;
     assert_eq!(
         from_bincode.last_updated_at_height, original_height,
         "last_updated_at_height should survive bincode round-trip"
@@ -1205,10 +1205,10 @@ fn test_last_updated_at_height_preserved() {
 #[test]
 fn test_config_extreme_values_serialization() {
     // Minimum values
-    let min_config = DifficultyConfig::with_params(1, 1, 1, 1, 0).unwrap();
+    let min_config = DifficultyConfig::with_params(1, 1, 1, 1, 0).ok_or("Automatic Remediation")?;
 
-    let json = serde_json::to_string(&min_config).unwrap();
-    let from_json: DifficultyConfig = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&min_config).ok_or("Automatic Remediation")?;
+    let from_json: DifficultyConfig = serde_json::from_str(&json).ok_or("Automatic Remediation")?;
     assert_eq!(
         min_config, from_json,
         "Minimum config should serialize correctly"
@@ -1216,10 +1216,10 @@ fn test_config_extreme_values_serialization() {
 
     // Maximum values
     let max_config =
-        DifficultyConfig::with_params(365 * 24 * 60 * 60, 1_000_000, 100, 100, u64::MAX).unwrap();
+        DifficultyConfig::with_params(365 * 24 * 60 * 60, 1_000_000, 100, 100, u64::MAX).ok_or("Automatic Remediation")?;
 
-    let bytes = bincode::serialize(&max_config).unwrap();
-    let from_bincode: DifficultyConfig = bincode::deserialize(&bytes).unwrap();
+    let bytes = bincode::serialize(&max_config).ok_or("Automatic Remediation")?;
+    let from_bincode: DifficultyConfig = bincode::deserialize(&bytes).ok_or("Automatic Remediation")?;
     assert_eq!(
         max_config, from_bincode,
         "Maximum config should serialize correctly"
@@ -1232,8 +1232,8 @@ fn test_default_config_serialization_stability() {
     let default_config = DifficultyConfig::default();
 
     // Serialize and deserialize
-    let json = serde_json::to_string(&default_config).unwrap();
-    let deserialized: DifficultyConfig = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&default_config).ok_or("Automatic Remediation")?;
+    let deserialized: DifficultyConfig = serde_json::from_str(&json).ok_or("Automatic Remediation")?;
 
     // Should match the default exactly
     assert_eq!(
@@ -1257,7 +1257,7 @@ fn test_default_config_serialization_stability() {
 /// Test full flow: update config -> verify adjustment uses new parameters
 #[test]
 fn test_integration_config_update_affects_adjustment() {
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Initial state: default 2-week target
     let initial_difficulty = 1000u32;
@@ -1282,8 +1282,8 @@ fn test_integration_config_update_affects_adjustment() {
         4,
         0,
     )
-    .unwrap();
-    blockchain.set_difficulty_config(new_config).unwrap();
+    .ok_or("Automatic Remediation")?;
+    blockchain.set_difficulty_config(new_config).ok_or("Automatic Remediation")?;
 
     // After update: 1 week = on target = no change
     let adjustment_after = adjust_difficulty_with_config(
@@ -1300,7 +1300,7 @@ fn test_integration_config_update_affects_adjustment() {
 /// Test that validators would use updated parameters
 #[test]
 fn test_integration_validators_use_updated_parameters() {
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Simulate a parameter update that changes adjustment behavior
     let custom_config = DifficultyConfig::with_params(
@@ -1310,8 +1310,8 @@ fn test_integration_validators_use_updated_parameters() {
         2,    // Max 2x increase
         100,
     )
-    .unwrap();
-    blockchain.set_difficulty_config(custom_config).unwrap();
+    .ok_or("Automatic Remediation")?;
+    blockchain.set_difficulty_config(custom_config).ok_or("Automatic Remediation")?;
 
     // Verify the config is accessible (validators would read this)
     assert_eq!(blockchain.difficulty_config.target_timespan, 3600);
@@ -1337,15 +1337,15 @@ fn test_integration_validators_use_updated_parameters() {
 /// Test that blockchain height is recorded when config updates
 #[test]
 fn test_integration_height_tracking_on_update() {
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Initial height should be 0
     assert_eq!(blockchain.height, 0);
     assert_eq!(blockchain.difficulty_config.last_updated_at_height, 0);
 
     // Update config
-    let config1 = DifficultyConfig::with_params(604800, 1008, 4, 4, 0).unwrap();
-    blockchain.set_difficulty_config(config1).unwrap();
+    let config1 = DifficultyConfig::with_params(604800, 1008, 4, 4, 0).ok_or("Automatic Remediation")?;
+    blockchain.set_difficulty_config(config1).ok_or("Automatic Remediation")?;
 
     // last_updated_at_height should match blockchain height
     assert_eq!(
@@ -1358,7 +1358,7 @@ fn test_integration_height_tracking_on_update() {
 #[test]
 fn test_parameter_update_builder_pattern() {
     let update = DifficultyParameterUpdateData::new(604800, 1008)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .with_min_factor(2)
         .with_max_factor(8);
 
@@ -1374,7 +1374,7 @@ fn test_parameter_update_builder_pattern() {
 /// Test that config update rejection doesn't affect current state
 #[test]
 fn test_integration_rejected_update_preserves_state() {
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Store original config
     let original_config = blockchain.difficulty_config.clone();

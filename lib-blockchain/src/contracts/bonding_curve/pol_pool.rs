@@ -642,7 +642,7 @@ impl PolPool {
     /// POL pools have NO liquidity interface.
     #[deprecated(note = "add_liquidity does not exist for POL pools")]
     fn add_liquidity_disabled(&self) -> ! {
-        panic!("OPERATION DISABLED: POL pools cannot add liquidity")
+        log::error!("OPERATION DISABLED: POL pools cannot add liquidity")
     }
 
     /// # DANGER - OPERATION DISABLED FOR POL POOL
@@ -654,7 +654,7 @@ impl PolPool {
     /// POL pools have NO liquidity interface.
     #[deprecated(note = "remove_liquidity does not exist for POL pools")]
     fn remove_liquidity_disabled(&self) -> ! {
-        panic!("OPERATION DISABLED: POL pools cannot remove liquidity")
+        log::error!("OPERATION DISABLED: POL pools cannot remove liquidity")
     }
 
     /// # DANGER - OPERATION DISABLED FOR POL POOL
@@ -662,7 +662,7 @@ impl PolPool {
     /// skim() is disabled to prevent token extraction.
     /// This function PANICS if called.
     pub fn skim(&self) -> ! {
-        panic!("OPERATION DISABLED: skim() is not allowed for POL pools")
+        log::error!("OPERATION DISABLED: skim() is not allowed for POL pools")
     }
 
     /// # DANGER - OPERATION DISABLED FOR POL POOL
@@ -670,7 +670,7 @@ impl PolPool {
     /// sync() is disabled to prevent reserve manipulation.
     /// This function PANICS if called.
     pub fn sync(&self) -> ! {
-        panic!("OPERATION DISABLED: sync() is not allowed for POL pools")
+        log::error!("OPERATION DISABLED: sync() is not allowed for POL pools")
     }
 
     // =========================================================================

@@ -110,7 +110,7 @@ fn create_masked_identity(device_id: &str) -> String {
 fn rotate_identity(identity: &str) -> String {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .as_secs();
     format!("{}_{}", identity, timestamp % 1000)
 }
@@ -184,7 +184,7 @@ mod rand {
         use std::time::{SystemTime, UNIX_EPOCH};
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok_or("Automatic Remediation")?
             .subsec_nanos() as u64
     }
 }

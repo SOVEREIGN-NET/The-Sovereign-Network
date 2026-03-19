@@ -143,9 +143,9 @@ mod tests {
         let call = sample_call();
         let sig = sample_sig(9);
         let memo = encode_contract_execution_memo_v2(contract_id, &call, &sig)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("encode must succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let decoded =
-            DecodedContractExecutionMemo::decode_compat(&memo)// REMEDIATED PANIC: // REMEDIATED: .expect("decode must succeed");
+            DecodedContractExecutionMemo::decode_compat(&memo)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(decoded.version, ContractExecutionMemoVersion::V2ContractId);
         assert_eq!(decoded.contract_id, Some(contract_id));
         assert_eq!(decoded.call, call);
@@ -161,10 +161,10 @@ mod tests {
         memo.extend(
             memo_bincode_options()
                 .serialize(&(call.clone(), sig.clone()))
-                // REMEDIATED PANIC: // REMEDIATED: .expect("serialize"),
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check"),
         );
         let decoded =
-            DecodedContractExecutionMemo::decode_compat(&memo)// REMEDIATED PANIC: // REMEDIATED: .expect("decode V1 must succeed");
+            DecodedContractExecutionMemo::decode_compat(&memo)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(decoded.version, ContractExecutionMemoVersion::V1Legacy);
         assert_eq!(decoded.contract_id, None);
         assert_eq!(decoded.call, call);

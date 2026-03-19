@@ -84,13 +84,13 @@ impl DsRRData {
 
 impl FromWireLen for DsRRData {
     fn from_wire_len(context: &mut FromWireContext, _len: u16) -> Result<Self, WireError> {
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 }
 
 impl ToWire for DsRRData {
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 }
 

@@ -552,9 +552,9 @@ mod tests {
         let mut ledger = CbeAllocationLedger::new();
         ledger.init().ok();
 
-        let serialized = serde_json::to_string(&ledger)// REMEDIATED PANIC: // REMEDIATED: .expect("serialization failed");
+        let serialized = serde_json::to_string(&ledger)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let deserialized: CbeAllocationLedger =
-            serde_json::from_str(&serialized)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialization failed");
+            serde_json::from_str(&serialized)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(ledger, deserialized);
         assert!(deserialized.is_initialized());
@@ -564,9 +564,9 @@ mod tests {
     #[test]
     fn test_bucket_id_serialization_round_trip() {
         for bucket in CbeBucketId::ALL {
-            let serialized = serde_json::to_string(bucket)// REMEDIATED PANIC: // REMEDIATED: .expect("serialization failed");
+            let serialized = serde_json::to_string(bucket)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             let deserialized: CbeBucketId =
-                serde_json::from_str(&serialized)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialization failed");
+                serde_json::from_str(&serialized)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             assert_eq!(*bucket, deserialized);
         }
     }

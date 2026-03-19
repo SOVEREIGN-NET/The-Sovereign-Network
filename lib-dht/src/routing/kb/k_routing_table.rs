@@ -259,7 +259,7 @@ impl RoutingTable for KRoutingTable {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Time went backwards")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
             .as_millis();
 
         for b in &self.k_buckets {

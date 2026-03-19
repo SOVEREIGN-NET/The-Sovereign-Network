@@ -1214,7 +1214,7 @@ impl ContentManager {
 impl Default for ContentManager {
     fn default() -> Self {
         Self::new(DhtStorage::new_default(), EconomicManagerConfig::default())
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create default ContentManager")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
     }
 }
 
@@ -1366,7 +1366,7 @@ mod tests {
             true,
             ownership_proof,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("valid test identity");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         identity.id = identity_id;
         identity.created_at = created_at;

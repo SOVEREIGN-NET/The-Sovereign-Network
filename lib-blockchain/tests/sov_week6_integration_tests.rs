@@ -48,7 +48,7 @@ fn init_fee_router(router: &mut FeeRouter) {
             &test_key(7), // Housing
             &test_key(8), // Food
         )
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 }
 
 // ============================================================================
@@ -61,17 +61,17 @@ fn test_fee_flow_small_amount() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Collect and distribute fees
-    router.collect(1000).unwrap();
-    let dist = router.distribute(100).unwrap();
+    router.collect(1000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(100).ok_or("Automatic Remediation")?;
 
     // UBI should receive 45% of fees
     assert_eq!(dist.ubi_pool, 450);
 
     // Simulate UBI receiving funds
-    ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+    ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
     assert_eq!(ubi.balance(), 450);
 }
 
@@ -81,16 +81,16 @@ fn test_fee_flow_large_amount() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Year 3 scenario: $5M fees
-    router.collect(5_000_000).unwrap();
-    let dist = router.distribute(100).unwrap();
+    router.collect(5_000_000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(100).ok_or("Automatic Remediation")?;
 
     // 45% to UBI = 2,250,000
     assert_eq!(dist.ubi_pool, 2_250_000);
 
-    ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+    ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
     assert_eq!(ubi.balance(), 2_250_000);
 }
 
@@ -100,18 +100,18 @@ fn test_ubi_pool_accumulates_funds() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // First distribution
-    router.collect(1000).unwrap();
-    let dist1 = router.distribute(100).unwrap();
-    ubi.receive_funds(&governance, dist1.ubi_pool).unwrap();
+    router.collect(1000).ok_or("Automatic Remediation")?;
+    let dist1 = router.distribute(100).ok_or("Automatic Remediation")?;
+    ubi.receive_funds(&governance, dist1.ubi_pool).ok_or("Automatic Remediation")?;
     assert_eq!(ubi.balance(), 450);
 
     // Second distribution
-    router.collect(2000).unwrap();
-    let dist2 = router.distribute(200).unwrap();
-    ubi.receive_funds(&governance, dist2.ubi_pool).unwrap();
+    router.collect(2000).ok_or("Automatic Remediation")?;
+    let dist2 = router.distribute(200).ok_or("Automatic Remediation")?;
+    ubi.receive_funds(&governance, dist2.ubi_pool).ok_or("Automatic Remediation")?;
     assert_eq!(ubi.balance(), 450 + 900); // 450 + 900
 }
 
@@ -121,8 +121,8 @@ fn test_fee_split_audit_trail() {
     init_fee_router(&mut router);
 
     // Collect $100K fees
-    router.collect(100_000).unwrap();
-    let dist = router.distribute(100).unwrap();
+    router.collect(100_000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(100).ok_or("Automatic Remediation")?;
 
     // Verify 45/30/15/10 split sums to total
     let total = dist.total_distributed();
@@ -138,20 +138,20 @@ fn test_fee_split_audit_trail() {
 #[test]
 fn test_integration_with_existing_ubi_balance() {
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Pre-fund UBI with 10,000
-    ubi.receive_funds(&governance, 10_000).unwrap();
+    ubi.receive_funds(&governance, 10_000).ok_or("Automatic Remediation")?;
     assert_eq!(ubi.balance(), 10_000);
 
     // Now add fees from FeeRouter
     let mut router = FeeRouter::new();
     init_fee_router(&mut router);
 
-    router.collect(1000).unwrap();
-    let dist = router.distribute(100).unwrap();
+    router.collect(1000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(100).ok_or("Automatic Remediation")?;
 
-    ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+    ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
     assert_eq!(ubi.balance(), 10_450);
 }
 
@@ -171,13 +171,13 @@ fn test_multiple_distributions_cumulative() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Three monthly distributions
     for month in 1..=3 {
-        router.collect(10_000).unwrap();
-        let dist = router.distribute(month * 100).unwrap();
-        ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+        router.collect(10_000).ok_or("Automatic Remediation")?;
+        let dist = router.distribute(month * 100).ok_or("Automatic Remediation")?;
+        ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
     }
 
     // Total should be 3 × 4500
@@ -194,26 +194,26 @@ fn test_complete_monthly_cycle() {
     let governance = test_key(1);
     let mut router = FeeRouter::new();
     init_fee_router(&mut router);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Register citizens
     for i in 10..20 {
-        ubi.register(&test_key(i)).unwrap();
+        ubi.register(&test_key(i)).ok_or("Automatic Remediation")?;
     }
     assert_eq!(ubi.registered_count(), 10);
 
     // Collect monthly fees
-    router.collect(100_000).unwrap();
+    router.collect(100_000).ok_or("Automatic Remediation")?;
 
     // Distribute
-    let dist = router.distribute(BLOCKS_PER_MONTH).unwrap();
+    let dist = router.distribute(BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Fund UBI
-    ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+    ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
     assert_eq!(ubi.balance(), 45_000); // 45% of 100k
 
     // Set schedule for month 0
-    ubi.set_amount_range(&governance, 0, 11, 4_500).unwrap();
+    ubi.set_amount_range(&governance, 0, 11, 4_500).ok_or("Automatic Remediation")?;
 
     // Verify amounts available
     assert_eq!(ubi.amount_for(0), 4_500);
@@ -226,7 +226,7 @@ fn test_year1_volume_projection() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Register 10K citizens
     for i in 0..100 {
@@ -234,10 +234,10 @@ fn test_year1_volume_projection() {
     }
 
     // Monthly volume: 1M → 10K fees
-    router.collect(10_000).unwrap();
-    let dist = router.distribute(BLOCKS_PER_MONTH).unwrap();
+    router.collect(10_000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
-    ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+    ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
 
     // 45% of 10K = 4500
     assert_eq!(ubi.balance(), 4_500);
@@ -250,12 +250,12 @@ fn test_year3_volume_projection() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
-    router.collect(5_000_000).unwrap();
-    let dist = router.distribute(BLOCKS_PER_MONTH * 24).unwrap();
+    router.collect(5_000_000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(BLOCKS_PER_MONTH * 24).ok_or("Automatic Remediation")?;
 
-    ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+    ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
 
     // 45% of 5M = 2.25M
     assert_eq!(ubi.balance(), 2_250_000);
@@ -268,12 +268,12 @@ fn test_year5_volume_projection() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
-    router.collect(50_000_000).unwrap();
-    let dist = router.distribute(BLOCKS_PER_MONTH * 48).unwrap();
+    router.collect(50_000_000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(BLOCKS_PER_MONTH * 48).ok_or("Automatic Remediation")?;
 
-    ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+    ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
 
     // 45% of 50M = 22.5M
     assert_eq!(ubi.balance(), 22_500_000);
@@ -284,13 +284,13 @@ fn test_monthly_cycle_three_months() {
     let governance = test_key(1);
     let mut router = FeeRouter::new();
     init_fee_router(&mut router);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Simulate 3 months of fee collection
     for month in 0..3 {
-        router.collect(20_000).unwrap();
-        let dist = router.distribute(BLOCKS_PER_MONTH * (month + 1)).unwrap();
-        ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+        router.collect(20_000).ok_or("Automatic Remediation")?;
+        let dist = router.distribute(BLOCKS_PER_MONTH * (month + 1)).ok_or("Automatic Remediation")?;
+        ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
     }
 
     // Total: 3 × 9000
@@ -305,7 +305,7 @@ fn test_monthly_cycle_three_months() {
 #[test]
 fn test_stress_10k_citizens() {
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Register 10K citizens
     // Magic number explanation:
@@ -328,13 +328,13 @@ fn test_stress_high_frequency_distributions() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // 100 rapid distributions
     for i in 1..=100 {
-        router.collect(1_000).unwrap();
-        let dist = router.distribute(i * 100).unwrap();
-        ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+        router.collect(1_000).ok_or("Automatic Remediation")?;
+        let dist = router.distribute(i * 100).ok_or("Automatic Remediation")?;
+        ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
     }
 
     // Total should be 100 × 450
@@ -347,13 +347,13 @@ fn test_stress_large_fee_amount() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Collect very large amount (1B)
-    router.collect(1_000_000_000).unwrap();
-    let dist = router.distribute(100).unwrap();
+    router.collect(1_000_000_000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(100).ok_or("Automatic Remediation")?;
 
-    ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+    ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
 
     // 45% of 1B
     assert_eq!(ubi.balance(), 450_000_000);
@@ -365,16 +365,16 @@ fn test_stress_overflow_protection() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Near max u64
     let large_amount = u64::MAX / 2;
-    router.collect(large_amount).unwrap();
-    let dist = router.distribute(100).unwrap();
+    router.collect(large_amount).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(100).ok_or("Automatic Remediation")?;
 
     // Should not overflow
     assert!(dist.ubi_pool > 0);
-    ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+    ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
 }
 
 // ============================================================================
@@ -387,8 +387,8 @@ fn test_precision_integer_division() {
     init_fee_router(&mut router);
 
     // Test with amounts that don't divide evenly
-    router.collect(999).unwrap();
-    let dist = router.distribute(100).unwrap();
+    router.collect(999).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(100).ok_or("Automatic Remediation")?;
 
     // 45% of 999 = 449.55 → 449
     assert_eq!(dist.ubi_pool, 449);
@@ -406,17 +406,17 @@ fn test_precision_cumulative_no_loss() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // 100 small amounts
     let mut total_distributed = 0u64;
 
     for i in 1..=100 {
-        router.collect(997).unwrap();
+        router.collect(997).ok_or("Automatic Remediation")?;
 
-        let dist = router.distribute(i as u64 * 100).unwrap();
+        let dist = router.distribute(i as u64 * 100).ok_or("Automatic Remediation")?;
         total_distributed += dist.ubi_pool;
-        ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+        ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
     }
 
     // Accumulated total should match what was actually distributed to UBI
@@ -429,18 +429,18 @@ fn test_precision_boundary_values() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Test boundary: 1
-    router.collect(1).unwrap();
-    let dist = router.distribute(1).unwrap();
+    router.collect(1).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(1).ok_or("Automatic Remediation")?;
     assert_eq!(dist.total_distributed() + dist.remainder, 1);
 
     // Test boundary: 100
     let mut router2 = FeeRouter::new();
     init_fee_router(&mut router2);
-    router2.collect(100).unwrap();
-    let dist2 = router2.distribute(2).unwrap();
+    router2.collect(100).ok_or("Automatic Remediation")?;
+    let dist2 = router2.distribute(2).ok_or("Automatic Remediation")?;
     assert_eq!(dist2.total_distributed() + dist2.remainder, 100);
 }
 
@@ -456,11 +456,11 @@ fn test_fairness_consistent_allocation() {
     init_fee_router(&mut router2);
 
     // Same amount in both routers
-    router1.collect(10_000).unwrap();
-    router2.collect(10_000).unwrap();
+    router1.collect(10_000).ok_or("Automatic Remediation")?;
+    router2.collect(10_000).ok_or("Automatic Remediation")?;
 
-    let dist1 = router1.distribute(100).unwrap();
-    let dist2 = router2.distribute(200).unwrap();
+    let dist1 = router1.distribute(100).ok_or("Automatic Remediation")?;
+    let dist2 = router2.distribute(200).ok_or("Automatic Remediation")?;
 
     // Should get exactly the same split percentages
     assert_eq!(dist1.ubi_pool, dist2.ubi_pool);
@@ -474,8 +474,8 @@ fn test_fairness_allocation_percentages() {
     let mut router = FeeRouter::new();
     init_fee_router(&mut router);
 
-    router.collect(1_000_000).unwrap();
-    let dist = router.distribute(100).unwrap();
+    router.collect(1_000_000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(100).ok_or("Automatic Remediation")?;
 
     // Verify exact percentages
     assert_eq!(dist.ubi_pool, 450_000); // 45%
@@ -490,15 +490,15 @@ fn test_fairness_no_double_allocation() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi1 = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
-    let mut ubi2 = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi1 = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
+    let mut ubi2 = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
-    router.collect(10_000).unwrap();
-    let dist = router.distribute(100).unwrap();
+    router.collect(10_000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(100).ok_or("Automatic Remediation")?;
 
     // Each receives the same allocation independently
-    ubi1.receive_funds(&governance, dist.ubi_pool).unwrap();
-    ubi2.receive_funds(&governance, dist.ubi_pool).unwrap();
+    ubi1.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
+    ubi2.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
 
     assert_eq!(ubi1.balance(), 4_500);
     assert_eq!(ubi2.balance(), 4_500);
@@ -517,7 +517,7 @@ fn bench_fee_collection_throughput() {
 
     // Collect 10K times
     for _ in 1..=10_000 {
-        router.collect(1).unwrap();
+        router.collect(1).ok_or("Automatic Remediation")?;
     }
 
     let elapsed = start.elapsed();
@@ -536,15 +536,15 @@ fn bench_distribution_throughput() {
     init_fee_router(&mut router);
 
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let start = Instant::now();
 
     // 100 distributions
     for i in 1..=100 {
-        router.collect(1_000).unwrap();
-        let dist = router.distribute(i * 100).unwrap();
-        ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+        router.collect(1_000).ok_or("Automatic Remediation")?;
+        let dist = router.distribute(i * 100).ok_or("Automatic Remediation")?;
+        ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
     }
 
     let elapsed = start.elapsed();
@@ -560,7 +560,7 @@ fn bench_distribution_throughput() {
 #[test]
 fn bench_ubi_citizen_registration() {
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let start = Instant::now();
 
@@ -584,7 +584,7 @@ fn bench_year1_to_year5_projection() {
     let governance = test_key(1);
     let mut router = FeeRouter::new();
     init_fee_router(&mut router);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let start = Instant::now();
 
@@ -599,9 +599,9 @@ fn bench_year1_to_year5_projection() {
             _ => 50_000_000, // Year 5
         };
 
-        router.collect(fees).unwrap();
-        let dist = router.distribute(BLOCKS_PER_MONTH * (month + 1)).unwrap();
-        ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+        router.collect(fees).ok_or("Automatic Remediation")?;
+        let dist = router.distribute(BLOCKS_PER_MONTH * (month + 1)).ok_or("Automatic Remediation")?;
+        ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
     }
 
     let elapsed = start.elapsed();
@@ -642,7 +642,7 @@ fn test_error_distribute_uninitialized() {
 fn test_error_receive_funds_unauthorized() {
     let governance = test_key(1);
     let other = test_key(99);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let result = ubi.receive_funds(&other, 1000);
     assert!(result.is_err());
@@ -654,12 +654,12 @@ fn test_error_unauthorized_fee_router_operations() {
     init_fee_router(&mut router);
 
     // collect() is permissionless but distribute() state change is guarded
-    router.collect(1000).unwrap();
-    let dist1 = router.distribute(100).unwrap();
+    router.collect(1000).ok_or("Automatic Remediation")?;
+    let dist1 = router.distribute(100).ok_or("Automatic Remediation")?;
 
     // Same operation should work - no authorization required for FeeRouter
-    router.collect(1000).unwrap();
-    let dist2 = router.distribute(200).unwrap();
+    router.collect(1000).ok_or("Automatic Remediation")?;
+    let dist2 = router.distribute(200).ok_or("Automatic Remediation")?;
 
     // Both distributions have same allocation percentages
     assert_eq!(dist1.ubi_pool, dist2.ubi_pool);
@@ -668,11 +668,11 @@ fn test_error_unauthorized_fee_router_operations() {
 #[test]
 fn test_error_ubi_duplicate_registration() {
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     let citizen = test_key(10);
 
-    ubi.register(&citizen).unwrap();
+    ubi.register(&citizen).ok_or("Automatic Remediation")?;
     let result = ubi.register(&citizen);
 
     assert!(result.is_err());
@@ -689,10 +689,10 @@ fn test_edge_case_remainder_accumulation() {
 
     // Collect amounts that produce remainders
     for _ in 0..10 {
-        router.collect(333).unwrap(); // Will have remainder: 333 % 100 != 0
+        router.collect(333).ok_or("Automatic Remediation")?; // Will have remainder: 333 % 100 != 0
     }
 
-    let dist = router.distribute(100).unwrap();
+    let dist = router.distribute(100).ok_or("Automatic Remediation")?;
 
     // Verify no precision loss
     assert_eq!(dist.total_distributed() + dist.remainder, 3330);
@@ -704,8 +704,8 @@ fn test_edge_case_dao_per_unit_distribution() {
     init_fee_router(&mut router);
 
     // Collect 1.5M (will be divided by 5 DAOs = 300k each)
-    router.collect(1_500_000).unwrap();
-    let dist = router.distribute(100).unwrap();
+    router.collect(1_500_000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(100).ok_or("Automatic Remediation")?;
 
     // 30% of 1.5M = 450k
     assert_eq!(dist.dao_pool, 450_000);
@@ -719,20 +719,20 @@ fn test_edge_case_ubi_schedule_integration() {
     let governance = test_key(1);
     let mut router = FeeRouter::new();
     init_fee_router(&mut router);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // Register citizens
     for i in 10..20 {
-        ubi.register(&test_key(i)).unwrap();
+        ubi.register(&test_key(i)).ok_or("Automatic Remediation")?;
     }
 
     // Collect fees and fund UBI
-    router.collect(50_000).unwrap();
-    let dist = router.distribute(BLOCKS_PER_MONTH).unwrap();
-    ubi.receive_funds(&governance, dist.ubi_pool).unwrap();
+    router.collect(50_000).ok_or("Automatic Remediation")?;
+    let dist = router.distribute(BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
+    ubi.receive_funds(&governance, dist.ubi_pool).ok_or("Automatic Remediation")?;
 
     // Set schedule: Year 1 (months 0-11)
-    ubi.set_amount_range(&governance, 0, 11, 2_000).unwrap();
+    ubi.set_amount_range(&governance, 0, 11, 2_000).ok_or("Automatic Remediation")?;
 
     // Verify schedule is set
     assert_eq!(ubi.amount_for(0), 2_000);
@@ -747,7 +747,7 @@ fn test_edge_case_ubi_schedule_integration() {
 #[test]
 fn test_edge_case_governance_consistency() {
     let governance = test_key(1);
-    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).unwrap();
+    let mut ubi = UbiDistributor::new(governance.clone(), BLOCKS_PER_MONTH).ok_or("Automatic Remediation")?;
 
     // All governance-protected operations should use same authority
     assert!(ubi.set_amount_range(&governance, 0, 11, 1000).is_ok());

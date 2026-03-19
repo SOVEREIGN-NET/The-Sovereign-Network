@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn test_consensus_integration_initialization() {
-    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().ok_or("Automatic Remediation")?));
     let mempool = Arc::new(RwLock::new(Mempool::default()));
 
     let coordinator = initialize_consensus_integration(
@@ -33,17 +33,17 @@ async fn test_consensus_integration_initialization() {
 
 #[tokio::test]
 async fn test_validator_registration() {
-    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().ok_or("Automatic Remediation")?));
     let mempool = Arc::new(RwLock::new(Mempool::default()));
 
     let mut coordinator =
         initialize_consensus_integration(blockchain, mempool, ConsensusType::ProofOfStake)
             .await
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
 
-    let validator_keypair = KeyPair::generate().unwrap();
-    let networking_keypair = KeyPair::generate().unwrap();
-    let rewards_keypair = KeyPair::generate().unwrap();
+    let validator_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
+    let networking_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
+    let rewards_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
     let validator_identity = IdentityId::from_bytes(&validator_keypair.public_key.dilithium_pk);
 
     let result = coordinator
@@ -63,7 +63,7 @@ async fn test_validator_registration() {
 
 #[tokio::test]
 async fn test_dao_proposal_creation() {
-    let proposer_keypair = KeyPair::generate().unwrap();
+    let proposer_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
 
     let proposal_tx = create_dao_proposal_transaction(
         &proposer_keypair,
@@ -77,7 +77,7 @@ async fn test_dao_proposal_creation() {
         "DAO proposal transaction should be created successfully"
     );
 
-    let tx = proposal_tx.unwrap();
+    let tx = proposal_tx.ok_or("Automatic Remediation")?;
     // DAO proposals use Transfer type for record keeping (actual DAO logic handled by lib-consensus)
     assert_eq!(
         tx.transaction_type,
@@ -94,7 +94,7 @@ async fn test_dao_proposal_creation() {
 
 #[tokio::test]
 async fn test_dao_vote_creation() {
-    let voter_keypair = KeyPair::generate().unwrap();
+    let voter_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
     let proposal_id = lib_crypto::Hash::from_bytes(&[1u8; 32]);
 
     let vote_tx = create_dao_vote_transaction(&voter_keypair, proposal_id, DaoVoteChoice::Yes);
@@ -104,7 +104,7 @@ async fn test_dao_vote_creation() {
         "DAO vote transaction should be created successfully"
     );
 
-    let tx = vote_tx.unwrap();
+    let tx = vote_tx.ok_or("Automatic Remediation")?;
     // DAO votes use Transfer type for record keeping (actual DAO logic handled by lib-consensus)
     assert_eq!(
         tx.transaction_type,
@@ -122,7 +122,7 @@ async fn test_dao_vote_creation() {
 
 #[tokio::test]
 async fn test_consensus_status() {
-    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().ok_or("Automatic Remediation")?));
     let mempool = Arc::new(RwLock::new(Mempool::default()));
 
     let coordinator = initialize_consensus_integration(
@@ -131,12 +131,12 @@ async fn test_consensus_status() {
         ConsensusType::ByzantineFaultTolerance,
     )
     .await
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     let status = coordinator.get_consensus_status().await;
     assert!(status.is_ok(), "Should be able to get consensus status");
 
-    let status = status.unwrap();
+    let status = status.ok_or("Automatic Remediation")?;
     assert_eq!(status.current_height, 0, "Initial height should be 0");
     assert_eq!(status.current_round, 0, "Initial round should be 0");
     assert!(!status.is_validator, "Should not be a validator initially");
@@ -144,7 +144,7 @@ async fn test_consensus_status() {
 
 #[tokio::test]
 async fn test_consensus_integration_with_blockchain() {
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
     let mempool = Arc::new(RwLock::new(Mempool::default()));
     let _blockchain_arc = Arc::new(RwLock::new(blockchain.clone()));
 
@@ -152,7 +152,7 @@ async fn test_consensus_integration_with_blockchain() {
     blockchain
         .initialize_consensus_coordinator(mempool.clone(), ConsensusType::ByzantineFaultTolerance)
         .await
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Check that consensus coordinator was initialized
     assert!(
@@ -161,13 +161,13 @@ async fn test_consensus_integration_with_blockchain() {
     );
 
     // Test consensus status
-    let status = blockchain.get_consensus_status().await.unwrap();
+    let status = blockchain.get_consensus_status().await.ok_or("Automatic Remediation")?;
     assert!(status.is_some(), "Should have consensus status");
 }
 
 #[tokio::test]
 async fn test_multiple_validators() {
-    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().ok_or("Automatic Remediation")?));
     let mempool = Arc::new(RwLock::new(Mempool::default()));
 
     let mut coordinator = initialize_consensus_integration(
@@ -176,7 +176,7 @@ async fn test_multiple_validators() {
         ConsensusType::ByzantineFaultTolerance,
     )
     .await
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     // Register multiple validators
     let validators = vec![
@@ -186,9 +186,9 @@ async fn test_multiple_validators() {
     ];
 
     for (name, stake, storage_gb) in validators {
-        let consensus_keypair = KeyPair::generate().unwrap();
-        let networking_keypair = KeyPair::generate().unwrap();
-        let rewards_keypair = KeyPair::generate().unwrap();
+        let consensus_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
+        let networking_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
+        let rewards_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
         let identity = IdentityId::from_bytes(&consensus_keypair.public_key.dilithium_pk);
         let storage_bytes = storage_gb * 1024 * 1024 * 1024;
 
@@ -211,7 +211,7 @@ async fn test_multiple_validators() {
         );
     }
 
-    let status = coordinator.get_consensus_status().await.unwrap();
+    let status = coordinator.get_consensus_status().await.ok_or("Automatic Remediation")?;
     assert!(
         status.validator_count > 0,
         "Should have registered validators"
@@ -220,22 +220,22 @@ async fn test_multiple_validators() {
 
 #[tokio::test]
 async fn test_consensus_event_handling() {
-    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().ok_or("Automatic Remediation")?));
     let mempool = Arc::new(RwLock::new(Mempool::default()));
 
     let coordinator =
         initialize_consensus_integration(blockchain, mempool, ConsensusType::ProofOfStake)
             .await
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
 
     // Test that coordinator can handle consensus events
     // This tests the internal event loop initialization
-    let status_before = coordinator.get_consensus_status().await.unwrap();
+    let status_before = coordinator.get_consensus_status().await.ok_or("Automatic Remediation")?;
 
     // Give it a moment to initialize
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    let status_after = coordinator.get_consensus_status().await.unwrap();
+    let status_after = coordinator.get_consensus_status().await.ok_or("Automatic Remediation")?;
 
     // The status should be accessible both before and after
     assert_eq!(status_before.current_height, status_after.current_height);
@@ -244,14 +244,14 @@ async fn test_consensus_event_handling() {
 #[tokio::test]
 async fn test_dao_transaction_parsing() {
     // Test DAO proposal transaction format
-    let proposer_keypair = KeyPair::generate().unwrap();
+    let proposer_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
     let proposal_tx = create_dao_proposal_transaction(
         &proposer_keypair,
         "Treasury Allocation".to_string(),
         "Allocate funds for development".to_string(),
         DaoProposalType::TreasuryAllocation,
     )
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     let memo = String::from_utf8_lossy(&proposal_tx.memo);
     assert!(memo.contains("dao:proposal:"));
@@ -260,10 +260,10 @@ async fn test_dao_transaction_parsing() {
     assert!(memo.contains("type:TreasuryAllocation"));
 
     // Test DAO vote transaction format
-    let voter_keypair = KeyPair::generate().unwrap();
+    let voter_keypair = KeyPair::generate().ok_or("Automatic Remediation")?;
     let proposal_id = lib_crypto::Hash::from_bytes(&[0xab; 32]);
     let vote_tx =
-        create_dao_vote_transaction(&voter_keypair, proposal_id, DaoVoteChoice::No).unwrap();
+        create_dao_vote_transaction(&voter_keypair, proposal_id, DaoVoteChoice::No).ok_or("Automatic Remediation")?;
 
     let memo = String::from_utf8_lossy(&vote_tx.memo);
     assert!(memo.contains("dao:vote:"));
@@ -273,13 +273,13 @@ async fn test_dao_transaction_parsing() {
 
 #[tokio::test]
 async fn test_consensus_coordinator_lifecycle() {
-    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().ok_or("Automatic Remediation")?));
     let mempool = Arc::new(RwLock::new(Mempool::default()));
 
     let mut coordinator =
         initialize_consensus_integration(blockchain, mempool, ConsensusType::ProofOfStake)
             .await
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
 
     // Test starting coordinator
     let start_result = coordinator.start_consensus_coordinator().await;
@@ -289,7 +289,7 @@ async fn test_consensus_coordinator_lifecycle() {
     );
 
     // Test status while running
-    let status = coordinator.get_consensus_status().await.unwrap();
+    let status = coordinator.get_consensus_status().await.ok_or("Automatic Remediation")?;
     assert!(
         status.is_producing_blocks,
         "Should be producing blocks when started"
@@ -304,13 +304,13 @@ async fn test_consensus_coordinator_lifecycle() {
 
 #[tokio::test]
 async fn test_difficulty_manager_integration() {
-    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().ok_or("Automatic Remediation")?));
     let mempool = Arc::new(RwLock::new(Mempool::default()));
 
     let coordinator =
         initialize_consensus_integration(blockchain, mempool, ConsensusType::ProofOfStake)
             .await
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
 
     // Test getting default difficulty config
     let config = coordinator.get_difficulty_config().await;
@@ -361,13 +361,13 @@ async fn test_difficulty_manager_integration() {
 
 #[tokio::test]
 async fn test_difficulty_adjustment_calculation() {
-    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().ok_or("Automatic Remediation")?));
     let mempool = Arc::new(RwLock::new(Mempool::default()));
 
     let coordinator =
         initialize_consensus_integration(blockchain, mempool, ConsensusType::ProofOfStake)
             .await
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
 
     let current_difficulty = 0x1d00ffff;
     let config = coordinator.get_difficulty_config().await;
@@ -384,14 +384,14 @@ async fn test_difficulty_adjustment_calculation() {
         .await;
 
     assert!(result.is_ok(), "Difficulty adjustment should succeed");
-    let new_difficulty = result.unwrap();
+    let new_difficulty = result.ok_or("Automatic Remediation")?;
     assert!(
         new_difficulty.is_some(),
         "Should return new difficulty at adjustment height"
     );
 
     // With on-target timing, difficulty should stay approximately the same
-    let diff = new_difficulty.unwrap();
+    let diff = new_difficulty.ok_or("Automatic Remediation")?;
     let diff_delta = (diff as i64 - current_difficulty as i64).abs();
     assert!(
         diff_delta < 100,
@@ -410,20 +410,20 @@ async fn test_difficulty_adjustment_calculation() {
 
     assert!(result.is_ok());
     assert!(
-        result.unwrap().is_none(),
+        result.ok_or("Automatic Remediation")?.is_none(),
         "Should return None at non-adjustment height"
     );
 }
 
 #[tokio::test]
 async fn test_difficulty_governance_update() {
-    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().ok_or("Automatic Remediation")?));
     let mempool = Arc::new(RwLock::new(Mempool::default()));
 
     let coordinator =
         initialize_consensus_integration(blockchain, mempool, ConsensusType::ProofOfStake)
             .await
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
 
     // Update adjustment interval via governance
     let result = coordinator
@@ -483,7 +483,7 @@ async fn test_difficulty_manager_with_custom_config() {
     use lib_blockchain::initialize_consensus_integration_with_difficulty_config;
     use lib_consensus::difficulty::DifficultyConfig;
 
-    let blockchain = Arc::new(RwLock::new(Blockchain::new().unwrap()));
+    let blockchain = Arc::new(RwLock::new(Blockchain::new().ok_or("Automatic Remediation")?));
     let mempool = Arc::new(RwLock::new(Mempool::default()));
 
     // Create custom difficulty config
@@ -492,7 +492,7 @@ async fn test_difficulty_manager_with_custom_config() {
         100,        // custom adjustment interval
         86400,      // 1 day target timespan
     )
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     let coordinator = initialize_consensus_integration_with_difficulty_config(
         blockchain,
@@ -501,7 +501,7 @@ async fn test_difficulty_manager_with_custom_config() {
         custom_config,
     )
     .await
-    .unwrap();
+    .ok_or("Automatic Remediation")?;
 
     let config = coordinator.get_difficulty_config().await;
     assert_eq!(config.initial_difficulty, 0x1d00fffe);
@@ -519,7 +519,7 @@ async fn test_difficulty_manager_with_custom_config() {
 async fn test_apply_difficulty_parameter_update_proposal_not_found() {
     use lib_blockchain::Blockchain;
 
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Try to apply a non-existent proposal
     let fake_proposal_id = lib_blockchain::Hash::new([42u8; 32]);
@@ -538,7 +538,7 @@ async fn test_apply_difficulty_parameter_update_proposal_not_found() {
 async fn test_difficulty_double_execution_prevention() {
     use lib_blockchain::Blockchain;
 
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Pre-mark a proposal as executed
     let proposal_id = lib_blockchain::Hash::new([99u8; 32]);
@@ -560,7 +560,7 @@ async fn test_difficulty_double_execution_prevention() {
 async fn test_process_approved_governance_proposals_empty() {
     use lib_blockchain::Blockchain;
 
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // With no proposals, this should succeed without errors
     let result = blockchain.process_approved_governance_proposals();
@@ -572,7 +572,7 @@ async fn test_process_approved_governance_proposals_empty() {
 async fn test_executed_proposals_tracking() {
     use lib_blockchain::Blockchain;
 
-    let blockchain = Blockchain::new().unwrap();
+    let blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Check that executed_dao_proposals is initialized empty
     assert!(
@@ -585,7 +585,7 @@ async fn test_executed_proposals_tracking() {
 async fn test_difficulty_config_persistence_after_update() {
     use lib_blockchain::Blockchain;
 
-    let blockchain = Blockchain::new().unwrap();
+    let blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Verify initial difficulty config exists
     assert!(
@@ -611,11 +611,11 @@ async fn test_apply_difficulty_parameter_update_updates_token_creation_fee() {
     use lib_consensus::dao::dao_types::GovernanceParameterValue;
     use tempfile::tempdir;
 
-    let mut blockchain = Blockchain::new().unwrap();
+    let mut blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
     blockchain.height = 42;
 
-    let dir = tempdir().unwrap();
-    let store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(dir.path()).unwrap());
+    let dir = tempdir().ok_or("Automatic Remediation")?;
+    let store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(dir.path()).ok_or("Automatic Remediation")?);
     let executor = Arc::new(BlockExecutor::from_config(store, ExecutorConfig::default()));
     blockchain.set_executor(executor);
 
@@ -637,7 +637,7 @@ async fn test_apply_difficulty_parameter_update_updates_token_creation_fee() {
     assert_eq!(blockchain.tx_fee_config_updated_at_height, 42);
     assert!(blockchain.executed_dao_proposals.contains(&proposal_id));
     assert_eq!(
-        blockchain.executor.as_ref().unwrap().token_creation_fee(),
+        blockchain.executor.as_ref().ok_or("Automatic Remediation")?.token_creation_fee(),
         2_222
     );
 }
@@ -660,10 +660,10 @@ async fn test_conflicting_block_hash_rejection() {
     use lib_blockchain::{Block, BlockHeader, Difficulty};
 
     // Initialize blockchain
-    let blockchain = Blockchain::new().unwrap();
+    let blockchain = Blockchain::new().ok_or("Automatic Remediation")?;
 
     // Get genesis block info
-    let genesis_hash = blockchain.latest_block().unwrap().header.block_hash;
+    let genesis_hash = blockchain.latest_block().ok_or("Automatic Remediation")?.header.block_hash;
     let height = 1u64;
 
     // Create two different blocks at the same height with different timestamps

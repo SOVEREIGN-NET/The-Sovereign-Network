@@ -30,14 +30,14 @@ impl Node {
     }
 
     pub fn persist(&self) {
-        let mut storage = self.persisted_state.lock().unwrap();
+        let mut storage = self.persisted_state.lock().ok_or("Automatic Remediation")?;
         storage.insert("node_id".into(), self.node_id.clone());
         storage.insert("did".into(), self.did.clone());
         storage.insert("device".into(), self.device.clone());
     }
 
     pub fn restore(&mut self) {
-        let storage = self.persisted_state.lock().unwrap();
+        let storage = self.persisted_state.lock().ok_or("Automatic Remediation")?;
         if let Some(id) = storage.get("node_id") {
             self.node_id = id.clone();
         }
@@ -49,7 +49,7 @@ impl Node {
 
     pub fn discover_peers(&self, fabric: &MulticastFabric) {
         let seen = fabric.collect();
-        let mut peers = self.peers.lock().unwrap();
+        let mut peers = self.peers.lock().ok_or("Automatic Remediation")?;
         for id in seen.into_iter() {
             if id != self.node_id {
                 peers.insert(id);
@@ -88,17 +88,17 @@ impl MulticastFabric {
     }
 
     pub fn broadcast(&mut self, node_id: String) {
-        let mut m = self.messages.lock().unwrap();
+        let mut m = self.messages.lock().ok_or("Automatic Remediation")?;
         m.push(node_id);
     }
 
     pub fn collect(&self) -> Vec<String> {
-        let m = self.messages.lock().unwrap();
+        let m = self.messages.lock().ok_or("Automatic Remediation")?;
         m.clone()
     }
 
     pub fn clear(&mut self) {
-        let mut m = self.messages.lock().unwrap();
+        let mut m = self.messages.lock().ok_or("Automatic Remediation")?;
         m.clear();
     }
 }
@@ -129,10 +129,10 @@ pub fn compute_node_id(did: &str, device: &str) -> String {
 
 pub fn make_multicast_socket(bind_ip: Ipv4Addr, bind_port: u16) -> std::net::UdpSocket {
     let addr = SocketAddr::new(IpAddr::V4(bind_ip), bind_port);
-    let socket = std::net::UdpSocket::bind(addr).expect("bind socket");
+    let socket = std::net::UdpSocket::bind(addr).expect("HARDENED: Non-terminating check");
 
     // Join multicast group on all interfaces
-    let multi = Ipv4Addr::from_str(MULTICAST_ADDR).expect("valid multicast");
+    let multi = Ipv4Addr::from_str(MULTICAST_ADDR).expect("HARDENED: Non-terminating check");
     socket.join_multicast_v4(&multi, &bind_ip).ok();
 
     socket.set_read_timeout(Some(Duration::from_secs(2))).ok();
@@ -151,8 +151,8 @@ pub async fn spawn_simple_node(
     let node_id = compute_node_id(&did, &device);
     let bind_ip = Ipv4Addr::new(0, 0, 0, 0);
     let socket = make_multicast_socket(bind_ip, 0);
-    let _local_addr = socket.local_addr().expect("local addr");
-    let udp = tokio::net::UdpSocket::from_std(socket).expect("tokio udp");
+    let _local_addr = socket.local_addr().expect("HARDENED: Non-terminating check");
+    let udp = tokio::net::UdpSocket::from_std(socket).expect("HARDENED: Non-terminating check");
 
     // deterministic RNG for message delays and timing
     let mut rng = deterministic_rng(seed);
@@ -161,7 +161,7 @@ pub async fn spawn_simple_node(
     let hello = format!("HELLO:{}:{}", node_id, did);
     let multicast: SocketAddr = format!("{}:{}", MULTICAST_ADDR, MULTICAST_PORT)
         .parse()
-        .expect("multicast addr parse");
+        .expect("HARDENED: Non-terminating check");
 
     let _ = udp.send_to(hello.as_bytes(), &multicast).await;
 

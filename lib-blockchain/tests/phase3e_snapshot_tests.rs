@@ -24,7 +24,7 @@ use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 // =============================================================================
 
 fn create_test_store(dir: &TempDir) -> Arc<SledStore> {
-    Arc::new(SledStore::open(dir.path()).unwrap())
+    Arc::new(SledStore::open(dir.path()).ok_or("Automatic Remediation")?)
 }
 
 fn create_dummy_public_key() -> PublicKey {
@@ -93,7 +93,7 @@ fn create_block_at_height(height: u64, prev_hash: Hash) -> Block {
 /// Test: Snapshot and restore preserves complete state
 #[test]
 fn test_snapshot_restore_complete_state() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let snapshot_dir = dir.path().join("snapshots");
 
@@ -119,92 +119,92 @@ fn test_snapshot_restore_complete_state() {
     let utxo3 = Utxo::native(30_000, charlie, 2);
 
     // Apply genesis with initial state
-    store.begin_block(0).unwrap();
-    store.append_block(&genesis).unwrap();
-    store.put_utxo(&outpoint1, &utxo1).unwrap();
-    store.set_token_balance(&token, &alice, 10_000).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(0).ok_or("Automatic Remediation")?;
+    store.append_block(&genesis).ok_or("Automatic Remediation")?;
+    store.put_utxo(&outpoint1, &utxo1).ok_or("Automatic Remediation")?;
+    store.set_token_balance(&token, &alice, 10_000).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
     // Apply block 1
-    store.begin_block(1).unwrap();
-    store.append_block(&block1).unwrap();
-    store.put_utxo(&outpoint2, &utxo2).unwrap();
-    store.set_token_balance(&token, &bob, 20_000).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(1).ok_or("Automatic Remediation")?;
+    store.append_block(&block1).ok_or("Automatic Remediation")?;
+    store.put_utxo(&outpoint2, &utxo2).ok_or("Automatic Remediation")?;
+    store.set_token_balance(&token, &bob, 20_000).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
     // Apply block 2
-    store.begin_block(2).unwrap();
-    store.append_block(&block2).unwrap();
-    store.put_utxo(&outpoint3, &utxo3).unwrap();
-    store.set_token_balance(&token, &charlie, 30_000).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(2).ok_or("Automatic Remediation")?;
+    store.append_block(&block2).ok_or("Automatic Remediation")?;
+    store.put_utxo(&outpoint3, &utxo3).ok_or("Automatic Remediation")?;
+    store.set_token_balance(&token, &charlie, 30_000).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
     // Apply block 3
-    store.begin_block(3).unwrap();
-    store.append_block(&block3).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(3).ok_or("Automatic Remediation")?;
+    store.append_block(&block3).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
     // Take snapshot at height 3
-    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
-    let snapshot_id = manager.snapshot_at(3).unwrap();
+    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok_or("Automatic Remediation")?;
+    let snapshot_id = manager.snapshot_at(3).ok_or("Automatic Remediation")?;
 
     // Record state before restore
-    let alice_balance_before = store.get_token_balance(&token, &alice).unwrap();
-    let bob_balance_before = store.get_token_balance(&token, &bob).unwrap();
-    let charlie_balance_before = store.get_token_balance(&token, &charlie).unwrap();
+    let alice_balance_before = store.get_token_balance(&token, &alice).ok_or("Automatic Remediation")?;
+    let bob_balance_before = store.get_token_balance(&token, &bob).ok_or("Automatic Remediation")?;
+    let charlie_balance_before = store.get_token_balance(&token, &charlie).ok_or("Automatic Remediation")?;
 
     // Clear all state
-    store.blocks_by_height().clear().unwrap();
-    store.blocks_by_hash().clear().unwrap();
-    store.utxos().clear().unwrap();
-    store.token_balances().clear().unwrap();
-    store.meta().clear().unwrap();
+    store.blocks_by_height().clear().ok_or("Automatic Remediation")?;
+    store.blocks_by_hash().clear().ok_or("Automatic Remediation")?;
+    store.utxos().clear().ok_or("Automatic Remediation")?;
+    store.token_balances().clear().ok_or("Automatic Remediation")?;
+    store.meta().clear().ok_or("Automatic Remediation")?;
 
     // Verify state is cleared
-    assert!(store.get_utxo(&outpoint1).unwrap().is_none());
-    assert_eq!(store.get_token_balance(&token, &alice).unwrap(), 0);
+    assert!(store.get_utxo(&outpoint1).ok_or("Automatic Remediation")?.is_none());
+    assert_eq!(store.get_token_balance(&token, &alice).ok_or("Automatic Remediation")?, 0);
 
     // Restore from snapshot
-    manager.restore(&snapshot_id).unwrap();
+    manager.restore(&snapshot_id).ok_or("Automatic Remediation")?;
 
     // Verify all state is restored
-    assert_eq!(store.latest_height().unwrap(), 3);
+    assert_eq!(store.latest_height().ok_or("Automatic Remediation")?, 3);
 
     // Verify balances
     assert_eq!(
-        store.get_token_balance(&token, &alice).unwrap(),
+        store.get_token_balance(&token, &alice).ok_or("Automatic Remediation")?,
         alice_balance_before
     );
     assert_eq!(
-        store.get_token_balance(&token, &bob).unwrap(),
+        store.get_token_balance(&token, &bob).ok_or("Automatic Remediation")?,
         bob_balance_before
     );
     assert_eq!(
-        store.get_token_balance(&token, &charlie).unwrap(),
+        store.get_token_balance(&token, &charlie).ok_or("Automatic Remediation")?,
         charlie_balance_before
     );
 
     // Verify UTXOs
-    let restored_utxo1 = store.get_utxo(&outpoint1).unwrap().unwrap();
+    let restored_utxo1 = store.get_utxo(&outpoint1).ok_or("Automatic Remediation")?.ok_or("Automatic Remediation")?;
     assert_eq!(restored_utxo1.amount, 10_000);
     assert_eq!(restored_utxo1.owner, alice);
 
-    let restored_utxo2 = store.get_utxo(&outpoint2).unwrap().unwrap();
+    let restored_utxo2 = store.get_utxo(&outpoint2).ok_or("Automatic Remediation")?.ok_or("Automatic Remediation")?;
     assert_eq!(restored_utxo2.amount, 20_000);
 
-    let restored_utxo3 = store.get_utxo(&outpoint3).unwrap().unwrap();
+    let restored_utxo3 = store.get_utxo(&outpoint3).ok_or("Automatic Remediation")?.ok_or("Automatic Remediation")?;
     assert_eq!(restored_utxo3.amount, 30_000);
 
     // Verify all blocks
     for height in 0..=3 {
-        assert!(store.get_block_by_height(height).unwrap().is_some());
+        assert!(store.get_block_by_height(height).ok_or("Automatic Remediation")?.is_some());
     }
 }
 
 /// Test: Restore from snapshot then continue with more blocks
 #[test]
 fn test_restore_then_continue_chain() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let snapshot_dir = dir.path().join("snapshots");
 
@@ -212,48 +212,48 @@ fn test_restore_then_continue_chain() {
     let genesis = create_genesis_block();
     let mut prev_hash = genesis.header.block_hash;
 
-    store.begin_block(0).unwrap();
-    store.append_block(&genesis).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(0).ok_or("Automatic Remediation")?;
+    store.append_block(&genesis).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
     for height in 1..=5 {
         let block = create_block_at_height(height, prev_hash);
         prev_hash = block.header.block_hash;
-        store.begin_block(height).unwrap();
-        store.append_block(&block).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(height).ok_or("Automatic Remediation")?;
+        store.append_block(&block).ok_or("Automatic Remediation")?;
+        store.commit_block().ok_or("Automatic Remediation")?;
     }
 
     // Take snapshot at height 5
-    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
-    let snapshot_id = manager.snapshot_at(5).unwrap();
+    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok_or("Automatic Remediation")?;
+    let snapshot_id = manager.snapshot_at(5).ok_or("Automatic Remediation")?;
 
     // Clear and restore
-    store.blocks_by_height().clear().unwrap();
-    store.blocks_by_hash().clear().unwrap();
-    store.meta().clear().unwrap();
+    store.blocks_by_height().clear().ok_or("Automatic Remediation")?;
+    store.blocks_by_hash().clear().ok_or("Automatic Remediation")?;
+    store.meta().clear().ok_or("Automatic Remediation")?;
 
-    manager.restore(&snapshot_id).unwrap();
-    assert_eq!(store.latest_height().unwrap(), 5);
+    manager.restore(&snapshot_id).ok_or("Automatic Remediation")?;
+    assert_eq!(store.latest_height().ok_or("Automatic Remediation")?, 5);
 
     // Get block 5's hash to continue from
-    let block5 = store.get_block_by_height(5).unwrap().unwrap();
+    let block5 = store.get_block_by_height(5).ok_or("Automatic Remediation")?.ok_or("Automatic Remediation")?;
     prev_hash = block5.header.block_hash;
 
     // Add more blocks (6-10)
     for height in 6..=10 {
         let block = create_block_at_height(height, prev_hash);
         prev_hash = block.header.block_hash;
-        store.begin_block(height).unwrap();
-        store.append_block(&block).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(height).ok_or("Automatic Remediation")?;
+        store.append_block(&block).ok_or("Automatic Remediation")?;
+        store.commit_block().ok_or("Automatic Remediation")?;
     }
 
     // Verify complete chain
-    assert_eq!(store.latest_height().unwrap(), 10);
+    assert_eq!(store.latest_height().ok_or("Automatic Remediation")?, 10);
 
     for height in 0..=10 {
-        let block = store.get_block_by_height(height).unwrap().unwrap();
+        let block = store.get_block_by_height(height).ok_or("Automatic Remediation")?.ok_or("Automatic Remediation")?;
         assert_eq!(block.header.height, height);
     }
 }
@@ -261,7 +261,7 @@ fn test_restore_then_continue_chain() {
 /// Test: Snapshot at intermediate height preserves only state up to that point
 #[test]
 fn test_snapshot_at_intermediate_height() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let snapshot_dir = dir.path().join("snapshots");
 
@@ -269,71 +269,71 @@ fn test_snapshot_at_intermediate_height() {
     let genesis = create_genesis_block();
     let mut prev_hash = genesis.header.block_hash;
 
-    store.begin_block(0).unwrap();
-    store.append_block(&genesis).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(0).ok_or("Automatic Remediation")?;
+    store.append_block(&genesis).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
     for height in 1..=10 {
         let block = create_block_at_height(height, prev_hash);
         prev_hash = block.header.block_hash;
-        store.begin_block(height).unwrap();
-        store.append_block(&block).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(height).ok_or("Automatic Remediation")?;
+        store.append_block(&block).ok_or("Automatic Remediation")?;
+        store.commit_block().ok_or("Automatic Remediation")?;
     }
 
     // Take snapshot at height 5 (middle)
-    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
-    let snapshot_id = manager.snapshot_at(5).unwrap();
+    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok_or("Automatic Remediation")?;
+    let snapshot_id = manager.snapshot_at(5).ok_or("Automatic Remediation")?;
 
     // Verify snapshot info
-    let info = manager.get_snapshot_info(&snapshot_id).unwrap();
+    let info = manager.get_snapshot_info(&snapshot_id).ok_or("Automatic Remediation")?;
     assert_eq!(info.height, 5);
 
     // Clear and restore
-    store.blocks_by_height().clear().unwrap();
-    store.blocks_by_hash().clear().unwrap();
-    store.meta().clear().unwrap();
+    store.blocks_by_height().clear().ok_or("Automatic Remediation")?;
+    store.blocks_by_hash().clear().ok_or("Automatic Remediation")?;
+    store.meta().clear().ok_or("Automatic Remediation")?;
 
-    manager.restore(&snapshot_id).unwrap();
+    manager.restore(&snapshot_id).ok_or("Automatic Remediation")?;
 
     // Should only have blocks 0-5
-    assert_eq!(store.latest_height().unwrap(), 5);
+    assert_eq!(store.latest_height().ok_or("Automatic Remediation")?, 5);
 
     for height in 0..=5 {
-        assert!(store.get_block_by_height(height).unwrap().is_some());
+        assert!(store.get_block_by_height(height).ok_or("Automatic Remediation")?.is_some());
     }
 
     // Blocks 6-10 should not exist
     for height in 6..=10 {
-        assert!(store.get_block_by_height(height).unwrap().is_none());
+        assert!(store.get_block_by_height(height).ok_or("Automatic Remediation")?.is_none());
     }
 }
 
 /// Test: Snapshot state hash integrity check
 #[test]
 fn test_snapshot_integrity_verification() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let snapshot_dir = dir.path().join("snapshots");
 
     let genesis = create_genesis_block();
-    store.begin_block(0).unwrap();
-    store.append_block(&genesis).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(0).ok_or("Automatic Remediation")?;
+    store.append_block(&genesis).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
-    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
-    let snapshot_id = manager.snapshot_at(0).unwrap();
+    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok_or("Automatic Remediation")?;
+    let snapshot_id = manager.snapshot_at(0).ok_or("Automatic Remediation")?;
 
     // Get snapshot info
-    let info = manager.get_snapshot_info(&snapshot_id).unwrap();
+    let info = manager.get_snapshot_info(&snapshot_id).ok_or("Automatic Remediation")?;
 
     // State hash should be non-zero
     assert_ne!(info.state_hash, [0u8; 32]);
 
     // Create another snapshot - same state should produce same hash
     // (determinism test)
-    let snapshot_id2 = manager.snapshot_at(0).unwrap();
-    let info2 = manager.get_snapshot_info(&snapshot_id2).unwrap();
+    let snapshot_id2 = manager.snapshot_at(0).ok_or("Automatic Remediation")?;
+    let info2 = manager.get_snapshot_info(&snapshot_id2).ok_or("Automatic Remediation")?;
 
     assert_eq!(info.state_hash, info2.state_hash);
 }
@@ -341,7 +341,7 @@ fn test_snapshot_integrity_verification() {
 /// Test: Multiple snapshots management
 #[test]
 fn test_multiple_snapshots() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let snapshot_dir = dir.path().join("snapshots");
 
@@ -351,31 +351,31 @@ fn test_multiple_snapshots() {
     let block2 = create_block_at_height(2, block1.header.block_hash);
     let block3 = create_block_at_height(3, block2.header.block_hash);
 
-    store.begin_block(0).unwrap();
-    store.append_block(&genesis).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(0).ok_or("Automatic Remediation")?;
+    store.append_block(&genesis).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
-    store.begin_block(1).unwrap();
-    store.append_block(&block1).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(1).ok_or("Automatic Remediation")?;
+    store.append_block(&block1).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
-    store.begin_block(2).unwrap();
-    store.append_block(&block2).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(2).ok_or("Automatic Remediation")?;
+    store.append_block(&block2).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
-    store.begin_block(3).unwrap();
-    store.append_block(&block3).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(3).ok_or("Automatic Remediation")?;
+    store.append_block(&block3).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
-    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
+    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok_or("Automatic Remediation")?;
 
     // Create snapshots at different heights
-    let id_h1 = manager.snapshot_at(1).unwrap();
-    let id_h2 = manager.snapshot_at(2).unwrap();
-    let id_h3 = manager.snapshot_at(3).unwrap();
+    let id_h1 = manager.snapshot_at(1).ok_or("Automatic Remediation")?;
+    let id_h2 = manager.snapshot_at(2).ok_or("Automatic Remediation")?;
+    let id_h3 = manager.snapshot_at(3).ok_or("Automatic Remediation")?;
 
     // List should have 3 snapshots
-    let list = manager.list_snapshots().unwrap();
+    let list = manager.list_snapshots().ok_or("Automatic Remediation")?;
     assert_eq!(list.len(), 3);
 
     // Sorted by height descending
@@ -384,24 +384,24 @@ fn test_multiple_snapshots() {
     assert_eq!(list[2].height, 1);
 
     // Delete one
-    manager.delete_snapshot(&id_h2).unwrap();
+    manager.delete_snapshot(&id_h2).ok_or("Automatic Remediation")?;
 
-    let list = manager.list_snapshots().unwrap();
+    let list = manager.list_snapshots().ok_or("Automatic Remediation")?;
     assert_eq!(list.len(), 2);
 
     // Can still restore from remaining snapshots
-    store.blocks_by_height().clear().unwrap();
-    store.blocks_by_hash().clear().unwrap();
-    store.meta().clear().unwrap();
+    store.blocks_by_height().clear().ok_or("Automatic Remediation")?;
+    store.blocks_by_hash().clear().ok_or("Automatic Remediation")?;
+    store.meta().clear().ok_or("Automatic Remediation")?;
 
-    manager.restore(&id_h3).unwrap();
-    assert_eq!(store.latest_height().unwrap(), 3);
+    manager.restore(&id_h3).ok_or("Automatic Remediation")?;
+    assert_eq!(store.latest_height().ok_or("Automatic Remediation")?, 3);
 }
 
 /// Test: Restore with account state
 #[test]
 fn test_snapshot_restore_account_state() {
-    let dir = TempDir::new().unwrap();
+    let dir = TempDir::new().ok_or("Automatic Remediation")?;
     let store = create_test_store(&dir);
     let snapshot_dir = dir.path().join("snapshots");
 
@@ -410,32 +410,32 @@ fn test_snapshot_restore_account_state() {
     let alice = Address::new([1u8; 32]);
     let alice_account = AccountState::new(alice).with_wallet(WalletState::new(42));
 
-    store.begin_block(0).unwrap();
-    store.append_block(&genesis).unwrap();
-    store.put_account(&alice, &alice_account).unwrap();
-    store.commit_block().unwrap();
+    store.begin_block(0).ok_or("Automatic Remediation")?;
+    store.append_block(&genesis).ok_or("Automatic Remediation")?;
+    store.put_account(&alice, &alice_account).ok_or("Automatic Remediation")?;
+    store.commit_block().ok_or("Automatic Remediation")?;
 
-    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
-    let snapshot_id = manager.snapshot_at(0).unwrap();
+    let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok_or("Automatic Remediation")?;
+    let snapshot_id = manager.snapshot_at(0).ok_or("Automatic Remediation")?;
 
     // Clear and restore
-    store.blocks_by_height().clear().unwrap();
-    store.blocks_by_hash().clear().unwrap();
-    store.accounts().clear().unwrap();
-    store.meta().clear().unwrap();
+    store.blocks_by_height().clear().ok_or("Automatic Remediation")?;
+    store.blocks_by_hash().clear().ok_or("Automatic Remediation")?;
+    store.accounts().clear().ok_or("Automatic Remediation")?;
+    store.meta().clear().ok_or("Automatic Remediation")?;
 
-    manager.restore(&snapshot_id).unwrap();
+    manager.restore(&snapshot_id).ok_or("Automatic Remediation")?;
 
     // Verify account state
-    let restored_account = store.get_account(&alice).unwrap().unwrap();
-    assert_eq!(restored_account.wallet.unwrap().nonce, 42);
+    let restored_account = store.get_account(&alice).ok_or("Automatic Remediation")?.ok_or("Automatic Remediation")?;
+    assert_eq!(restored_account.wallet.ok_or("Automatic Remediation")?.nonce, 42);
 }
 
 /// Test: Snapshot with sync roundtrip
 #[test]
 fn test_snapshot_with_chain_sync_roundtrip() {
-    let dir1 = TempDir::new().unwrap();
-    let dir2 = TempDir::new().unwrap();
+    let dir1 = TempDir::new().ok_or("Automatic Remediation")?;
+    let dir2 = TempDir::new().ok_or("Automatic Remediation")?;
     let snapshot_dir = dir1.path().join("snapshots");
 
     let store1 = create_test_store(&dir1);
@@ -448,57 +448,57 @@ fn test_snapshot_with_chain_sync_roundtrip() {
     let mut blocks = vec![genesis.clone()];
 
     for height in 1..10 {
-        let prev_hash = blocks.last().unwrap().header.block_hash;
+        let prev_hash = blocks.last().ok_or("Automatic Remediation")?.header.block_hash;
         let block = create_block_at_height(height, prev_hash);
         blocks.push(block);
     }
 
-    sync1.import_blocks(blocks.clone()).unwrap();
+    sync1.import_blocks(blocks.clone()).ok_or("Automatic Remediation")?;
 
     // Add some state
-    store1.begin_block(10).unwrap();
+    store1.begin_block(10).ok_or("Automatic Remediation")?;
     let block10 = create_block_at_height(
         10,
         store1
             .get_block_by_height(9)
-            .unwrap()
-            .unwrap()
+            .ok_or("Automatic Remediation")?
+            .ok_or("Automatic Remediation")?
             .header
             .block_hash,
     );
-    store1.append_block(&block10).unwrap();
+    store1.append_block(&block10).ok_or("Automatic Remediation")?;
     store1
         .set_token_balance(&TokenId::NATIVE, &Address::new([1u8; 32]), 999_999)
-        .unwrap();
-    store1.commit_block().unwrap();
+        .ok_or("Automatic Remediation")?;
+    store1.commit_block().ok_or("Automatic Remediation")?;
 
     // Take snapshot
-    let manager = SnapshotManager::new(Arc::clone(&store1), &snapshot_dir).unwrap();
-    let snapshot_id = manager.snapshot_at(10).unwrap();
+    let manager = SnapshotManager::new(Arc::clone(&store1), &snapshot_dir).ok_or("Automatic Remediation")?;
+    let snapshot_id = manager.snapshot_at(10).ok_or("Automatic Remediation")?;
 
     // Export all blocks from store1
-    let exported = sync1.export_all_blocks().unwrap();
+    let exported = sync1.export_all_blocks().ok_or("Automatic Remediation")?;
     assert_eq!(exported.len(), 11);
 
     // Import to store2 via ChainSync
     let sync2 = ChainSync::new(Arc::clone(&store2) as Arc<dyn BlockchainStore>);
-    sync2.import_blocks(exported).unwrap();
+    sync2.import_blocks(exported).ok_or("Automatic Remediation")?;
 
     // Both should be at height 10
-    assert_eq!(store1.latest_height().unwrap(), 10);
-    assert_eq!(store2.latest_height().unwrap(), 10);
+    assert_eq!(store1.latest_height().ok_or("Automatic Remediation")?, 10);
+    assert_eq!(store2.latest_height().ok_or("Automatic Remediation")?, 10);
 
     // Hashes should match
     let hash1 = store1
         .get_block_by_height(10)
-        .unwrap()
-        .unwrap()
+        .ok_or("Automatic Remediation")?
+        .ok_or("Automatic Remediation")?
         .header
         .block_hash;
     let hash2 = store2
         .get_block_by_height(10)
-        .unwrap()
-        .unwrap()
+        .ok_or("Automatic Remediation")?
+        .ok_or("Automatic Remediation")?
         .header
         .block_hash;
     assert_eq!(hash1, hash2);

@@ -19,7 +19,7 @@ async fn test_complete_citizen_onboarding_flow() {
     // Initialize identity system
     let mut manager = initialize_identity_system()
         .await
-        .expect("Failed to initialize identity system");
+        .expect("HARDENED: Non-terminating check");
 
     // Mock economic model
     let mut economic_model = create_mock_economic_model();
@@ -32,7 +32,7 @@ async fn test_complete_citizen_onboarding_flow() {
             &mut economic_model,
         )
         .await
-        .expect("Failed to create citizen identity");
+        .expect("HARDENED: Non-terminating check");
 
     // Verify citizenship result
     assert!(!citizenship_result.identity_id.0.is_empty());
@@ -107,7 +107,7 @@ async fn test_credential_management_lifecycle() {
     let age_result = factory
         .create_age_verification_credential(subject_id.clone(), 25, None, issuer_id.clone())
         .await
-        .expect("Failed to create age credential");
+        .expect("HARDENED: Non-terminating check");
 
     assert!(age_result.success);
     assert_eq!(
@@ -120,7 +120,7 @@ async fn test_credential_management_lifecycle() {
     let reputation_result = factory
         .create_reputation_credential(subject_id.clone(), 850, issuer_id.clone())
         .await
-        .expect("Failed to create reputation credential");
+        .expect("HARDENED: Non-terminating check");
 
     assert!(reputation_result.success);
     assert_eq!(
@@ -137,14 +137,14 @@ async fn test_credential_management_lifecycle() {
             Some(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok_or("Automatic Remediation")?
                     .as_secs()
                     + (5 * 365 * 24 * 3600),
             ), // 5 years
             issuer_id.clone(),
         )
         .await
-        .expect("Failed to create custom credential");
+        .expect("HARDENED: Non-terminating check");
 
     assert!(custom_result.success);
     assert_eq!(
@@ -176,7 +176,7 @@ async fn test_identity_verification_system() {
     verifier
         .initialize()
         .await
-        .expect("Failed to initialize verifier");
+        .expect("HARDENED: Non-terminating check");
 
     // Create test identity
     let identity = create_test_identity().await;
@@ -185,7 +185,7 @@ async fn test_identity_verification_system() {
     let basic_verification = verifier
         .verify_identity_complete(&identity, VerificationLevel::BasicExistence, None)
         .await
-        .expect("Failed to perform basic verification");
+        .expect("HARDENED: Non-terminating check");
 
     assert!(basic_verification.verified);
     assert!(basic_verification.trust_score > 0.0);
@@ -195,7 +195,7 @@ async fn test_identity_verification_system() {
     let privacy_verification = verifier
         .verify_identity_complete(&identity, VerificationLevel::PrivacyPreserving, None)
         .await
-        .expect("Failed to perform privacy verification");
+        .expect("HARDENED: Non-terminating check");
 
     assert!(privacy_verification.verified);
     assert!(privacy_verification
@@ -206,7 +206,7 @@ async fn test_identity_verification_system() {
     let complete_verification = verifier
         .verify_identity_complete(&identity, VerificationLevel::Complete, None)
         .await
-        .expect("Failed to perform complete verification");
+        .expect("HARDENED: Non-terminating check");
 
     assert!(complete_verification.verified);
     assert!(complete_verification.trust_score >= 0.8);
@@ -240,7 +240,7 @@ async fn test_recovery_system() {
     let recovery_phrase = phrase_manager
         .generate_recovery_phrase("test_identity_123", generation_options)
         .await
-        .expect("Failed to generate recovery phrase");
+        .expect("HARDENED: Non-terminating check");
 
     assert_eq!(recovery_phrase.words.len(), 15);
     assert_eq!(recovery_phrase.language, "english");
@@ -255,7 +255,7 @@ async fn test_recovery_system() {
             Some("additional_auth_123"),
         )
         .await
-        .expect("Failed to store recovery phrase");
+        .expect("HARDENED: Non-terminating check");
 
     assert!(!phrase_id.is_empty());
 
@@ -263,7 +263,7 @@ async fn test_recovery_system() {
     let recovered_identity = phrase_manager
         .recover_identity_with_phrase(&recovery_phrase.words, Some("additional_auth_123"))
         .await
-        .expect("Failed to recover identity");
+        .expect("HARDENED: Non-terminating check");
 
     assert_eq!(recovered_identity, "test_identity_123");
 
@@ -271,7 +271,7 @@ async fn test_recovery_system() {
     let validation_result = phrase_manager
         .validate_phrase(&recovery_phrase)
         .await
-        .expect("Failed to validate phrase");
+        .expect("HARDENED: Non-terminating check");
 
     println!("DEBUG: validation_result = {:?}", validation_result);
     assert!(validation_result.valid);
@@ -301,7 +301,7 @@ async fn test_wallet_integration() {
             Some("primary".to_string()),
         )
         .await
-        .expect("Failed to create primary wallet");
+        .expect("HARDENED: Non-terminating check");
 
     let (_ubi_wallet, _seed2) = wallet_manager
         .create_wallet_with_seed_phrase(
@@ -310,7 +310,7 @@ async fn test_wallet_integration() {
             Some("ubi".to_string()),
         )
         .await
-        .expect("Failed to create UBI wallet");
+        .expect("HARDENED: Non-terminating check");
 
     let (_savings_wallet, _seed3) = wallet_manager
         .create_wallet_with_seed_phrase(
@@ -319,7 +319,7 @@ async fn test_wallet_integration() {
             Some("savings".to_string()),
         )
         .await
-        .expect("Failed to create savings wallet");
+        .expect("HARDENED: Non-terminating check");
 
     // Test wallet retrieval
     assert!(wallet_manager.get_wallet(&primary_wallet).is_some());
@@ -362,7 +362,7 @@ async fn test_activity_tracking() {
     // Verify activity record
     let record = tracker
         .get_activity_record(&identity_id)
-        .expect("Activity record not found");
+        .expect("HARDENED: Non-terminating check");
     assert_eq!(record.activity_count, 4);
     assert_eq!(record.activity_types.len(), 4);
     assert!(record
@@ -381,7 +381,7 @@ async fn test_activity_tracking() {
     );
     tracker.end_session(&identity_id, &session_id);
 
-    let updated_record = tracker.get_activity_record(&identity_id).unwrap();
+    let updated_record = tracker.get_activity_record(&identity_id).ok_or("Automatic Remediation")?;
     assert_eq!(updated_record.sessions.len(), 1);
     assert!(updated_record.sessions[0].end_time.is_some());
 
@@ -389,7 +389,7 @@ async fn test_activity_tracking() {
     let stats = tracker.get_global_stats();
     assert_eq!(stats.total_activities, 4);
     assert!(stats.most_active_identity.is_some());
-    assert_eq!(stats.most_active_identity.as_ref().unwrap(), &identity_id);
+    assert_eq!(stats.most_active_identity.as_ref().ok_or("Automatic Remediation")?, &identity_id);
 
     println!("Activity tracking test passed!");
 }
@@ -399,7 +399,7 @@ async fn test_citizenship_system_integration() {
     println!(" Testing citizenship system integration...");
 
     // Test the complete citizenship flow
-    let mut manager = initialize_identity_system().await.unwrap();
+    let mut manager = initialize_identity_system().await.ok_or("Automatic Remediation")?;
     let mut economic_model = create_mock_economic_model();
 
     // Create multiple citizens
@@ -413,7 +413,7 @@ async fn test_citizenship_system_integration() {
                 &mut economic_model,
             )
             .await
-            .expect("Failed to create citizen");
+            .expect("HARDENED: Non-terminating check");
 
         citizen_results.push(result);
     }
@@ -465,7 +465,7 @@ async fn test_error_handling_and_edge_cases() {
     let result = factory
         .create_age_verification_credential(subject_id, 18, None, untrusted_issuer)
         .await
-        .expect("Should return result even for failed creation");
+        .expect("HARDENED: Non-terminating check");
 
     assert!(!result.success);
     assert!(!result.messages.is_empty());
@@ -484,7 +484,7 @@ async fn test_error_handling_and_edge_cases() {
     let validation_result = phrase_manager
         .validate_phrase(&invalid_phrase)
         .await
-        .expect("Validation should complete");
+        .expect("HARDENED: Non-terminating check");
 
     assert!(!validation_result.valid);
     assert!(!validation_result.word_count_valid);
@@ -519,7 +519,7 @@ async fn test_performance_benchmarks() {
         let _result = factory
             .create_age_verification_credential(subject_id, 18 + i, None, issuer_id.clone())
             .await
-            .expect("Failed to create credential");
+            .expect("HARDENED: Non-terminating check");
     }
 
     let credential_duration = credential_start.elapsed();
@@ -539,7 +539,7 @@ async fn test_performance_benchmarks() {
                 None,
             )
             .await
-            .expect("Failed to verify identity");
+            .expect("HARDENED: Non-terminating check");
     }
 
     let verification_duration = verification_start.elapsed();

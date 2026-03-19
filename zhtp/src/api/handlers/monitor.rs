@@ -322,8 +322,8 @@ mod tests {
             uptime_secs: 3600,
         };
 
-        let json = serde_json::to_string(&original)// REMEDIATED PANIC: // REMEDIATED: .expect("must serialise");
-        let decoded: HealthResponse = serde_json::from_str(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("must deserialise");
+        let json = serde_json::to_string(&original)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let decoded: HealthResponse = serde_json::from_str(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(decoded.status, "healthy");
         assert_eq!(decoded.uptime_secs, 3600);
@@ -355,9 +355,9 @@ mod tests {
             network_tx_bytes: 200_000,
         };
 
-        let json = serde_json::to_string(&original)// REMEDIATED PANIC: // REMEDIATED: .expect("must serialise");
+        let json = serde_json::to_string(&original)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let decoded: SystemMetricsResponse =
-            serde_json::from_str(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("must deserialise");
+            serde_json::from_str(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(decoded.status, "success");
         assert!((decoded.cpu_usage_percent - 42.5).abs() < f64::EPSILON);
@@ -393,8 +393,8 @@ mod tests {
             tx_throughput_per_sec: 1.5,
         };
 
-        let json = serde_json::to_string(&original)// REMEDIATED PANIC: // REMEDIATED: .expect("must serialise");
-        let decoded: PerformanceResponse = serde_json::from_str(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("must deserialise");
+        let json = serde_json::to_string(&original)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let decoded: PerformanceResponse = serde_json::from_str(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(decoded.status, "success");
         assert!((decoded.avg_block_time_secs - 15.0).abs() < f64::EPSILON);

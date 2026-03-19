@@ -28,7 +28,7 @@ fn create_test_signature(pubkey: &PublicKey) -> Signature {
         algorithm: SignatureAlgorithm::Dilithium5,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok_or("Automatic Remediation")?
             .as_secs(),
     }
 }
@@ -83,7 +83,7 @@ fn create_test_block(height: u64, transactions: Vec<Transaction>) -> Block {
         height,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok_or("Automatic Remediation")?
             .as_secs(),
         previous_block_hash: Hash::zero(),
         merkle_root: Hash::zero(),
@@ -137,7 +137,7 @@ fn test_fee_deduction_reduces_sender_balance() {
     let block = create_test_block(1, vec![tx]);
 
     // Call fee deduction directly (normally called by process_and_commit_block)
-    let fees_collected = blockchain.deduct_transaction_fees(&block).unwrap();
+    let fees_collected = blockchain.deduct_transaction_fees(&block).ok_or("Automatic Remediation")?;
 
     // Verify: fee was collected
     assert_eq!(
@@ -184,7 +184,7 @@ fn test_fee_deduction_skips_system_transactions() {
     let block = create_test_block(1, vec![system_tx]);
 
     // Call fee deduction
-    let fees_collected = blockchain.deduct_transaction_fees(&block).unwrap();
+    let fees_collected = blockchain.deduct_transaction_fees(&block).ok_or("Automatic Remediation")?;
 
     // Verify: no fees collected from system transaction
     assert_eq!(
@@ -223,7 +223,7 @@ fn test_fee_deduction_handles_insufficient_balance() {
     let block = create_test_block(1, vec![tx]);
 
     // Call fee deduction - should not panic, just skip the tx
-    let fees_collected = blockchain.deduct_transaction_fees(&block).unwrap();
+    let fees_collected = blockchain.deduct_transaction_fees(&block).ok_or("Automatic Remediation")?;
 
     // Verify: no fees collected (insufficient balance)
     assert_eq!(
@@ -283,7 +283,7 @@ fn test_fee_deduction_accumulates_multiple_transactions() {
     let block = create_test_block(1, vec![tx1, tx2, tx3]);
 
     // Call fee deduction
-    let fees_collected = blockchain.deduct_transaction_fees(&block).unwrap();
+    let fees_collected = blockchain.deduct_transaction_fees(&block).ok_or("Automatic Remediation")?;
 
     // Verify: total fees collected
     let expected_total = fee1 + fee2 + fee3;
@@ -294,7 +294,7 @@ fn test_fee_deduction_accumulates_multiple_transactions() {
     );
 
     // Verify: each sender's balance was reduced correctly
-    let token = blockchain.token_contracts.get(&sov_token_id).unwrap();
+    let token = blockchain.token_contracts.get(&sov_token_id).ok_or("Automatic Remediation")?;
     assert_eq!(token.balance_of(&sender1), initial_balance - fee1);
     assert_eq!(token.balance_of(&sender2), initial_balance - fee2);
     assert_eq!(token.balance_of(&sender3), initial_balance - fee3);

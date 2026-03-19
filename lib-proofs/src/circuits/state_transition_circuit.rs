@@ -542,7 +542,7 @@ impl StateTransitionCircuit {
 
 impl Default for StateTransitionCircuit {
     fn default() -> Self {
-        Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create default StateTransitionCircuit")
+        Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
     }
 }
 

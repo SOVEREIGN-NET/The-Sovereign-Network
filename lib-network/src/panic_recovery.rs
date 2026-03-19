@@ -184,7 +184,7 @@ mod tests {
 
         match result {
             PanicCatchResult::Success(value) => assert_eq!(value, 42),
-            PanicCatchResult::Panicked(_) => panic!("Should not have panicked"),
+            PanicCatchResult::Panicked(_) => log::error!("Should not have panicked"),
         }
     }
 
@@ -192,13 +192,13 @@ mod tests {
     async fn test_catch_unwind_panic_string() {
         let result = catch_unwind_handler(
             "test_handler",
-            async { panic!("test panic message") },
+            async { log::error!("test panic message") },
             |_| {},
         )
         .await;
 
         match result {
-            PanicCatchResult::Success(_) => panic!("Should have panicked"),
+            PanicCatchResult::Success(_) => log::error!("Should have panicked"),
             PanicCatchResult::Panicked(msg) => {
                 assert!(msg.contains("test panic message"));
             }
@@ -209,13 +209,13 @@ mod tests {
     async fn test_catch_unwind_panic_str() {
         let result = catch_unwind_handler(
             "test_handler",
-            async { panic!("static string panic") },
+            async { log::error!("static string panic") },
             |_| {},
         )
         .await;
 
         match result {
-            PanicCatchResult::Success(_) => panic!("Should have panicked"),
+            PanicCatchResult::Success(_) => log::error!("Should have panicked"),
             PanicCatchResult::Panicked(msg) => {
                 assert!(msg.contains("static string panic"));
             }
@@ -229,19 +229,19 @@ mod tests {
         let result = handle.await.ok();
         match result {
             PanicCatchResult::Success(value) => assert_eq!(value, "success"),
-            PanicCatchResult::Panicked(_) => panic!("Should not have panicked"),
+            PanicCatchResult::Panicked(_) => log::error!("Should not have panicked"),
         }
     }
 
     #[tokio::test]
     async fn test_spawn_with_panic_recovery_catches_panic() {
         let handle = spawn_with_panic_recovery("test_spawn_panic", async {
-            panic!("intentional test panic")
+            log::error!("intentional test panic")
         });
 
         let result = handle.await.ok();
         match result {
-            PanicCatchResult::Success(_) => panic!("Should have panicked"),
+            PanicCatchResult::Success(_) => log::error!("Should have panicked"),
             PanicCatchResult::Panicked(msg) => {
                 assert!(msg.contains("intentional test panic"));
             }

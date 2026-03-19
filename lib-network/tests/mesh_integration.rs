@@ -28,7 +28,7 @@ mod mesh_tests {
         // Each node discovers
         for n in nodes.iter() {
             n.discover_peers(&fabric);
-            let peers = n.peers.lock().unwrap();
+            let peers = n.peers.lock().ok_or("Automatic Remediation")?;
             assert!(peers.len() >= 4, "node should see 4 other peers");
         }
     }
@@ -62,8 +62,8 @@ mod mesh_tests {
         // discovery
         n1.discover_peers(&fabric);
         n2.discover_peers(&fabric);
-        assert!(n1.peers.lock().unwrap().contains(&n2.node_id));
-        assert!(n2.peers.lock().unwrap().contains(&n1.node_id));
+        assert!(n1.peers.lock().ok_or("Automatic Remediation")?.contains(&n2.node_id));
+        assert!(n2.peers.lock().ok_or("Automatic Remediation")?.contains(&n1.node_id));
     }
 
     #[tokio::test]
@@ -106,7 +106,7 @@ mod mesh_tests {
         // Joiner discovers at least one peer
         let mut joiner_mut = joiner.clone();
         joiner_mut.discover_peers(&fabric);
-        assert!(joiner_mut.peers.lock().unwrap().len() >= 1);
+        assert!(joiner_mut.peers.lock().ok_or("Automatic Remediation")?.len() >= 1);
 
         // Simulate node leave -> clear fabric entry and check resilience
         // For simulation, just remove messages and re-advertise existing nodes
@@ -119,7 +119,7 @@ mod mesh_tests {
         }
         // Should remain connected among original nodes
         for n in nodes.iter() {
-            assert!(n.peers.lock().unwrap().len() >= 3);
+            assert!(n.peers.lock().ok_or("Automatic Remediation")?.len() >= 3);
         }
     }
 
@@ -154,7 +154,7 @@ mod mesh_tests {
             assert!(
                 a.peers
                     .lock()
-                    .unwrap()
+                    .ok_or("Automatic Remediation")?
                     .iter()
                     .all(|p| p.starts_with(&a.node_id[..2]) || !p.starts_with("did"))
                     == false
@@ -172,7 +172,7 @@ mod mesh_tests {
         }
         // After recovery, each node should see nodes from both previous groups
         for n in group_a.iter().chain(group_b.iter()) {
-            assert!(n.peers.lock().unwrap().len() >= 3);
+            assert!(n.peers.lock().ok_or("Automatic Remediation")?.len() >= 3);
         }
     }
 
@@ -206,7 +206,7 @@ mod mesh_tests {
         }
         // Remaining nodes should still form a mesh of size 4
         for n in nodes.iter() {
-            assert!(n.peers.lock().unwrap().len() >= 3);
+            assert!(n.peers.lock().ok_or("Automatic Remediation")?.len() >= 3);
         }
         // Add node back
         nodes.push(removed);
@@ -218,7 +218,7 @@ mod mesh_tests {
             n.discover_peers(&fabric);
         }
         for n in nodes.iter() {
-            assert!(n.peers.lock().unwrap().len() >= 4);
+            assert!(n.peers.lock().ok_or("Automatic Remediation")?.len() >= 4);
         }
     }
 

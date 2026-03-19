@@ -1405,7 +1405,7 @@ mod tests {
             true,
             ownership_proof,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("valid test identity");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         identity.id = identity_id;
         identity.created_at = created_at;

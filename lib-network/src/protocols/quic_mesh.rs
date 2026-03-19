@@ -2026,7 +2026,7 @@ mod tests {
                 device_name,
                 None,
             )
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test identity"),
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check"),
         )
     }
 
@@ -2201,7 +2201,7 @@ mod tests {
         let identity = create_test_identity("broadcast-test");
         let bind_addr = "127.0.0.1:0".parse().ok();
         let protocol =
-            QuicMeshProtocol::new(identity, bind_addr)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create protocol");
+            QuicMeshProtocol::new(identity, bind_addr)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let result = protocol.broadcast_message(b"test message").await;
         assert!(result.is_ok());
@@ -2217,7 +2217,7 @@ mod tests {
         let identity = create_test_identity("send-test");
         let bind_addr = "127.0.0.1:0".parse().ok();
         let protocol =
-            QuicMeshProtocol::new(identity, bind_addr)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create protocol");
+            QuicMeshProtocol::new(identity, bind_addr)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let message = ZhtpMeshMessage::PeerAnnouncement {
             sender: PublicKey::new(vec![0u8; 32]),

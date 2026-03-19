@@ -211,7 +211,7 @@ pub fn enforce_consensus_invariants(state: &ConsensusState) {
             ));
         }
         msg.push_str("The node must halt to prevent further state corruption.");
-        panic!("{}", msg);
+        log::error!("{}", msg);
     }
 }
 

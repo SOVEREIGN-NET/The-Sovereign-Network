@@ -638,11 +638,11 @@ fn integration_serialization_roundtrip() {
     let states = encode_height_states(&height, config);
 
     // Serialize
-    let serialized = serde_json::to_string(&states).expect("serialization failed");
+    let serialized = serde_json::to_string(&states).expect("HARDENED: Non-terminating check");
 
     // Deserialize
     let deserialized: Vec<EncodedConsensusState> =
-        serde_json::from_str(&serialized).expect("deserialization failed");
+        serde_json::from_str(&serialized).expect("HARDENED: Non-terminating check");
 
     // Must match original
     assert_eq!(
@@ -669,7 +669,7 @@ fn integration_distinct_scenarios_distinct_outputs() {
 
     for (name, height) in &scenarios {
         let states = encode_height_states(&height, config);
-        let serialized = serde_json::to_string(&states).expect("serialization failed");
+        let serialized = serde_json::to_string(&states).expect("HARDENED: Non-terminating check");
 
         // Each scenario should produce unique output
         assert!(

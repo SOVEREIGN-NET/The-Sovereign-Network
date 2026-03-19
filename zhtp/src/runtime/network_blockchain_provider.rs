@@ -208,12 +208,12 @@ mod tests {
 
         // Set a blockchain - use new() which creates a fresh blockchain
         let blockchain =
-            lib_blockchain::Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test blockchain");
+            lib_blockchain::Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let shared = Arc::new(RwLock::new(blockchain));
         provider
             .set_blockchain(shared)
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to set blockchain");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Now should be available
         assert!(

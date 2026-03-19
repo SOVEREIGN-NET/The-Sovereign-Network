@@ -335,7 +335,7 @@ mod tests {
             device_name,
             None, // Random seed
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test identity");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         build_peer_identity(
             identity.node_id.clone(),

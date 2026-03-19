@@ -1228,12 +1228,12 @@ impl NonceCache {
         static TEST_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
         let counter = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let temp_dir = tempfile::TempDir::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create temp dir for test");
+        let temp_dir = tempfile::TempDir::new()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let db_path = temp_dir.path().join(format!("nonce_cache_{}", counter));
 
         // Create cache
         let cache = Self::open(&db_path, ttl_secs, max_memory_size, network_epoch)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test nonce cache");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Leak temp_dir to keep it alive (acceptable for tests)
         std::mem::forget(temp_dir);

@@ -114,7 +114,7 @@ impl ResponseCallback for FindNodeResponseListener {
 
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("Time went backwards")
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
                 .as_millis();
 
             let uid = self

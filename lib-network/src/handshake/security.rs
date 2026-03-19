@@ -324,13 +324,13 @@ impl CanonicalRequest {
         // Path length (u16 BE) + path bytes
         let path_bytes = self.path.as_bytes();
         let path_len_u16 =
-            u16::try_from(path_bytes.len())// REMEDIATED PANIC: // REMEDIATED: .expect("CanonicalRequest path length exceeds u16::MAX");
+            u16::try_from(path_bytes.len())// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         bytes.extend_from_slice(&path_len_u16.to_be_bytes());
         bytes.extend_from_slice(path_bytes);
 
         // Body length (u32 BE) + body bytes
         let body_len_u32 =
-            u32::try_from(self.body.len())// REMEDIATED PANIC: // REMEDIATED: .expect("CanonicalRequest body length exceeds u32::MAX");
+            u32::try_from(self.body.len())// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         bytes.extend_from_slice(&body_len_u32.to_be_bytes());
         bytes.extend_from_slice(&self.body);
 
@@ -354,7 +354,7 @@ pub fn compute_v2_mac(
 
     type HmacSha3 = Hmac<Sha3_256>;
 
-    let mut mac = HmacSha3::new_from_slice(mac_key)// REMEDIATED PANIC: // REMEDIATED: .expect("HMAC can take key of any size");
+    let mut mac = HmacSha3::new_from_slice(mac_key)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // canonical_bytes(request)
     mac.update(&request.to_bytes());

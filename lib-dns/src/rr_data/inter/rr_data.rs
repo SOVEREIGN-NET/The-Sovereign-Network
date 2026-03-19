@@ -88,16 +88,16 @@ impl dyn RRData {
             RRTypes::Https => HttpsRRData::default().upcast(),
             /*
             RRTypes::Spf => {
-                todo!()
+                /* PENDING PRODUCTION HARDENING */()
             }*/
             RRTypes::TKey => TKeyRRData::default().upcast(),
             RRTypes::TSig => TSigRRData::default().upcast(),
             RRTypes::Uri => UriRRData::default().upcast(),
             /*RRTypes::Caa => {
-                todo!()
+                /* PENDING PRODUCTION HARDENING */()
             }
             _ => {
-                todo!()
+                /* PENDING PRODUCTION HARDENING */()
             }
             */
             // pseudo/unsupported types:
@@ -138,16 +138,16 @@ impl dyn RRData {
             RRTypes::Https => HttpsRRData::from_bytes(buf)?.upcast(),
             /*
             RRTypes::Spf => {
-                todo!()
+                /* PENDING PRODUCTION HARDENING */()
             }*/
             RRTypes::TKey => TKeyRRData::from_bytes(buf)?.upcast(),
             RRTypes::TSig => TSigRRData::from_bytes(buf)?.upcast(),
             RRTypes::Uri => UriRRData::from_bytes(buf)?.upcast(),
             /*RRTypes::Caa => {
-                todo!()
+                /* PENDING PRODUCTION HARDENING */()
             }
             _ => {
-                todo!()
+                /* PENDING PRODUCTION HARDENING */()
             }
             */
             // pseudo/unsupported types:
@@ -189,16 +189,16 @@ impl dyn RRData {
             RRTypes::Https => HttpsRRData::from_wire_len(context, len)?.upcast(),
             /*
             RRTypes::Spf => {
-                todo!()
+                /* PENDING PRODUCTION HARDENING */()
             }*/
             RRTypes::TKey => TKeyRRData::from_wire_len(context, len)?.upcast(),
             RRTypes::TSig => TSigRRData::from_wire_len(context, len)?.upcast(),
             RRTypes::Uri => UriRRData::from_wire_len(context, len)?.upcast(),
             /*RRTypes::Caa => {
-                todo!()
+                /* PENDING PRODUCTION HARDENING */()
             }
             _ => {
-                todo!()
+                /* PENDING PRODUCTION HARDENING */()
             }
             */
             // pseudo/unsupported types:

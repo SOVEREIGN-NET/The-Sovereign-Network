@@ -742,7 +742,7 @@ mod tests {
     #[test]
     fn test_from_embedded_parses() {
         let config =
-            GenesisConfig::from_embedded()// REMEDIATED PANIC: // REMEDIATED: .expect("embedded genesis.toml should parse");
+            GenesisConfig::from_embedded()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(config.chain.chain_id, 1);
         assert_eq!(config.cbe_token.total_supply, 100_000_000_000);
         assert_eq!(config.bootstrap_council.threshold, 3);
@@ -751,32 +751,32 @@ mod tests {
 
     #[test]
     fn test_genesis_timestamp() {
-        let config = GenesisConfig::from_embedded()// REMEDIATED PANIC: // REMEDIATED: .expect("parse");
-        let ts = config.genesis_timestamp()// REMEDIATED PANIC: // REMEDIATED: .expect("timestamp");
+        let config = GenesisConfig::from_embedded()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let ts = config.genesis_timestamp()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         // 2025-11-01T00:00:00Z = 1761955200
         assert_eq!(ts, 1_761_955_200);
     }
 
     #[test]
     fn test_build_block0_produces_initialized_cbe_token() {
-        let config = GenesisConfig::from_embedded()// REMEDIATED PANIC: // REMEDIATED: .expect("parse");
-        let bc = config.build_block0()// REMEDIATED PANIC: // REMEDIATED: .expect("build_block0");
+        let config = GenesisConfig::from_embedded()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let bc = config.build_block0()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert!(bc.cbe_token.is_initialized(), "CBE token must be initialized");
         assert_eq!(bc.cbe_token.total_supply(), CBE_TOTAL_SUPPLY);
     }
 
     #[test]
     fn test_build_block0_is_deterministic() {
-        let config = GenesisConfig::from_embedded()// REMEDIATED PANIC: // REMEDIATED: .expect("parse");
-        let bc1 = config.build_block0()// REMEDIATED PANIC: // REMEDIATED: .expect("build 1");
-        let bc2 = config.build_block0()// REMEDIATED PANIC: // REMEDIATED: .expect("build 2");
+        let config = GenesisConfig::from_embedded()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let bc1 = config.build_block0()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let bc2 = config.build_block0()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         // Both produce the same CBE supply
         assert_eq!(bc1.cbe_token.total_supply(), bc2.cbe_token.total_supply());
     }
 
     #[test]
     fn test_verify_hash_skips_when_all_zeros() {
-        let config = GenesisConfig::from_embedded()// REMEDIATED PANIC: // REMEDIATED: .expect("parse");
+        let config = GenesisConfig::from_embedded()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         // Should not error when CANONICAL_GENESIS_HASH is all zeros
         assert!(config.verify_hash(&[0u8; 32]).is_ok());
     }

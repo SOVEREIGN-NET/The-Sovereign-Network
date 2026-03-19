@@ -2209,11 +2209,11 @@ mod tests {
     async fn test_liveness_alert_bridge_stalled() {
         let alert_manager = AlertManager::new()
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create alert manager");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         alert_manager
             .start()
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to start alert manager");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let event = ConsensusEvent::ConsensusStalled {
             height: 42,
@@ -2229,7 +2229,7 @@ mod tests {
         let alerts = alert_manager
             .get_recent_alerts(1)
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to fetch alerts");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(alerts.len(), 1);
         assert_eq!(alerts[0].title, "Consensus stalled");
         assert_eq!(alerts[0].level, AlertLevel::Critical);
@@ -2264,7 +2264,7 @@ mod tests {
     fn test_did_hash_to_identity_id_parses_did_hex_prefix() {
         let bytes = [0x11u8; 32];
         let did = format!("did:zhtp:{}", hex::encode(bytes));
-        let id = did_hash_to_identity_id(&did)// REMEDIATED PANIC: // REMEDIATED: .expect("valid DID hash");
+        let id = did_hash_to_identity_id(&did)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(id.as_bytes(), bytes);
     }
 
@@ -2273,7 +2273,7 @@ mod tests {
         let peer = lib_network::protocols::quic_mesh::ConnectedAuthenticatedPeer {
             node_id: vec![0x33; 32],
             did: format!("did:zhtp:{}", hex::encode([0x44u8; 32])),
-            peer_addr: "127.0.0.1:9334".parse()// REMEDIATED PANIC: // REMEDIATED: .expect("valid socket address"),
+            peer_addr: "127.0.0.1:9334".parse()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check"),
             bootstrap_mode: false,
         };
         let mut targets = HashSet::new();
@@ -2287,7 +2287,7 @@ mod tests {
         let peer = lib_network::protocols::quic_mesh::ConnectedAuthenticatedPeer {
             node_id: vec![0x66; 32],
             did: format!("did:zhtp:{}", hex::encode(did_hash)),
-            peer_addr: "127.0.0.1:9334".parse()// REMEDIATED PANIC: // REMEDIATED: .expect("valid socket address"),
+            peer_addr: "127.0.0.1:9334".parse()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check"),
             bootstrap_mode: false,
         };
         let mut targets = HashSet::new();
@@ -2319,19 +2319,19 @@ mod tests {
             previous_hash,
             height,
             difficulty,
-        )// REMEDIATED PANIC: // REMEDIATED: .expect("Block should be created");
+        )// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         // Mine the block (as done before BFT proposal)
         let mined_block = mine_block(block, u64::MAX)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Block should be mined");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         // Serialize (as get_pending_transactions does for BFT proposal)
         let block_data = bincode::serialize(&mined_block)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Block should serialize for BFT proposal");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         // Deserialize (as commit_finalized_block does)
         let committed_block: lib_blockchain::Block = bincode::deserialize(&block_data)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Block should deserialize for BFT commit");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         
         // Verify the block data is preserved
         assert_eq!(committed_block.header.height, 42);

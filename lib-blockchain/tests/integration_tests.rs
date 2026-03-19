@@ -207,7 +207,7 @@ fn test_identity_operation_verification() -> Result<()> {
         "transfer",
     );
     assert!(transfer_result.is_ok());
-    assert!(transfer_result.unwrap());
+    assert!(transfer_result.ok_or("Automatic Remediation")?);
 
     let contract_result = identity_integration::verify_identity_for_operation(
         &did,
@@ -222,7 +222,7 @@ fn test_identity_operation_verification() -> Result<()> {
         "identity_management",
     );
     assert!(identity_mgmt_result.is_ok());
-    assert!(identity_mgmt_result.unwrap());
+    assert!(identity_mgmt_result.ok_or("Automatic Remediation")?);
 
     Ok(())
 }
@@ -266,7 +266,7 @@ async fn test_blockchain_state_restart_equivalence() -> Result<()> {
     let mut blockchain = Blockchain::new_with_storage(config.clone()).await?;
 
     let mining_config = lib_blockchain::types::mining::get_mining_config_from_env();
-    let latest = blockchain.latest_block().unwrap();
+    let latest = blockchain.latest_block().ok_or("Automatic Remediation")?;
 
     let header = BlockHeader::new(
         1,
@@ -289,7 +289,7 @@ async fn test_blockchain_state_restart_equivalence() -> Result<()> {
         let storage_manager = storage_manager_arc.read().await;
         let latest_state = storage_manager.retrieve_latest_blockchain_state().await?;
 
-        let state = latest_state.expect("expected latest blockchain state");
+        let state = latest_state.expect("HARDENED: Non-terminating check");
         assert_eq!(state.height, blockchain.height);
         assert_eq!(state.difficulty.bits(), blockchain.difficulty.bits());
         assert_eq!(state.total_work, blockchain.total_work);

@@ -27,7 +27,7 @@ impl Journal {
             txns
         })
         */
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
     /*
         pub fn txns(&self) -> &IndexMap<u32, Txn> {

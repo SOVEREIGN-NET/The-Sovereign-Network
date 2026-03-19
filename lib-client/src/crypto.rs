@@ -452,7 +452,7 @@ mod tests {
 
         // Sign with lib-client (uses crystals-dilithium for 4864-byte keys)
         let message = b"SEED_MIGRATE:supertramp:abc123hex:1234567890";
-        let signature = Dilithium5::sign(message, &sk)// REMEDIATED PANIC: // REMEDIATED: .expect("Signing should succeed");
+        let signature = Dilithium5::sign(message, &sk)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         println!("Signature length: {}", signature.len());
         assert_eq!(
@@ -465,7 +465,7 @@ mod tests {
         let valid = lib_crypto::post_quantum::dilithium::dilithium5_verify_crystals(
             message, &signature, &pk,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Verification should not error");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert!(
             valid,

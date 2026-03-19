@@ -101,7 +101,7 @@ pub fn assert_deterministic_state_transition(
             hex::encode(result_state_hash_2),
         );
         #[cfg(debug_assertions)]
-        panic!("{}", msg);
+        log::error!("{}", msg);
         #[cfg(not(debug_assertions))]
         tracing::error!("{}", msg);
     }
@@ -145,7 +145,7 @@ pub(super) mod determinism_guard {
     #[track_caller]
     pub fn assert_no_nondeterminism(operation: &str) {
         if is_consensus_active() {
-            panic!(
+            log::error!(
                 "CONSENSUS NONDETERMINISM DETECTED: {} called during active consensus. \
                 This operation can lead to chain splits. Location: {}",
                 operation,

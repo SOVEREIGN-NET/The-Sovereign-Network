@@ -102,7 +102,7 @@ impl WiFiRouter {
                 let fallback_path = PathBuf::from("/tmp/zhtp/wifi_nonce_cache");
                 let _ = std::fs::create_dir_all(&fallback_path.parent().unwrap_or(&fallback_path));
                 NonceCache::open_default(&fallback_path, 300, network_epoch)
-                    // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create WiFi nonce cache even with fallback path")
+                    // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
             });
         let handshake_context = HandshakeContext::new(nonce_cache);
 

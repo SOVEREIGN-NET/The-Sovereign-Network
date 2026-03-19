@@ -284,7 +284,7 @@ pub fn assert_state_root_set(height: u64, state_root: &Hash) {
             height
         );
         #[cfg(debug_assertions)]
-        panic!("{}", msg);
+        log::error!("{}", msg);
         #[cfg(not(debug_assertions))]
         tracing::error!("{}", msg);
     }

@@ -97,9 +97,9 @@ fn create_mined_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -
 
     let header = BlockHeader::new(
         1,
-        blockchain.latest_block().unwrap().hash(),
+        blockchain.latest_block().ok_or("Automatic Remediation")?.hash(),
         merkle_root,
-        blockchain.latest_block().unwrap().timestamp() + 10,
+        blockchain.latest_block().ok_or("Automatic Remediation")?.timestamp() + 10,
         mining_config.difficulty,
         blockchain.height + 1,
         transactions.len() as u32,
@@ -123,7 +123,7 @@ async fn test_blockchain_creation() -> Result<()> {
     assert!(blockchain.identity_registry.is_empty());
 
     // Check genesis block
-    let genesis = blockchain.latest_block().unwrap();
+    let genesis = blockchain.latest_block().ok_or("Automatic Remediation")?;
     assert!(genesis.is_genesis());
     assert_eq!(genesis.height(), 0);
     assert_eq!(genesis.previous_hash(), Hash::default());
@@ -175,7 +175,7 @@ async fn test_identity_registration() -> Result<()> {
     // Verify registration
     assert!(blockchain.identity_exists("did:zhtp:test123"));
 
-    let registered_identity = blockchain.get_identity("did:zhtp:test123").unwrap();
+    let registered_identity = blockchain.get_identity("did:zhtp:test123").ok_or("Automatic Remediation")?;
     assert_eq!(registered_identity.did, "did:zhtp:test123");
     assert_eq!(registered_identity.display_name, "Test User");
 
@@ -223,7 +223,7 @@ async fn test_identity_update() -> Result<()> {
         .insert(updated_data.did.clone(), updated_data);
 
     // Verify update
-    let updated_identity = blockchain.get_identity("did:zhtp:update_test").unwrap();
+    let updated_identity = blockchain.get_identity("did:zhtp:update_test").ok_or("Automatic Remediation")?;
     assert_eq!(updated_identity.display_name, "Updated Name");
     assert_eq!(updated_identity.public_key, vec![9, 10, 11, 12]);
 
@@ -268,7 +268,7 @@ async fn test_identity_revocation() -> Result<()> {
 
     let revoked_identity = blockchain
         .get_identity("did:zhtp:revoke_test_revoked")
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     assert_eq!(revoked_identity.identity_type, "revoked");
 
     Ok(())
@@ -335,9 +335,9 @@ async fn test_block_verification() -> Result<()> {
     // Create a valid block
     let valid_header = BlockHeader::new(
         1,
-        blockchain.latest_block().unwrap().hash(),
+        blockchain.latest_block().ok_or("Automatic Remediation")?.hash(),
         Hash::default(),
-        blockchain.latest_block().unwrap().timestamp() + 10,
+        blockchain.latest_block().ok_or("Automatic Remediation")?.timestamp() + 10,
         mining_config.difficulty,
         1,
         0,
@@ -355,7 +355,7 @@ async fn test_block_verification() -> Result<()> {
         1,
         Hash::from_hex("1111111111111111111111111111111111111111111111111111111111111111")?, // Wrong previous hash
         Hash::default(),
-        blockchain.latest_block().unwrap().timestamp() + 10,
+        blockchain.latest_block().ok_or("Automatic Remediation")?.timestamp() + 10,
         mining_config.difficulty,
         1,
         0,
@@ -443,7 +443,7 @@ async fn test_identity_confirmations() -> Result<()> {
             let confirmations =
                 blockchain.get_identity_confirmations("did:zhtp:confirmations_test");
             assert!(confirmations.is_some());
-            assert_eq!(confirmations.unwrap(), 1);
+            assert_eq!(confirmations.ok_or("Automatic Remediation")?, 1);
 
             // Add more blocks to increase confirmations
             for _i in 1..=2 {
@@ -455,7 +455,7 @@ async fn test_identity_confirmations() -> Result<()> {
             let confirmations =
                 blockchain.get_identity_confirmations("did:zhtp:confirmations_test");
             assert!(confirmations.is_some());
-            assert_eq!(confirmations.unwrap(), 3);
+            assert_eq!(confirmations.ok_or("Automatic Remediation")?, 3);
         }
         Err(e) => {
             // Print detailed error information to understand what's failing
@@ -648,7 +648,7 @@ async fn test_register_validator_added_to_blockchain() -> Result<()> {
         "Validator should exist"
     );
 
-    let validator = blockchain.get_validator("validator_001").unwrap();
+    let validator = blockchain.get_validator("validator_001").ok_or("Automatic Remediation")?;
     assert_eq!(validator.stake, 5000u64, "Validator stake should match");
     assert_eq!(validator.status, "active", "Validator should be active");
 

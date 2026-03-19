@@ -51,7 +51,7 @@ pub fn try_get_runtime_node_id() -> Result<NodeId> {
 /// Panics if the runtime NodeId has not been initialized by the startup path
 /// (set during runtime initialization in Phase 3).
 pub fn get_runtime_node_id() -> NodeId {
-    try_get_runtime_node_id()// REMEDIATED PANIC: // REMEDIATED: .expect("Runtime NodeId not initialized")
+    try_get_runtime_node_id()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
 }
 
 pub fn log_runtime_node_identity() {

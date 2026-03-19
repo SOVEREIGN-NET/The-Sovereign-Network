@@ -213,7 +213,7 @@ mod tests {
             None,
             None,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("committee request should build");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(
             body.get("proposal_type").and_then(|v| v.as_str()),

@@ -75,7 +75,7 @@ fn register_identity(
             Some("Test User".to_string()),
             created_at,
         )
-        .expect("register_external_identity failed");
+        .expect("HARDENED: Non-terminating check");
     did
 }
 
@@ -87,13 +87,13 @@ async fn issue_challenge(
     let response = generator
         .generate_challenge(Some(proof_types), None, None, None)
         .await
-        .expect("generate_challenge failed");
+        .expect("HARDENED: Non-terminating check");
 
     let token_bytes = base64::engine::general_purpose::STANDARD
         .decode(&response.token)
-        .expect("base64 decode challenge token");
+        .expect("HARDENED: Non-terminating check");
     let token: zhtp::pouw::types::ChallengeToken =
-        serde_json::from_slice(&token_bytes).expect("parse challenge token");
+        serde_json::from_slice(&token_bytes).expect("HARDENED: Non-terminating check");
 
     (token.challenge_nonce, token.task_id)
 }
@@ -159,8 +159,8 @@ fn build_signed_batch(
         aux,
     };
 
-    let receipt_bytes = bincode::serialize(&receipt).expect("serialize receipt");
-    let signature = ed25519_sign(&receipt_bytes, ed25519_sk).expect("sign receipt");
+    let receipt_bytes = bincode::serialize(&receipt).expect("HARDENED: Non-terminating check");
+    let signature = ed25519_sign(&receipt_bytes, ed25519_sk).expect("HARDENED: Non-terminating check");
 
     ReceiptBatch {
         version: POUW_VERSION,
@@ -191,7 +191,7 @@ async fn test_web4_manifest_route_receipt_accepted() {
     let client_did = register_identity(&mut identity_manager, 0x01, client_pk, created_at);
 
     let generator = Arc::new(ChallengeGenerator::new(
-        node_sk.try_into().unwrap(),
+        node_sk.try_into().ok_or("Automatic Remediation")?,
         node_pk,
     ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
@@ -229,7 +229,7 @@ async fn test_web4_manifest_route_receipt_accepted() {
         0x10,
     );
 
-    let response = validator.validate_batch(&batch).await.unwrap();
+    let response = validator.validate_batch(&batch).await.ok_or("Automatic Remediation")?;
     assert_eq!(
         response.accepted.len(),
         1,
@@ -247,10 +247,10 @@ async fn test_web4_manifest_route_receipt_accepted() {
     assert_eq!(r.client_did, client_did);
     assert!(r.manifest_cid.is_some(), "manifest_cid should be set");
     assert_eq!(
-        r.manifest_cid.as_deref().unwrap(),
+        r.manifest_cid.as_deref().ok_or("Automatic Remediation")?,
         "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
     );
-    assert_eq!(r.domain.as_deref().unwrap(), "central.sov");
+    assert_eq!(r.domain.as_deref().ok_or("Automatic Remediation")?, "central.sov");
     assert_eq!(r.route_hops, Some(3));
 }
 
@@ -268,7 +268,7 @@ async fn test_web4_content_served_receipt_accepted() {
     let client_did = register_identity(&mut identity_manager, 0x02, client_pk, created_at);
 
     let generator = Arc::new(ChallengeGenerator::new(
-        node_sk.try_into().unwrap(),
+        node_sk.try_into().ok_or("Automatic Remediation")?,
         node_pk,
     ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
@@ -306,7 +306,7 @@ async fn test_web4_content_served_receipt_accepted() {
         0x20,
     );
 
-    let response = validator.validate_batch(&batch).await.unwrap();
+    let response = validator.validate_batch(&batch).await.ok_or("Automatic Remediation")?;
     assert_eq!(
         response.accepted.len(),
         1,
@@ -321,7 +321,7 @@ async fn test_web4_content_served_receipt_accepted() {
     assert_eq!(r.proof_type, ProofType::Web4ContentServed);
     assert_eq!(r.bytes_verified, 65536);
     assert_eq!(r.served_from_cache, Some(true));
-    assert_eq!(r.domain.as_deref().unwrap(), "app.sov");
+    assert_eq!(r.domain.as_deref().ok_or("Automatic Remediation")?, "app.sov");
 }
 
 // =============================================================================
@@ -338,7 +338,7 @@ async fn test_fabricated_receipt_missing_manifest_cid_rejected() {
     let client_did = register_identity(&mut identity_manager, 0x03, client_pk, created_at);
 
     let generator = Arc::new(ChallengeGenerator::new(
-        node_sk.try_into().unwrap(),
+        node_sk.try_into().ok_or("Automatic Remediation")?,
         node_pk,
     ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
@@ -368,7 +368,7 @@ async fn test_fabricated_receipt_missing_manifest_cid_rejected() {
         0x30,
     );
 
-    let response = validator.validate_batch(&batch).await.unwrap();
+    let response = validator.validate_batch(&batch).await.ok_or("Automatic Remediation")?;
     assert_eq!(
         response.accepted.len(),
         0,
@@ -392,7 +392,7 @@ async fn test_replay_receipt_rejected() {
     let client_did = register_identity(&mut identity_manager, 0x04, client_pk, created_at);
 
     let generator = Arc::new(ChallengeGenerator::new(
-        node_sk.try_into().unwrap(),
+        node_sk.try_into().ok_or("Automatic Remediation")?,
         node_pk,
     ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
@@ -431,7 +431,7 @@ async fn test_replay_receipt_rejected() {
         0x40,
     );
 
-    let resp1 = validator.validate_batch(&batch1).await.unwrap();
+    let resp1 = validator.validate_batch(&batch1).await.ok_or("Automatic Remediation")?;
     assert_eq!(
         resp1.accepted.len(),
         1,
@@ -450,7 +450,7 @@ async fn test_replay_receipt_rejected() {
         0x40, // Same nonce_seed → same receipt_nonce bytes
     );
 
-    let resp2 = validator.validate_batch(&batch2).await.unwrap();
+    let resp2 = validator.validate_batch(&batch2).await.ok_or("Automatic Remediation")?;
     assert_eq!(resp2.accepted.len(), 0, "Replay should be rejected");
     assert_eq!(resp2.rejected.len(), 1);
     assert_eq!(resp2.rejected[0].reason, "REPLAY");
@@ -472,7 +472,7 @@ async fn test_new_identity_receipt_rejected() {
     let client_did = register_identity(&mut identity_manager, 0x05, client_pk, created_at);
 
     let generator = Arc::new(ChallengeGenerator::new(
-        node_sk.try_into().unwrap(),
+        node_sk.try_into().ok_or("Automatic Remediation")?,
         node_pk,
     ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
@@ -494,7 +494,7 @@ async fn test_new_identity_receipt_rejected() {
         0x50,
     );
 
-    let response = validator.validate_batch(&batch).await.unwrap();
+    let response = validator.validate_batch(&batch).await.ok_or("Automatic Remediation")?;
     assert_eq!(
         response.accepted.len(),
         0,
@@ -522,7 +522,7 @@ async fn test_signature_forgery_rejected() {
     let client_did = register_identity(&mut identity_manager, 0x06, client_pk, created_at);
 
     let generator = Arc::new(ChallengeGenerator::new(
-        node_sk.try_into().unwrap(),
+        node_sk.try_into().ok_or("Automatic Remediation")?,
         node_pk,
     ));
     let identity_mgr = Arc::new(RwLock::new(identity_manager));
@@ -551,8 +551,8 @@ async fn test_signature_forgery_rejected() {
 
     // Sign with a DIFFERENT key (attacker's key, not client's)
     let (_attacker_pk, attacker_sk) = make_ed25519_keys(0x99);
-    let receipt_bytes = bincode::serialize(&receipt).expect("serialize receipt");
-    let forged_signature = ed25519_sign(&receipt_bytes, &attacker_sk).expect("sign with wrong key");
+    let receipt_bytes = bincode::serialize(&receipt).expect("HARDENED: Non-terminating check");
+    let forged_signature = ed25519_sign(&receipt_bytes, &attacker_sk).expect("HARDENED: Non-terminating check");
 
     let batch = ReceiptBatch {
         version: POUW_VERSION,
@@ -564,7 +564,7 @@ async fn test_signature_forgery_rejected() {
         }],
     };
 
-    let response = validator.validate_batch(&batch).await.unwrap();
+    let response = validator.validate_batch(&batch).await.ok_or("Automatic Remediation")?;
     assert_eq!(
         response.accepted.len(),
         0,

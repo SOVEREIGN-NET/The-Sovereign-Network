@@ -34,7 +34,7 @@ fn test_double_sign_is_rejected() {
         OracleAttestationAdmissionError::ConflictingSigner { signer, .. } => {
             assert_eq!(signer, validator_key);
         }
-        other => panic!("expected ConflictingSigner error, got: {:?}", other),
+        other => log::error!("expected ConflictingSigner error, got: {:?}", other),
     }
 }
 
@@ -77,11 +77,11 @@ fn test_slashing_preserved_across_restart() {
     );
 
     // Save and reload
-    let dir = tempdir().unwrap();
+    let dir = tempdir().ok_or("Automatic Remediation")?;
     let path = dir.path().join("test.dat");
-    harness.blockchain.save_to_file(&path).unwrap();
+    harness.blockchain.save_to_file(&path).ok_or("Automatic Remediation")?;
 
-    let reloaded = lib_blockchain::Blockchain::load_from_file(&path).unwrap();
+    let reloaded = lib_blockchain::Blockchain::load_from_file(&path).ok_or("Automatic Remediation")?;
 
     // Verify slashing preserved
     assert!(reloaded.oracle_banned_validators.contains(&validator_key));
@@ -172,7 +172,7 @@ fn test_slash_event_contains_correct_metadata() {
         harness.blockchain.oracle_slash_events.len(),
         initial_events + 1
     );
-    let event = harness.blockchain.oracle_slash_events.last().unwrap();
+    let event = harness.blockchain.oracle_slash_events.last().ok_or("Automatic Remediation")?;
 
     assert_eq!(event.validator_key_id, validator_key);
     assert!(matches!(

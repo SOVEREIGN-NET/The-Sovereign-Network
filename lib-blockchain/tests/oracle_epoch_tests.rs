@@ -147,7 +147,7 @@ fn last_committed_timestamp_from_blockchain() {
     use lib_blockchain::Blockchain;
 
     // Create a new blockchain (has genesis block)
-    let bc = Blockchain::new().expect("Failed to create blockchain");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
 
     // At genesis, there should be a genesis block with timestamp
     let timestamp = bc.last_committed_timestamp();

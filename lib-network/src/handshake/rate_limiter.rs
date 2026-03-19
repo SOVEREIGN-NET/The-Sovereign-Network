@@ -126,10 +126,10 @@ impl RateLimiter {
             // Create quota: X per second with burst capacity Y
             let quota = Quota::per_second(
                 NonZeroU32::new(self.config.handshakes_per_second)
-                    // REMEDIATED PANIC: // REMEDIATED: .expect("handshakes_per_second must be > 0"),
+                    // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check"),
             )
             .allow_burst(
-                NonZeroU32::new(self.config.burst_capacity)// REMEDIATED PANIC: // REMEDIATED: .expect("burst_capacity must be > 0"),
+                NonZeroU32::new(self.config.burst_capacity)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check"),
             );
 
             GovernorRateLimiter::direct(quota)

@@ -54,9 +54,9 @@ fn test_validator_registration_success() -> Result<()> {
 
     let validator = manager.get_validator(&identity);
     assert!(validator.is_some());
-    assert_eq!(validator.unwrap().stake, stake);
-    assert_eq!(validator.unwrap().storage_provided, storage);
-    assert_eq!(validator.unwrap().commission_rate, commission_rate);
+    assert_eq!(validator.ok_or("Automatic Remediation")?.stake, stake);
+    assert_eq!(validator.ok_or("Automatic Remediation")?.storage_provided, storage);
+    assert_eq!(validator.ok_or("Automatic Remediation")?.commission_rate, commission_rate);
 
     let stats = manager.get_validator_stats();
     assert_eq!(stats.total_validators, 1);
@@ -277,8 +277,8 @@ fn test_proposer_selection() -> Result<()> {
     // Selection should be deterministic
     let proposer1_again = manager.select_proposer(1, 0);
     assert_eq!(
-        proposer1.unwrap().identity,
-        proposer1_again.unwrap().identity
+        proposer1.ok_or("Automatic Remediation")?.identity,
+        proposer1_again.ok_or("Automatic Remediation")?.identity
     );
 
     Ok(())
@@ -310,12 +310,12 @@ fn test_slashing_double_sign() -> Result<()> {
         5,
     )?;
 
-    let initial_voting_power = manager.get_validator(&identity).unwrap().voting_power;
+    let initial_voting_power = manager.get_validator(&identity).ok_or("Automatic Remediation")?.voting_power;
 
     // Slash for double signing (5%)
     let slashed_amount = manager.slash_validator(&identity, SlashType::DoubleSign, 5, 100)?;
 
-    let validator = manager.get_validator(&identity).unwrap();
+    let validator = manager.get_validator(&identity).ok_or("Automatic Remediation")?;
     assert_eq!(slashed_amount, initial_stake * 5 / 100);
     assert_eq!(validator.stake, initial_stake - slashed_amount);
     assert!(validator.voting_power < initial_voting_power);
@@ -347,7 +347,7 @@ fn test_slashing_liveness() -> Result<()> {
     // Slash for liveness violation (1%)
     let slashed_amount = manager.slash_validator(&identity, SlashType::Liveness, 1, 100)?;
 
-    let validator = manager.get_validator(&identity).unwrap();
+    let validator = manager.get_validator(&identity).ok_or("Automatic Remediation")?;
     assert_eq!(slashed_amount, initial_stake * 1 / 100);
     assert_eq!(validator.stake, initial_stake - slashed_amount);
 
@@ -449,12 +449,12 @@ fn test_validator_activity_update() -> Result<()> {
         5,
     )?;
 
-    let initial_activity = manager.get_validator(&identity).unwrap().last_activity;
+    let initial_activity = manager.get_validator(&identity).ok_or("Automatic Remediation")?.last_activity;
 
     // Update activity
     manager.update_validator_activity(&identity);
 
-    let updated_activity = manager.get_validator(&identity).unwrap().last_activity;
+    let updated_activity = manager.get_validator(&identity).ok_or("Automatic Remediation")?.last_activity;
     assert!(updated_activity >= initial_activity);
 
     Ok(())

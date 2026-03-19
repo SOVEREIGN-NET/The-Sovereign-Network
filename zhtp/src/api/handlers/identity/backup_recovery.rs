@@ -1818,14 +1818,14 @@ mod tests {
 
     async fn build_persistent_storage() -> Arc<RwLock<lib_storage::PersistentStorageSystem>> {
         // Persist the tempdir path so sled keeps working for the duration of the test.
-        let dir = tempfile::tempdir()// REMEDIATED PANIC: // REMEDIATED: .expect("tempdir");
+        let dir = tempfile::tempdir()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let path = dir.into_path();
         let system = lib_storage::UnifiedStorageSystem::new_persistent(
             lib_storage::UnifiedStorageConfig::default(),
             path,
         )
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("persistent storage init");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         Arc::new(RwLock::new(system))
     }
 
@@ -1846,7 +1846,7 @@ mod tests {
             Some(display_name.to_string()),
             0,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("failed to create identity");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let mut manager = IdentityManager::new();
         manager.add_identity(identity);
@@ -1932,7 +1932,7 @@ mod tests {
             storage_system,
         )
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("handler failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(response.status, ZhtpStatus::Unauthorized);
     }
@@ -1983,7 +1983,7 @@ mod tests {
             storage_system,
         )
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("handler failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(response.status, ZhtpStatus::Ok);
         let parsed: MigrateIdentityResponse = serde_json::from_slice(&response.body).ok();
@@ -1992,7 +1992,7 @@ mod tests {
         let mgr = manager.read().await;
         let old_identity = mgr
             .get_identity(&identity_id)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("old identity missing");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert!(old_identity.metadata.get("display_name").is_none());
         assert_eq!(
             old_identity.metadata.get("migrated_to"),
@@ -2034,7 +2034,7 @@ mod tests {
                 storage_system.clone(),
             )
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("handler failed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
             if i < 3 {
                 assert_eq!(response.status, ZhtpStatus::BadRequest);
@@ -2054,8 +2054,8 @@ mod tests {
 
         // Migration authority (validator) keypair + keystore wiring.
         // The handler loads `node_private_key.json` from `ZHTP_KEYSTORE_DIR`.
-        let validator_kp = lib_crypto::KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("validator keypair");
-        let keystore_dir = tempfile::tempdir()// REMEDIATED PANIC: // REMEDIATED: .expect("keystore tempdir");
+        let validator_kp = lib_crypto::KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let keystore_dir = tempfile::tempdir()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         std::env::set_var("ZHTP_KEYSTORE_DIR", keystore_dir.path());
         let keystore_key = crate::keystore_names::KeystorePrivateKey {
             dilithium_sk: validator_kp.private_key.dilithium_sk.clone(),
@@ -2067,9 +2067,9 @@ mod tests {
             keystore_dir
                 .path()
                 .join(crate::keystore_names::NODE_PRIVATE_KEY_FILENAME),
-            serde_json::to_vec(&keystore_key)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize keystore key"),
+            serde_json::to_vec(&keystore_key)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check"),
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("write node_private_key.json");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Old identity that currently owns display_name + wallets.
         let (mut manager, old_identity_id, old_did) =
@@ -2086,7 +2086,7 @@ mod tests {
         {
             let old = manager
                 .get_identity_mut(&old_identity_id)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("old identity missing");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
             // Give the old identity a few wallets so we can verify "move" semantics.
             let (w1, _) = old
@@ -2097,7 +2097,7 @@ mod tests {
                     Some("primary".to_string()),
                 )
                 .await
-                // REMEDIATED PANIC: // REMEDIATED: .expect("create primary wallet");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             if let Some(w) = old.wallet_manager.get_wallet_mut(&w1) {
                 w.balance = 111;
                 wallet_summaries.push((
@@ -2119,7 +2119,7 @@ mod tests {
                     Some("ubi".to_string()),
                 )
                 .await
-                // REMEDIATED PANIC: // REMEDIATED: .expect("create ubi wallet");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             if let Some(w) = old.wallet_manager.get_wallet_mut(&w2) {
                 w.balance = 222;
                 wallet_summaries.push((
@@ -2141,7 +2141,7 @@ mod tests {
                     Some("savings".to_string()),
                 )
                 .await
-                // REMEDIATED PANIC: // REMEDIATED: .expect("create savings wallet");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             if let Some(w) = old.wallet_manager.get_wallet_mut(&w3) {
                 w.balance = 333;
                 wallet_summaries.push((
@@ -2161,7 +2161,7 @@ mod tests {
         // Seed the global blockchain provider with wallet records so the migration can persist
         // the rebind as an on-chain WalletUpdate + mined block.
         crate::runtime::blockchain_provider::initialize_global_blockchain_provider();
-        let mut bc = lib_blockchain::Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("new blockchain");
+        let mut bc = lib_blockchain::Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Register an "active" validator so stateful WalletUpdate validation can authorize.
         let validator_did = {
@@ -2226,13 +2226,13 @@ mod tests {
         let bc = Arc::new(RwLock::new(bc));
         crate::runtime::blockchain_provider::set_global_blockchain(bc)
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("set global blockchain");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // First migration: build request JSON using lib-client helper.
         let new_identity_1 =
-            generate_identity("device-new-1".to_string())// REMEDIATED PANIC: // REMEDIATED: .expect("generate identity");
+            generate_identity("device-new-1".to_string())// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let body_json_1 = build_migrate_identity_request_json(&new_identity_1, "alice".to_string())
-            // REMEDIATED PANIC: // REMEDIATED: .expect("build migrate json");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let request_1 = build_request(
             body_json_1.into_bytes(),
             Some(old_identity_id.clone()),
@@ -2248,7 +2248,7 @@ mod tests {
             storage_system.clone(),
         )
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("handler failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(response_1.status, ZhtpStatus::Ok);
         let parsed_1: MigrateIdentityResponse = serde_json::from_slice(&response_1.body).ok();
@@ -2267,14 +2267,14 @@ mod tests {
 
             let old = mgr
                 .get_identity(&old_identity_id)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("old identity missing");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             assert!(old.metadata.get("display_name").is_none());
             assert_eq!(old.metadata.get("migrated_to"), Some(&parsed_1.new_did));
             assert!(old.wallet_manager.wallets.is_empty());
 
             let new = mgr
                 .get_identity(&new_identity_id_1)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("new identity missing");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             assert_eq!(new.metadata.get("migrated_from"), Some(&parsed_1.old_did));
             assert_eq!(new.wallet_manager.wallets.len(), 3);
         }
@@ -2282,9 +2282,9 @@ mod tests {
         // Second migration attempt for same display_name with a different new identity must fail,
         // and must not transfer wallets a second time.
         let new_identity_2 =
-            generate_identity("device-new-2".to_string())// REMEDIATED PANIC: // REMEDIATED: .expect("generate identity");
+            generate_identity("device-new-2".to_string())// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let body_json_2 = build_migrate_identity_request_json(&new_identity_2, "alice".to_string())
-            // REMEDIATED PANIC: // REMEDIATED: .expect("build migrate json");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let request_2 = build_request(
             body_json_2.into_bytes(),
             Some(old_identity_id.clone()),
@@ -2300,7 +2300,7 @@ mod tests {
             storage_system.clone(),
         )
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("handler failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(response_2.status, ZhtpStatus::Conflict);
 
@@ -2310,12 +2310,12 @@ mod tests {
 
             let old = mgr
                 .get_identity(&old_identity_id)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("old identity missing");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             assert!(old.wallet_manager.wallets.is_empty());
 
             let new = mgr
                 .get_identity(&new_identity_id_1)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("new identity missing");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             assert_eq!(new.wallet_manager.wallets.len(), 3);
         }
     }

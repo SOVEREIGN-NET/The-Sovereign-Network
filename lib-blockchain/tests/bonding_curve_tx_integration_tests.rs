@@ -173,7 +173,7 @@ fn create_graduate_transaction(
 
 #[test]
 fn test_bonding_curve_deploy_transaction_success() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let creator = test_key(1);
 
     let deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
@@ -192,7 +192,7 @@ fn test_bonding_curve_deploy_transaction_success() {
         "Token should be registered in bonding_curve_registry"
     );
 
-    let token = blockchain.bonding_curve_registry.get(&expected_token_id).unwrap();
+    let token = blockchain.bonding_curve_registry.get(&expected_token_id).ok_or("Automatic Remediation")?;
     assert_eq!(token.name, "Test Token");
     assert_eq!(token.symbol, "TEST");
     assert_eq!(token.phase, Phase::Curve);
@@ -201,7 +201,7 @@ fn test_bonding_curve_deploy_transaction_success() {
 
 #[test]
 fn test_bonding_curve_deploy_duplicate_symbol_fails() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let creator = test_key(1);
 
     // First deploy should succeed
@@ -219,7 +219,7 @@ fn test_bonding_curve_deploy_duplicate_symbol_fails() {
 
 #[test]
 fn test_bonding_curve_deploy_empty_name_fails() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let creator = test_key(1);
 
     let mut deploy_tx = create_deploy_transaction(&creator, "", "TEST", 0);
@@ -239,14 +239,14 @@ fn test_bonding_curve_deploy_empty_name_fails() {
 
 #[test]
 fn test_bonding_curve_buy_transaction_success() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let creator = test_key(1);
     let buyer = test_key(2);
 
     // First deploy the token
     let deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
     let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
+    blockchain.process_token_transactions(&block1).expect("HARDENED: Non-terminating check");
 
     let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
     let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
@@ -262,7 +262,7 @@ fn test_bonding_curve_buy_transaction_success() {
     // Verify token state updated - Issue #1844: 40/60 split
     let expected_reserve = buy_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
     let expected_treasury = buy_amount - expected_reserve;
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
+    let token = blockchain.bonding_curve_registry.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(token.reserve_balance, expected_reserve, "Reserve should be 40% of buy amount");
     assert_eq!(token.treasury_balance, expected_treasury, "Treasury should be 60% of buy amount");
     assert!(token.total_supply > 0);
@@ -270,14 +270,14 @@ fn test_bonding_curve_buy_transaction_success() {
 
 #[test]
 fn test_bonding_curve_buy_slippage_protection() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let creator = test_key(1);
     let buyer = test_key(2);
 
     // Deploy token
     let deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
     let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
+    blockchain.process_token_transactions(&block1).expect("HARDENED: Non-terminating check");
 
     let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
     let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
@@ -292,7 +292,7 @@ fn test_bonding_curve_buy_slippage_protection() {
 
 #[test]
 fn test_bonding_curve_buy_nonexistent_token_fails() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let buyer = test_key(2);
 
     let fake_token_id = [99u8; 32];
@@ -305,7 +305,7 @@ fn test_bonding_curve_buy_nonexistent_token_fails() {
 
 #[test]
 fn test_bonding_curve_buy_key_mismatch_fails() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let creator = test_key(1);
     let buyer = test_key(2);
     let wrong_key = test_key(3);
@@ -313,7 +313,7 @@ fn test_bonding_curve_buy_key_mismatch_fails() {
     // Deploy token
     let deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
     let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
+    blockchain.process_token_transactions(&block1).expect("HARDENED: Non-terminating check");
 
     let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
     let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
@@ -336,7 +336,7 @@ fn test_bonding_curve_buy_key_mismatch_fails() {
 
 #[test]
 fn test_bonding_curve_sell_transaction_success() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let creator = test_key(1);
     let buyer = test_key(2);
     let seller = buyer.clone(); // Same as buyer
@@ -344,7 +344,7 @@ fn test_bonding_curve_sell_transaction_success() {
     // Deploy token
     let deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
     let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
+    blockchain.process_token_transactions(&block1).expect("HARDENED: Non-terminating check");
 
     let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
     let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
@@ -353,9 +353,9 @@ fn test_bonding_curve_sell_transaction_success() {
     // Issue #1844: 20/80 split - only 20% goes to reserve
     let buy_tx = create_buy_transaction(&buyer, token_id, 100_000_000, 0, 0);
     let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-    blockchain.process_token_transactions(&block2).expect("Buy should succeed");
+    blockchain.process_token_transactions(&block2).expect("HARDENED: Non-terminating check");
 
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
+    let token = blockchain.bonding_curve_registry.get(&token_id).ok_or("Automatic Remediation")?;
     // deploy() initializes total_supply to 0; all minted tokens come from buys
     let initial_supply = token.total_supply;
     let initial_reserve = token.reserve_balance;
@@ -371,7 +371,7 @@ fn test_bonding_curve_sell_transaction_success() {
     assert!(result.is_ok(), "Sell transaction should succeed: {:?}", result);
 
     // Verify exact deltas: supply burns by sold amount, reserve decreases, treasury unchanged
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
+    let token = blockchain.bonding_curve_registry.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(token.total_supply, initial_supply - sell_amount, "Supply should decrease by exact sell amount (burn)");
     assert!(token.reserve_balance < initial_reserve, "Reserve should decrease after sell");
     assert_eq!(token.treasury_balance, initial_treasury, "Treasury should be unaffected by sell");
@@ -379,7 +379,7 @@ fn test_bonding_curve_sell_transaction_success() {
 
 #[test]
 fn test_bonding_curve_sell_disabled_fails() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let creator = test_key(1);
     let buyer = test_key(2);
 
@@ -390,7 +390,7 @@ fn test_bonding_curve_sell_disabled_fails() {
     }
 
     let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
+    blockchain.process_token_transactions(&block1).expect("HARDENED: Non-terminating check");
 
     let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
     let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
@@ -398,7 +398,7 @@ fn test_bonding_curve_sell_disabled_fails() {
     // Buy tokens first
     let buy_tx = create_buy_transaction(&buyer, token_id, 10_000_000, 0, 0);
     let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-    blockchain.process_token_transactions(&block2).expect("Buy should succeed");
+    blockchain.process_token_transactions(&block2).expect("HARDENED: Non-terminating check");
 
     // Try to sell (should fail because sell is disabled)
     let sell_tx = create_sell_transaction(&buyer, token_id, 100_000, 0, 0);
@@ -414,7 +414,7 @@ fn test_bonding_curve_sell_disabled_fails() {
 
 #[test]
 fn test_bonding_curve_graduate_transaction_success() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let creator = test_key(1);
     let buyer = test_key(2);
     let graduator = creator.clone(); // Creator graduates the token
@@ -428,7 +428,7 @@ fn test_bonding_curve_graduate_transaction_success() {
     }
 
     let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
+    blockchain.process_token_transactions(&block1).expect("HARDENED: Non-terminating check");
 
     let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
     let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
@@ -439,11 +439,11 @@ fn test_bonding_curve_graduate_transaction_success() {
     let buy_amount = 50_000_000u64;
     let buy_tx = create_buy_transaction(&buyer, token_id, buy_amount, 0, 0);
     let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-    blockchain.process_token_transactions(&block2).expect("Buy should succeed");
+    blockchain.process_token_transactions(&block2).expect("HARDENED: Non-terminating check");
 
     // Verify token can graduate
     let expected_reserve = buy_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
+    let token = blockchain.bonding_curve_registry.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(token.reserve_balance, expected_reserve, "Reserve should be 40% of buy amount");
     assert!(token.can_graduate(1_700_000_200, 0), "Token should be ready to graduate");
 
@@ -456,13 +456,13 @@ fn test_bonding_curve_graduate_transaction_success() {
     assert!(result.is_ok(), "Graduate transaction should succeed: {:?}", result);
 
     // Verify token is now graduated
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
+    let token = blockchain.bonding_curve_registry.get(&token_id).ok_or("Automatic Remediation")?;
     assert!(token.phase.is_graduated(), "Token should be in Graduated phase");
 }
 
 #[test]
 fn test_bonding_curve_graduate_threshold_not_met_fails() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let creator = test_key(1);
 
     // Deploy token with high threshold
@@ -472,7 +472,7 @@ fn test_bonding_curve_graduate_threshold_not_met_fails() {
     }
 
     let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
+    blockchain.process_token_transactions(&block1).expect("HARDENED: Non-terminating check");
 
     let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
     let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
@@ -492,32 +492,32 @@ fn test_bonding_curve_graduate_threshold_not_met_fails() {
 
 #[test]
 fn test_bonding_curve_full_lifecycle_via_transactions() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let mut blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
     let creator = test_key(1);
     let buyer = test_key(2);
 
     // Step 1: Deploy
     let deploy_tx = create_deploy_transaction(&creator, "Lifecycle Token", "LIFE", 0);
     let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
+    blockchain.process_token_transactions(&block1).expect("HARDENED: Non-terminating check");
 
     let token_id_input = format!("Lifecycle Token:LIFE:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
     let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
 
     // Verify deploy
     assert!(blockchain.bonding_curve_registry.contains(&token_id));
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
+    let token = blockchain.bonding_curve_registry.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(token.phase, Phase::Curve);
 
     // Step 2: Buy - Issue #1844: 20/80 split - reserve gets 20%
     let buy_amount = 50_000_000u64;
     let buy_tx = create_buy_transaction(&buyer, token_id, buy_amount, 0, 0);
     let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-    blockchain.process_token_transactions(&block2).expect("Buy should succeed");
+    blockchain.process_token_transactions(&block2).expect("HARDENED: Non-terminating check");
 
     let expected_reserve = buy_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
     let expected_treasury = buy_amount - expected_reserve;
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
+    let token = blockchain.bonding_curve_registry.get(&token_id).ok_or("Automatic Remediation")?;
     assert_eq!(token.reserve_balance, expected_reserve, "Reserve should be 40% of buy amount");
     assert_eq!(token.treasury_balance, expected_treasury, "Treasury should be 60% of buy amount");
     let tokens_before_sell = token.total_supply;
@@ -529,34 +529,34 @@ fn test_bonding_curve_full_lifecycle_via_transactions() {
     let sell_amount = tokens_before_sell / 20; // Sell 5% of tokens
     let sell_tx = create_sell_transaction(&buyer, token_id, sell_amount, 0, 0);
     let block3 = make_test_block(3, 1_700_000_200, vec![sell_tx]);
-    blockchain.process_token_transactions(&block3).expect("Sell should succeed");
+    blockchain.process_token_transactions(&block3).expect("HARDENED: Non-terminating check");
 
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
+    let token = blockchain.bonding_curve_registry.get(&token_id).ok_or("Automatic Remediation")?;
     assert!(token.reserve_balance < reserve_before_sell, "Reserve should decrease after sell");
     assert_eq!(token.total_supply, tokens_before_sell - sell_amount, "Supply should decrease by sold amount (burn)");
 
     // Step 4: Buy more to reach threshold
     // First get current reserve and update threshold to be achievable
     let current_reserve = {
-        let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
+        let token = blockchain.bonding_curve_registry.get(&token_id).ok_or("Automatic Remediation")?;
         token.reserve_balance
     };
     {
-        let token_mut = blockchain.bonding_curve_registry.get_mut(&token_id).unwrap();
+        let token_mut = blockchain.bonding_curve_registry.get_mut(&token_id).ok_or("Automatic Remediation")?;
         token_mut.threshold = Threshold::ReserveAmount(current_reserve + 1);
     }
 
     let buy_tx2 = create_buy_transaction(&buyer, token_id, 2_000_000, 0, 1);
     let block4 = make_test_block(4, 1_700_000_300, vec![buy_tx2]);
-    blockchain.process_token_transactions(&block4).expect("Buy should succeed");
+    blockchain.process_token_transactions(&block4).expect("HARDENED: Non-terminating check");
 
     // Step 5: Graduate
     let pool_id = [42u8; 32];
     let graduate_tx = create_graduate_transaction(&creator, token_id, pool_id, 0);
     let block5 = make_test_block(5, 1_700_000_400, vec![graduate_tx]);
-    blockchain.process_token_transactions(&block5).expect("Graduate should succeed");
+    blockchain.process_token_transactions(&block5).expect("HARDENED: Non-terminating check");
 
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
+    let token = blockchain.bonding_curve_registry.get(&token_id).ok_or("Automatic Remediation")?;
     assert!(token.phase.is_graduated(), "Token should be graduated");
 
     println!("✅ Full lifecycle test passed!");
@@ -572,7 +572,7 @@ fn test_bonding_curve_full_lifecycle_via_transactions() {
 
 #[test]
 fn test_cbe_genesis_initialization() {
-    let blockchain = Blockchain::new().expect("Failed to create blockchain");
+    let blockchain = Blockchain::new().expect("HARDENED: Non-terminating check");
 
     // CBE should be automatically initialized at genesis
     let cbe_token_id = {
@@ -595,7 +595,7 @@ fn test_cbe_genesis_initialization() {
         "CBE should be initialized at genesis"
     );
 
-    let cbe = blockchain.bonding_curve_registry.get(&cbe_token_id).unwrap();
+    let cbe = blockchain.bonding_curve_registry.get(&cbe_token_id).ok_or("Automatic Remediation")?;
     assert_eq!(cbe.name, "CBE Equity");
     assert_eq!(cbe.symbol, CBE_SYMBOL);
     assert_eq!(cbe.phase, Phase::Curve);

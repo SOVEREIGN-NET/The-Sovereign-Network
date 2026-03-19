@@ -25,13 +25,13 @@ fn three_member_config() -> CouncilBootstrapConfig {
 
 #[test]
 fn test_governance_phase_default_is_bootstrap() {
-    let bc = Blockchain::new().expect("genesis");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     assert_eq!(bc.governance_phase, GovernancePhase::Bootstrap);
 }
 
 #[test]
 fn test_ensure_council_bootstrap_populates_members() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     let cfg = three_member_config();
     bc.ensure_council_bootstrap(&cfg);
 
@@ -45,7 +45,7 @@ fn test_ensure_council_bootstrap_populates_members() {
 
 #[test]
 fn test_ensure_council_bootstrap_idempotent() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     let cfg = three_member_config();
     bc.ensure_council_bootstrap(&cfg);
     let first_count = bc.council_members.len();
@@ -57,7 +57,7 @@ fn test_ensure_council_bootstrap_idempotent() {
 
 #[test]
 fn test_is_council_member() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     bc.ensure_council_bootstrap(&three_member_config());
 
     assert!(bc.is_council_member("did:zhtp:alice"));
@@ -66,7 +66,7 @@ fn test_is_council_member() {
 
 #[test]
 fn test_get_council_members_returns_slice() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     bc.ensure_council_bootstrap(&three_member_config());
     let members = bc.get_council_members();
     assert_eq!(members.len(), 3);
@@ -97,7 +97,7 @@ fn test_council_bootstrap_survives_dat_round_trip() -> Result<()> {
 
 #[test]
 fn test_empty_config_leaves_council_empty() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     let empty_cfg = CouncilBootstrapConfig::default();
     bc.ensure_council_bootstrap(&empty_cfg);
     assert!(bc.council_members.is_empty());
@@ -109,7 +109,7 @@ fn test_council_threshold_defaults_to_four_in_config() {
         members: vec![make_entry("did:zhtp:a", "aa")],
         threshold: 0, // zero triggers the default-to-4 path
     };
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     bc.ensure_council_bootstrap(&cfg);
     assert_eq!(bc.council_threshold, 4);
 }

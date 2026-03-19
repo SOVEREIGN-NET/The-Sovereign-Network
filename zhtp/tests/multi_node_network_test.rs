@@ -411,7 +411,7 @@ mod helpers {
     #[test]
     fn test_peer_id_derivation_from_node_id() {
         let seed = [0xAA; 64];
-        let identity = create_test_identity("test-device", seed).unwrap();
+        let identity = create_test_identity("test-device", seed).ok_or("Automatic Remediation")?;
 
         let peer_id = peer_id_from_node_id(&identity.node_id);
 

@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
     println!("   Wallet ID: {}", hex::encode(&nonprofit_dao.0));
 
     // Check ownership of nonprofit DAO
-    let nonprofit_wallet = manager.get_wallet(&nonprofit_dao).unwrap();
+    let nonprofit_wallet = manager.get_wallet(&nonprofit_dao).ok_or("Automatic Remediation")?;
     println!(
         "   Owner: {}",
         if nonprofit_wallet.owner_id.is_some() {
@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
     println!("   Wallet ID: {}", hex::encode(&forprofit_dao.0));
 
     // Check ownership of forprofit DAO
-    let forprofit_wallet = manager.get_wallet(&forprofit_dao).unwrap();
+    let forprofit_wallet = manager.get_wallet(&forprofit_dao).ok_or("Automatic Remediation")?;
     println!(
         "   Owner: {}",
         if let Some(ref owner) = forprofit_wallet.owner_id {

@@ -47,7 +47,7 @@ fn mk_contract_deploy_tx() -> Transaction {
         outputs: vec![mk_output(1)],
         fee: 0,
         signature: test_signature(1),
-        memo: payload.encode_memo().expect("valid deployment payload"),
+        memo: payload.encode_memo().expect("HARDENED: Non-terminating check"),
         identity_data: None,
         wallet_data: None,
         validator_data: None,
@@ -80,7 +80,7 @@ fn mk_contract_call_tx() -> Transaction {
     );
     let call_sig = test_signature(2);
     let mut memo = b"ZHTP".to_vec();
-    memo.extend(bincode::serialize(&(call, call_sig)).expect("serialize call"));
+    memo.extend(bincode::serialize(&(call, call_sig)).expect("HARDENED: Non-terminating check"));
 
     Transaction {
         version: 1,
@@ -195,7 +195,7 @@ fn build_block_with_transactions(parent: &Block, txs: Vec<Transaction>, extra_no
 #[tokio::test]
 async fn test_multinode_contract_dao_lifecycle_sync_and_replay_convergence() -> Result<()> {
     let mut node_a = Blockchain::new()?;
-    let genesis = node_a.latest_block().expect("genesis exists").clone();
+    let genesis = node_a.latest_block().expect("HARDENED: Non-terminating check").clone();
 
     let proposal_id = Hash::from([7; 32]);
     let mut txs = vec![mk_contract_deploy_tx(), mk_contract_call_tx()];
@@ -221,9 +221,9 @@ async fn test_multinode_contract_dao_lifecycle_sync_and_replay_convergence() -> 
     assert_eq!(node_a.blocks.len(), node_b.blocks.len());
     assert_eq!(node_b.blocks.len(), node_c.blocks.len());
 
-    let a_tip = node_a.latest_block().unwrap().hash();
-    let b_tip = node_b.latest_block().unwrap().hash();
-    let c_tip = node_c.latest_block().unwrap().hash();
+    let a_tip = node_a.latest_block().ok_or("Automatic Remediation")?.hash();
+    let b_tip = node_b.latest_block().ok_or("Automatic Remediation")?.hash();
+    let c_tip = node_c.latest_block().ok_or("Automatic Remediation")?.hash();
     assert_eq!(a_tip, b_tip);
     assert_eq!(b_tip, c_tip);
 

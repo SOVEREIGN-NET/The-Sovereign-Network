@@ -105,7 +105,7 @@ async fn test_no_reorg_after_commit_with_four_validators() -> Result<()> {
     );
 
     // Append block at height H=1.
-    let genesis = local_chain.latest_block().unwrap().clone();
+    let genesis = local_chain.latest_block().ok_or("Automatic Remediation")?.clone();
     let block_h1 = build_next_block(&genesis, 0);
     local_chain.add_block(block_h1).await?;
     assert_eq!(local_chain.height, 1, "Local chain should be at height 1");
@@ -125,7 +125,7 @@ async fn test_no_reorg_after_commit_with_four_validators() -> Result<()> {
     // *different* block at H=1 (extra_nonce=1 ⟹ different timestamp ⟹
     // different hash).
     let mut alternate_chain = Blockchain::new()?;
-    let alt_genesis = alternate_chain.latest_block().unwrap().clone();
+    let alt_genesis = alternate_chain.latest_block().ok_or("Automatic Remediation")?.clone();
     let alt_block_h1 = build_next_block(&alt_genesis, 1); // extra_nonce=1 → different hash
     alternate_chain.add_block(alt_block_h1).await?;
     assert_eq!(
@@ -198,7 +198,7 @@ async fn test_reorg_rejected_regardless_of_imported_chain_length() -> Result<()>
     let mut local_chain = Blockchain::new()?;
     register_n_validators(&mut local_chain, 4);
 
-    let genesis = local_chain.latest_block().unwrap().clone();
+    let genesis = local_chain.latest_block().ok_or("Automatic Remediation")?.clone();
     let block_h1 = build_next_block(&genesis, 0);
     local_chain.add_block(block_h1).await?;
     local_chain.mark_block_finalized(1);
@@ -207,10 +207,10 @@ async fn test_reorg_rejected_regardless_of_imported_chain_length() -> Result<()>
     // satisfy the "longer chain wins" heuristic — but the guard must still
     // reject it.
     let mut alternate_chain = Blockchain::new()?;
-    let alt_g = alternate_chain.latest_block().unwrap().clone();
+    let alt_g = alternate_chain.latest_block().ok_or("Automatic Remediation")?.clone();
     let alt_h1 = build_next_block(&alt_g, 99); // different nonce → different hash
     alternate_chain.add_block(alt_h1).await?;
-    let alt_h1_blk = alternate_chain.latest_block().unwrap().clone();
+    let alt_h1_blk = alternate_chain.latest_block().ok_or("Automatic Remediation")?.clone();
     let alt_h2 = build_next_block(&alt_h1_blk, 0);
     alternate_chain.add_block(alt_h2).await?;
     assert_eq!(

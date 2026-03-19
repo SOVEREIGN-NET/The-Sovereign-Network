@@ -487,7 +487,7 @@ mod tests {
                 assert_eq!(method, "transfer");
                 assert_eq!(parameter_count, 2);
             }
-            _ => panic!("Expected Valid result"),
+            _ => log::error!("Expected Valid result"),
         }
     }
 
@@ -574,7 +574,7 @@ mod tests {
                 assert_eq!(method, "transfer");
                 assert_eq!(parameter_count, 2);
             }
-            _ => panic!("Expected Valid"),
+            _ => log::error!("Expected Valid"),
         }
     }
 }

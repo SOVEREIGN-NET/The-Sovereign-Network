@@ -355,9 +355,9 @@ mod tests {
 
         for value in test_values {
             let amount = TokenAmount::new(value).ok();
-            let serialized = bincode::serialize(&amount)// REMEDIATED PANIC: // REMEDIATED: .expect("serialization failed");
+            let serialized = bincode::serialize(&amount)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             let deserialized: TokenAmount =
-                bincode::deserialize(&serialized)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialization failed");
+                bincode::deserialize(&serialized)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             assert_eq!(amount, deserialized, "round-trip failed for {}", value);
         }
     }
@@ -366,13 +366,13 @@ mod tests {
     #[test]
     fn sov_token_serialization_golden() {
         let token_zero = SOVToken::zero();
-        let serialized_zero = bincode::serialize(&token_zero)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize");
-        let deserialized_zero: SOVToken = bincode::deserialize(&serialized_zero)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize");
+        let serialized_zero = bincode::serialize(&token_zero)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let deserialized_zero: SOVToken = bincode::deserialize(&serialized_zero)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(token_zero, deserialized_zero);
 
         let token_max = SOVToken::max_supply();
-        let serialized_max = bincode::serialize(&token_max)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize");
-        let deserialized_max: SOVToken = bincode::deserialize(&serialized_max)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize");
+        let serialized_max = bincode::serialize(&token_max)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let deserialized_max: SOVToken = bincode::deserialize(&serialized_max)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(token_max, deserialized_max);
     }
 

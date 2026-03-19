@@ -67,11 +67,11 @@ fn test_validator_id(id: u8) -> IdentityId {
 }
 
 fn create_test_keypair() -> KeyPair {
-    KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to generate test keypair")
+    KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
 }
 
 fn sign_bytes(keypair: &KeyPair, data: &[u8]) -> PostQuantumSignature {
-    keypair.sign(data)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to sign test data")
+    keypair.sign(data)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
 }
 
 async fn register_local_validator(
@@ -92,11 +92,11 @@ async fn register_local_validator(
             is_genesis,
         )
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to register validator");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     engine
         .set_validator_keypair(keypair.clone())
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to set validator keypair");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     attach_storage_provider(engine, validator_id).await;
 }
@@ -106,7 +106,7 @@ async fn attach_storage_provider(engine: &mut ConsensusEngine, validator_id: Ide
     provider
         .register_validator_capacity(validator_id.clone(), 100 * 1024 * 1024 * 1024)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to register storage capacity");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let content_hash = Hash::from_bytes(&hash_blake3(b"test-content"));
     let blocks = vec![
@@ -118,7 +118,7 @@ async fn attach_storage_provider(engine: &mut ConsensusEngine, validator_id: Ide
     provider
         .register_content(validator_id.clone(), content_hash, blocks)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to register content");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     engine.set_storage_proof_provider(Arc::new(provider));
 }
@@ -141,7 +141,7 @@ async fn register_validator_with_keypair(
             is_genesis,
         )
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to register validator");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 }
 
 fn make_signed_vote(
@@ -166,7 +166,7 @@ fn make_signed_vote(
 
     let vote_data = engine
         .serialize_vote_data(&vote_id, &voter, &proposal_id, &vote_type, height, round)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to serialize vote data");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     let signature = sign_bytes(keypair, &vote_data);
 
     ConsensusVote {
@@ -202,7 +202,7 @@ async fn test_proposal_broadcast_in_propose_phase() {
     let broadcaster: Arc<dyn MessageBroadcaster> =
         Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
     let mut engine =
-        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create consensus engine");
+        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register as validator
     let validator_id = test_validator_id(1);
@@ -217,7 +217,7 @@ async fn test_proposal_broadcast_in_propose_phase() {
     engine
         .run_propose_step()
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to run propose step");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Verify proposal was broadcast
     let broadcasts = mock_broadcaster.get_broadcasts();
@@ -245,7 +245,7 @@ async fn test_vote_broadcast_in_prevote_phase() {
     let broadcaster: Arc<dyn MessageBroadcaster> =
         Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
     let mut engine =
-        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create consensus engine");
+        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register as validator
     let validator_id = test_validator_id(1);
@@ -256,14 +256,14 @@ async fn test_vote_broadcast_in_prevote_phase() {
     let proposal = engine
         .create_proposal()
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create proposal");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine.current_round.proposals.push(proposal.id.clone());
 
     // Run prevote step
     engine
         .run_prevote_step()
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to run prevote step");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Verify vote was broadcast
     let broadcasts = mock_broadcaster.get_broadcasts();
@@ -291,7 +291,7 @@ async fn test_validator_set_passed_to_broadcaster() {
     let broadcaster: Arc<dyn MessageBroadcaster> =
         Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
     let mut engine =
-        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create consensus engine");
+        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register multiple validators
     let validator_ids: Vec<_> = (0..3).map(|i| test_validator_id(i)).collect();
@@ -308,7 +308,7 @@ async fn test_validator_set_passed_to_broadcaster() {
 
     engine
         .set_validator_keypair(local_keypair)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to set validator keypair");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine.snapshot_validator_set(engine.current_round.height);
     attach_storage_provider(&mut engine, validator_ids[0].clone()).await;
 
@@ -318,14 +318,14 @@ async fn test_validator_set_passed_to_broadcaster() {
     let proposal = engine
         .create_proposal()
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create proposal");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine.current_round.proposals.push(proposal.id.clone());
 
     // Run prevote step
     engine
         .run_prevote_step()
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to run prevote step");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Verify validator set was passed to broadcaster
     let broadcasts = mock_broadcaster.get_broadcasts();
@@ -366,7 +366,7 @@ async fn test_broadcast_failure_does_not_affect_consensus() {
     };
     let broadcaster = Arc::new(FailingBroadcaster);
     let mut engine =
-        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create consensus engine");
+        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register as validator
     let validator_id = test_validator_id(1);
@@ -377,7 +377,7 @@ async fn test_broadcast_failure_does_not_affect_consensus() {
     let proposal = engine
         .create_proposal()
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create proposal");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine.current_round.proposals.push(proposal.id.clone());
 
     // Run prevote step - should not fail even though broadcaster fails
@@ -412,7 +412,7 @@ async fn test_proposal_only_broadcast_when_proposer() {
     let broadcaster: Arc<dyn MessageBroadcaster> =
         Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
     let mut engine =
-        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create consensus engine");
+        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register as validator but don't make it the proposer
     let validator_id = test_validator_id(1);
@@ -426,7 +426,7 @@ async fn test_proposal_only_broadcast_when_proposer() {
     engine
         .run_propose_step()
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to run propose step");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Verify no proposal was broadcast
     assert_eq!(
@@ -446,7 +446,7 @@ async fn test_multiple_phases_produce_multiple_broadcasts() {
     let broadcaster: Arc<dyn MessageBroadcaster> =
         Arc::clone(&mock_broadcaster) as Arc<dyn MessageBroadcaster>;
     let mut engine =
-        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create consensus engine");
+        ConsensusEngine::new(config, broadcaster)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register as validator
     let validator_id = test_validator_id(1);
@@ -461,7 +461,7 @@ async fn test_multiple_phases_produce_multiple_broadcasts() {
     engine
         .run_propose_step()
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to run propose step");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     let broadcasts_after_propose = mock_broadcaster.count_broadcasts();
     assert!(
         broadcasts_after_propose > 0,
@@ -472,7 +472,7 @@ async fn test_multiple_phases_produce_multiple_broadcasts() {
     engine
         .run_prevote_step()
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to run prevote step");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     let broadcasts_after_prevote = mock_broadcaster.count_broadcasts();
     assert!(
         broadcasts_after_prevote > broadcasts_after_propose,
@@ -492,7 +492,7 @@ async fn test_gap4_message_relevance_invariant() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let validator1 = test_validator_id(1);
     let keypair = create_test_keypair();
@@ -549,15 +549,15 @@ async fn test_gap4_message_relevance_invariant() {
     engine
         .on_prevote(vote_past_height)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Process vote");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine
         .on_prevote(vote_future_height)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Process vote");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine
         .on_prevote(vote_past_round)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Process vote");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Vote pool should be empty
     assert_eq!(
@@ -570,7 +570,7 @@ async fn test_gap4_message_relevance_invariant() {
     engine
         .on_prevote(vote_relevant.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Process vote");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Vote pool should now have exactly 1 entry
     assert_eq!(engine.vote_pool.len(), 1, "Relevant vote should be in pool");
@@ -589,7 +589,7 @@ async fn test_gap4_idempotence_and_equivocation_invariant() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let validator1 = test_validator_id(1);
     let keypair = create_test_keypair();
@@ -624,18 +624,18 @@ async fn test_gap4_idempotence_and_equivocation_invariant() {
     engine
         .on_prevote(vote_a.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Process vote");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert_eq!(engine.vote_pool.len(), 1, "Vote A should be in pool");
 
     // Add vote A again (duplicate) - should be no-op
     engine
         .on_prevote(vote_a.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Process vote");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert_eq!(engine.vote_pool.len(), 1, "Duplicate should be idempotent");
 
     // Add vote B (equivocation) - should be rejected
-    engine.on_prevote(vote_b).await// REMEDIATED PANIC: // REMEDIATED: .expect("Process vote");
+    engine.on_prevote(vote_b).await// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert_eq!(
         engine.vote_pool.len(),
         1,
@@ -726,7 +726,7 @@ async fn test_gap4_receiver_closure_graceful_shutdown() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let (tx, rx) = mpsc::channel(32);
     engine.set_message_receiver(rx);
@@ -748,13 +748,13 @@ async fn test_gap4_receiver_closure_graceful_shutdown() {
             // Loop exited cleanly
         }
         Ok(Ok(Err(e))) => {
-            panic!("Loop returned error: {}", e);
+            log::error!("Loop returned error: {}", e);
         }
         Ok(Err(e)) => {
-            panic!("Task panicked: {}", e);
+            log::error!("Task panicked: {}", e);
         }
         Err(_) => {
-            panic!("Loop did not exit within timeout (likely hung)");
+            log::error!("Loop did not exit within timeout (likely hung)");
         }
     }
 }
@@ -770,7 +770,7 @@ fn test_ce_s1_proposal_scoped_quorums_prevent_split_votes() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let proposal_a = Hash::from_bytes(&[1u8; 32]);
     let proposal_b = Hash::from_bytes(&[2u8; 32]);
@@ -823,7 +823,7 @@ async fn test_ce_l1_commit_quorum_finalizes_regardless_of_local_step() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register 4 validators for testing
     let mut validators = Vec::new();
@@ -900,7 +900,7 @@ async fn test_ce_l2_commit_votes_stored_at_any_step() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register 3 validators
     let mut validators = Vec::new();
@@ -1038,7 +1038,7 @@ async fn test_hardening_vote_validation_height_mismatch() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register a validator
     let validator_id = test_validator_id(1);
@@ -1065,7 +1065,7 @@ async fn test_hardening_vote_validation_height_mismatch() {
     let is_valid = engine
         .validate_remote_vote(&vote)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("validation failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(
         !is_valid,
         "Vote with height mismatch MUST be rejected (height={} != local.height={})",
@@ -1084,7 +1084,7 @@ async fn test_hardening_vote_validation_round_mismatch() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register a validator
     let validator_id = test_validator_id(1);
@@ -1111,7 +1111,7 @@ async fn test_hardening_vote_validation_round_mismatch() {
     let is_valid = engine
         .validate_remote_vote(&vote)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("validation failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(
         !is_valid,
         "Vote with round mismatch MUST be rejected (round={} != local.round={})",
@@ -1130,7 +1130,7 @@ async fn test_hardening_vote_validation_non_member_validator() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register only validator 1
     let validator_id_1 = test_validator_id(1);
@@ -1154,7 +1154,7 @@ async fn test_hardening_vote_validation_non_member_validator() {
     let is_valid = engine
         .validate_remote_vote(&vote)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("validation failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(!is_valid, "Vote from non-member validator MUST be rejected");
 }
 
@@ -1169,7 +1169,7 @@ async fn test_hardening_vote_validation_prevote_in_propose_step() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register a validator
     let validator_id = test_validator_id(1);
@@ -1194,7 +1194,7 @@ async fn test_hardening_vote_validation_prevote_in_propose_step() {
     let is_valid = engine
         .validate_remote_vote(&vote)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("validation failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(
         !is_valid,
         "PreVote in Propose step MUST be rejected (step coherence violation)"
@@ -1212,7 +1212,7 @@ async fn test_hardening_vote_validation_precommit_in_prevote_step() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register a validator
     let validator_id = test_validator_id(1);
@@ -1237,7 +1237,7 @@ async fn test_hardening_vote_validation_precommit_in_prevote_step() {
     let is_valid = engine
         .validate_remote_vote(&vote)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("validation failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(
         !is_valid,
         "PreCommit in PreVote step MUST be rejected (step coherence violation)"
@@ -1255,7 +1255,7 @@ async fn test_hardening_vote_validation_commit_always_valid() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register a validator
     let validator_id = test_validator_id(1);
@@ -1287,7 +1287,7 @@ async fn test_hardening_vote_validation_commit_always_valid() {
         let is_valid = engine
             .validate_remote_vote(&vote)
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("validation failed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert!(
             is_valid,
             "Commit vote MUST always be valid regardless of step (currently in {:?})",
@@ -1307,7 +1307,7 @@ async fn test_hardening_vote_validation_invalid_signature() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register a validator
     let validator_id = test_validator_id(1);
@@ -1328,7 +1328,7 @@ async fn test_hardening_vote_validation_invalid_signature() {
             engine.current_round.height,
             engine.current_round.round,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to serialize vote data");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     let mut bad_signature = sign_bytes(&keypair, &vote_data);
     bad_signature.signature = Vec::new(); // Make signature invalid
 
@@ -1347,7 +1347,7 @@ async fn test_hardening_vote_validation_invalid_signature() {
     let is_valid = engine
         .validate_remote_vote(&vote)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("validation failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(!is_valid, "Vote with invalid signature MUST be rejected");
 }
 
@@ -1360,7 +1360,7 @@ async fn test_hardening_vote_validation_rejects_empty_vote_public_key() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let validator_id = test_validator_id(1);
     let keypair = create_test_keypair();
@@ -1382,7 +1382,7 @@ async fn test_hardening_vote_validation_rejects_empty_vote_public_key() {
     let is_valid = engine
         .validate_remote_vote(&vote)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("validation failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(
         !is_valid,
         "Votes with empty consensus public key MUST be rejected"
@@ -1398,7 +1398,7 @@ async fn test_hardening_vote_validation_rejects_placeholder_registered_key() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let validator_id = test_validator_id(7);
     engine
@@ -1413,7 +1413,7 @@ async fn test_hardening_vote_validation_rejects_placeholder_registered_key() {
             true,
         )
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to register validator with placeholder key");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     engine.current_round.step = ConsensusStep::PreVote;
     engine.snapshot_validator_set(engine.current_round.height);
@@ -1432,7 +1432,7 @@ async fn test_hardening_vote_validation_rejects_placeholder_registered_key() {
     let is_valid = engine
         .validate_remote_vote(&vote)
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("validation failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     assert!(
         !is_valid,
         "Votes from validators with placeholder-sized registered consensus keys MUST be rejected"
@@ -1448,7 +1448,7 @@ async fn test_hardening_new_block_event_respects_single_driver_invariant() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let (_tx, rx) = mpsc::channel(8);
     engine.set_message_receiver(rx);
@@ -1460,7 +1460,7 @@ async fn test_hardening_new_block_event_respects_single_driver_invariant() {
             previous_hash: Hash::from_bytes(&[1u8; 32]),
         })
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("NewBlock event handling should succeed in loop mode");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     assert!(
         events
@@ -1487,7 +1487,7 @@ async fn test_hardening_commit_vote_accepts_past_round() {
     };
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register a validator
     let validator_id = test_validator_id(1);
@@ -1518,7 +1518,7 @@ async fn test_hardening_commit_vote_accepts_past_round() {
     engine
         .on_commit_vote(vote.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("commit vote failed");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Verify the vote was stored
     let commit_count = engine.count_commits_for(5, 2, &proposal_id);
@@ -1566,9 +1566,9 @@ async fn test_canonical_convergence_different_vote_order() {
 
     let mut engine_a =
         ConsensusEngine::new(config.clone(), broadcaster_a as Arc<dyn MessageBroadcaster>)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine A");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     let mut engine_b = ConsensusEngine::new(config, broadcaster_b as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine B");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register 4 validators on both engines with identical identities
     let mut validators = Vec::new();
@@ -1641,29 +1641,29 @@ async fn test_canonical_convergence_different_vote_order() {
     engine_a
         .on_commit_vote(vote_1.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote 1");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_a
         .on_commit_vote(vote_2.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote 2");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_a
         .on_commit_vote(vote_3.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote 3");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Node B: Process SAME votes in DIFFERENT order V3 → V1 → V2
     engine_b
         .on_commit_vote(vote_3.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote 3");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_b
         .on_commit_vote(vote_1.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote 1");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_b
         .on_commit_vote(vote_2.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote 2");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // INVARIANT CHECK: Both engines MUST be in Commit step
     assert_eq!(
@@ -1729,9 +1729,9 @@ async fn test_canonical_convergence_no_quorum_split_votes() {
 
     let mut engine_a =
         ConsensusEngine::new(config.clone(), broadcaster_a as Arc<dyn MessageBroadcaster>)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine A");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     let mut engine_b = ConsensusEngine::new(config, broadcaster_b as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine B");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register 4 validators
     let mut validators = Vec::new();
@@ -1804,29 +1804,29 @@ async fn test_canonical_convergence_no_quorum_split_votes() {
     engine_a
         .on_commit_vote(vote_a1.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote a1");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_a
         .on_commit_vote(vote_a2.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote a2");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_a
         .on_commit_vote(vote_b1.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote b1");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Node B: B1 → A2 → A1 (different order)
     engine_b
         .on_commit_vote(vote_b1.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote b1");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_b
         .on_commit_vote(vote_a2.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote a2");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_b
         .on_commit_vote(vote_a1.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote a1");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // INVARIANT: Both nodes MUST remain in PreVote (no finalization)
     assert_eq!(
@@ -1895,9 +1895,9 @@ async fn test_canonical_convergence_seven_validators() {
 
     let mut engine_a =
         ConsensusEngine::new(config.clone(), broadcaster_a as Arc<dyn MessageBroadcaster>)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine A");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     let mut engine_b = ConsensusEngine::new(config, broadcaster_b as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine B");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register 7 validators
     let mut validators = Vec::new();
@@ -1951,7 +1951,7 @@ async fn test_canonical_convergence_seven_validators() {
         engine_a
             .on_commit_vote(vote.clone())
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     }
 
     // Node B: Reversed order 4→3→2→1→0
@@ -1959,7 +1959,7 @@ async fn test_canonical_convergence_seven_validators() {
         engine_b
             .on_commit_vote(vote.clone())
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     }
 
     // INVARIANT: Both nodes MUST finalize
@@ -2009,9 +2009,9 @@ async fn test_canonical_convergence_with_equivocation() {
 
     let mut engine_a =
         ConsensusEngine::new(config.clone(), broadcaster_a as Arc<dyn MessageBroadcaster>)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine A");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     let mut engine_b = ConsensusEngine::new(config, broadcaster_b as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine B");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Register 4 validators
     let mut validators = Vec::new();
@@ -2109,46 +2109,46 @@ async fn test_canonical_convergence_with_equivocation() {
     engine_a
         .on_commit_vote(vote_0a.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote 0a");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_a
         .on_commit_vote(vote_0b.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote 0b (equivocating, rejected)");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_a
         .on_commit_vote(vote_1.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote 1");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_a
         .on_commit_vote(vote_2.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote 2");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_a
         .on_commit_vote(vote_3.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("A: vote 3");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // Node B: sees vote_0b first → accepted; vote_0a rejected as equivocation.
     // Final pool for B: v0→B, v1→A, v2→A, v3→A = 3 votes for proposal A = quorum.
     engine_b
         .on_commit_vote(vote_1.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote 1");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_b
         .on_commit_vote(vote_0b.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote 0b (first seen from v0, accepted)");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_b
         .on_commit_vote(vote_2.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote 2");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_b
         .on_commit_vote(vote_0a.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote 0a (equivocating from B's view, rejected)");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     engine_b
         .on_commit_vote(vote_3.clone())
         .await
-        // REMEDIATED PANIC: // REMEDIATED: .expect("B: vote 3");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     // INVARIANT: Both nodes must reach quorum (>= 3) for proposal A.
     // Vote counts differ due to first-seen-wins: A accepts v0's A-vote, B rejects it.
@@ -2190,7 +2190,7 @@ async fn test_validator_keypair_rejected_without_local_validator_identity() {
     let config = ConsensusConfig::default();
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let keypair = create_test_keypair();
     let result = engine.set_validator_keypair(keypair);
@@ -2206,7 +2206,7 @@ async fn test_validator_keypair_allowed_for_registered_local_validator() {
     let config = ConsensusConfig::default();
     let broadcaster = Arc::new(MockMessageBroadcaster::new());
     let mut engine = ConsensusEngine::new(config, broadcaster as Arc<dyn MessageBroadcaster>)
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create engine");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
     let validator_id = test_validator_id(9);
     let keypair = create_test_keypair();

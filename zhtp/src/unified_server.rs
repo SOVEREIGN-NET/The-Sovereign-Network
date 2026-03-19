@@ -1344,7 +1344,7 @@ impl ZhtpUnifiedServer {
                     error!("   Error: {}", e);
                     error!("   QUIC is the only entry point in this architecture.");
                     error!("   Without it, the node cannot receive or send messages.");
-                    panic!("QUIC accept loop critical failure - crashing for restart: {}", e);
+                    log::error!("QUIC accept loop critical failure - crashing for restart: {}", e);
                 }
             }
         });

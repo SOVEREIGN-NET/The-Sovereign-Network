@@ -703,10 +703,10 @@ mod tests {
             "test-device",
             None,
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test identity");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let peer_id =
-            UnifiedPeerId::from_zhtp_identity(&identity)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create UnifiedPeerId");
+            UnifiedPeerId::from_zhtp_identity(&identity)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let connection_metrics = ConnectionMetrics {
             signal_strength: 1.0,

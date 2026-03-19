@@ -823,12 +823,12 @@ pub struct StateSummary {
 
 impl Default for RecursiveProofAggregator {
     fn default() -> Self {
-        Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create default RecursiveProofAggregator")
+        Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
     }
 }
 
 impl Default for InstantStateVerifier {
     fn default() -> Self {
-        Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create default InstantStateVerifier")
+        Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
     }
 }

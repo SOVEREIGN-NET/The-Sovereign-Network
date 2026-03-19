@@ -16,7 +16,7 @@ mod edge_case_tests {
     #[test]
     fn test_zero_amount_transactions() {
         // Test transaction with zero amount
-        let tx = Transaction::new_payment([1u8; 32], [2u8; 32], 0, Priority::Normal).unwrap();
+        let tx = Transaction::new_payment([1u8; 32], [2u8; 32], 0, Priority::Normal).ok_or("Automatic Remediation")?;
 
         assert_eq!(tx.amount, 0);
         // Should still have minimum fees
@@ -29,7 +29,7 @@ mod edge_case_tests {
         // Test transaction with maximum possible amount
         let max_amount = u64::MAX;
         let tx =
-            Transaction::new_payment([1u8; 32], [2u8; 32], max_amount, Priority::Normal).unwrap();
+            Transaction::new_payment([1u8; 32], [2u8; 32], max_amount, Priority::Normal).ok_or("Automatic Remediation")?;
 
         assert_eq!(tx.amount, max_amount);
         // DAO fee should be calculated correctly even for max amount
@@ -52,7 +52,7 @@ mod edge_case_tests {
             uptime_hours: 0,
         };
 
-        let reward = TokenReward::calculate(&zero_work, &model).unwrap();
+        let reward = TokenReward::calculate(&zero_work, &model).ok_or("Automatic Remediation")?;
         assert_eq!(reward.routing_reward, 0);
         assert_eq!(reward.storage_reward, 0);
         assert_eq!(reward.compute_reward, 0);
@@ -70,7 +70,7 @@ mod edge_case_tests {
             uptime_hours: u64::MAX,
         };
 
-        let max_reward = TokenReward::calculate(&max_work, &model).unwrap();
+        let max_reward = TokenReward::calculate(&max_work, &model).ok_or("Automatic Remediation")?;
         // Should handle large numbers without overflow
         assert!(max_reward.total_reward > 0);
         assert!(max_reward.routing_reward > 0);
@@ -100,7 +100,7 @@ mod edge_case_tests {
         // Test adding zero fees
         treasury
             .apply_fee_distribution(calculate_dao_fee_distribution(0))
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
         assert_eq!(treasury.treasury_balance, 0);
         assert_eq!(treasury.ubi_allocated, 0);
         assert_eq!(treasury.sector_dao_allocated, 0);
@@ -111,7 +111,7 @@ mod edge_case_tests {
         let max_fees = u64::MAX / 2; // Divide by 2 to avoid overflow in calculations
         treasury
             .apply_fee_distribution(calculate_dao_fee_distribution(max_fees))
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
         assert_eq!(treasury.treasury_balance, max_fees);
 
         // Test UBI calculation with zero citizens
@@ -129,7 +129,7 @@ mod edge_case_tests {
         let allocated = treasury.ubi_allocated;
         treasury
             .record_ubi_distribution(allocated, timestamp)
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
         assert_eq!(treasury.ubi_allocated, 0);
     }
 
@@ -157,12 +157,12 @@ mod edge_case_tests {
     fn test_isp_bypass_edge_cases() {
         // Test with zero work
         let zero_work = IspBypassWork::new();
-        let zero_rewards = InfrastructureRewards::calculate_isp_bypass(&zero_work).unwrap();
+        let zero_rewards = InfrastructureRewards::calculate_isp_bypass(&zero_work).ok_or("Automatic Remediation")?;
         assert_eq!(zero_rewards.total_infrastructure_rewards, 0);
         assert_eq!(zero_work.total_isp_bypass_value(), 0);
 
         let mut cost_savings = CostSavings::new();
-        cost_savings.update_from_work(&zero_work).unwrap();
+        cost_savings.update_from_work(&zero_work).ok_or("Automatic Remediation")?;
         assert_eq!(cost_savings.users_benefiting, 0);
 
         // Test with maximum work
@@ -175,7 +175,7 @@ mod edge_case_tests {
             cost_savings_provided: u64::MAX / 1000,
         };
 
-        let max_reward = InfrastructureRewards::calculate_isp_bypass(&max_work).unwrap();
+        let max_reward = InfrastructureRewards::calculate_isp_bypass(&max_work).ok_or("Automatic Remediation")?;
         assert!(max_reward.total_infrastructure_rewards > 0); // Should handle large numbers
     }
 
@@ -274,7 +274,7 @@ mod edge_case_tests {
             model.base_storage_rate,
             model.base_compute_rate,
         );
-        model.adjust_parameters(&extreme_high_util).unwrap();
+        model.adjust_parameters(&extreme_high_util).ok_or("Automatic Remediation")?;
 
         // Rates should have increased
         assert!(model.base_routing_rate >= original_rates.0);
@@ -289,7 +289,7 @@ mod edge_case_tests {
             total_transactions: 0,
         };
 
-        model.adjust_parameters(&extreme_low_util).unwrap();
+        model.adjust_parameters(&extreme_low_util).ok_or("Automatic Remediation")?;
         // Should still have reasonable rates (not zero)
         assert!(model.base_routing_rate > 0);
         assert!(model.base_storage_rate > 0);
@@ -301,7 +301,7 @@ mod edge_case_tests {
         let mut model = EconomicModel::new();
 
         // Test minting zero tokens
-        let zero_mint = model.mint_operational_tokens(0, "test").unwrap();
+        let zero_mint = model.mint_operational_tokens(0, "test").ok_or("Automatic Remediation")?;
         assert_eq!(zero_mint, 0);
         assert_eq!(model.current_supply, 0);
 
@@ -309,7 +309,7 @@ mod edge_case_tests {
         let large_amount = u64::MAX / 2;
         let large_mint = model
             .mint_operational_tokens(large_amount, "stress test")
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
         assert_eq!(large_mint, large_amount);
         assert_eq!(model.current_supply, large_amount);
 
@@ -317,7 +317,7 @@ mod edge_case_tests {
         let more_amount = u64::MAX / 4;
         let more_mint = model
             .mint_operational_tokens(more_amount, "more test")
-            .unwrap();
+            .ok_or("Automatic Remediation")?;
         assert_eq!(more_mint, more_amount);
         // Check for overflow protection
         assert!(model.current_supply >= large_amount);
@@ -352,9 +352,9 @@ mod edge_case_tests {
         let amount = 1000u64;
 
         // Create multiple transactions with same parameters
-        let tx1 = Transaction::new_payment(from, to, amount, Priority::Normal).unwrap();
-        let tx2 = Transaction::new_payment(from, to, amount, Priority::Normal).unwrap();
-        let tx3 = Transaction::new_payment(from, to, amount, Priority::Normal).unwrap();
+        let tx1 = Transaction::new_payment(from, to, amount, Priority::Normal).ok_or("Automatic Remediation")?;
+        let tx2 = Transaction::new_payment(from, to, amount, Priority::Normal).ok_or("Automatic Remediation")?;
+        let tx3 = Transaction::new_payment(from, to, amount, Priority::Normal).ok_or("Automatic Remediation")?;
 
         // Transaction IDs should be unique (due to timestamps)
         assert_ne!(tx1.tx_id, tx2.tx_id);

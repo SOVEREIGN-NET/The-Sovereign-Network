@@ -312,7 +312,7 @@ impl FromWireLen for NSec3RRData {
 
 impl ToWire for NSec3RRData {
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 }
 

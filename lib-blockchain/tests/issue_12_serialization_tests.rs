@@ -52,11 +52,11 @@ fn test_token_contract_serialization_cycle() {
         .insert(holder2.clone(), 100_000);
 
     // Serialize
-    let serialized = bincode::serialize(&token).expect("Failed to serialize token");
+    let serialized = bincode::serialize(&token).expect("HARDENED: Non-terminating check");
 
     // Deserialize
     let deserialized: TokenContract =
-        bincode::deserialize(&serialized).expect("Failed to deserialize token");
+        bincode::deserialize(&serialized).expect("HARDENED: Non-terminating check");
 
     // Verify all fields survived the cycle
     assert_eq!(deserialized.token_id, token.token_id);
@@ -103,9 +103,9 @@ fn test_token_contract_empty_serialization() {
     );
 
     // Should serialize successfully despite empty maps
-    let serialized = bincode::serialize(&token).expect("Failed to serialize empty token");
+    let serialized = bincode::serialize(&token).expect("HARDENED: Non-terminating check");
     let deserialized: TokenContract =
-        bincode::deserialize(&serialized).expect("Failed to deserialize empty token");
+        bincode::deserialize(&serialized).expect("HARDENED: Non-terminating check");
 
     assert_eq!(deserialized.total_supply, 0);
     assert!(deserialized.balances.is_empty());
@@ -132,9 +132,9 @@ fn test_token_contract_large_numbers() {
     token.total_supply = u64::MAX - 1;
     token.balances.insert(test_public_key(21), u64::MAX / 2);
 
-    let serialized = bincode::serialize(&token).expect("Failed to serialize");
+    let serialized = bincode::serialize(&token).expect("HARDENED: Non-terminating check");
     let deserialized: TokenContract =
-        bincode::deserialize(&serialized).expect("Failed to deserialize");
+        bincode::deserialize(&serialized).expect("HARDENED: Non-terminating check");
 
     assert_eq!(deserialized.total_supply, u64::MAX - 1);
     assert_eq!(
@@ -164,9 +164,9 @@ fn test_token_unicode_strings() {
     token.balances.insert(test_public_key(41), 100_000);
 
     // Serialize and deserialize
-    let serialized = bincode::serialize(&token).expect("Failed to serialize unicode");
+    let serialized = bincode::serialize(&token).expect("HARDENED: Non-terminating check");
     let deserialized: TokenContract =
-        bincode::deserialize(&serialized).expect("Failed to deserialize unicode");
+        bincode::deserialize(&serialized).expect("HARDENED: Non-terminating check");
 
     // Verify unicode strings survived
     assert_eq!(deserialized.name, "Token with emojis 🎯🚀");

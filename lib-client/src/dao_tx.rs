@@ -95,7 +95,7 @@ mod tests {
         );
         assert_eq!(tx.fee, 0);
 
-        let data = tx.init_entity_registry_data// REMEDIATED PANIC: // REMEDIATED: .expect("init payload");
+        let data = tx.init_entity_registry_data// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(data.initialized_at_height, 42);
         assert_eq!(data.cbe_treasury.dilithium_pk, vec![0x11; 2592]);
         assert_eq!(data.nonprofit_treasury.dilithium_pk, vec![0x22; 2592]);

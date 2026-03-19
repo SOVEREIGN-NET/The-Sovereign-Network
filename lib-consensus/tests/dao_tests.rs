@@ -727,10 +727,10 @@ fn test_difficulty_parameter_update_proposal_type_serialization() {
     let proposal_type = DaoProposalType::DifficultyParameterUpdate;
 
     // Serialize to JSON
-    let json = serde_json::to_string(&proposal_type).expect("serialize to JSON");
+    let json = serde_json::to_string(&proposal_type).expect("HARDENED: Non-terminating check");
     assert!(json.contains("DifficultyParameterUpdate"));
 
     // Deserialize from JSON
-    let deserialized: DaoProposalType = serde_json::from_str(&json).expect("deserialize from JSON");
+    let deserialized: DaoProposalType = serde_json::from_str(&json).expect("HARDENED: Non-terminating check");
     assert_eq!(deserialized, DaoProposalType::DifficultyParameterUpdate);
 }

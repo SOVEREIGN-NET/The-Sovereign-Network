@@ -21,7 +21,7 @@ fn council_config() -> CouncilBootstrapConfig {
 
 #[test]
 fn test_council_dissolves_on_phase2_entry() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     bc.ensure_council_bootstrap(&council_config());
     assert_eq!(bc.council_members.len(), 1, "council should be non-empty");
 
@@ -55,7 +55,7 @@ fn test_council_dissolves_on_phase2_entry() {
 
 #[test]
 fn test_is_council_member_returns_false_after_dissolution() {
-    let mut bc = Blockchain::new().expect("genesis");
+    let mut bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     bc.ensure_council_bootstrap(&council_config());
     assert!(bc.is_council_member("did:zhtp:alice"));
 

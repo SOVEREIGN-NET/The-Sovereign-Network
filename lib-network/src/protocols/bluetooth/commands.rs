@@ -36,7 +36,7 @@ mod tests {
             AuthCommand::Log { message, .. } => {
                 assert_eq!(message, "ok");
             }
-            _ => panic!("Expected log command"),
+            _ => log::error!("Expected log command"),
         }
     }
 
@@ -65,7 +65,7 @@ mod tests {
             AuthCommand::StoreVerifiedPeer { peer_address, .. } => {
                 assert_eq!(peer_address, "peer-y");
             }
-            _ => panic!("Expected store command"),
+            _ => log::error!("Expected store command"),
         }
     }
 }

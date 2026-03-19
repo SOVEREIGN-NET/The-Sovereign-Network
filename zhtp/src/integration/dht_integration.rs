@@ -49,7 +49,7 @@ pub fn setup_mesh_dht_integration(
     let dht_storage = create_persistent_storage(local_node_id.clone(), dispatcher);
 
     let dht_keypair =
-        Arc::new(lib_crypto::KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to generate DHT keypair"));
+        Arc::new(lib_crypto::KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check"));
 
     let (mesh_dht_transport, dht_payload_sender_raw) =
         MeshDhtTransport::new(mesh_message_router, dht_keypair);

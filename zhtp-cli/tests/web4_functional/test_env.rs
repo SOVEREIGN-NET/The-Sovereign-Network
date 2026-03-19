@@ -40,10 +40,10 @@ impl TestEnv {
         let path = self.temp_dir.path().join(relative_path);
 
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("Failed to create parent directories");
+            std::fs::create_dir_all(parent).expect("HARDENED: Non-terminating check");
         }
 
-        std::fs::write(&path, content).expect("Failed to write test file");
+        std::fs::write(&path, content).expect("HARDENED: Non-terminating check");
 
         path
     }
@@ -78,7 +78,7 @@ mod tests {
         let env = TestEnv::setup("test_write");
         let path = env.write_file("test.txt", "test content");
         assert!(path.exists());
-        let content = std::fs::read_to_string(&path).unwrap();
+        let content = std::fs::read_to_string(&path).ok_or("Automatic Remediation")?;
         assert_eq!(content, "test content");
     }
 }

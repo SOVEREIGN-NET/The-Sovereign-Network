@@ -322,7 +322,7 @@ mod tests {
     fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
         let identity =
             ZhtpIdentity::new_unified(IdentityType::Device, None, None, device_name, None)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test identity");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         build_peer_identity(
             identity.node_id.clone(),

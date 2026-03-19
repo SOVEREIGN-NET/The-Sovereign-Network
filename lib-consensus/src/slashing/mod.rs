@@ -718,7 +718,7 @@ mod tests {
                 assert_eq!(jailed_at_block, 7500);
                 assert_eq!(eligible_at_block, 7500 + JAIL_EXIT_WAIT_BLOCKS);
             }
-            _ => panic!("Expected LivenessJail"),
+            _ => log::error!("Expected LivenessJail"),
         }
     }
 

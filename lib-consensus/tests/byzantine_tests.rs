@@ -25,7 +25,7 @@ fn test_byzantine_fault_detector_initialization() {
 
     // Initially should have no faults detected
     let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
-    let faults = detector.detect_faults(&validator_manager).unwrap();
+    let faults = detector.detect_faults(&validator_manager).ok_or("Automatic Remediation")?;
     assert_eq!(faults.len(), 0);
 }
 
@@ -193,7 +193,7 @@ fn test_fault_processing_and_slashing() -> Result<()> {
 
     let initial_stake = validator_manager
         .get_validator(&validator_id)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .stake;
 
     // Record and detect double signing
@@ -204,7 +204,7 @@ fn test_fault_processing_and_slashing() -> Result<()> {
     detector.process_faults(faults, &mut validator_manager, 100)?;
 
     // Verify slashing was applied
-    let validator = validator_manager.get_validator(&validator_id).unwrap();
+    let validator = validator_manager.get_validator(&validator_id).ok_or("Automatic Remediation")?;
     assert!(validator.stake < initial_stake);
 
     Ok(())
@@ -223,19 +223,19 @@ fn test_fault_record_cleanup() {
 
     // Verify faults were recorded
     let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
-    let faults_before = detector.detect_faults(&validator_manager).unwrap();
+    let faults_before = detector.detect_faults(&validator_manager).ok_or("Automatic Remediation")?;
     assert!(!faults_before.is_empty());
 
     // Clean up old records: use current time + max_age + 1000 to ensure cleanup
     let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .as_secs();
     let cleanup_time = current_time + 86400 + 1000; // Current time + 24h + buffer
     detector.cleanup_old_records(cleanup_time);
 
     // After cleanup with far future timestamp, old faults should be cleaned
-    let faults_after = detector.detect_faults(&validator_manager).unwrap();
+    let faults_after = detector.detect_faults(&validator_manager).ok_or("Automatic Remediation")?;
     assert_eq!(
         faults_after.len(),
         0,
@@ -310,18 +310,18 @@ fn test_timestamp_accuracy() {
     let validator = create_test_identity("test_validator");
     let before_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .as_secs();
 
     detector.record_double_sign(validator.clone(), 100, 1, vec![1, 2], vec![3, 4]);
 
     let after_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .as_secs();
 
     let validator_manager = ValidatorManager::new(10, 1000 * 1_000_000);
-    let faults = detector.detect_faults(&validator_manager).unwrap();
+    let faults = detector.detect_faults(&validator_manager).ok_or("Automatic Remediation")?;
 
     assert_eq!(faults.len(), 1);
     assert!(faults[0].detected_at >= before_time);

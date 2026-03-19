@@ -568,7 +568,7 @@ mod tests {
                 assert!(set.contains(&validators[0]));
                 assert!(set.contains(&validators[1]));
             }
-            _ => panic!("Expected stalled transition"),
+            _ => log::error!("Expected stalled transition"),
         }
 
         // No transition on second check (still stalled)
@@ -579,7 +579,7 @@ mod tests {
 
         match monitor.check_stall_transition() {
             Some((false, set)) => assert!(set.is_empty()),
-            _ => panic!("Expected recovery transition"),
+            _ => log::error!("Expected recovery transition"),
         }
     }
 

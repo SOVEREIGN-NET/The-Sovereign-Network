@@ -32,7 +32,7 @@ fn create_valid_test_transaction_proof() -> ZkTransactionProof {
 fn create_mined_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -> Result<Block> {
     use lib_blockchain::block::creation::{create_block, mine_block};
 
-    let previous_hash = blockchain.latest_block().unwrap().hash();
+    let previous_hash = blockchain.latest_block().ok_or("Automatic Remediation")?.hash();
     let height = blockchain.height + 1;
     let difficulty = Difficulty::from_bits(0x1fffffff); // Maximum difficulty (easiest) for testing
 

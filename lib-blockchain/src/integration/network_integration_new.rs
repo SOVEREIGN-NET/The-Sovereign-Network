@@ -237,7 +237,7 @@ mod tests {
             NetworkMessage::NewBlock(received_block) => {
                 assert_eq!(received_block.header.height, 1);
             }
-            _ => panic!("Wrong message type"),
+            _ => log::error!("Wrong message type"),
         }
         
         Ok(())

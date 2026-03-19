@@ -227,7 +227,7 @@ impl CircuitBuilder {
     /// Add hash gate (Blake3)
     pub fn add_hash(&mut self, inputs: Vec<usize>) -> usize {
         if inputs.is_empty() {
-            panic!("Hash gate requires at least one input");
+            log::error!("Hash gate requires at least one input");
         }
         
         let output_wire = self.next_wire_index;

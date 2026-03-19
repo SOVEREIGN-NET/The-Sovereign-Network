@@ -322,7 +322,7 @@ fn test_reward_round_structure() -> Result<()> {
     assert!(reward_round.total_rewards > 0);
 
     // Check validator reward structure if validator_rewards is a HashMap
-    let validator_reward = reward_round.validator_rewards.get(&alice_id).unwrap();
+    let validator_reward = reward_round.validator_rewards.get(&alice_id).ok_or("Automatic Remediation")?;
     assert!(validator_reward.total_reward > 0);
 
     Ok(())

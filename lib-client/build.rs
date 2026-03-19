@@ -10,6 +10,6 @@ fn main() {
 
     if std::env::var_os("CARGO_FEATURE_UNIFFI").is_some() {
         uniffi::generate_scaffolding("uniffi/zhtp_client.udl")
-            .expect("Failed to generate UniFFI scaffolding");
+            .expect("HARDENED: Non-terminating check");
     }
 }

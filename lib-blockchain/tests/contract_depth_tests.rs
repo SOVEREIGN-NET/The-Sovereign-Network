@@ -55,7 +55,7 @@ fn test_call_depth_increments() {
         "Should create nested context when below max depth"
     );
 
-    let nested_context = nested.unwrap();
+    let nested_context = nested.ok_or("Automatic Remediation")?;
     assert_eq!(
         nested_context.call_depth, 2,
         "Nested context should have depth 2"
@@ -78,7 +78,7 @@ fn test_call_depth_limit_enforced() {
     // Attempting to increment should succeed (creates depth = max)
     let nested = context.with_incremented_depth();
     assert!(nested.is_ok(), "Should allow depth = max");
-    assert_eq!(nested.unwrap().call_depth, DEFAULT_MAX_CALL_DEPTH);
+    assert_eq!(nested.ok_or("Automatic Remediation")?.call_depth, DEFAULT_MAX_CALL_DEPTH);
 
     // Set to max depth
     context.call_depth = DEFAULT_MAX_CALL_DEPTH;

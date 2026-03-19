@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn test_abi_encoding() {
         let abi = ContractAbi::new("Test", "1.0.0");
-        let json = AbiEncoder::encode_abi(&abi)// REMEDIATED PANIC: // REMEDIATED: .expect("Should encode");
+        let json = AbiEncoder::encode_abi(&abi)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert!(json.contains("\"contract\""));
         assert!(json.contains("Test"));
         assert!(json.contains("1.0.0"));
@@ -123,8 +123,8 @@ mod tests {
         let original = ContractAbi::new("UBI", "1.0.0")
             .with_method(MethodSchema::new("claim", ReturnType::Void).kernel_only());
 
-        let json = AbiEncoder::encode_abi(&original)// REMEDIATED PANIC: // REMEDIATED: .expect("Should encode");
-        let decoded = AbiDecoder::decode_abi(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("Should decode");
+        let json = AbiEncoder::encode_abi(&original)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let decoded = AbiDecoder::decode_abi(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(decoded.contract, "UBI");
         assert_eq!(decoded.version, "1.0.0");
@@ -135,8 +135,8 @@ mod tests {
     #[test]
     fn test_abi_hash_deterministic() {
         let abi = ContractAbi::new("Test", "1.0.0");
-        let hash1 = AbiEncoder::abi_hash(&abi)// REMEDIATED PANIC: // REMEDIATED: .expect("Should hash");
-        let hash2 = AbiEncoder::abi_hash(&abi)// REMEDIATED PANIC: // REMEDIATED: .expect("Should hash");
+        let hash1 = AbiEncoder::abi_hash(&abi)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let hash2 = AbiEncoder::abi_hash(&abi)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(hash1, hash2);
     }
 

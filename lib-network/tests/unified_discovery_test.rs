@@ -25,7 +25,7 @@ fn test_discovery_protocol_priority() {
 #[test]
 fn test_discovery_result_creation() {
     let peer_id = Uuid::new_v4();
-    let addr: SocketAddr = "192.168.1.100:9333".parse().unwrap();
+    let addr: SocketAddr = "192.168.1.100:9333".parse().ok_or("Automatic Remediation")?;
 
     let result = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9333);
 
@@ -40,8 +40,8 @@ fn test_discovery_result_creation() {
 #[test]
 fn test_discovery_result_merge_addresses() {
     let peer_id = Uuid::new_v4();
-    let addr1: SocketAddr = "192.168.1.100:9333".parse().unwrap();
-    let addr2: SocketAddr = "10.0.0.50:9333".parse().unwrap();
+    let addr1: SocketAddr = "192.168.1.100:9333".parse().ok_or("Automatic Remediation")?;
+    let addr2: SocketAddr = "10.0.0.50:9333".parse().ok_or("Automatic Remediation")?;
 
     let mut result1 = DiscoveryResult::new(peer_id, addr1, DiscoveryProtocol::PortScan, 9333);
     let result2 = DiscoveryResult::new(peer_id, addr2, DiscoveryProtocol::UdpMulticast, 9333);
@@ -60,11 +60,11 @@ fn test_discovery_result_merge_addresses() {
 #[test]
 fn test_discovery_result_merge_public_key() {
     let peer_id = Uuid::new_v4();
-    let addr: SocketAddr = "192.168.1.100:9333".parse().unwrap();
+    let addr: SocketAddr = "192.168.1.100:9333".parse().ok_or("Automatic Remediation")?;
 
     // Create a test identity to get a public key
     let seed = [0x42u8; 64];
-    let identity = create_test_identity("laptop", Some(seed)).unwrap();
+    let identity = create_test_identity("laptop", Some(seed)).ok_or("Automatic Remediation")?;
     let public_key = identity.public_key.clone();
 
     let mut result1 = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::PortScan, 9333);
@@ -79,7 +79,7 @@ fn test_discovery_result_merge_public_key() {
     // Should now have public key from result2
     assert!(result1.public_key.is_some());
     assert_eq!(
-        result1.public_key.unwrap().as_bytes(),
+        result1.public_key.ok_or("Automatic Remediation")?.as_bytes(),
         public_key.as_bytes()
     );
 }
@@ -87,7 +87,7 @@ fn test_discovery_result_merge_public_key() {
 #[test]
 fn test_discovery_result_merge_keeps_earliest_timestamp() {
     let peer_id = Uuid::new_v4();
-    let addr: SocketAddr = "192.168.1.100:9333".parse().unwrap();
+    let addr: SocketAddr = "192.168.1.100:9333".parse().ok_or("Automatic Remediation")?;
 
     let mut result1 = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::PortScan, 9333);
     result1.discovered_at = 1000;
@@ -104,7 +104,7 @@ fn test_discovery_result_merge_keeps_earliest_timestamp() {
 #[test]
 fn test_discovery_result_merge_no_duplicate_addresses() {
     let peer_id = Uuid::new_v4();
-    let addr: SocketAddr = "192.168.1.100:9333".parse().unwrap();
+    let addr: SocketAddr = "192.168.1.100:9333".parse().ok_or("Automatic Remediation")?;
 
     let mut result1 = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::PortScan, 9333);
     let result2 = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9333);
@@ -137,7 +137,7 @@ async fn test_unified_discovery_service_register_peer() -> Result<()> {
     let service = UnifiedDiscoveryService::new(Uuid::new_v4(), 9333, identity.public_key.clone());
 
     let peer_id = Uuid::new_v4();
-    let addr: SocketAddr = "192.168.1.100:9333".parse().unwrap();
+    let addr: SocketAddr = "192.168.1.100:9333".parse().ok_or("Automatic Remediation")?;
     let result = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9333);
 
     service.register_peer(result.clone()).await;
@@ -148,7 +148,7 @@ async fn test_unified_discovery_service_register_peer() -> Result<()> {
     // Should be able to retrieve the peer
     let retrieved = service.get_peer(&peer_id).await;
     assert!(retrieved.is_some());
-    assert_eq!(retrieved.unwrap().peer_id, peer_id);
+    assert_eq!(retrieved.ok_or("Automatic Remediation")?.peer_id, peer_id);
 
     Ok(())
 }
@@ -161,8 +161,8 @@ async fn test_unified_discovery_service_deduplication() -> Result<()> {
     let service = UnifiedDiscoveryService::new(Uuid::new_v4(), 9333, identity.public_key.clone());
 
     let peer_id = Uuid::new_v4();
-    let addr1: SocketAddr = "192.168.1.100:9333".parse().unwrap();
-    let addr2: SocketAddr = "10.0.0.50:9333".parse().unwrap();
+    let addr1: SocketAddr = "192.168.1.100:9333".parse().ok_or("Automatic Remediation")?;
+    let addr2: SocketAddr = "10.0.0.50:9333".parse().ok_or("Automatic Remediation")?;
 
     // Register same peer discovered via different methods
     let result1 = DiscoveryResult::new(peer_id, addr1, DiscoveryProtocol::PortScan, 9333);
@@ -175,7 +175,7 @@ async fn test_unified_discovery_service_deduplication() -> Result<()> {
     assert_eq!(service.peer_count().await, 1);
 
     // Peer should have both addresses merged
-    let peer = service.get_peer(&peer_id).await.unwrap();
+    let peer = service.get_peer(&peer_id).await.ok_or("Automatic Remediation")?;
     assert_eq!(peer.addresses.len(), 2);
     assert!(peer.addresses.contains(&addr1));
     assert!(peer.addresses.contains(&addr2));
@@ -200,19 +200,19 @@ async fn test_unified_discovery_service_multiple_peers() -> Result<()> {
 
     let result1 = DiscoveryResult::new(
         peer1,
-        "192.168.1.100:9333".parse().unwrap(),
+        "192.168.1.100:9333".parse().ok_or("Automatic Remediation")?,
         DiscoveryProtocol::UdpMulticast,
         9333,
     );
     let result2 = DiscoveryResult::new(
         peer2,
-        "192.168.1.101:9333".parse().unwrap(),
+        "192.168.1.101:9333".parse().ok_or("Automatic Remediation")?,
         DiscoveryProtocol::PortScan,
         9333,
     );
     let result3 = DiscoveryResult::new(
         peer3,
-        "192.168.1.102:9333".parse().unwrap(),
+        "192.168.1.102:9333".parse().ok_or("Automatic Remediation")?,
         DiscoveryProtocol::PortScan,
         9333,
     );
@@ -241,7 +241,7 @@ async fn test_unified_discovery_service_remove_peer() -> Result<()> {
     let peer_id = Uuid::new_v4();
     let result = DiscoveryResult::new(
         peer_id,
-        "192.168.1.100:9333".parse().unwrap(),
+        "192.168.1.100:9333".parse().ok_or("Automatic Remediation")?,
         DiscoveryProtocol::UdpMulticast,
         9333,
     );
@@ -267,7 +267,7 @@ async fn test_unified_discovery_service_clear_peers() -> Result<()> {
     // Register multiple peers
     for i in 0..5 {
         let peer_id = Uuid::new_v4();
-        let addr = format!("192.168.1.{}:9333", 100 + i).parse().unwrap();
+        let addr = format!("192.168.1.{}:9333", 100 + i).parse().ok_or("Automatic Remediation")?;
         let result = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9333);
         service.register_peer(result).await;
     }
@@ -300,7 +300,7 @@ async fn test_unified_discovery_service_with_callback() -> Result<()> {
     // Register three different peers
     for i in 0..3 {
         let peer_id = Uuid::new_v4();
-        let addr = format!("192.168.1.{}:9333", 100 + i).parse().unwrap();
+        let addr = format!("192.168.1.{}:9333", 100 + i).parse().ok_or("Automatic Remediation")?;
         let result = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9333);
         service.register_peer(result).await;
     }
@@ -312,7 +312,7 @@ async fn test_unified_discovery_service_with_callback() -> Result<()> {
     let peer_id = Uuid::new_v4();
     let result1 = DiscoveryResult::new(
         peer_id,
-        "192.168.1.200:9333".parse().unwrap(),
+        "192.168.1.200:9333".parse().ok_or("Automatic Remediation")?,
         DiscoveryProtocol::PortScan,
         9333,
     );
@@ -324,7 +324,7 @@ async fn test_unified_discovery_service_with_callback() -> Result<()> {
     // Re-register same peer (deduplication, no new callback)
     let result2 = DiscoveryResult::new(
         peer_id,
-        "10.0.0.50:9333".parse().unwrap(),
+        "10.0.0.50:9333".parse().ok_or("Automatic Remediation")?,
         DiscoveryProtocol::UdpMulticast,
         9333,
     );
@@ -343,7 +343,7 @@ fn test_discovery_result_to_unified_peer_id() -> Result<()> {
     let identity = create_test_identity("my-laptop-abc123def456", Some(seed))?;
 
     let peer_id = Uuid::new_v4();
-    let addr: SocketAddr = "192.168.1.100:9333".parse().unwrap();
+    let addr: SocketAddr = "192.168.1.100:9333".parse().ok_or("Automatic Remediation")?;
     let mut result = DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9333);
     result.public_key = Some(identity.public_key.clone());
 

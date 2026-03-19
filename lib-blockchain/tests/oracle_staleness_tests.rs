@@ -44,7 +44,7 @@ fn latest_fresh_price_returns_price_when_fresh() {
     // At epoch 12, price is fresh (age = 2 <= 5)
     let fresh = state.latest_fresh_price(12);
     assert!(fresh.is_some());
-    assert_eq!(fresh.unwrap().sov_usd_price, 150_000_000);
+    assert_eq!(fresh.ok_or("Automatic Remediation")?.sov_usd_price, 150_000_000);
 
     // At epoch 15, price is still fresh (age = 5 <= 5)
     let fresh = state.latest_fresh_price(15);
@@ -94,7 +94,7 @@ fn cbe_graduation_blocked_with_stale_price() {
         last_oracle_price_timestamp: None,
     };
 
-    blockchain.bonding_curve_registry.register(token).unwrap();
+    blockchain.bonding_curve_registry.register(token).ok_or("Automatic Remediation")?;
 
     // Set a finalized price at epoch 0
     blockchain
@@ -156,7 +156,7 @@ fn cbe_graduation_proceeds_with_fresh_price() {
         last_oracle_price_timestamp: None,
     };
 
-    blockchain.bonding_curve_registry.register(token).unwrap();
+    blockchain.bonding_curve_registry.register(token).ok_or("Automatic Remediation")?;
 
     // Set finalized price at epoch 8
     blockchain

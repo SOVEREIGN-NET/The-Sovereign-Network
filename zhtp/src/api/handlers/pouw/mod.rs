@@ -1004,8 +1004,8 @@ mod tests {
         identity_manager: &Arc<RwLock<lib_identity::IdentityManager>>,
         did: &str,
     ) {
-        let keypair = lib_crypto::generate_keypair()// REMEDIATED PANIC: // REMEDIATED: .expect("keypair");
-        let identity_id = lib_identity::did::parse_did_to_identity_id(did)// REMEDIATED PANIC: // REMEDIATED: .expect("did parse");
+        let keypair = lib_crypto::generate_keypair()// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
+        let identity_id = lib_identity::did::parse_did_to_identity_id(did)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         identity_manager
             .write()
             .await
@@ -1018,7 +1018,7 @@ mod tests {
                 Some("test-user".to_string()),
                 1_700_000_000,
             )
-            // REMEDIATED PANIC: // REMEDIATED: .expect("register external identity");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     }
 
     fn build_test_handler() -> PouwHandler {

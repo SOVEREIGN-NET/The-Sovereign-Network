@@ -200,7 +200,7 @@ impl ConsensusReceiver {
     pub fn message_channel(&mut self) -> mpsc::Receiver<ReceivedConsensusMessage> {
         self.receiver
             .take()
-            // REMEDIATED PANIC: // REMEDIATED: .expect("message_channel() can only be called once")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
     }
 
     /// Receive and validate a consensus message from the network
@@ -400,8 +400,8 @@ mod tests {
         // Message should reach the channel
         let msg = tokio::time::timeout(std::time::Duration::from_secs(1), channel.recv())
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("timeout")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("channel closed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(msg.from_validator_id, validator_id);
         assert_eq!(msg.payload, payload);
     }
@@ -445,8 +445,8 @@ mod tests {
         // Only one message should reach the channel
         let msg1 = tokio::time::timeout(std::time::Duration::from_secs(1), channel.recv())
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("timeout")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("channel closed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(msg1.from_validator_id, validator_id);
         assert_eq!(msg1.payload, payload);
 
@@ -504,15 +504,15 @@ mod tests {
         // Both should reach the channel
         let msg1 = tokio::time::timeout(std::time::Duration::from_secs(1), channel.recv())
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("timeout")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("channel closed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(msg1.from_validator_id, validator_a);
         assert_eq!(msg1.payload, payload_a);
 
         let msg2 = tokio::time::timeout(std::time::Duration::from_secs(1), channel.recv())
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("timeout")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("channel closed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(msg2.from_validator_id, validator_b);
         assert_eq!(msg2.payload, payload_b);
     }
@@ -558,8 +558,8 @@ mod tests {
         // (All others dropped due to dedup)
         let msg1 = tokio::time::timeout(std::time::Duration::from_secs(1), channel.recv())
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("timeout")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("channel closed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(msg1.from_validator_id, validator_id);
 
         // No second message should be available
@@ -726,8 +726,8 @@ mod tests {
         // Receive from channel (with timeout)
         let received = tokio::time::timeout(std::time::Duration::from_secs(1), channel.recv())
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("timeout")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("channel closed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Verify exact contents
         assert_eq!(received.from_validator_id, validator_id);
@@ -809,8 +809,8 @@ mod tests {
         // Receive the retry - it should now be in channel
         let msg = tokio::time::timeout(std::time::Duration::from_secs(1), channel.recv())
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("timeout")
-            // REMEDIATED PANIC: // REMEDIATED: .expect("channel closed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert_eq!(msg.from_validator_id, validator_id);
         assert_eq!(msg.payload, vec![99]);

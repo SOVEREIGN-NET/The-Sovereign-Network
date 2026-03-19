@@ -55,7 +55,7 @@ fn test_cbe_graduation_blocked_without_fresh_oracle_price() {
         .blockchain
         .bonding_curve_registry
         .register(token)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Try to validate graduation without any finalized price
     let result = harness
@@ -82,7 +82,7 @@ fn test_cbe_graduation_rejected_with_stale_oracle_price() {
         .blockchain
         .bonding_curve_registry
         .register(token)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Finalize a price in current epoch
     let old_epoch = harness.current_epoch();
@@ -117,7 +117,7 @@ fn test_cbe_graduation_accepted_with_fresh_oracle_price() {
         .blockchain
         .bonding_curve_registry
         .register(token)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Finalize a price in current epoch
     let current_epoch = harness.current_epoch();
@@ -146,7 +146,7 @@ fn test_cbe_graduation_accepts_price_at_staleness_boundary() {
         .blockchain
         .bonding_curve_registry
         .register(token)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Finalize price at epoch 10
     let epoch_duration = harness.epoch_duration();
@@ -195,7 +195,7 @@ fn test_non_cbe_token_skips_oracle_gate() {
         .blockchain
         .bonding_curve_registry
         .register(token)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Should pass without any oracle price (non-CBE tokens skip the gate)
     let result = harness
@@ -217,7 +217,7 @@ fn test_already_graduated_token_skips_oracle_gate() {
         .blockchain
         .bonding_curve_registry
         .register(token)
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
 
     // Should pass without checking oracle price
     let result = harness

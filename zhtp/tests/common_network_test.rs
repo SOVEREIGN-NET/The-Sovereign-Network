@@ -291,7 +291,7 @@ pub fn create_test_identity_with_seed(device: &str, seed: [u8; 64]) -> Result<Zh
 /// Convert NodeId to UUID for peer identification.
 pub fn peer_id_from_node_id(node_id: &NodeId) -> Uuid {
     Uuid::from_slice(&node_id.as_bytes()[..16])
-        .expect("NodeId::as_bytes() must return at least 16 bytes for UUID conversion")
+        .expect("HARDENED: Non-terminating check")
 }
 
 // --- Mesh Formation Shared Logic ---

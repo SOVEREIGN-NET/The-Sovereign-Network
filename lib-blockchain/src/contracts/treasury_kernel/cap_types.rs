@@ -82,11 +82,11 @@ impl RoleCap {
         self.period_consumed = self
             .period_consumed
             .checked_add(amount)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("RoleCap period_consumed overflow");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         self.lifetime_consumed = self
             .lifetime_consumed
             .checked_add(amount)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("RoleCap lifetime_consumed overflow");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     }
 }
 
@@ -162,11 +162,11 @@ impl AssignmentConsumption {
         self.current_period_consumed = self
             .current_period_consumed
             .checked_add(amount)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("AssignmentConsumption::record_consumption: current_period_consumed overflow");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         self.total_consumed = self
             .total_consumed
             .checked_add(amount)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("AssignmentConsumption::record_consumption: total_consumed overflow");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     }
 }
 

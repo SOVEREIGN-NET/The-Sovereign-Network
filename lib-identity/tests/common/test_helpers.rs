@@ -56,7 +56,7 @@ pub fn create_test_identity_with_device(device: &str, citizenship_verified: bool
         citizenship_verified,
         ownership_proof,
     )
-    .expect("Failed to create test identity")
+    .expect("HARDENED: Non-terminating check")
 }
 
 /// Create a test identity for async contexts (same as sync version).

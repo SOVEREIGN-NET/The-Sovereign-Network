@@ -8,7 +8,7 @@ use lib_blockchain::Blockchain;
 
 #[test]
 fn test_voting_power_mode_default_is_identity() {
-    let bc = Blockchain::new().expect("genesis");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     assert_eq!(bc.voting_power_mode, VotingPowerMode::Identity);
 }
 
@@ -31,7 +31,7 @@ fn test_voting_power_mode_survives_dat_round_trip() -> Result<()> {
 
 #[test]
 fn test_voting_power_no_wallet_returns_zero() {
-    let bc = Blockchain::new().expect("genesis");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     // An identity with no wallets should return 0
     let id_bytes = [1u8; 32];
     let identity_id = lib_crypto::Hash(id_bytes);
@@ -41,7 +41,7 @@ fn test_voting_power_no_wallet_returns_zero() {
 
 #[test]
 fn test_get_circulating_sov_supply_nonzero() {
-    let bc = Blockchain::new().expect("genesis");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     // Genesis mints SOV for the DAO treasury, so circulating supply > 0.
     let supply = bc.get_circulating_sov_supply();
     // Exact amount varies by genesis config; just ensure it's a positive number
@@ -65,7 +65,7 @@ fn test_quorum_method_returns_false_when_no_votes() -> Result<()> {
 
 #[test]
 fn test_vote_delegations_default_empty() {
-    let bc = Blockchain::new().expect("genesis");
+    let bc = Blockchain::new().expect("HARDENED: Non-terminating check");
     assert!(bc.vote_delegations.is_empty());
 }
 

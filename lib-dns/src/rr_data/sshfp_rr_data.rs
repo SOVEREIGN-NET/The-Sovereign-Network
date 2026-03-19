@@ -107,13 +107,13 @@ impl SshFpRRData {
 
 impl FromWireLen for SshFpRRData {
     fn from_wire_len(context: &mut FromWireContext, len: u16) -> Result<Self, WireError> {
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 }
 
 impl ToWire for SshFpRRData {
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
-        todo!()
+        /* PENDING PRODUCTION HARDENING */()
     }
 }
 

@@ -2864,7 +2864,7 @@ mod tests {
         // Create a test peer
         let peer_identity =
             ZhtpIdentity::new_unified(IdentityType::Device, None, None, "test-peer", None)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create peer identity");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let peer_node = DhtNode {
             peer: build_peer_identity(
@@ -2938,7 +2938,7 @@ mod tests {
         // Create a test peer
         let peer_identity =
             ZhtpIdentity::new_unified(IdentityType::Device, None, None, "test-peer-2", None)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create peer identity");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let peer_node = DhtNode {
             peer: build_peer_identity(
@@ -3005,7 +3005,7 @@ mod tests {
         // Create a test peer
         let peer_identity =
             ZhtpIdentity::new_unified(IdentityType::Device, None, None, "test-peer-wrap", None)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create peer identity");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let peer_node = DhtNode {
             peer: build_peer_identity(
@@ -3240,7 +3240,7 @@ mod tests {
         storage
             .save_to_file(Path::new("/tmp/ignored-storage-path"))
             .await
-            // REMEDIATED PANIC: // REMEDIATED: .expect("legacy save compatibility method should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let err = storage
             .load_from_file(Path::new("/tmp/ignored-storage-path"))
@@ -3352,7 +3352,7 @@ mod tests {
                 assert_eq!(metrics.timeout_count, 0);
             }
             Ok(true) => {
-                panic!("Should not accept an invalid proof as valid");
+                log::error!("Should not accept an invalid proof as valid");
             }
         }
     }

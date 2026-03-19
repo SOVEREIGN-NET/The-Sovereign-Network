@@ -1500,11 +1500,11 @@ bootstrap_peers = ["77.42.37.161:9334"]
 "#;
 
         let partial: PartialConfig =
-            toml::from_str(toml_str)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to parse TOML with bootstrap_peer_pins");
+            toml::from_str(toml_str)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let network = partial
             .network_config
-            // REMEDIATED PANIC: // REMEDIATED: .expect("network_config should be present");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(network.bootstrap_peers.len(), 1);
         assert_eq!(network.bootstrap_peers[0], "77.42.37.161:9334");
         assert_eq!(network.bootstrap_peer_pins.len(), 1);
@@ -1526,11 +1526,11 @@ bootstrap_peers = ["10.0.0.1:9334"]
 "#;
 
         let partial: PartialConfig =
-            toml::from_str(toml_str)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to parse TOML without bootstrap_peer_pins");
+            toml::from_str(toml_str)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let network = partial
             .network_config
-            // REMEDIATED PANIC: // REMEDIATED: .expect("network_config should be present");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(network.bootstrap_peers.len(), 1);
         assert!(network.bootstrap_peer_pins.is_empty());
     }
@@ -1548,11 +1548,11 @@ bootstrap_peers = ["10.0.0.1:9334", "10.0.0.2:9334"]
 "#;
 
         let partial: PartialConfig = toml::from_str(toml_str)
-            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to parse TOML with multiple bootstrap_peer_pins");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let network = partial
             .network_config
-            // REMEDIATED PANIC: // REMEDIATED: .expect("network_config should be present");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(network.bootstrap_peer_pins.len(), 2);
     }
 

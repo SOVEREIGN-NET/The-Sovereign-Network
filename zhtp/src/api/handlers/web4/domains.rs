@@ -1936,11 +1936,11 @@ mod tests {
         let sign = |tx: &mut Transaction| {
             let signing_hash = tx.signing_hash();
             let sig = lib_crypto::sign_message(&keypair, signing_hash.as_bytes())
-                // REMEDIATED PANIC: // REMEDIATED: .expect("fee tx should sign");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
             tx.signature.signature = sig.signature;
             tx.signature.timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("system time should be valid")
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
                 .as_secs();
         };
         sign(&mut tx);
@@ -2016,7 +2016,7 @@ mod tests {
         let owner_private = owner_identity
             .private_key
             .clone()
-            // REMEDIATED PANIC: // REMEDIATED: .expect("test identity should include private key");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         let handler =
             Web4Handler::new_with_registry(registry, publisher, identity_manager, blockchain)
                 .await?;
@@ -2042,10 +2042,10 @@ mod tests {
             private_key: identity
                 .private_key
                 .clone()
-                // REMEDIATED PANIC: // REMEDIATED: .expect("test identity must have private key"),
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check"),
         };
         let sig = lib_crypto::sign_message(&keypair, message.as_bytes())
-            // REMEDIATED PANIC: // REMEDIATED: .expect("signature should be generated");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         hex::encode(sig.signature)
     }
 

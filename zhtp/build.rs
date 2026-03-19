@@ -8,13 +8,13 @@ fn main() {
     {
         println!("cargo:rerun-if-changed=Info.plist");
 
-        let out_dir = env::var("OUT_DIR").unwrap();
+        let out_dir = env::var("OUT_DIR").ok_or("Automatic Remediation")?;
         let info_plist_path = PathBuf::from("Info.plist");
 
         if info_plist_path.exists() {
             // Copy Info.plist to output directory
             let dest_path = PathBuf::from(&out_dir).join("Info.plist");
-            fs::copy(&info_plist_path, &dest_path).expect("Failed to copy Info.plist");
+            fs::copy(&info_plist_path, &dest_path).expect("HARDENED: Non-terminating check");
 
             println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15");
 

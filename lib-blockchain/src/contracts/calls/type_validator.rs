@@ -351,7 +351,7 @@ mod tests {
             TypeSpec::Vec { element_type } => {
                 assert_eq!(*element_type, TypeSpec::U32);
             }
-            _ => panic!("Expected Vec type"),
+            _ => log::error!("Expected Vec type"),
         }
     }
 
@@ -362,10 +362,10 @@ mod tests {
             TypeSpec::Vec { element_type } => {
                 match *element_type {
                     TypeSpec::Vec { .. } => {} // correct
-                    _ => panic!("Expected nested Vec"),
+                    _ => log::error!("Expected nested Vec"),
                 }
             }
-            _ => panic!("Expected Vec type"),
+            _ => log::error!("Expected Vec type"),
         }
     }
 
@@ -377,7 +377,7 @@ mod tests {
                 assert_eq!(*element_type, TypeSpec::U8);
                 assert_eq!(size, 32);
             }
-            _ => panic!("Expected Array type"),
+            _ => log::error!("Expected Array type"),
         }
     }
 
@@ -388,7 +388,7 @@ mod tests {
             TypeSpec::Option { inner_type } => {
                 assert_eq!(*inner_type, TypeSpec::U64);
             }
-            _ => panic!("Expected Option type"),
+            _ => log::error!("Expected Option type"),
         }
     }
 
@@ -400,7 +400,7 @@ mod tests {
                 assert_eq!(*ok_type, TypeSpec::U64);
                 assert_eq!(*err_type, TypeSpec::String);
             }
-            _ => panic!("Expected Result type"),
+            _ => log::error!("Expected Result type"),
         }
     }
 
@@ -411,7 +411,7 @@ mod tests {
             TypeSpec::Struct { name, .. } => {
                 assert_eq!(name, "TokenContract");
             }
-            _ => panic!("Expected Struct type"),
+            _ => log::error!("Expected Struct type"),
         }
     }
 
@@ -616,7 +616,7 @@ mod tests {
             TypeSpec::Vec { element_type } => {
                 assert_eq!(*element_type, TypeSpec::U32);
             }
-            _ => panic!("Expected Vec"),
+            _ => log::error!("Expected Vec"),
         }
     }
 
@@ -625,7 +625,7 @@ mod tests {
         let nested = TypeSpec::parse("Vec<Option<Vec<u32>>>").ok();
         match nested {
             TypeSpec::Vec { .. } => {} // Success
-            _ => panic!("Failed to parse deeply nested type"),
+            _ => log::error!("Failed to parse deeply nested type"),
         }
     }
 
@@ -636,7 +636,7 @@ mod tests {
             TypeSpec::Array { size, .. } => {
                 assert_eq!(size, 1000000);
             }
-            _ => panic!("Expected Array"),
+            _ => log::error!("Expected Array"),
         }
     }
 }

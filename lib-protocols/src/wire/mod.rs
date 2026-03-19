@@ -147,7 +147,7 @@ impl ZhtpRequestWire {
     /// requests over UHP-authenticated connections.
     pub fn new(request: ZhtpRequest) -> Self {
         let mut request_id = [0u8; 16];
-        getrandom::getrandom(&mut request_id)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to generate secure request_id");
+        getrandom::getrandom(&mut request_id)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -181,7 +181,7 @@ impl ZhtpRequestWire {
         use sha3::Sha3_256;
 
         let mut request_id = [0u8; 16];
-        getrandom::getrandom(&mut request_id)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to generate secure request_id");
+        getrandom::getrandom(&mut request_id)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -214,7 +214,7 @@ impl ZhtpRequestWire {
 
         // Compute V2 MAC: HMAC-SHA3-256(mac_key, canonical_bytes || counter_BE || session_id)
         type HmacSha3 = Hmac<Sha3_256>;
-        let mut mac = HmacSha3::new_from_slice(session_key)// REMEDIATED PANIC: // REMEDIATED: .expect("HMAC can take key of any size");
+        let mut mac = HmacSha3::new_from_slice(session_key)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         mac.update(&canonical_bytes);
         mac.update(&sequence.to_be_bytes());
         mac.update(&session_id);

@@ -1115,7 +1115,7 @@ impl DhtHandler {
             "dht-service",
             None, // Random seed for security
         )
-        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create DHT service identity")
+        // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check")
     }
 
     /// Update handler statistics

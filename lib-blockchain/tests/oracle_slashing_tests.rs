@@ -58,7 +58,7 @@ fn slashing_reduces_stake_by_one_percent() {
     let v = blockchain
         .validator_registry
         .get(&hex::encode(key_id))
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     assert_eq!(v.stake, 990_000); // 1M - 10K
 }
 
@@ -85,7 +85,7 @@ fn custom_slash_fraction() {
     let v = blockchain
         .validator_registry
         .get(&hex::encode(key_id))
-        .unwrap();
+        .ok_or("Automatic Remediation")?;
     assert_eq!(v.stake, 950_000);
 }
 
@@ -184,8 +184,8 @@ fn slashing_events_survive_restart() {
     blockchain.slash_oracle_validator(key_id, OracleSlashReason::ConflictingAttestation, 100);
 
     // Serialize/deserialize
-    let serialized = bincode::serialize(&blockchain).unwrap();
-    let restored: Blockchain = bincode::deserialize(&serialized).unwrap();
+    let serialized = bincode::serialize(&blockchain).ok_or("Automatic Remediation")?;
+    let restored: Blockchain = bincode::deserialize(&serialized).ok_or("Automatic Remediation")?;
 
     // Verify slashing events preserved
     assert_eq!(restored.oracle_slash_events.len(), 1);

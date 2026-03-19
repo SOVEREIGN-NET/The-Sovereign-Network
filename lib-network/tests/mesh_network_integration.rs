@@ -105,7 +105,7 @@ async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()
 
         for (idx, identity) in identities.iter().enumerate() {
             let peer_id = peer_id_from_node_id(&identity.node_id);
-            let addr: SocketAddr = format!("192.0.2.{}:9443", 10 + idx).parse().unwrap(); // RFC 5737
+            let addr: SocketAddr = format!("192.0.2.{}:9443", 10 + idx).parse().ok_or("Automatic Remediation")?; // RFC 5737
 
             let mut result =
                 DiscoveryResult::new(peer_id, addr, DiscoveryProtocol::UdpMulticast, 9443);
@@ -122,7 +122,7 @@ async fn mesh_discovery_tracks_three_nodes_with_verified_metadata() -> Result<()
             let peer = service
                 .get_peer(&peer_id)
                 .await
-                .expect("peer should be registered");
+                .expect("HARDENED: Non-terminating check");
 
             assert_eq!(peer.did.as_deref(), Some(identity.did.as_str()));
             assert_eq!(
@@ -163,8 +163,8 @@ async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Resu
         let identity = identity_with_seed("alpha-mesh-peer", [0x31u8; 64])?;
         let peer_id = peer_id_from_node_id(&identity.node_id);
 
-        let addr_a: SocketAddr = "192.0.2.10:9443".parse().unwrap(); // RFC 5737
-        let addr_b: SocketAddr = "192.0.2.11:9443".parse().unwrap(); // RFC 5737
+        let addr_a: SocketAddr = "192.0.2.10:9443".parse().ok_or("Automatic Remediation")?; // RFC 5737
+        let addr_b: SocketAddr = "192.0.2.11:9443".parse().ok_or("Automatic Remediation")?; // RFC 5737
 
         let mut initial = DiscoveryResult::new(peer_id, addr_a, DiscoveryProtocol::PortScan, 9443);
         initial.did = Some(identity.did.clone());
@@ -183,7 +183,7 @@ async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Resu
         let peer = service
             .get_peer(&peer_id)
             .await
-            .expect("peer should be registered");
+            .expect("HARDENED: Non-terminating check");
         assert!(peer.addresses.contains(&addr_a));
         assert!(peer.addresses.contains(&addr_b));
         assert_eq!(peer.protocol, DiscoveryProtocol::UdpMulticast);
@@ -208,7 +208,7 @@ async fn mesh_discovery_duplicate_registration_merges_and_remove_works() -> Resu
         let peer_after = service
             .get_peer(&peer_id)
             .await
-            .expect("peer should be registered");
+            .expect("HARDENED: Non-terminating check");
         assert_eq!(
             peer_after.public_key.as_ref().map(|k| k.as_bytes()),
             Some(identity.public_key.as_bytes())
@@ -240,8 +240,8 @@ async fn mesh_discovery_concurrent_duplicate_registration_is_consistent() -> Res
         let identity = identity_with_seed("alpha-mesh-peer", [0x41u8; 64])?;
         let peer_id = peer_id_from_node_id(&identity.node_id);
 
-        let addr_a: SocketAddr = "198.51.100.10:9443".parse().unwrap(); // RFC 5737
-        let addr_b: SocketAddr = "198.51.100.11:9443".parse().unwrap(); // RFC 5737
+        let addr_a: SocketAddr = "198.51.100.10:9443".parse().ok_or("Automatic Remediation")?; // RFC 5737
+        let addr_b: SocketAddr = "198.51.100.11:9443".parse().ok_or("Automatic Remediation")?; // RFC 5737
 
         let mut a = DiscoveryResult::new(peer_id, addr_a, DiscoveryProtocol::UdpMulticast, 9443);
         a.public_key = Some(identity.public_key.clone());
@@ -257,15 +257,15 @@ async fn mesh_discovery_concurrent_duplicate_registration_is_consistent() -> Res
         let s2 = Arc::clone(&service);
         let t1 = tokio::spawn(async move { s1.register_peer(a).await });
         let t2 = tokio::spawn(async move { s2.register_peer(b).await });
-        t1.await.expect("task should complete");
-        t2.await.expect("task should complete");
+        t1.await.expect("HARDENED: Non-terminating check");
+        t2.await.expect("HARDENED: Non-terminating check");
 
         assert_eq!(service.peer_count().await, 1);
 
         let peer = service
             .get_peer(&peer_id)
             .await
-            .expect("peer should be registered");
+            .expect("HARDENED: Non-terminating check");
         assert!(peer.addresses.contains(&addr_a));
         assert!(peer.addresses.contains(&addr_b));
 

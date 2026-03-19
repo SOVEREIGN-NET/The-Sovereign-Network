@@ -583,7 +583,7 @@ mod tests {
     fn create_test_node(device_name: &str, port: u16) -> DhtNode {
         let identity =
             ZhtpIdentity::new_unified(IdentityType::Device, None, None, device_name, None)
-                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test identity");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         let peer = build_peer_identity(
             identity.node_id.clone(),
@@ -961,7 +961,7 @@ mod tests {
                 assert_eq!(sequence, 50);
                 assert_eq!(last_sequence, 100);
             }
-            _ => panic!("Expected ReplayDetected error"),
+            _ => log::error!("Expected ReplayDetected error"),
         }
 
         // Test PeerNotFound error

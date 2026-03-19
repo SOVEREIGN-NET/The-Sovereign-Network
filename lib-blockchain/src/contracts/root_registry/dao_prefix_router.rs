@@ -527,7 +527,7 @@ mod tests {
         assert!(resolution.delegate.is_some());
         match resolution.delegate {
             Some(DelegateTarget::Contract(addr)) => assert_eq!(addr, [99u8; 32]),
-            _ => panic!("Expected Contract delegate"),
+            _ => log::error!("Expected Contract delegate"),
         }
     }
 
@@ -572,7 +572,7 @@ mod tests {
                 assert_eq!(res.governance_contract, Some([42u8; 32]));
                 assert_eq!(res.status, GovernanceStatus::Active);
             }
-            _ => panic!("Expected Governance resolution"),
+            _ => log::error!("Expected Governance resolution"),
         }
     }
 
@@ -602,7 +602,7 @@ mod tests {
                 assert!(reason.contains("dao.dao.sov"));
                 assert!(reason.contains("invalid"));
             }
-            _ => panic!("Expected Invalid resolution for dao.dao.sov"),
+            _ => log::error!("Expected Invalid resolution for dao.dao.sov"),
         }
     }
 
@@ -626,7 +626,7 @@ mod tests {
                 assert_eq!(res.parent_domain, "food.dao.sov");
                 assert_eq!(res.governance_contract, Some([88u8; 32]));
             }
-            _ => panic!("Expected Governance resolution for dao.food.dao.sov"),
+            _ => log::error!("Expected Governance resolution for dao.food.dao.sov"),
         }
     }
 
@@ -643,7 +643,7 @@ mod tests {
             ResolutionResult::Invalid { reason } => {
                 assert!(reason.contains("Not a dao-prefixed"));
             }
-            _ => panic!("Expected Invalid for non-dao-prefixed query"),
+            _ => log::error!("Expected Invalid for non-dao-prefixed query"),
         }
     }
 

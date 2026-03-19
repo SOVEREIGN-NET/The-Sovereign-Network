@@ -52,7 +52,7 @@ fn test_fix_10_systemtime_panic_handling() {
     // Instead, it should log error and use timestamp 0 as fallback
 
     // Create a minimal ConsensusEngine (pseudo-test)
-    // This would normally panic with .unwrap() but should handle gracefully
+    // This would normally panic with .ok_or("Automatic Remediation")? but should handle gracefully
     let _round = ConsensusRound {
         height: 1,
         round: 0,

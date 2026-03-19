@@ -83,7 +83,7 @@ fn create_client_config() -> ClientConfig {
         .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
         .with_no_client_auth();
 
-    ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).unwrap()))
+    ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).ok_or("Automatic Remediation")?))
 }
 
 /// Connect to ZHTP node via QUIC

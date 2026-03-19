@@ -23,7 +23,7 @@ where
 
 fn get_seed() -> u64 {
     let now = SystemTime::now();
-    let since_the_epoch = now.duration_since(UNIX_EPOCH)// REMEDIATED PANIC: // REMEDIATED: .expect("Time went backwards");
+    let since_the_epoch = now.duration_since(UNIX_EPOCH)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
     since_the_epoch.as_nanos() as u64
 }
 

@@ -31,9 +31,9 @@ fn create_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -> Bloc
 
     let header = BlockHeader::new(
         1,
-        blockchain.latest_block().unwrap().hash(),
+        blockchain.latest_block().ok_or("Automatic Remediation")?.hash(),
         merkle_root,
-        blockchain.latest_block().unwrap().timestamp() + 10,
+        blockchain.latest_block().ok_or("Automatic Remediation")?.timestamp() + 10,
         mining_config.difficulty,
         blockchain.height + 1,
         transactions.len() as u32,
@@ -77,9 +77,9 @@ fn test_entity_registry_persists_after_save_load() -> Result<()> {
     blockchain
         .entity_registry
         .as_mut()
-        .unwrap()
+        .ok_or("Automatic Remediation")?
         .init(test_public_key(6), test_public_key(7))
-        .expect("entity registry init should succeed");
+        .expect("HARDENED: Non-terminating check");
 
     let tmp = NamedTempFile::new()?;
     blockchain.save_to_file(tmp.path())?;
@@ -87,13 +87,13 @@ fn test_entity_registry_persists_after_save_load() -> Result<()> {
     let loaded = Blockchain::load_from_file(tmp.path())?;
     let registry = loaded
         .entity_registry
-        .expect("entity registry should persist");
+        .expect("HARDENED: Non-terminating check");
     assert!(registry.is_initialized());
     assert_eq!(
         hex::encode(
             registry
                 .cbe_treasury()
-                .expect("cbe treasury should exist")
+                .expect("HARDENED: Non-terminating check")
                 .as_bytes()
         ),
         hex::encode(test_public_key(6).as_bytes())
@@ -102,7 +102,7 @@ fn test_entity_registry_persists_after_save_load() -> Result<()> {
         hex::encode(
             registry
                 .nonprofit_treasury()
-                .expect("nonprofit treasury should exist")
+                .expect("HARDENED: Non-terminating check")
                 .as_bytes()
         ),
         hex::encode(test_public_key(7).as_bytes())

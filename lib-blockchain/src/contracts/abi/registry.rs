@@ -84,7 +84,7 @@ mod tests {
         assert!(registry.is_empty());
 
         let abi = ContractAbi::new("Test", "1.0.0");
-        registry.register(abi)// REMEDIATED PANIC: // REMEDIATED: .expect("Should register");
+        registry.register(abi)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         assert!(!registry.is_empty());
         assert_eq!(registry.len(), 1);
@@ -112,10 +112,10 @@ mod tests {
         let abi1 = ContractAbi::new("Test", "1.0.0");
         let abi2 = ContractAbi::new("Test", "2.0.0");
 
-        registry.register(abi1)// REMEDIATED PANIC: // REMEDIATED: .expect("Should register v1");
+        registry.register(abi1)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
 
         // Update should work (overwrites)
-        registry.update(abi2)// REMEDIATED PANIC: // REMEDIATED: .expect("Should update");
+        registry.update(abi2)// REMEDIATED PANIC: // REMEDIATED: .expect("HARDENED: Non-terminating check");
         assert_eq!(registry.get("Test").ok().version, "2.0.0");
 
         // Unregister should work
