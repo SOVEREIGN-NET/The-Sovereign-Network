@@ -78,21 +78,21 @@ impl std::fmt::Display for PriceSource {
 /// Component prices for transparent calculation
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PriceComponents {
-    /// SRV value (for SOV fixed pricing)
+    /// SRV value in 8-decimal fixed-point units.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub srv: Option<f64>,
-    /// CBE/USD price from oracle (deprecated - Issue #1852)
+    pub srv: Option<u128>,
+    /// CBE/USD price from oracle (deprecated - Issue #1852), 8-decimal units.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cbe_usd: Option<f64>,
-    /// CBE/SOV ratio from bonding curve
+    pub cbe_usd: Option<u128>,
+    /// CBE/SOV ratio from bonding curve in 8-decimal units.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cbe_sov: Option<f64>,
-    /// Curve price in SOV for CBE tokens
+    pub cbe_sov: Option<u128>,
+    /// Curve price in SOV for CBE tokens, 8-decimal units.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub curve_price_sov: Option<f64>,
-    /// SOV/USD price used for CBE calculation
+    pub curve_price_sov: Option<u128>,
+    /// SOV/USD price used for CBE calculation, 8-decimal units.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sov_usd: Option<f64>,
+    pub sov_usd: Option<u128>,
 }
 
 /// Token price information
@@ -185,8 +185,8 @@ pub struct CbePriceInfo {
     pub supply: u128,
     /// Component prices
     pub components: PriceComponents,
-    /// Deprecated: always None (oracle is observer-only)
-    pub oracle_confidence: Option<f64>,
+    /// Deprecated: confidence in basis points (oracle is observer-only)
+    pub oracle_confidence_bps: Option<u16>,
     /// Last update timestamp
     pub last_updated: u64,
 }
@@ -264,19 +264,15 @@ impl TokenPricingState {
 
     /// Deprecated: Calculate CBE price components
     pub fn calculate_cbe_price(&self, _sov_price_8dec: u128, curve_price_sov: u128) -> (u128, PriceComponents) {
-        let curve_sov = curve_price_sov as f64 / PRICE_SCALE as f64;
-        let sov_usd = GENESIS_SRV_8DEC as f64 / PRICE_SCALE as f64;
-        
-        // CBE/USD = CBE/SOV * SOV/USD
-        let cbe_usd = curve_sov * sov_usd;
-        // Encode in 4-decimal USD units to match stable API schema (price_usd_cents = price_usd * 10_000)
-        let cbe_usd_cents = (cbe_usd * 10_000.0).round() as u128;
+        let sov_usd = GENESIS_SRV_8DEC as u128;
+        let cbe_usd_8dec = PricingCalculator::calculate_cbe_usd(curve_price_sov, sov_usd);
+        let cbe_usd_cents = PricingCalculator::to_cents(cbe_usd_8dec);
 
         let components = PriceComponents {
             srv: Some(sov_usd),
             cbe_usd: None, // Issue #1852: oracle is observer-only
             cbe_sov: None,
-            curve_price_sov: Some(curve_sov),
+            curve_price_sov: Some(curve_price_sov),
             sov_usd: Some(sov_usd),
         };
 
@@ -300,7 +296,7 @@ impl TokenPricingState {
 
     /// Deprecated: Get SOV price components
     pub fn get_sov_components(&self) -> PriceComponents {
-        let srv = GENESIS_SRV_8DEC as f64 / PRICE_SCALE as f64;
+        let srv = GENESIS_SRV_8DEC as u128;
         
         PriceComponents {
             srv: Some(srv),

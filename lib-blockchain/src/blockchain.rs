@@ -1715,8 +1715,8 @@ impl Blockchain {
 
         if self.token_pricing_state.dynamic_pricing_active {
             info!(
-                "Unified pricing: Dynamic mode activated - SOV price = ${:.4}",
-                self.token_pricing_state.get_sov_price_8dec() as f64 / 100_000_000.0
+                "Unified pricing: Dynamic mode activated - SOV price atomic = {}",
+                self.token_pricing_state.get_sov_price_8dec()
             );
         }
     }
@@ -1804,12 +1804,12 @@ impl Blockchain {
             .token_pricing_state
             .calculate_cbe_price(sov_price_8dec, cbe_token.current_price());
 
-        let (price_mode, price_source, oracle_confidence) =
+        let (price_mode, price_source, oracle_confidence_bps) =
             if self.token_pricing_state.cbe_usd_price.is_some() {
                 (
                     crate::pricing::PricingMode::PostGraduation,
                     crate::pricing::PriceSource::Oracle,
-                    Some(0.95), // High confidence when oracle provides price
+                    Some(9_500), // High confidence when oracle provides price
                 )
             } else {
                 (
@@ -1827,7 +1827,7 @@ impl Blockchain {
             reserve_usd: cbe_token.reserve_balance,
             supply: cbe_token.total_supply,
             components,
-            oracle_confidence,
+            oracle_confidence_bps,
             last_updated: self.token_pricing_state.last_updated,
         })
     }
