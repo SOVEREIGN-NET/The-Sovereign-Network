@@ -1,0 +1,17 @@
+name: MrCakes931 Security Monitor
+
+on:
+  push:
+    branches: [ development, main ]
+  pull_request:
+    branches: [ development, main ]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Rust Security Audit
+      run: cargo install cargo-audit && cargo audit
+    - name: TS Security Audit
+      run: cd sdk-ts && npm install --package-lock-only && npm audit
