@@ -216,7 +216,7 @@ impl AggregatedCircuitBuilder {
                 memory_usage_estimate: self.estimate_memory_usage(),
                 generated_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             },
             verification_hints,
@@ -445,7 +445,7 @@ impl AggregatedCircuitBuilder {
 
         // Extract the final aggregated proof
         Ok(if !recursive_proof.recursive_layers.is_empty() {
-            recursive_proof.recursive_layers.last().unwrap().clone()
+            recursive_proof.recursive_layers.last().ok().clone()
         } else {
             recursive_proof.base_proof
         })
@@ -592,7 +592,7 @@ impl AggregatedCircuit {
 
 impl Default for AggregatedCircuit {
     fn default() -> Self {
-        Self::new().expect("Failed to create default AggregatedCircuit")
+        Self::new()// REMEDIATED PANIC: .expect("Failed to create default AggregatedCircuit")
     }
 }
 

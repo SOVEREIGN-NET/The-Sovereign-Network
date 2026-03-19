@@ -338,12 +338,12 @@ mod tests {
         let mut manager = create_isolation_manager(SecurityLevel::Standard);
         manager
             .create_isolation_context("test_contract".to_string(), SecurityLevel::Standard)
-            .unwrap();
+            .ok();
 
         let result = manager.track_memory_allocation("test_contract", 1024);
         assert!(result.is_ok());
 
-        let usage = manager.get_resource_usage("test_contract").unwrap();
+        let usage = manager.get_resource_usage("test_contract").ok();
         assert_eq!(usage.memory_allocated, 1024);
     }
 }

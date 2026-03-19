@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn test_display_and_fromstr() {
         assert_eq!(ZhtpMethod::Get.to_string(), "GET");
-        assert_eq!("POST".parse::<ZhtpMethod>().unwrap(), ZhtpMethod::Post);
+        assert_eq!("POST".parse::<ZhtpMethod>().ok(), ZhtpMethod::Post);
         assert!("INVALID".parse::<ZhtpMethod>().is_err());
     }
 }

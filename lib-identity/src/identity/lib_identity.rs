@@ -1192,7 +1192,7 @@ impl ZhtpIdentity {
             privacy_score,
             verified_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         }
     }
@@ -1208,7 +1208,7 @@ impl ZhtpIdentity {
     pub fn update_activity(&mut self) {
         self.last_active = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
     }
 
@@ -1242,7 +1242,7 @@ impl ZhtpIdentity {
             && credential.expires_at.map_or(true, |exp| {
                 exp > std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             });
 
@@ -1279,7 +1279,7 @@ impl ZhtpIdentity {
         if let Some(expires_at) = attestation.expires_at {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs();
             if expires_at <= now {
                 return Ok(false);

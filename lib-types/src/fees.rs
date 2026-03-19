@@ -361,16 +361,16 @@ mod tests {
             state_write_bytes: 32,
         };
 
-        let json = serde_json::to_string(&input).unwrap();
-        let deserialized: FeeInput = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&input).ok();
+        let deserialized: FeeInput = serde_json::from_str(&json).ok();
         assert_eq!(input, deserialized);
     }
 
     #[test]
     fn test_fee_params_serialization_roundtrip() {
         let params = FeeParams::default();
-        let json = serde_json::to_string(&params).unwrap();
-        let deserialized: FeeParams = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&params).ok();
+        let deserialized: FeeParams = serde_json::from_str(&json).ok();
         assert_eq!(params, deserialized);
     }
 }

@@ -1017,7 +1017,7 @@ impl CoreBluetoothManager {
                 ) -> *mut std::ffi::c_void;
             }
 
-            let queue_label = CString::new("com.zhtp.corebluetooth.central").unwrap();
+            let queue_label = CString::new("com.zhtp.corebluetooth.central").ok();
             let dispatch_queue = dispatch_queue_create(queue_label.as_ptr(), std::ptr::null());
 
             if dispatch_queue.is_null() {
@@ -1081,7 +1081,7 @@ impl CoreBluetoothManager {
                 ) -> *mut std::ffi::c_void;
             }
 
-            let queue_label = CString::new("com.zhtp.corebluetooth.peripheral").unwrap();
+            let queue_label = CString::new("com.zhtp.corebluetooth.peripheral").ok();
             let dispatch_queue = dispatch_queue_create(queue_label.as_ptr(), std::ptr::null());
 
             if dispatch_queue.is_null() {

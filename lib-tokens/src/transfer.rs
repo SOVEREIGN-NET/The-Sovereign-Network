@@ -273,15 +273,15 @@ mod tests {
 
         store.set_balance(contract.id, from, 10_000);
 
-        let result = apply_token_transfer(&store, &mut contract, from, to, 1_000).unwrap();
+        let result = apply_token_transfer(&store, &mut contract, from, to, 1_000).ok();
 
         assert_eq!(result.amount, 1_000);
         assert_eq!(result.transfer_fee, 0);
         assert_eq!(result.burn_fee, 0);
         assert_eq!(result.total_debit, 1_000);
 
-        assert_eq!(store.get_token_balance(&contract.id, &from).unwrap(), 9_000);
-        assert_eq!(store.get_token_balance(&contract.id, &to).unwrap(), 1_000);
+        assert_eq!(store.get_token_balance(&contract.id, &from).ok(), 9_000);
+        assert_eq!(store.get_token_balance(&contract.id, &to).ok(), 1_000);
     }
 
     #[test]
@@ -303,7 +303,7 @@ mod tests {
 
         store.set_balance(contract.id, from, 10_000);
 
-        let result = apply_token_transfer(&store, &mut contract, from, to, 1_000).unwrap();
+        let result = apply_token_transfer(&store, &mut contract, from, to, 1_000).ok();
 
         assert_eq!(result.amount, 1_000);
         assert_eq!(result.transfer_fee, 10); // 1% of 1000
@@ -311,12 +311,12 @@ mod tests {
         assert_eq!(result.total_debit, 1_015); // 1000 + 10 + 5
 
         // Verify balances
-        assert_eq!(store.get_token_balance(&contract.id, &from).unwrap(), 8_985); // 10000 - 1015
-        assert_eq!(store.get_token_balance(&contract.id, &to).unwrap(), 1_000);
+        assert_eq!(store.get_token_balance(&contract.id, &from).ok(), 8_985); // 10000 - 1015
+        assert_eq!(store.get_token_balance(&contract.id, &to).ok(), 1_000);
         assert_eq!(
             store
                 .get_token_balance(&contract.id, &fee_recipient)
-                .unwrap(),
+                .ok(),
             10
         );
 

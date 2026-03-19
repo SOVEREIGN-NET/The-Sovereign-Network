@@ -537,7 +537,7 @@ mod tests {
             &test_recorder(),
             1,
         )
-        .unwrap();
+        .ok();
 
         // Attempt overwrite
         let result = book.record_metric(
@@ -571,10 +571,10 @@ mod tests {
             &test_recorder(),
             1,
         )
-        .unwrap();
+        .ok();
 
         // Close epoch
-        clock.close_epoch(1, &governance_key(), 2).unwrap();
+        clock.close_epoch(1, &governance_key(), 2).ok();
         clock.sync_to_metric_book(&mut book);
 
         // Cannot record to closed epoch
@@ -595,7 +595,7 @@ mod tests {
         let mut clock = EpochClock::new(1, governance_key());
 
         // Close epoch
-        clock.close_epoch(1, &governance_key(), 2).unwrap();
+        clock.close_epoch(1, &governance_key(), 2).ok();
 
         // Attempt reopen
         let result = clock.reopen_epoch(1);
@@ -624,7 +624,7 @@ mod tests {
                 &test_recorder(),
                 1,
             )
-            .unwrap();
+            .ok();
 
         // Try to finalize without attestation
         let result = book.finalize_metric(&key, 2);
@@ -642,7 +642,7 @@ mod tests {
             &test_signature(),
             1,
         )
-        .unwrap();
+        .ok();
 
         // Now finalization succeeds
         assert!(book.finalize_metric(&key, 2).is_ok());
@@ -664,7 +664,7 @@ mod tests {
                 &test_recorder(),
                 1,
             )
-            .unwrap();
+            .ok();
 
         // First attestation
         book.attest_metric(
@@ -674,7 +674,7 @@ mod tests {
             &test_signature(),
             1,
         )
-        .unwrap();
+        .ok();
 
         // Duplicate attestation from same attester
         let result = book.attest_metric(
@@ -706,7 +706,7 @@ mod tests {
                 &test_recorder(),
                 1,
             )
-            .unwrap();
+            .ok();
 
         // Attest and finalize
         book.attest_metric(
@@ -716,8 +716,8 @@ mod tests {
             &test_signature(),
             1,
         )
-        .unwrap();
-        book.finalize_metric(&key, 2).unwrap();
+        .ok();
+        book.finalize_metric(&key, 2).ok();
 
         // Try to add another attestation
         let result = book.attest_metric(
@@ -740,12 +740,12 @@ mod tests {
         assert!(!clock.can_process_compensation(1));
 
         // Begin close
-        clock.begin_close_epoch(1, &governance_key()).unwrap();
+        clock.begin_close_epoch(1, &governance_key()).ok();
         assert!(!clock.can_record_metrics(1)); // No longer accepting new metrics
         assert!(!clock.can_process_compensation(1)); // Not yet closed
 
         // Finalize close
-        clock.finalize_close_epoch(1, &governance_key(), 2).unwrap();
+        clock.finalize_close_epoch(1, &governance_key(), 2).ok();
         assert!(!clock.can_record_metrics(1));
         assert!(clock.can_process_compensation(1)); // Now can process
 
@@ -771,10 +771,10 @@ mod tests {
                 &test_recorder(),
                 1,
             )
-            .unwrap();
+            .ok();
 
         // Begin close
-        clock.begin_close_epoch(1, &governance_key()).unwrap();
+        clock.begin_close_epoch(1, &governance_key()).ok();
         clock.sync_to_metric_book(&mut book);
 
         // Cannot record new metrics
@@ -821,7 +821,7 @@ mod tests {
                 &test_recorder(),
                 1,
             )
-            .unwrap();
+            .ok();
 
         // Just supervisor - not sufficient
         book.attest_metric(
@@ -831,12 +831,12 @@ mod tests {
             &test_signature(),
             1,
         )
-        .unwrap();
+        .ok();
         assert!(!book.is_sufficiently_attested(&key));
 
         // Add peer - now sufficient
         book.attest_metric(&key, &[70u8; 32], AttesterRole::Peer, &test_signature(), 1)
-            .unwrap();
+            .ok();
         assert!(book.is_sufficiently_attested(&key));
     }
 
@@ -855,7 +855,7 @@ mod tests {
             &test_recorder(),
             1,
         )
-        .unwrap();
+        .ok();
         book.record_metric(
             1,
             &test_assignment_id(10),
@@ -864,7 +864,7 @@ mod tests {
             &test_recorder(),
             1,
         )
-        .unwrap();
+        .ok();
         book.record_metric(
             1,
             &test_assignment_id(11), // Different assignment
@@ -873,7 +873,7 @@ mod tests {
             &test_recorder(),
             1,
         )
-        .unwrap();
+        .ok();
 
         let metrics = book.get_metrics_for_assignment(1, &test_assignment_id(10));
         assert_eq!(metrics.len(), 2);

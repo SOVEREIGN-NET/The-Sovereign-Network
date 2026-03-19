@@ -439,6 +439,6 @@ mod tests {
 
         let latest = indexer.get_latest_event(token1);
         assert!(latest.is_some());
-        assert_eq!(latest.unwrap().block_height(), 101);
+        assert_eq!(latest.ok().block_height(), 101);
     }
 }

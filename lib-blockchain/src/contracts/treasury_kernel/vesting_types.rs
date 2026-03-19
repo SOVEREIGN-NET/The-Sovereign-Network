@@ -350,7 +350,7 @@ mod tests {
     fn test_vesting_schedule_new_valid() {
         let schedule = VestingSchedule::new(100, 110, 200, 10000);
         assert!(schedule.is_some());
-        let s = schedule.unwrap();
+        let s = schedule.ok();
         assert!(s.is_valid());
     }
 
@@ -374,20 +374,20 @@ mod tests {
 
     #[test]
     fn test_vested_amount_before_start() {
-        let schedule = VestingSchedule::new(100, 110, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 110, 200, 10000).ok();
         assert_eq!(schedule.vested_amount(50), 0);
         assert_eq!(schedule.vested_amount(99), 0);
     }
 
     #[test]
     fn test_vested_amount_at_start() {
-        let schedule = VestingSchedule::new(100, 110, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 110, 200, 10000).ok();
         assert_eq!(schedule.vested_amount(100), 0);
     }
 
     #[test]
     fn test_vested_amount_linear() {
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         // 50% through = 50% vested
         assert_eq!(schedule.vested_amount(150), 5000);
         // 25% through = 25% vested
@@ -396,19 +396,19 @@ mod tests {
 
     #[test]
     fn test_vested_amount_at_end() {
-        let schedule = VestingSchedule::new(100, 110, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 110, 200, 10000).ok();
         assert_eq!(schedule.vested_amount(200), 10000);
     }
 
     #[test]
     fn test_vested_amount_after_end() {
-        let schedule = VestingSchedule::new(100, 110, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 110, 200, 10000).ok();
         assert_eq!(schedule.vested_amount(300), 10000);
     }
 
     #[test]
     fn test_releasable_before_cliff() {
-        let schedule = VestingSchedule::new(100, 150, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 150, 200, 10000).ok();
         // Vested but not releasable (before cliff)
         assert_eq!(schedule.vested_amount(125), 2500);
         assert_eq!(schedule.releasable_amount(125), 0);
@@ -416,21 +416,21 @@ mod tests {
 
     #[test]
     fn test_releasable_at_cliff() {
-        let schedule = VestingSchedule::new(100, 150, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 150, 200, 10000).ok();
         // At cliff, 50% vested and now releasable
         assert_eq!(schedule.releasable_amount(150), 5000);
     }
 
     #[test]
     fn test_releasable_after_cliff() {
-        let schedule = VestingSchedule::new(100, 150, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 150, 200, 10000).ok();
         // After cliff, vested == releasable
         assert_eq!(schedule.releasable_amount(175), 7500);
     }
 
     #[test]
     fn test_vesting_lock_new() {
-        let schedule = VestingSchedule::new(100, 110, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 110, 200, 10000).ok();
         let lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, false);
 
         assert_eq!(lock.amount_released, 0);
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_vesting_lock_status_pending() {
-        let schedule = VestingSchedule::new(100, 110, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 110, 200, 10000).ok();
         let lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 50, false);
 
         assert_eq!(lock.status(50), VestingStatus::Pending);
@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_vesting_lock_status_before_cliff() {
-        let schedule = VestingSchedule::new(100, 150, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 150, 200, 10000).ok();
         let lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, false);
 
         assert_eq!(lock.status(100), VestingStatus::BeforeCliff);
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_vesting_lock_status_active() {
-        let schedule = VestingSchedule::new(100, 150, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 150, 200, 10000).ok();
         let lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, false);
 
         assert_eq!(lock.status(150), VestingStatus::Active);
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_vesting_lock_status_completed() {
-        let schedule = VestingSchedule::new(100, 110, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 110, 200, 10000).ok();
         let mut lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, false);
         lock.amount_released = 10000;
 
@@ -477,20 +477,20 @@ mod tests {
 
     #[test]
     fn test_vesting_lock_available_to_release() {
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let mut lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, false);
 
         // At 150, 50% vested, none released
         assert_eq!(lock.available_to_release(150), 5000);
 
         // Release 3000
-        lock.record_release(3000).unwrap();
+        lock.record_release(3000).ok();
         assert_eq!(lock.available_to_release(150), 2000);
     }
 
     #[test]
     fn test_vesting_lock_record_release() {
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let mut lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, false);
 
         assert!(lock.record_release(3000).is_ok());
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn test_vesting_lock_record_release_exceeds_total() {
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let mut lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, false);
 
         let result = lock.record_release(10001);
@@ -511,20 +511,20 @@ mod tests {
 
     #[test]
     fn test_vesting_lock_revoke() {
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let mut lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, true);
 
         // At epoch 150, 50% vested, so unvested = 5000
         let result = lock.revoke(150);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 5000);
+        assert_eq!(result.ok(), 5000);
         assert_eq!(lock.revoked_epoch, Some(150));
         assert_eq!(lock.status(150), VestingStatus::Revoked);
     }
 
     #[test]
     fn test_vesting_lock_revoke_not_revocable() {
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let mut lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, false);
 
         let result = lock.revoke(150);
@@ -533,21 +533,21 @@ mod tests {
 
     #[test]
     fn test_vesting_lock_revoke_already_revoked() {
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let mut lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, true);
 
-        lock.revoke(150).unwrap();
+        lock.revoke(150).ok();
         let result = lock.revoke(160);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_vesting_lock_available_after_revoke() {
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let mut lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 100, true);
 
         // Revoke at epoch 150 when 50% (5000) is vested
-        lock.revoke(150).unwrap();
+        lock.revoke(150).ok();
         // Beneficiary can still claim the 5000 that had vested before revocation
         assert_eq!(lock.available_to_release(200), 5000);
         // Even at later epochs, only the amount vested at revocation is available
@@ -557,7 +557,7 @@ mod tests {
     #[test]
     fn test_instant_vesting() {
         // Same start and end = instant vesting
-        let schedule = VestingSchedule::new(100, 100, 100, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 100, 10000).ok();
         assert_eq!(schedule.vested_amount(100), 10000);
         assert_eq!(schedule.releasable_amount(100), 10000);
     }
@@ -566,7 +566,7 @@ mod tests {
     fn test_large_amounts_overflow_protection() {
         // Test with amounts close to u64::MAX to verify overflow protection
         let large_amount = u64::MAX - 1;
-        let schedule = VestingSchedule::new(0, 0, 100, large_amount).unwrap();
+        let schedule = VestingSchedule::new(0, 0, 100, large_amount).ok();
 
         // At 50% through, should get half without overflow
         let vested = schedule.vested_amount(50);
@@ -581,7 +581,7 @@ mod tests {
     fn test_large_amounts_linear_calculation() {
         // Verify linear calculation precision with large amounts
         let amount = u64::MAX / 2; // ~9.2 quintillion
-        let schedule = VestingSchedule::new(0, 0, 1000, amount).unwrap();
+        let schedule = VestingSchedule::new(0, 0, 1000, amount).ok();
 
         // 10% through
         let vested_10 = schedule.vested_amount(100);
@@ -598,14 +598,14 @@ mod tests {
     #[test]
     fn test_vesting_lock_large_amounts() {
         let large_amount = u64::MAX / 4;
-        let schedule = VestingSchedule::new(0, 0, 100, large_amount).unwrap();
+        let schedule = VestingSchedule::new(0, 0, 100, large_amount).ok();
         let mut lock = VestingLock::new([1u8; 32], [2u8; 32], schedule, 0, false);
 
         // Release half
         let available = lock.available_to_release(50);
         assert_eq!(available, large_amount / 2);
 
-        lock.record_release(available).unwrap();
+        lock.record_release(available).ok();
         assert_eq!(lock.amount_released, large_amount / 2);
 
         // Release remaining

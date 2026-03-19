@@ -61,7 +61,7 @@ impl ZhtpRelayProtocol {
         let request_id = format!(
             "{}-{}",
             hex::encode(&hash_blake3(format!("{}{}{}", domain, path, peer_address).as_bytes())[..16]),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+            SystemTime::now().duration_since(UNIX_EPOCH).ok().as_secs()
         );
         
         // Create query payload
@@ -78,7 +78,7 @@ impl ZhtpRelayProtocol {
             .await?;
         
         // Create signature message: request_id + domain + path + timestamp
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).ok().as_secs();
         let signature_message = [
             request_id.as_bytes(),
             domain.as_bytes(),
@@ -163,7 +163,7 @@ impl ZhtpRelayProtocol {
         let content_hash = response_payload.content_hash.clone();
         
         // Create signature message: request_id + content_hash + timestamp
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).ok().as_secs();
         let mut signature_message = Vec::new();
         signature_message.extend_from_slice(request_id.as_bytes());
         if let Some(ref hash) = content_hash {

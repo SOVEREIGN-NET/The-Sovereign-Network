@@ -169,7 +169,7 @@ impl IdentityProver {
             proven_attributes: claims.to_vec(),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }
@@ -274,7 +274,7 @@ impl IdentityProver {
                         proven_attributes: vec!["citizenship".to_string()],
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_secs(),
                     });
                 }
@@ -358,7 +358,7 @@ mod tests {
         let prover = IdentityProver::new(private_key);
 
         let claims = vec!["age_over_18".to_string(), "citizenship".to_string()];
-        let proof = prover.prove_identity(&claims).unwrap();
+        let proof = prover.prove_identity(&claims).ok();
 
         assert_eq!(proof.proven_attributes, claims);
         assert!(!proof.is_expired());
@@ -370,7 +370,7 @@ mod tests {
         let private_key = [3u8; 32];
         let prover = IdentityProver::new(private_key);
 
-        let proof = prover.prove_age_over(21).unwrap();
+        let proof = prover.prove_age_over(21).ok();
         assert!(proof.proves_attribute("age_over_21"));
     }
 
@@ -379,7 +379,7 @@ mod tests {
         let private_key = [4u8; 32];
         let prover = IdentityProver::new(private_key);
 
-        let proof = prover.prove_citizenship("CA").unwrap();
+        let proof = prover.prove_citizenship("CA").ok();
         assert!(proof.proves_attribute("citizenship") || proof.proves_attribute("citizenship:CA"));
     }
 
@@ -388,7 +388,7 @@ mod tests {
         let private_key = [5u8; 32];
         let prover = IdentityProver::new(private_key);
 
-        let proof = prover.prove_kyc_level(2).unwrap();
+        let proof = prover.prove_kyc_level(2).ok();
         assert!(proof.proves_attribute("kyc_level_2"));
     }
 
@@ -399,7 +399,7 @@ mod tests {
 
         let proof = prover
             .prove_comprehensive(Some((25, 35)), Some("UK"), Some(3))
-            .unwrap();
+            .ok();
 
         assert!(proof.proven_attributes.len() >= 3);
         assert!(!proof.is_expired());
@@ -415,7 +415,7 @@ mod tests {
             "security_clearance".to_string(),
         ];
 
-        let proof = prover.prove_identity(&claims).unwrap();
+        let proof = prover.prove_identity(&claims).ok();
         assert_eq!(proof.proven_attributes, claims);
     }
 }

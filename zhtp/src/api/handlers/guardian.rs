@@ -1064,7 +1064,7 @@ mod tests {
     #[test]
     fn test_extract_recovery_id() {
         let uri = "/api/v1/identity/recovery/abc123/approve";
-        let recovery_id = extract_recovery_id(uri).unwrap();
+        let recovery_id = extract_recovery_id(uri).ok();
         assert_eq!(recovery_id, "abc123");
     }
 

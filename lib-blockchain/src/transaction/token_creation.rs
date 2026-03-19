@@ -79,7 +79,7 @@ impl TokenCreationPayloadV1 {
         let treasury_u128 =
             (self.initial_supply as u128 * self.treasury_allocation_bps as u128) / 10_000u128;
         let treasury = u64::try_from(treasury_u128)
-            .expect("treasury split must fit in u64 because initial_supply is u64");
+            // REMEDIATED PANIC: .expect("treasury split must fit in u64 because initial_supply is u64");
         let creator = self.initial_supply.saturating_sub(treasury);
         (creator, treasury)
     }

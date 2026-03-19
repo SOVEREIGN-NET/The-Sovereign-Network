@@ -43,7 +43,7 @@ impl RecoveryKey {
     pub fn new(encrypted_key: Vec<u8>, derivation_path: String, label: String) -> Self {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let key_data = [
@@ -70,7 +70,7 @@ impl RecoveryKey {
         self.last_used = Some(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         );
     }
@@ -84,7 +84,7 @@ impl RecoveryKey {
     pub fn is_expired(&self) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let last_activity = self.last_used.unwrap_or(self.created_at);

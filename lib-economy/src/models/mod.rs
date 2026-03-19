@@ -67,7 +67,7 @@ mod tests {
             uptime_hours: 24,    // Perfect uptime
         };
 
-        let reward = TokenReward::calculate(&work, &model).unwrap();
+        let reward = TokenReward::calculate(&work, &model).ok();
 
         // Base rewards
         assert_eq!(reward.routing_reward, 5); // 5MB * 1 token/MB
@@ -91,7 +91,7 @@ mod tests {
             cost_savings_provided: 150,
         };
 
-        let reward = TokenReward::calculate_isp_bypass(&work).unwrap();
+        let reward = TokenReward::calculate_isp_bypass(&work).ok();
 
         // Expected calculations
         let expected_bandwidth = 5 * crate::ISP_BYPASS_CONNECTIVITY_RATE; // 5 * 100 = 500

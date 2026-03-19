@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_circuit_builder() {
-        let mut builder = CircuitBuilder::standard().unwrap();
+        let mut builder = CircuitBuilder::standard().ok();
         
         let input_a = builder.add_public_input(Some([1u8; 32]));
         let input_b = builder.add_private_input(Some([2u8; 32]));
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn test_circuit_construction() {
-        let mut builder = CircuitBuilder::fast().unwrap();
+        let mut builder = CircuitBuilder::fast().ok();
         
         let input1 = builder.add_public_input(Some([10u8; 32]));
         let input2 = builder.add_private_input(Some([20u8; 32]));
@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn test_complex_circuit() {
-        let mut builder = CircuitBuilder::standard().unwrap();
+        let mut builder = CircuitBuilder::standard().ok();
         
         // Build a circuit that computes hash(a + b * c) and verifies range
         let a = builder.add_public_input(Some([1u8; 32]));
@@ -609,12 +609,12 @@ mod tests {
 
     #[test]
     fn test_circuit_hash_deterministic() {
-        let mut builder1 = CircuitBuilder::fast().unwrap();
+        let mut builder1 = CircuitBuilder::fast().ok();
         let input1 = builder1.add_public_input(Some([1u8; 32]));
         let output1 = builder1.add_output(input1);
         let circuit1 = ZkCircuit::from_builder(builder1);
         
-        let mut builder2 = CircuitBuilder::fast().unwrap();
+        let mut builder2 = CircuitBuilder::fast().ok();
         let input2 = builder2.add_public_input(Some([1u8; 32]));
         let output2 = builder2.add_output(input2);
         let circuit2 = ZkCircuit::from_builder(builder2);

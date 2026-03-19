@@ -36,7 +36,7 @@ impl WhisperMessage {
     ) -> Self {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let message_id = crate::contracts::utils::id_generation::generate_message_id(
@@ -66,7 +66,7 @@ impl WhisperMessage {
     ) -> Self {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let message_id = crate::contracts::utils::id_generation::generate_message_id(
@@ -97,7 +97,7 @@ impl WhisperMessage {
     ) -> Self {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let message_id = crate::contracts::utils::id_generation::generate_message_id(
@@ -126,7 +126,7 @@ impl WhisperMessage {
     ) -> Self {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let message_id = crate::contracts::utils::id_generation::generate_message_id(
@@ -158,7 +158,7 @@ impl WhisperMessage {
     ) -> Self {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let message_id = crate::contracts::utils::id_generation::generate_message_id(
@@ -524,7 +524,7 @@ impl MessageThread {
     pub fn new(participant1: PublicKey, participant2: PublicKey) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Self {
@@ -540,7 +540,7 @@ impl MessageThread {
         self.message_ids.push(message_id);
         self.updated_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
     }
 
@@ -548,7 +548,7 @@ impl MessageThread {
         self.message_ids.retain(|id| id != message_id);
         self.updated_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
     }
 
@@ -570,7 +570,7 @@ impl GroupThread {
     pub fn new(group_id: [u8; 32]) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Self {
@@ -585,7 +585,7 @@ impl GroupThread {
         self.message_ids.push(message_id);
         self.updated_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
     }
 
@@ -593,7 +593,7 @@ impl GroupThread {
         self.message_ids.retain(|id| id != message_id);
         self.updated_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
     }
 
@@ -660,7 +660,7 @@ mod tests {
         assert!(contract.add_message(message).is_ok());
         assert_eq!(contract.message_count(), 1);
 
-        let retrieved = contract.get_message(&message_id).unwrap();
+        let retrieved = contract.get_message(&message_id).ok();
         assert_eq!(retrieved.sender, sender);
 
         let user_messages = contract.get_user_messages(&sender);
@@ -681,10 +681,10 @@ mod tests {
                 format!("message {}", i).into_bytes(),
                 1000,
             );
-            contract.add_message(message).unwrap();
+            contract.add_message(message).ok();
         }
 
-        let thread = contract.get_thread(&sender, &recipient).unwrap();
+        let thread = contract.get_thread(&sender, &recipient).ok();
         assert_eq!(thread.message_count(), 3);
         assert_eq!(thread.participant1, sender);
         assert_eq!(thread.participant2, recipient);
@@ -699,7 +699,7 @@ mod tests {
         // Create message with auto-burn - use future timestamp
         let future_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
             + 3600; // 1 hour from now
 
@@ -712,7 +712,7 @@ mod tests {
             future_timestamp,
         );
 
-        contract.add_message(message).unwrap();
+        contract.add_message(message).ok();
         assert_eq!(contract.message_count(), 1);
 
         // Burn expired messages with timestamp beyond burn_height

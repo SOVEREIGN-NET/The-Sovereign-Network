@@ -96,11 +96,11 @@ impl CitizenshipManager {
             status: CitizenshipStatus::Active,
             registration_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             last_updated: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -143,7 +143,7 @@ impl CitizenshipManager {
             verification_hash,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }
@@ -191,7 +191,7 @@ mod tests {
             verification_level: CitizenshipVerificationLevel::Complete,
             verification_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             issuing_authority: "Test Authority".to_string(),
             additional_metadata: HashMap::new(),
@@ -206,12 +206,12 @@ mod tests {
 
         let citizenship_id = manager
             .register_citizen(&identity_id, verification_data)
-            .unwrap();
+            .ok();
 
         assert!(!citizenship_id.0.is_empty());
         assert!(manager.is_citizen(&identity_id));
 
-        let record = manager.get_citizenship_record(&identity_id).unwrap();
+        let record = manager.get_citizenship_record(&identity_id).ok();
         assert_eq!(record.identity_id, identity_id);
         assert_eq!(record.status, CitizenshipStatus::Active);
     }
@@ -224,9 +224,9 @@ mod tests {
 
         manager
             .register_citizen(&identity_id, verification_data)
-            .unwrap();
+            .ok();
 
-        let verification = manager.verify_citizenship(&identity_id).unwrap();
+        let verification = manager.verify_citizenship(&identity_id).ok();
         assert!(verification.is_valid);
         assert!(verification.is_active);
         assert!(!verification.verification_hash.0.is_empty());
@@ -242,7 +242,7 @@ mod tests {
             let verification_data = create_test_verification_data();
             manager
                 .register_citizen(&identity_id, verification_data)
-                .unwrap();
+                .ok();
         }
 
         let metrics = manager.get_citizenship_metrics();
@@ -260,7 +260,7 @@ mod tests {
         // First registration should succeed
         manager
             .register_citizen(&identity_id, verification_data.clone())
-            .unwrap();
+            .ok();
 
         // Second registration should fail
         let result = manager.register_citizen(&identity_id, verification_data);

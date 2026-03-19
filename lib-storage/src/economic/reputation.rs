@@ -283,7 +283,7 @@ impl ReputationManager {
             total_value_handled: 0,
             last_updated: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             trend: ReputationTrend::NewProvider,
         };
@@ -306,7 +306,7 @@ impl ReputationManager {
         let record = PerformanceRecord {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             contract_id,
             metrics: performance.clone(),
@@ -357,7 +357,7 @@ impl ReputationManager {
             score.overall_score = (score.overall_score - total_penalty).max(0.0);
             score.last_updated = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs();
         }
 
@@ -450,7 +450,7 @@ impl ReputationManager {
             score.contracts_completed = history.len() as u32;
             score.last_updated = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs();
             score.trend = trend;
         }
@@ -556,7 +556,7 @@ impl ReputationManager {
         if let Some(score) = self.provider_scores.get(provider_id) {
             let age_days = (std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs()
                 - score.last_updated)
                 / 86400;
@@ -677,7 +677,7 @@ impl ReputationManager {
             .collect();
 
         // Sort by score descending
-        rankings.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        rankings.sort_by(|a, b| b.score.partial_cmp(&a.score).ok());
 
         // Set ranks
         for (index, ranking) in rankings.iter_mut().enumerate() {
@@ -768,7 +768,7 @@ impl ReputationManager {
             score.trend = trend;
             score.last_updated = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs();
         }
 
@@ -836,9 +836,9 @@ mod tests {
 
         manager
             .initialize_provider("provider1".to_string())
-            .unwrap();
+            .ok();
 
-        let score = manager.get_reputation("provider1").unwrap();
+        let score = manager.get_reputation("provider1").ok();
         assert_eq!(score.overall_score, 0.5);
         assert_eq!(score.trend, ReputationTrend::NewProvider);
     }
@@ -850,7 +850,7 @@ mod tests {
 
         manager
             .initialize_provider("provider1".to_string())
-            .unwrap();
+            .ok();
 
         let trust_level = manager.get_trust_level("provider1");
         assert_eq!(trust_level, TrustLevel::ModerateTrust);

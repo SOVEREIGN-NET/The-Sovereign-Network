@@ -704,28 +704,28 @@ mod tests {
 
     #[test]
     fn test_normalize_path_basic() {
-        assert_eq!(Web4ContentService::normalize_path("/").unwrap(), "/");
-        assert_eq!(Web4ContentService::normalize_path("/foo").unwrap(), "/foo");
+        assert_eq!(Web4ContentService::normalize_path("/").ok(), "/");
+        assert_eq!(Web4ContentService::normalize_path("/foo").ok(), "/foo");
         assert_eq!(
-            Web4ContentService::normalize_path("/foo/bar").unwrap(),
+            Web4ContentService::normalize_path("/foo/bar").ok(),
             "/foo/bar"
         );
     }
 
     #[test]
     fn test_normalize_path_empty() {
-        assert_eq!(Web4ContentService::normalize_path("").unwrap(), "/");
+        assert_eq!(Web4ContentService::normalize_path("").ok(), "/");
     }
 
     #[test]
     fn test_normalize_path_double_slashes() {
-        assert_eq!(Web4ContentService::normalize_path("//").unwrap(), "/");
+        assert_eq!(Web4ContentService::normalize_path("//").ok(), "/");
         assert_eq!(
-            Web4ContentService::normalize_path("/foo//bar").unwrap(),
+            Web4ContentService::normalize_path("/foo//bar").ok(),
             "/foo/bar"
         );
         assert_eq!(
-            Web4ContentService::normalize_path("///foo///bar///").unwrap(),
+            Web4ContentService::normalize_path("///foo///bar///").ok(),
             "/foo/bar"
         );
     }
@@ -733,25 +733,25 @@ mod tests {
     #[test]
     fn test_normalize_path_dot_segments() {
         assert_eq!(
-            Web4ContentService::normalize_path("/./foo").unwrap(),
+            Web4ContentService::normalize_path("/./foo").ok(),
             "/foo"
         );
         assert_eq!(
-            Web4ContentService::normalize_path("/foo/./bar").unwrap(),
+            Web4ContentService::normalize_path("/foo/./bar").ok(),
             "/foo/bar"
         );
-        assert_eq!(Web4ContentService::normalize_path("/./").unwrap(), "/");
+        assert_eq!(Web4ContentService::normalize_path("/./").ok(), "/");
     }
 
     #[test]
     fn test_normalize_path_dotdot_safe() {
         // Should resolve .. within bounds
         assert_eq!(
-            Web4ContentService::normalize_path("/foo/bar/../baz").unwrap(),
+            Web4ContentService::normalize_path("/foo/bar/../baz").ok(),
             "/foo/baz"
         );
         assert_eq!(
-            Web4ContentService::normalize_path("/foo/../bar").unwrap(),
+            Web4ContentService::normalize_path("/foo/../bar").ok(),
             "/bar"
         );
     }
@@ -779,7 +779,7 @@ mod tests {
     fn test_normalize_path_mixed_attacks() {
         // Combined attack patterns
         assert_eq!(
-            Web4ContentService::normalize_path("/foo/./bar/../baz//qux").unwrap(),
+            Web4ContentService::normalize_path("/foo/./bar/../baz//qux").ok(),
             "/foo/baz/qux"
         );
     }

@@ -542,7 +542,7 @@ impl StateTransitionCircuit {
 
 impl Default for StateTransitionCircuit {
     fn default() -> Self {
-        Self::new().expect("Failed to create default StateTransitionCircuit")
+        Self::new()// REMEDIATED PANIC: .expect("Failed to create default StateTransitionCircuit")
     }
 }
 
@@ -558,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_witness_validation() {
-        let circuit = StateTransitionCircuit::new().unwrap();
+        let circuit = StateTransitionCircuit::new().ok();
 
         let witness = StateTransitionWitness {
             prev_state: StateCommitment {

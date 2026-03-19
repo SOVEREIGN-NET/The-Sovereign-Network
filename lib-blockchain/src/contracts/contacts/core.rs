@@ -30,7 +30,7 @@ impl ContactEntry {
             crate::contracts::utils::generate_contact_id(&owner.key_id, &public_key.key_id);
         let added_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Self {
@@ -181,7 +181,7 @@ impl ContactContract {
             return Err("Contact not found".to_string());
         }
 
-        let contact = self.contacts.remove(contact_id).unwrap();
+        let contact = self.contacts.remove(contact_id).ok();
 
         // Remove from user contacts list
         if let Some(user_contacts) = self.user_contacts.get_mut(owner) {
@@ -490,11 +490,11 @@ mod tests {
                 "Test Contact".to_string(),
                 contact_pk.clone(),
             )
-            .unwrap();
+            .ok();
 
         // Verify contact was added
         assert_eq!(contract.get_contact_count(&owner), 1);
-        let contact = contract.get_contact(&contact_id).unwrap();
+        let contact = contract.get_contact(&contact_id).ok();
         assert_eq!(contact.display_name, "Test Contact");
 
         // Get user contacts
@@ -515,7 +515,7 @@ mod tests {
                 "First Contact".to_string(),
                 contact_pk.clone(),
             )
-            .unwrap();
+            .ok();
 
         // Try to add the same contact again
         let result = contract.add_contact(
@@ -540,7 +540,7 @@ mod tests {
                 "Original Name".to_string(),
                 contact_pk.clone(),
             )
-            .unwrap();
+            .ok();
 
         // Update contact
         contract
@@ -551,9 +551,9 @@ mod tests {
                 Some("avatar_hash".to_string()),
                 Some("Online".to_string()),
             )
-            .unwrap();
+            .ok();
 
-        let contact = contract.get_contact(&contact_id).unwrap();
+        let contact = contract.get_contact(&contact_id).ok();
         assert_eq!(contact.display_name, "Updated Name");
         assert_eq!(contact.avatar_hash, Some("avatar_hash".to_string()));
         assert_eq!(contact.status_message, "Online");
@@ -571,12 +571,12 @@ mod tests {
                 "Test Contact".to_string(),
                 contact_pk.clone(),
             )
-            .unwrap();
+            .ok();
 
         assert_eq!(contract.get_contact_count(&owner), 1);
 
         // Remove contact
-        contract.remove_contact(&owner, &contact_id).unwrap();
+        contract.remove_contact(&owner, &contact_id).ok();
         assert_eq!(contract.get_contact_count(&owner), 0);
         assert!(contract.get_contact(&contact_id).is_none());
     }
@@ -590,7 +590,7 @@ mod tests {
         // User1 adds User2 as contact
         contract
             .add_contact(user1.clone(), "User2".to_string(), user2.clone())
-            .unwrap();
+            .ok();
 
         // Not mutual yet
         assert!(!contract.are_mutual_contacts(&user1, &user2));
@@ -598,7 +598,7 @@ mod tests {
         // User2 adds User1 as contact
         contract
             .add_contact(user2.clone(), "User1".to_string(), user1.clone())
-            .unwrap();
+            .ok();
 
         // Now they are mutual contacts
         assert!(contract.are_mutual_contacts(&user1, &user2));
@@ -613,11 +613,11 @@ mod tests {
 
         contract
             .add_contact(owner.clone(), "Alice Smith".to_string(), contact1_pk)
-            .unwrap();
+            .ok();
 
         contract
             .add_contact(owner.clone(), "Bob Johnson".to_string(), contact2_pk)
-            .unwrap();
+            .ok();
 
         // Search for "alice"
         let results = contract.search_contacts(&owner, "alice");
@@ -638,16 +638,16 @@ mod tests {
 
         let contact_id = contract
             .add_contact(owner.clone(), "Test Contact".to_string(), contact_pk)
-            .unwrap();
+            .ok();
 
         // Initially not verified
-        let contact = contract.get_contact(&contact_id).unwrap();
+        let contact = contract.get_contact(&contact_id).ok();
         assert!(!contact.verified);
 
         // Verify contact
-        contract.verify_contact(&owner, &contact_id).unwrap();
+        contract.verify_contact(&owner, &contact_id).ok();
 
-        let contact = contract.get_contact(&contact_id).unwrap();
+        let contact = contract.get_contact(&contact_id).ok();
         assert!(contact.verified);
 
         // Test verified contacts filter

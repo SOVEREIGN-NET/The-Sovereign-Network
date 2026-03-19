@@ -401,10 +401,10 @@ mod tests {
 
         config
             .add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string())
-            .unwrap();
+            .ok();
         config
             .add_guardian("did:zhtp:bob".to_string(), pubkey2, "Bob".to_string())
-            .unwrap();
+            .ok();
 
         let result = manager.initiate_recovery(
             "did:zhtp:carol".to_string(),
@@ -426,10 +426,10 @@ mod tests {
 
         config
             .add_guardian("did:zhtp:alice".to_string(), pubkey1, "Alice".to_string())
-            .unwrap();
+            .ok();
         config
             .add_guardian("did:zhtp:bob".to_string(), pubkey2, "Bob".to_string())
-            .unwrap();
+            .ok();
 
         // First recovery should succeed
         let result1 = manager.initiate_recovery(

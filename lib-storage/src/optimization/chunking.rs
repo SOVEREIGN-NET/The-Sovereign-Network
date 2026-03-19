@@ -184,7 +184,7 @@ mod tests {
         let chunker = ContentChunker::new(ChunkingAlgorithm::Fixed { size: 10 });
         let data = b"0123456789abcdefghij";
 
-        let chunks = chunker.chunk(data).unwrap();
+        let chunks = chunker.chunk(data).ok();
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].data.len(), 10);
         assert_eq!(chunks[1].data.len(), 10);
@@ -199,14 +199,14 @@ mod tests {
         });
 
         let data = b"This is a test of content-defined chunking algorithm";
-        let chunks = chunker.chunk(data).unwrap();
+        let chunks = chunker.chunk(data).ok();
 
         // Should produce multiple chunks
         assert!(chunks.len() > 1);
 
         // All chunks should be within size bounds
         for chunk in &chunks {
-            assert!(chunk.size() >= 4 || chunks.last().unwrap().offset == chunk.offset);
+            assert!(chunk.size() >= 4 || chunks.last().ok().offset == chunk.offset);
             assert!(chunk.size() <= 16);
         }
     }
@@ -216,7 +216,7 @@ mod tests {
         let chunker = ContentChunker::new(ChunkingAlgorithm::Fixed { size: 10 });
         let data = b"test data here";
 
-        let chunks = chunker.chunk(data).unwrap();
+        let chunks = chunker.chunk(data).ok();
 
         for chunk in chunks {
             assert!(chunk.verify());
@@ -232,7 +232,7 @@ mod tests {
         });
 
         let data = b"small";
-        let chunks = chunker.chunk(data).unwrap();
+        let chunks = chunker.chunk(data).ok();
 
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].data, data);

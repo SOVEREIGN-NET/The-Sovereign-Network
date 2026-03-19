@@ -230,19 +230,19 @@ mod tests {
     #[test]
     fn test_parse_format_valid() {
         assert_eq!(
-            SerializationFormat::parse("bincode").unwrap(),
+            SerializationFormat::parse("bincode").ok(),
             SerializationFormat::Bincode
         );
         assert_eq!(
-            SerializationFormat::parse("json").unwrap(),
+            SerializationFormat::parse("json").ok(),
             SerializationFormat::Json
         );
         assert_eq!(
-            SerializationFormat::parse("msgpack").unwrap(),
+            SerializationFormat::parse("msgpack").ok(),
             SerializationFormat::MessagePack
         );
         assert_eq!(
-            SerializationFormat::parse("cbor").unwrap(),
+            SerializationFormat::parse("cbor").ok(),
             SerializationFormat::Cbor
         );
     }
@@ -250,11 +250,11 @@ mod tests {
     #[test]
     fn test_parse_format_case_insensitive() {
         assert_eq!(
-            SerializationFormat::parse("BINCODE").unwrap(),
+            SerializationFormat::parse("BINCODE").ok(),
             SerializationFormat::Bincode
         );
         assert_eq!(
-            SerializationFormat::parse("JSON").unwrap(),
+            SerializationFormat::parse("JSON").ok(),
             SerializationFormat::Json
         );
     }
@@ -294,70 +294,70 @@ mod tests {
     #[test]
     fn test_detect_json_object() {
         let json = br#"{"key": "value"}"#;
-        let detected = SerializationValidator::detect_format(json).unwrap();
+        let detected = SerializationValidator::detect_format(json).ok();
         assert_eq!(detected, SerializationFormat::Json);
     }
 
     #[test]
     fn test_detect_json_array() {
         let json = b"[1, 2, 3]";
-        let detected = SerializationValidator::detect_format(json).unwrap();
+        let detected = SerializationValidator::detect_format(json).ok();
         assert_eq!(detected, SerializationFormat::Json);
     }
 
     #[test]
     fn test_detect_json_string() {
         let json = b"\"hello\"";
-        let detected = SerializationValidator::detect_format(json).unwrap();
+        let detected = SerializationValidator::detect_format(json).ok();
         assert_eq!(detected, SerializationFormat::Json);
     }
 
     #[test]
     fn test_detect_json_with_whitespace() {
         let json = b"  \n  {\"key\": \"value\"}";
-        let detected = SerializationValidator::detect_format(json).unwrap();
+        let detected = SerializationValidator::detect_format(json).ok();
         assert_eq!(detected, SerializationFormat::Json);
     }
 
     #[test]
     fn test_detect_json_null() {
         let json = b"null";
-        let detected = SerializationValidator::detect_format(json).unwrap();
+        let detected = SerializationValidator::detect_format(json).ok();
         assert_eq!(detected, SerializationFormat::Json);
     }
 
     #[test]
     fn test_detect_json_boolean() {
         let json = b"true";
-        let detected = SerializationValidator::detect_format(json).unwrap();
+        let detected = SerializationValidator::detect_format(json).ok();
         assert_eq!(detected, SerializationFormat::Json);
     }
 
     #[test]
     fn test_detect_json_number() {
         let json = b"12345";
-        let detected = SerializationValidator::detect_format(json).unwrap();
+        let detected = SerializationValidator::detect_format(json).ok();
         assert_eq!(detected, SerializationFormat::Json);
     }
 
     #[test]
     fn test_detect_messagepack_uint8() {
         let msgpack = vec![0xcc, 0x42]; // uint8(66)
-        let detected = SerializationValidator::detect_format(&msgpack).unwrap();
+        let detected = SerializationValidator::detect_format(&msgpack).ok();
         assert_eq!(detected, SerializationFormat::MessagePack);
     }
 
     #[test]
     fn test_detect_messagepack_fixint() {
         let msgpack = vec![0x42]; // fixint(66)
-        let detected = SerializationValidator::detect_format(&msgpack).unwrap();
+        let detected = SerializationValidator::detect_format(&msgpack).ok();
         assert_eq!(detected, SerializationFormat::MessagePack);
     }
 
     #[test]
     fn test_detect_messagepack_array() {
         let msgpack = vec![0xdc, 0x00, 0x03]; // array16 with 3 elements
-        let detected = SerializationValidator::detect_format(&msgpack).unwrap();
+        let detected = SerializationValidator::detect_format(&msgpack).ok();
         assert_eq!(detected, SerializationFormat::MessagePack);
     }
 
@@ -367,7 +367,7 @@ mod tests {
         // should default to bincode. Use a byte sequence that's not valid
         // in MessagePack (reserved bytes in 0xc1, 0xc7-0xcb range with data)
         let unknown = vec![0xc1]; // Reserved/undefined in MessagePack
-        let detected = SerializationValidator::detect_format(&unknown).unwrap();
+        let detected = SerializationValidator::detect_format(&unknown).ok();
         assert_eq!(detected, SerializationFormat::Bincode);
     }
 
@@ -375,7 +375,7 @@ mod tests {
     fn test_detect_messagepack_fixstr() {
         // MessagePack fixstr format (0xa0-0xbf prefix)
         let msgpack = vec![0xa5, 0x68, 0x65, 0x6c, 0x6c, 0x6f]; // fixstr "hello"
-        let detected = SerializationValidator::detect_format(&msgpack).unwrap();
+        let detected = SerializationValidator::detect_format(&msgpack).ok();
         assert_eq!(detected, SerializationFormat::MessagePack);
     }
 
@@ -383,7 +383,7 @@ mod tests {
     fn test_detect_messagepack_boolean() {
         // MessagePack false
         let msgpack = vec![0xc2];
-        let detected = SerializationValidator::detect_format(&msgpack).unwrap();
+        let detected = SerializationValidator::detect_format(&msgpack).ok();
         assert_eq!(detected, SerializationFormat::MessagePack);
     }
 

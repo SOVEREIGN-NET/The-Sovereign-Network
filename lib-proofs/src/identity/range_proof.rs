@@ -226,7 +226,7 @@ mod tests {
         let value = 100u64;
         let blinding = [1u8; 32];
         
-        let proof = ZkRangeProof::generate(value, 0, 1000, blinding).unwrap();
+        let proof = ZkRangeProof::generate(value, 0, 1000, blinding).ok();
         
         assert_eq!(proof.min_value, 0);
         assert_eq!(proof.max_value, 1000);
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn test_generate_simple() {
         let value = 50u64;
-        let proof = ZkRangeProof::generate_simple(value, 0, 100).unwrap();
+        let proof = ZkRangeProof::generate_simple(value, 0, 100).ok();
         
         assert_eq!(proof.min_value, 0);
         assert_eq!(proof.max_value, 100);
@@ -257,7 +257,7 @@ mod tests {
         let value = 42u64;
         let blinding = [2u8; 32];
         
-        let proof = ZkRangeProof::generate_positive(value, blinding).unwrap();
+        let proof = ZkRangeProof::generate_positive(value, blinding).ok();
         
         assert_eq!(proof.min_value, 1);
         assert_eq!(proof.max_value, (1u64 << 63) - 1);
@@ -268,7 +268,7 @@ mod tests {
         let value = 15u64; // Fits in 4 bits
         let blinding = [3u8; 32];
         
-        let proof = ZkRangeProof::generate_bounded_pow2(value, 4, blinding).unwrap();
+        let proof = ZkRangeProof::generate_bounded_pow2(value, 4, blinding).ok();
         
         assert_eq!(proof.min_value, 0);
         assert_eq!(proof.max_value, 15); // 2^4 - 1
@@ -291,7 +291,7 @@ mod tests {
         let values = vec![10u64, 20u64, 30u64];
         let blindings = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
         
-        let batch_proof = BatchRangeProof::generate(values, 0, 100, blindings).unwrap();
+        let batch_proof = BatchRangeProof::generate(values, 0, 100, blindings).ok();
         
         assert_eq!(batch_proof.batch_size(), 3);
         assert_eq!(batch_proof.min_value, 0);
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_range_properties() {
-        let proof = ZkRangeProof::generate_simple(10, 0, 15).unwrap();
+        let proof = ZkRangeProof::generate_simple(10, 0, 15).ok();
         
         assert_eq!(proof.range_size(), 16);
         assert!(proof.is_power_of_2_range());

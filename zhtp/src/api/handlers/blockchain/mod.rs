@@ -2861,7 +2861,7 @@ mod tests {
         Transaction::new_token_creation_with_chain_id(
             0x03,
             test_signature(9),
-            payload.encode_memo().unwrap(),
+            payload.encode_memo().ok(),
         )
     }
 
@@ -2876,7 +2876,7 @@ mod tests {
             gas_limit: 1,
             memory_limit_bytes: 1024,
         };
-        let memo = payload.encode_memo().unwrap();
+        let memo = payload.encode_memo().ok();
         let tx = build_contract_tx(TransactionType::ContractDeployment, memo, sig);
 
         let result = BlockchainHandler::validate_canonical_contract_payload(
@@ -2933,7 +2933,7 @@ mod tests {
         let sig = test_signature(4);
         let contract_id = [2u8; 32];
         let call = ContractCall::token_call("mint".to_string(), vec![1, 2, 3]);
-        let memo = encode_contract_execution_memo_v2(contract_id, &call, &sig).unwrap();
+        let memo = encode_contract_execution_memo_v2(contract_id, &call, &sig).ok();
         let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
 
         let result = BlockchainHandler::validate_canonical_contract_payload(
@@ -2952,7 +2952,7 @@ mod tests {
         let sig = test_signature(5);
         let call =
             ContractCall::public_call(ContractType::Web4Website, "set_page".to_string(), vec![1]);
-        let memo = encode_contract_execution_memo_v2([9u8; 32], &call, &sig).unwrap();
+        let memo = encode_contract_execution_memo_v2([9u8; 32], &call, &sig).ok();
         let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
 
         let result = BlockchainHandler::validate_canonical_contract_payload(
@@ -2972,7 +2972,7 @@ mod tests {
         let contract_id = [7u8; 32];
         let call =
             ContractCall::public_call(ContractType::Web4Website, "set_page".to_string(), vec![1]);
-        let memo = encode_contract_execution_memo_v2(contract_id, &call, &sig).unwrap();
+        let memo = encode_contract_execution_memo_v2(contract_id, &call, &sig).ok();
         let tx = build_contract_tx(TransactionType::ContractExecution, memo, sig);
 
         let result = BlockchainHandler::validate_canonical_contract_payload(
@@ -3020,7 +3020,7 @@ mod tests {
             chain_height: 34,
         };
 
-        let value = serde_json::to_value(response).unwrap();
+        let value = serde_json::to_value(response).ok();
 
         assert_eq!(value["token_creation_fee"], 1_000);
     }

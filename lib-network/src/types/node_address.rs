@@ -307,7 +307,7 @@ impl AddressResolver {
                 endpoint.last_seen = Some(
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs(),
                 );
             }
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_node_address_string_conversion() {
-        let addr = NodeAddress::Udp("127.0.0.1:8080".parse().unwrap());
+        let addr = NodeAddress::Udp("127.0.0.1:8080".parse().ok());
         assert_eq!(addr.to_address_string(), "udp://127.0.0.1:8080");
         assert_eq!(addr.protocol(), "udp");
 
@@ -356,22 +356,22 @@ mod tests {
 
     #[test]
     fn test_address_parsing() {
-        let addr = NodeAddress::from_string("udp://192.168.1.1:5000").unwrap();
-        assert_eq!(addr, NodeAddress::Udp("192.168.1.1:5000".parse().unwrap()));
+        let addr = NodeAddress::from_string("udp://192.168.1.1:5000").ok();
+        assert_eq!(addr, NodeAddress::Udp("192.168.1.1:5000".parse().ok()));
 
-        let addr = NodeAddress::from_string("bt://AA:BB:CC:DD:EE:FF").unwrap();
+        let addr = NodeAddress::from_string("bt://AA:BB:CC:DD:EE:FF").ok();
         assert_eq!(
             addr,
             NodeAddress::BluetoothClassic("AA:BB:CC:DD:EE:FF".to_string())
         );
 
-        let addr = NodeAddress::from_string("zdns://example.sov").unwrap();
+        let addr = NodeAddress::from_string("zdns://example.sov").ok();
         assert_eq!(addr, NodeAddress::Domain("example.sov".to_string()));
     }
 
     #[test]
     fn test_socket_addr_extraction() {
-        let addr = NodeAddress::Udp("10.0.0.1:9000".parse().unwrap());
+        let addr = NodeAddress::Udp("10.0.0.1:9000".parse().ok());
         assert!(addr.socket_addr().is_some());
 
         let addr = NodeAddress::BluetoothClassic("AA:BB:CC:DD:EE:FF".to_string());
@@ -383,7 +383,7 @@ mod tests {
         let resolver = AddressResolver::new();
         let pubkey = "test_pubkey";
 
-        let endpoint = AddressEndpoint::new(NodeAddress::Udp("127.0.0.1:8080".parse().unwrap()));
+        let endpoint = AddressEndpoint::new(NodeAddress::Udp("127.0.0.1:8080".parse().ok()));
         resolver.register_address(pubkey, endpoint).await;
 
         let addresses = resolver.get_addresses(pubkey).await;

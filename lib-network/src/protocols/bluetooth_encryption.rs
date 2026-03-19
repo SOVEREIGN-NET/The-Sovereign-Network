@@ -352,12 +352,12 @@ mod tests {
     #[test]
     fn test_nonce_derivation_determinism() {
         let session_id = create_test_session_id();
-        let nonce1 = core::derive_nonce(&session_id, 100, 0x00).unwrap();
-        let nonce2 = core::derive_nonce(&session_id, 100, 0x00).unwrap();
+        let nonce1 = core::derive_nonce(&session_id, 100, 0x00).ok();
+        let nonce2 = core::derive_nonce(&session_id, 100, 0x00).ok();
 
         assert_eq!(nonce1, nonce2, "Same inputs should produce same nonce");
 
-        let nonce3 = core::derive_nonce(&session_id, 101, 0x00).unwrap();
+        let nonce3 = core::derive_nonce(&session_id, 101, 0x00).ok();
         assert_ne!(
             nonce1, nonce3,
             "Different sequence should produce different nonce"
@@ -397,7 +397,7 @@ mod tests {
         };
 
         let serialized = original.serialize();
-        let deserialized = BluetoothFrame::deserialize(&serialized).unwrap();
+        let deserialized = BluetoothFrame::deserialize(&serialized).ok();
 
         assert_eq!(deserialized.version, original.version);
         assert_eq!(deserialized.flags, original.flags);
@@ -425,13 +425,13 @@ mod tests {
         let session_id = create_test_session_id();
         let peer_id = create_test_peer_id();
 
-        let enc = BluetoothEncryption::new(&key, session_id).unwrap();
+        let enc = BluetoothEncryption::new(&key, session_id).ok();
         let message = b"Test Bluetooth message";
 
-        let frame_data = enc.encrypt_message(message).unwrap();
+        let frame_data = enc.encrypt_message(message).ok();
         assert!(frame_data.len() > message.len()); // Includes frame + nonce + tag
 
-        let decrypted = enc.decrypt_message(&frame_data, &peer_id).unwrap();
+        let decrypted = enc.decrypt_message(&frame_data, &peer_id).ok();
         assert_eq!(message, &decrypted[..]);
     }
 
@@ -441,10 +441,10 @@ mod tests {
         let session_id = create_test_session_id();
         let peer_id = create_test_peer_id();
 
-        let enc = BluetoothEncryption::new(&key, session_id).unwrap();
+        let enc = BluetoothEncryption::new(&key, session_id).ok();
         let message = b"Test message";
 
-        let frame1 = enc.encrypt_message(message).unwrap();
+        let frame1 = enc.encrypt_message(message).ok();
 
         // First decryption should succeed
         let result1 = enc.decrypt_message(&frame1, &peer_id);
@@ -462,16 +462,16 @@ mod tests {
         let session_id = create_test_session_id();
         let peer_id = create_test_peer_id();
 
-        let enc1 = BluetoothEncryption::new(&key, session_id).unwrap();
-        let enc2 = BluetoothEncryption::new(&key, session_id).unwrap();
+        let enc1 = BluetoothEncryption::new(&key, session_id).ok();
+        let enc2 = BluetoothEncryption::new(&key, session_id).ok();
 
         let message = b"Test";
-        let frame1 = enc1.encrypt_message(message).unwrap();
-        let frame2 = enc2.encrypt_message(message).unwrap();
+        let frame1 = enc1.encrypt_message(message).ok();
+        let frame2 = enc2.encrypt_message(message).ok();
 
         // Parse frames
-        let parsed1 = BluetoothFrame::deserialize(&frame1).unwrap();
-        let parsed2 = BluetoothFrame::deserialize(&frame2).unwrap();
+        let parsed1 = BluetoothFrame::deserialize(&frame1).ok();
+        let parsed2 = BluetoothFrame::deserialize(&frame2).ok();
 
         // Same session_id + sequence (both start at 0) should produce same nonce
         assert_eq!(parsed1.nonce, parsed2.nonce, "Nonce determinism failed");
@@ -487,10 +487,10 @@ mod tests {
         let session_id = create_test_session_id();
         let peer_id = create_test_peer_id();
 
-        let enc = BluetoothEncryption::new(&key, session_id).unwrap();
+        let enc = BluetoothEncryption::new(&key, session_id).ok();
         let message = b"Important data";
 
-        let mut frame_data = enc.encrypt_message(message).unwrap();
+        let mut frame_data = enc.encrypt_message(message).ok();
 
         // Tamper with ciphertext (flip a bit)
         if frame_data.len() > HEADER_SIZE {
@@ -508,11 +508,11 @@ mod tests {
         let peer_id1 = [0xAAu8; 16];
         let peer_id2 = [0xBBu8; 16];
 
-        let enc = BluetoothEncryption::new(&key, session_id).unwrap();
+        let enc = BluetoothEncryption::new(&key, session_id).ok();
         let message = b"Test";
 
         // Encrypt once (sequence 0)
-        let frame1 = enc.encrypt_message(message).unwrap();
+        let frame1 = enc.encrypt_message(message).ok();
 
         // Decrypt from peer1 (should succeed, record seq 0)
         let result1 = enc.decrypt_message(&frame1, &peer_id1);

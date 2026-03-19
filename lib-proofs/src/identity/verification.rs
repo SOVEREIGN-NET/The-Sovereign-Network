@@ -849,9 +849,9 @@ mod tests {
         let attrs = IdentityAttributes::new().with_age_range(25, 35);
         let proof =
             ZkIdentityProof::generate(&attrs, [1u8; 32], [2u8; 32], vec!["age_range".to_string()])
-                .unwrap();
+                .ok();
 
-        let result = verify_identity_proof(&proof).unwrap();
+        let result = verify_identity_proof(&proof).ok();
         assert!(result.basic_result.is_valid());
         assert!(!result.is_expired);
         assert_eq!(result.verified_attributes, vec!["age_range"]);
@@ -882,7 +882,7 @@ mod tests {
             issuer_signature,
             [3u8; 32], // credential_secret parameter
         )
-        .unwrap();
+        .ok();
 
         println!("Proof schema hash: {:?}", proof.schema_hash);
         println!("Expected schema hash: {:?}", schema.schema_hash());
@@ -899,19 +899,19 @@ mod tests {
         );
         println!("2. Is expired: {}", proof.is_expired());
 
-        let signature_valid = verify_issuer_signature(&proof, &schema).unwrap();
+        let signature_valid = verify_issuer_signature(&proof, &schema).ok();
         println!("3. Issuer signature valid: {}", signature_valid);
 
-        let claims_valid = verify_claims_commitment(&proof).unwrap();
+        let claims_valid = verify_claims_commitment(&proof).ok();
         println!("4. Claims commitment valid: {}", claims_valid);
 
-        let revealed_claims_valid = verify_revealed_claims(&proof, &schema).unwrap();
+        let revealed_claims_valid = verify_revealed_claims(&proof, &schema).ok();
         println!("5. Revealed claims valid: {}", revealed_claims_valid);
 
-        let validity_valid = verify_credential_validity_proof(&proof, &schema).unwrap();
+        let validity_valid = verify_credential_validity_proof(&proof, &schema).ok();
         println!("6. Validity proof valid: {}", validity_valid);
 
-        let result = verify_credential_proof(&proof, &schema).unwrap();
+        let result = verify_credential_proof(&proof, &schema).ok();
         println!("Final verification result: {:#?}", result);
 
         // Report the status of individual verification steps
@@ -947,10 +947,10 @@ mod tests {
             [2u8; 64],
             [3u8; 32],
         )
-        .unwrap();
+        .ok();
 
         // This will fail schema validation as schemas don't match
-        let result = verify_credential_proof(&proof, &mismatched_schema).unwrap();
+        let result = verify_credential_proof(&proof, &mismatched_schema).ok();
         assert!(!result.is_valid()); // Expected failure due to schema mismatch
     }
 
@@ -963,9 +963,9 @@ mod tests {
             [5u8; 32],
             vec!["citizenship".to_string()],
         )
-        .unwrap();
+        .ok();
 
-        let is_valid = verify_identity_proof_fast(&proof).unwrap();
+        let is_valid = verify_identity_proof_fast(&proof).ok();
         assert!(is_valid);
     }
 
@@ -974,16 +974,16 @@ mod tests {
         let attrs = IdentityAttributes::new().with_kyc_level(2);
         let mut proof =
             ZkIdentityProof::generate(&attrs, [6u8; 32], [7u8; 32], vec!["kyc_level".to_string()])
-                .unwrap();
+                .ok();
 
         // Set timestamp to 2 days ago
         proof.timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
             - (2 * 24 * 60 * 60);
 
-        let result = verify_identity_proof(&proof).unwrap();
+        let result = verify_identity_proof(&proof).ok();
         assert!(result.is_expired);
         assert!(result.proof_age_seconds >= 2 * 24 * 60 * 60);
     }
@@ -992,9 +992,9 @@ mod tests {
     fn test_identity_commitment_verification() {
         let attrs = IdentityAttributes::new().with_age_range(18, 21);
         let commitment =
-            super::super::IdentityCommitment::generate(&attrs, [8u8; 32], [9u8; 32]).unwrap();
+            super::super::IdentityCommitment::generate(&attrs, [8u8; 32], [9u8; 32]).ok();
 
-        let is_valid = verify_identity_commitment(&commitment).unwrap();
+        let is_valid = verify_identity_commitment(&commitment).ok();
         assert!(is_valid);
     }
 
@@ -1007,9 +1007,9 @@ mod tests {
             [11u8; 32],
             vec!["license_type".to_string()],
         )
-        .unwrap();
+        .ok();
 
-        let is_valid = verify_identity_challenge_response(&proof).unwrap();
+        let is_valid = verify_identity_challenge_response(&proof).ok();
         assert!(is_valid);
     }
 }

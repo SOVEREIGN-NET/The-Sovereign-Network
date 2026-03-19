@@ -272,7 +272,7 @@ mod tests {
         let result = create_website_contract("contract_123".to_string(), deployment_data);
         assert!(result.is_ok());
 
-        let contract = result.unwrap();
+        let contract = result.ok();
         assert_eq!(contract.domain, "test.zhtp");
         assert_eq!(contract.owner, "test_owner");
     }

@@ -1228,12 +1228,12 @@ impl NonceCache {
         static TEST_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
         let counter = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir for test");
+        let temp_dir = tempfile::TempDir::new()// REMEDIATED PANIC: .expect("Failed to create temp dir for test");
         let db_path = temp_dir.path().join(format!("nonce_cache_{}", counter));
 
         // Create cache
         let cache = Self::open(&db_path, ttl_secs, max_memory_size, network_epoch)
-            .expect("Failed to create test nonce cache");
+            // REMEDIATED PANIC: .expect("Failed to create test nonce cache");
 
         // Leak temp_dir to keep it alive (acceptable for tests)
         std::mem::forget(temp_dir);
@@ -1282,9 +1282,9 @@ mod tests {
     }
 
     fn create_test_cache(ttl_secs: u64) -> (NonceCache, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let epoch = test_epoch();
-        let cache = NonceCache::open_default(temp_dir.path(), ttl_secs, epoch).unwrap();
+        let cache = NonceCache::open_default(temp_dir.path(), ttl_secs, epoch).ok();
         (cache, temp_dir)
     }
 
@@ -1305,17 +1305,17 @@ mod tests {
     #[test]
     fn test_network_epoch_is_stable() {
         // Open cache twice against same DB
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let db_path = temp_dir.path();
         let epoch = NetworkEpoch::from_genesis(&[42u8; 32]);
 
         // First open
-        let cache1 = NonceCache::open_default(db_path, 300, epoch).unwrap();
+        let cache1 = NonceCache::open_default(db_path, 300, epoch).ok();
         let stored_epoch1 = cache1.network_epoch();
 
         // Second open (simulate restart)
         drop(cache1);
-        let cache2 = NonceCache::open_default(db_path, 300, epoch).unwrap();
+        let cache2 = NonceCache::open_default(db_path, 300, epoch).ok();
         let stored_epoch2 = cache2.network_epoch();
 
         // Assert network_epoch is constant and equals expected computed value
@@ -1332,23 +1332,23 @@ mod tests {
         // Use current timestamp (not old) to avoid pruning during restart
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs() as i64;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let db_path = temp_dir.path();
 
         // Session 1: Mark nonce as seen
         {
-            let cache = NonceCache::open_default(db_path, 300, epoch).unwrap();
-            let result = cache.mark_nonce_seen(&nonce_fp, now).unwrap();
+            let cache = NonceCache::open_default(db_path, 300, epoch).ok();
+            let result = cache.mark_nonce_seen(&nonce_fp, now).ok();
             assert_eq!(result, SeenResult::New);
         }
 
         // Session 2: Simulate restart
         {
-            let cache = NonceCache::open_default(db_path, 300, epoch).unwrap();
-            let result = cache.mark_nonce_seen(&nonce_fp, now).unwrap();
+            let cache = NonceCache::open_default(db_path, 300, epoch).ok();
+            let result = cache.mark_nonce_seen(&nonce_fp, now).ok();
             assert_eq!(result, SeenResult::Replay); // Should be rejected!
         }
     }
@@ -1363,23 +1363,23 @@ mod tests {
         let old_timestamp = 1000000000i64; // Very old (year 2001)
 
         // Insert with old timestamp (this inserts into both memory cache and DB)
-        cache.mark_nonce_seen(&nonce_fp, old_timestamp).unwrap();
+        cache.mark_nonce_seen(&nonce_fp, old_timestamp).ok();
         assert_eq!(cache.size(), 1);
 
         // Both memory and disk now use Unix timestamps for consistency
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs() as i64;
         let cutoff = now - 10; // Anything older than 10 seconds ago
 
-        let pruned = cache.prune_seen_nonces(cutoff).unwrap();
+        let pruned = cache.prune_seen_nonces(cutoff).ok();
         // Both DB and memory entries are pruned (first_seen_unix = 1000000000 < cutoff)
         assert_eq!(pruned, 1);
 
         // Memory cache is now also pruned (consistent with disk)
         // So the nonce can be reinserted as NEW
-        let result = cache.mark_nonce_seen(&nonce_fp, now).unwrap();
+        let result = cache.mark_nonce_seen(&nonce_fp, now).ok();
         assert_eq!(result, SeenResult::New); // Both memory and disk were pruned
 
         // Verify cache now has the reinserted entry
@@ -1388,7 +1388,7 @@ mod tests {
         // For another new nonce, it should also work
         let new_nonce = [2u8; 32];
         let new_nonce_fp = compute_nonce_fingerprint(epoch, &new_nonce, 1, "client");
-        let result = cache.mark_nonce_seen(&new_nonce_fp, now).unwrap();
+        let result = cache.mark_nonce_seen(&new_nonce_fp, now).ok();
         assert_eq!(result, SeenResult::New);
     }
 
@@ -1440,9 +1440,9 @@ mod tests {
         // Store nonce with current timestamp (not old timestamp)
         let initial_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
-        cache.check_and_store(&nonce, initial_time).unwrap();
+        cache.check_and_store(&nonce, initial_time).ok();
 
         // Wait for expiration (TTL is 1 second)
         std::thread::sleep(Duration::from_secs(2));
@@ -1453,7 +1453,7 @@ mod tests {
         // Get new current timestamp for reinsert
         let new_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Should be able to use again (expired and cleaned)
@@ -1466,10 +1466,10 @@ mod tests {
 
         assert_eq!(cache.size(), 0);
 
-        cache.check_and_store(&[1u8; 32], 1234567890).unwrap();
+        cache.check_and_store(&[1u8; 32], 1234567890).ok();
         assert_eq!(cache.size(), 1);
 
-        cache.check_and_store(&[2u8; 32], 1234567890).unwrap();
+        cache.check_and_store(&[2u8; 32], 1234567890).ok();
         assert_eq!(cache.size(), 2);
     }
 
@@ -1492,7 +1492,7 @@ mod tests {
             .collect();
 
         // Wait for all threads
-        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().ok()).collect();
 
         // Exactly ONE should succeed, rest should fail
         let successes = results
@@ -1514,9 +1514,9 @@ mod tests {
 
     #[test]
     fn test_utilization_percentage() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let epoch = test_epoch();
-        let cache = NonceCache::open(temp_dir.path(), 60, 100, epoch).unwrap();
+        let cache = NonceCache::open(temp_dir.path(), 60, 100, epoch).ok();
 
         // Empty cache
         assert_eq!(cache.utilization(), 0.0);
@@ -1525,7 +1525,7 @@ mod tests {
         for i in 0..50 {
             let mut nonce = [0u8; 32];
             nonce[0] = i as u8;
-            cache.check_and_store(&nonce, 1234567890).unwrap();
+            cache.check_and_store(&nonce, 1234567890).ok();
         }
         assert_eq!(cache.utilization(), 0.5);
 
@@ -1533,28 +1533,28 @@ mod tests {
         for i in 50..100 {
             let mut nonce = [0u8; 32];
             nonce[0] = i as u8;
-            cache.check_and_store(&nonce, 1234567890).unwrap();
+            cache.check_and_store(&nonce, 1234567890).ok();
         }
         assert_eq!(cache.utilization(), 1.0);
     }
 
     #[test]
     fn test_max_size_accessor() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let epoch = test_epoch();
-        let cache = NonceCache::open(temp_dir.path(), 60, 5000, epoch).unwrap();
+        let cache = NonceCache::open(temp_dir.path(), 60, 5000, epoch).ok();
         assert_eq!(cache.max_size(), 5000);
     }
 
     #[test]
     fn test_network_epoch_mismatch_rejected() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let db_path = temp_dir.path();
 
         // Open with epoch1
         let epoch1 = NetworkEpoch::from_genesis(&[1u8; 32]);
         {
-            let _cache = NonceCache::open_default(db_path, 300, epoch1).unwrap();
+            let _cache = NonceCache::open_default(db_path, 300, epoch1).ok();
         }
 
         // Try to open with epoch2 - should fail
@@ -1573,27 +1573,27 @@ mod tests {
 
     #[test]
     fn test_corrupted_database_entries_handled_gracefully() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let db_path = temp_dir.path();
         let epoch = test_epoch();
 
         // Create cache and add a valid nonce
         {
-            let cache = NonceCache::open_default(db_path, 60, epoch).unwrap();
+            let cache = NonceCache::open_default(db_path, 60, epoch).ok();
             let nonce = [1u8; 32];
-            cache.check_and_store(&nonce, 1234567890).unwrap();
+            cache.check_and_store(&nonce, 1234567890).ok();
         }
 
         // Manually corrupt an entry in sled
         {
-            let db = sled::open(db_path).unwrap();
+            let db = sled::open(db_path).ok();
             let bad_key = b"seen:0000000000000000000000000000000000000000000000000000000000000000";
-            db.insert(bad_key, b"corrupted_binary_data").unwrap();
-            db.flush().unwrap();
+            db.insert(bad_key, b"corrupted_binary_data").ok();
+            db.flush().ok();
         }
 
         // Reopen cache - should recover without panic
-        let cache2 = NonceCache::open_default(db_path, 60, epoch).unwrap();
+        let cache2 = NonceCache::open_default(db_path, 60, epoch).ok();
 
         // Should load successfully and skip corrupted entry
         assert!(
@@ -1602,7 +1602,7 @@ mod tests {
         );
 
         // Verify we can still insert new nonces
-        let result = cache2.mark_nonce_seen(&[2u8; 32], 1234567890).unwrap();
+        let result = cache2.mark_nonce_seen(&[2u8; 32], 1234567890).ok();
         assert_eq!(
             result,
             SeenResult::New,
@@ -1612,16 +1612,16 @@ mod tests {
 
     #[test]
     fn test_replay_protection_after_memory_cache_eviction() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let epoch = test_epoch();
 
         // Create cache with small memory size (capacity 10)
-        let cache = NonceCache::open(temp_dir.path(), 60, 10, epoch).unwrap();
+        let cache = NonceCache::open(temp_dir.path(), 60, 10, epoch).ok();
 
         // Insert first nonce (in memory)
         let nonce1 = [1u8; 32];
         let fp1 = compute_nonce_fingerprint(epoch, &nonce1, 1, "client");
-        let result = cache.mark_nonce_seen(&fp1, 1000).unwrap();
+        let result = cache.mark_nonce_seen(&fp1, 1000).ok();
         assert_eq!(result, SeenResult::New, "First nonce should be new");
         assert_eq!(cache.size(), 1, "Cache should have 1 entry");
 
@@ -1638,7 +1638,7 @@ mod tests {
 
         // First nonce was evicted from memory but still on disk
         // Attempting to use it again should fail (disk lookup will find it)
-        let result = cache.mark_nonce_seen(&fp1, 1000).unwrap();
+        let result = cache.mark_nonce_seen(&fp1, 1000).ok();
         assert_eq!(
             result,
             SeenResult::Replay,
@@ -1651,9 +1651,9 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        let temp_dir = Arc::new(TempDir::new().unwrap());
+        let temp_dir = Arc::new(TempDir::new().ok());
         let epoch = test_epoch();
-        let cache = Arc::new(NonceCache::open_sync(temp_dir.path(), 60, epoch).unwrap());
+        let cache = Arc::new(NonceCache::open_sync(temp_dir.path(), 60, epoch).ok());
 
         // Insert 10,000 nonces in one thread (should trigger pruning)
         let insert_handle = {
@@ -1665,7 +1665,7 @@ mod tests {
                     let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs() as i64;
                     let _ = cache.mark_nonce_seen(&fp, now);
                 }
@@ -1682,7 +1682,7 @@ mod tests {
                     let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs() as i64;
                     let result = cache.mark_nonce_seen(&fp, now);
                     assert!(result.is_ok(), "Concurrent verification should succeed");
@@ -1690,8 +1690,8 @@ mod tests {
             })
         };
 
-        insert_handle.join().unwrap();
-        verify_handle.join().unwrap();
+        insert_handle.join().ok();
+        verify_handle.join().ok();
 
         // Should complete without panics or data corruption
         assert!(cache.size() > 0, "Cache should contain entries");
@@ -1699,20 +1699,20 @@ mod tests {
 
     #[test]
     fn test_ttl_boundary_exact_timestamp() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let epoch = test_epoch();
-        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).unwrap();
+        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).ok();
 
         let base_time = 1_000_000_000i64;
         let nonce = [1u8; 32];
         let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
 
         // Insert at base_time
-        cache.mark_nonce_seen(&fp, base_time).unwrap();
+        cache.mark_nonce_seen(&fp, base_time).ok();
 
         // Prune at base_time + 60 (exactly at TTL boundary)
         let cutoff_exact = base_time + 60;
-        let pruned = cache.prune_seen_nonces(cutoff_exact).unwrap();
+        let pruned = cache.prune_seen_nonces(cutoff_exact).ok();
 
         // Behavior should be consistent: nonce at exact boundary should be pruned
         assert!(pruned > 0, "Nonce at exact TTL boundary should be pruned");
@@ -1739,19 +1739,19 @@ mod tests {
 
     #[test]
     fn test_legacy_epoch_migration_from_old_format() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let db_path = temp_dir.path();
         let epoch = NetworkEpoch::from_genesis(&[5u8; 32]);
 
         // Simulate old format by directly writing legacy key
         {
-            let db = sled::open(db_path).unwrap();
-            db.insert(b"meta:epoch", &epoch.to_bytes()).unwrap();
-            db.flush().unwrap();
+            let db = sled::open(db_path).ok();
+            db.insert(b"meta:epoch", &epoch.to_bytes()).ok();
+            db.flush().ok();
         }
 
         // Open with new code - should migrate
-        let cache = NonceCache::open_default(db_path, 300, epoch).unwrap();
+        let cache = NonceCache::open_default(db_path, 300, epoch).ok();
 
         // Verify migration happened
         assert_eq!(
@@ -1763,7 +1763,7 @@ mod tests {
         // Should be able to add nonces normally
         let nonce = [42u8; 32];
         let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
-        let result = cache.mark_nonce_seen(&fp, 1234567890).unwrap();
+        let result = cache.mark_nonce_seen(&fp, 1234567890).ok();
         assert_eq!(
             result,
             SeenResult::New,
@@ -1779,26 +1779,26 @@ mod tests {
         let nonce = [1u8; 32];
 
         // Insert a nonce
-        cache.check_and_store(&nonce, 1234567890).unwrap();
+        cache.check_and_store(&nonce, 1234567890).ok();
 
         // Normal cleanup should work
         cache.cleanup_expired();
 
         // Verify nonce is still in cache (TTL hasn't expired)
-        let result = cache.mark_nonce_seen(&[1u8; 32], 1234567890).unwrap();
+        let result = cache.mark_nonce_seen(&[1u8; 32], 1234567890).ok();
         assert_eq!(result, SeenResult::Replay, "Nonce should still be cached");
     }
 
     #[test]
     fn test_two_separate_networks_cannot_share_nonces() {
-        let temp_dir1 = TempDir::new().unwrap();
-        let temp_dir2 = TempDir::new().unwrap();
+        let temp_dir1 = TempDir::new().ok();
+        let temp_dir2 = TempDir::new().ok();
 
         let epoch1 = NetworkEpoch::from_genesis(&[1u8; 32]);
         let epoch2 = NetworkEpoch::from_genesis(&[2u8; 32]);
 
-        let cache1 = NonceCache::open_default(temp_dir1.path(), 60, epoch1).unwrap();
-        let cache2 = NonceCache::open_default(temp_dir2.path(), 60, epoch2).unwrap();
+        let cache1 = NonceCache::open_default(temp_dir1.path(), 60, epoch1).ok();
+        let cache2 = NonceCache::open_default(temp_dir2.path(), 60, epoch2).ok();
 
         // Insert same nonce in both caches with different epochs
         let nonce = [42u8; 32];
@@ -1807,24 +1807,24 @@ mod tests {
 
         // Both inserts should succeed (different fingerprints)
         assert_eq!(
-            cache1.mark_nonce_seen(&fp1, 1000).unwrap(),
+            cache1.mark_nonce_seen(&fp1, 1000).ok(),
             SeenResult::New,
             "Nonce with epoch1 should be new in cache1"
         );
         assert_eq!(
-            cache2.mark_nonce_seen(&fp2, 1000).unwrap(),
+            cache2.mark_nonce_seen(&fp2, 1000).ok(),
             SeenResult::New,
             "Nonce with epoch2 should be new in cache2"
         );
 
         // Cross-network verification should see them as new (different fingerprints)
         assert_eq!(
-            cache1.mark_nonce_seen(&fp2, 1000).unwrap(),
+            cache1.mark_nonce_seen(&fp2, 1000).ok(),
             SeenResult::New,
             "Different fingerprint should be new in cache1"
         );
         assert_eq!(
-            cache2.mark_nonce_seen(&fp1, 1000).unwrap(),
+            cache2.mark_nonce_seen(&fp1, 1000).ok(),
             SeenResult::New,
             "Different fingerprint should be new in cache2"
         );
@@ -1836,9 +1836,9 @@ mod tests {
 
     #[test]
     fn test_batch_delete_atomicity() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let epoch = test_epoch();
-        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).unwrap();
+        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).ok();
 
         // Insert 100 nonces with old timestamps (will be pruned)
         let old_timestamp = 1000i64; // Very old
@@ -1847,7 +1847,7 @@ mod tests {
             let mut nonce = [0u8; 32];
             nonce[0] = i;
             let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
-            cache.mark_nonce_seen(&fp, old_timestamp).unwrap();
+            cache.mark_nonce_seen(&fp, old_timestamp).ok();
             fingerprints.push(fp);
         }
 
@@ -1855,7 +1855,7 @@ mod tests {
 
         // Prune with cutoff that expires all entries
         let cutoff = old_timestamp + 100; // All entries are older than this
-        let pruned = cache.prune_seen_nonces(cutoff).unwrap();
+        let pruned = cache.prune_seen_nonces(cutoff).ok();
 
         // Batch delete should remove all entries atomically
         assert_eq!(pruned, 100, "Should have pruned all 100 entries");
@@ -1865,11 +1865,11 @@ mod tests {
         drop(cache);
 
         // Reopen cache to verify disk state
-        let cache2 = NonceCache::open_default(temp_dir.path(), 60, epoch).unwrap();
+        let cache2 = NonceCache::open_default(temp_dir.path(), 60, epoch).ok();
 
         // All fingerprints should be insertable as new (they were batch-deleted)
         for fp in &fingerprints {
-            let result = cache2.mark_nonce_seen(fp, old_timestamp + 200).unwrap();
+            let result = cache2.mark_nonce_seen(fp, old_timestamp + 200).ok();
             assert_eq!(
                 result,
                 SeenResult::New,
@@ -1880,9 +1880,9 @@ mod tests {
 
     #[test]
     fn test_batch_delete_with_many_entries() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let epoch = test_epoch();
-        let cache = NonceCache::open(temp_dir.path(), 60, 10_000, epoch).unwrap();
+        let cache = NonceCache::open(temp_dir.path(), 60, 10_000, epoch).ok();
 
         // Insert 1000 nonces (exceeds the >10 threshold for batch optimization)
         let old_timestamp = 1000i64;
@@ -1890,14 +1890,14 @@ mod tests {
             let mut nonce = [0u8; 32];
             nonce[0..4].copy_from_slice(&i.to_le_bytes());
             let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
-            cache.mark_nonce_seen(&fp, old_timestamp).unwrap();
+            cache.mark_nonce_seen(&fp, old_timestamp).ok();
         }
 
         assert_eq!(cache.size(), 1000, "Should have 1000 entries");
 
         // Prune all entries
         let cutoff = old_timestamp + 100;
-        let pruned = cache.prune_seen_nonces(cutoff).unwrap();
+        let pruned = cache.prune_seen_nonces(cutoff).ok();
 
         // Should efficiently batch delete all 1000 entries
         assert_eq!(pruned, 1000, "Should prune all 1000 entries in batch");
@@ -1905,22 +1905,22 @@ mod tests {
 
     #[test]
     fn test_batch_clear_atomicity() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let epoch = test_epoch();
-        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).unwrap();
+        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).ok();
 
         // Insert multiple nonces
         for i in 0..50u8 {
             let mut nonce = [0u8; 32];
             nonce[0] = i;
             let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
-            cache.mark_nonce_seen(&fp, 1234567890).unwrap();
+            cache.mark_nonce_seen(&fp, 1234567890).ok();
         }
 
         assert_eq!(cache.size(), 50, "Should have 50 entries before clear");
 
         // Clear uses batch delete internally (now returns Result)
-        cache.clear().unwrap();
+        cache.clear().ok();
 
         assert_eq!(cache.size(), 0, "Should have 0 entries after clear");
 
@@ -1929,7 +1929,7 @@ mod tests {
             let mut nonce = [0u8; 32];
             nonce[0] = i;
             let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
-            let result = cache.mark_nonce_seen(&fp, 1234567890).unwrap();
+            let result = cache.mark_nonce_seen(&fp, 1234567890).ok();
             assert_eq!(
                 result,
                 SeenResult::New,
@@ -1940,13 +1940,13 @@ mod tests {
 
     #[test]
     fn test_empty_batch_delete_no_error() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let epoch = test_epoch();
-        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).unwrap();
+        let cache = NonceCache::open_default(temp_dir.path(), 60, epoch).ok();
 
         // Prune on empty cache should succeed without error
         let cutoff = 999999999i64;
-        let pruned = cache.prune_seen_nonces(cutoff).unwrap();
+        let pruned = cache.prune_seen_nonces(cutoff).ok();
 
         assert_eq!(pruned, 0, "Should report 0 entries pruned on empty cache");
     }
@@ -1962,23 +1962,23 @@ mod tests {
     /// fixed in PR #440.
     #[test]
     fn test_epoch_increments_on_reopen() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let db_path = temp_dir.path();
         let genesis = [42u8; 32];
         let expected_epoch = NetworkEpoch::from_genesis(&genesis);
 
         // First open
-        let cache1 = NonceCache::open_default(db_path, 300, expected_epoch).unwrap();
+        let cache1 = NonceCache::open_default(db_path, 300, expected_epoch).ok();
         let epoch1 = cache1.network_epoch();
         drop(cache1);
 
         // Second open (simulate restart)
-        let cache2 = NonceCache::open_default(db_path, 300, expected_epoch).unwrap();
+        let cache2 = NonceCache::open_default(db_path, 300, expected_epoch).ok();
         let epoch2 = cache2.network_epoch();
         drop(cache2);
 
         // Third open (another restart)
-        let cache3 = NonceCache::open_default(db_path, 300, expected_epoch).unwrap();
+        let cache3 = NonceCache::open_default(db_path, 300, expected_epoch).ok();
         let epoch3 = cache3.network_epoch();
 
         // Assert: epoch is STABLE (does NOT increment)
@@ -2005,14 +2005,14 @@ mod tests {
     /// the expected value and is retrieved correctly on reopen.
     #[test]
     fn test_epoch_persistence() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let db_path = temp_dir.path();
         let genesis = [123u8; 32];
         let expected_epoch = NetworkEpoch::from_genesis(&genesis);
 
         // Create cache and verify epoch is stored
         {
-            let cache = NonceCache::open_default(db_path, 300, expected_epoch).unwrap();
+            let cache = NonceCache::open_default(db_path, 300, expected_epoch).ok();
             assert_eq!(
                 cache.network_epoch(),
                 expected_epoch,
@@ -2022,7 +2022,7 @@ mod tests {
 
         // Reopen with same epoch - should succeed
         {
-            let cache = NonceCache::open_default(db_path, 300, expected_epoch).unwrap();
+            let cache = NonceCache::open_default(db_path, 300, expected_epoch).ok();
             assert_eq!(
                 cache.network_epoch(),
                 expected_epoch,
@@ -2051,14 +2051,14 @@ mod tests {
     /// property that DB-013 ensures.
     #[test]
     fn test_cross_restart_replay_protection() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let db_path = temp_dir.path();
         let epoch = NetworkEpoch::from_genesis(&[0u8; 32]);
 
         // Use current timestamp to ensure nonces don't get pruned
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs() as i64;
 
         // Create some nonces
@@ -2072,22 +2072,22 @@ mod tests {
 
         // Session 1: Mark nonces 1 and 2 as seen
         {
-            let cache = NonceCache::open_default(db_path, 3600, epoch).unwrap();
+            let cache = NonceCache::open_default(db_path, 3600, epoch).ok();
 
             assert_eq!(
-                cache.mark_nonce_seen(&fp1, now).unwrap(),
+                cache.mark_nonce_seen(&fp1, now).ok(),
                 SeenResult::New,
                 "Nonce 1 should be new in session 1"
             );
             assert_eq!(
-                cache.mark_nonce_seen(&fp2, now).unwrap(),
+                cache.mark_nonce_seen(&fp2, now).ok(),
                 SeenResult::New,
                 "Nonce 2 should be new in session 1"
             );
 
             // Verify immediate replay detection
             assert_eq!(
-                cache.mark_nonce_seen(&fp1, now).unwrap(),
+                cache.mark_nonce_seen(&fp1, now).ok(),
                 SeenResult::Replay,
                 "Nonce 1 should be detected as replay in same session"
             );
@@ -2095,23 +2095,23 @@ mod tests {
 
         // Session 2: Simulate restart
         {
-            let cache = NonceCache::open_default(db_path, 3600, epoch).unwrap();
+            let cache = NonceCache::open_default(db_path, 3600, epoch).ok();
 
             // CRITICAL: Nonces from session 1 MUST be detected as replays
             assert_eq!(
-                cache.mark_nonce_seen(&fp1, now).unwrap(),
+                cache.mark_nonce_seen(&fp1, now).ok(),
                 SeenResult::Replay,
                 "Nonce 1 MUST be detected as replay after restart"
             );
             assert_eq!(
-                cache.mark_nonce_seen(&fp2, now).unwrap(),
+                cache.mark_nonce_seen(&fp2, now).ok(),
                 SeenResult::Replay,
                 "Nonce 2 MUST be detected as replay after restart"
             );
 
             // New nonce should still be accepted
             assert_eq!(
-                cache.mark_nonce_seen(&fp3, now).unwrap(),
+                cache.mark_nonce_seen(&fp3, now).ok(),
                 SeenResult::New,
                 "New nonce 3 should be accepted after restart"
             );
@@ -2119,10 +2119,10 @@ mod tests {
 
         // Session 3: Verify nonce 3 is also persisted
         {
-            let cache = NonceCache::open_default(db_path, 3600, epoch).unwrap();
+            let cache = NonceCache::open_default(db_path, 3600, epoch).ok();
 
             assert_eq!(
-                cache.mark_nonce_seen(&fp3, now).unwrap(),
+                cache.mark_nonce_seen(&fp3, now).ok(),
                 SeenResult::Replay,
                 "Nonce 3 MUST be detected as replay after second restart"
             );
@@ -2142,7 +2142,7 @@ mod tests {
 
         // If not initialized, try to initialize (may fail if already initialized by another test)
         if !is_init {
-            let temp_dir = TempDir::new().unwrap();
+            let temp_dir = TempDir::new().ok();
             let epoch = test_epoch();
 
             // This may succeed or fail depending on test order
@@ -2153,7 +2153,7 @@ mod tests {
         // This may still fail if initialization failed, which is acceptable
         let result = super::global_nonce_cache();
         if result.is_ok() {
-            let cache = result.unwrap();
+            let cache = result.ok();
             // Verify the cache is functional
             assert!(cache.max_size() > 0, "Cache should have positive max size");
         }

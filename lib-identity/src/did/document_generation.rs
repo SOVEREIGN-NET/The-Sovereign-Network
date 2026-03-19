@@ -130,7 +130,7 @@ pub fn generate_did_document(
     // Generate timestamp
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok()
         .as_secs();
     let timestamp = format_timestamp(now);
 
@@ -342,7 +342,7 @@ pub fn update_did_document(
     // Update timestamp
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok()
         .as_secs();
     document.updated = format_timestamp(now);
 
@@ -728,7 +728,7 @@ mod tests {
             .iter()
             .find(|d| d.device_id == "phone-1");
         assert!(entry.is_some(), "Device should be added");
-        assert_eq!(entry.unwrap().status, DeviceStatus::Active);
+        assert_eq!(entry.ok().status, DeviceStatus::Active);
         Ok(())
     }
 
@@ -760,7 +760,7 @@ mod tests {
             .iter()
             .find(|d| d.device_id == "tablet-1");
         assert!(entry.is_some(), "Device should exist");
-        assert_eq!(entry.unwrap().status, DeviceStatus::Removed);
+        assert_eq!(entry.ok().status, DeviceStatus::Removed);
         Ok(())
     }
 

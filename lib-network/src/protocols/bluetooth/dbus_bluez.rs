@@ -385,11 +385,11 @@ mod tests {
     #[test]
     fn test_device_path_conversion() {
         let client = BlueZDBusClient {
-            connection: Connection::new_system().unwrap(),
+            connection: Connection::new_system().ok(),
             adapter_path: "/org/bluez/hci0".to_string(),
         };
 
-        let path = client.get_device_path("AA:BB:CC:DD:EE:FF").unwrap();
+        let path = client.get_device_path("AA:BB:CC:DD:EE:FF").ok();
         assert_eq!(path, "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF");
     }
 }

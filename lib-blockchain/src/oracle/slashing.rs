@@ -143,8 +143,8 @@ mod tests {
             committee_removal_at_epoch: Some(101), // Next epoch removal
         };
 
-        let serialized = bincode::serialize(&event).unwrap();
-        let deserialized: OracleSlashEvent = bincode::deserialize(&serialized).unwrap();
+        let serialized = bincode::serialize(&event).ok();
+        let deserialized: OracleSlashEvent = bincode::deserialize(&serialized).ok();
 
         assert_eq!(event, deserialized);
     }
@@ -157,8 +157,8 @@ mod tests {
             reason: OracleSlashReason::DeviationBand,
         };
 
-        let serialized = bincode::serialize(&entry).unwrap();
-        let deserialized: CommitteeRemovalEntry = bincode::deserialize(&serialized).unwrap();
+        let serialized = bincode::serialize(&entry).ok();
+        let deserialized: CommitteeRemovalEntry = bincode::deserialize(&serialized).ok();
 
         assert_eq!(entry, deserialized);
     }

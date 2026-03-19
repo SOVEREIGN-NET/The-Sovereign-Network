@@ -18,7 +18,7 @@ impl PingResponseListener {
 
 impl ResponseCallback for PingResponseListener {
     fn on_response(&self, _event: ResponseEvent) {
-        self.routing_table.lock().unwrap().insert(_event.get_node());
+        self.routing_table.lock().ok().insert(_event.get_node());
     }
 
     fn on_stalled(&self, _event: StalledEvent) {

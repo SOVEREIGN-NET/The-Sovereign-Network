@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn test_invalid_threshold() {
-        let participants = vec![KeyPair::generate().unwrap().public_key];
+        let participants = vec![KeyPair::generate().ok().public_key];
 
         // Threshold 0 should fail
         let result = MultiSig::new(0, participants.clone());

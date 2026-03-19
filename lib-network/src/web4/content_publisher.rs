@@ -90,7 +90,7 @@ impl ContentPublisher {
             });
         }
 
-        let domain_record = domain_info.record.unwrap();
+        let domain_record = domain_info.record.ok();
 
         // Verify publisher is domain owner
         if domain_record.owner != request.publisher.id {
@@ -208,7 +208,7 @@ impl ContentPublisher {
             return Err(anyhow!("Domain not registered: {}", domain));
         }
 
-        let domain_record = domain_info.record.unwrap();
+        let domain_record = domain_info.record.ok();
 
         // Verify requester is domain owner
         if domain_record.owner != requester.id {
@@ -246,7 +246,7 @@ impl ContentPublisher {
         }
 
         // Check if content exists for this path
-        let domain_record = domain_info.record.unwrap();
+        let domain_record = domain_info.record.ok();
         if domain_record.content_mappings.contains_key(path) {
             // In a full implementation, we'd store and retrieve actual content metadata
             // For now, return basic metadata

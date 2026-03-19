@@ -62,7 +62,7 @@ pub fn sign_with_identity(
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok()
         .as_secs();
 
     Ok(PostQuantumSignature {

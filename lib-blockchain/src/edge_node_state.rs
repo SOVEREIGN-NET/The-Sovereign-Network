@@ -548,7 +548,7 @@ impl EdgeNodeState {
             latest_block_hash: self.get_latest_header().map(|h| h.block_hash),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         }
     }

@@ -109,7 +109,7 @@ impl KeyPair {
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             })
         } else if sk_len == DILITHIUM5_SECRETKEY_BYTES_CRYSTALS {
@@ -124,7 +124,7 @@ impl KeyPair {
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             })
         } else if sk_len == DILITHIUM2_SECRETKEY_BYTES {
@@ -139,7 +139,7 @@ impl KeyPair {
                 algorithm: SignatureAlgorithm::Dilithium2,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             })
         } else {

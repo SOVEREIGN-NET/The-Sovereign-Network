@@ -257,7 +257,7 @@ fn derive_token_address(config: &DaoLaunchConfig) -> PublicKey {
     hasher.update(b"token_addr");
     hasher.update(config.name.as_bytes());
     let id = hasher.finalize();
-    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap();
+    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).ok();
 
     // Derive high-entropy, domain-separated public key material from key_id
     let dilithium_pk = {
@@ -289,7 +289,7 @@ fn derive_treasury_address(config: &DaoLaunchConfig) -> PublicKey {
     hasher.update(b"treasury_addr");
     hasher.update(config.symbol.as_bytes());
     let id = hasher.finalize();
-    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap();
+    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).ok();
 
     // Derive high-entropy, domain-separated public key material from key_id
     let dilithium_pk = {
@@ -321,7 +321,7 @@ fn derive_staking_address(config: &DaoLaunchConfig) -> PublicKey {
     hasher.update(b"staking_addr");
     hasher.update(config.symbol.as_bytes());
     let id = hasher.finalize();
-    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap();
+    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).ok();
 
     // Derive high-entropy, domain-separated public key material from key_id
     let dilithium_pk = {
@@ -353,7 +353,7 @@ fn derive_brokerage_address(config: &DaoLaunchConfig) -> PublicKey {
     hasher.update(b"brokerage_addr");
     hasher.update(config.symbol.as_bytes());
     let id = hasher.finalize();
-    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap();
+    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).ok();
 
     // Derive high-entropy, domain-separated public key material from key_id
     let dilithium_pk = {
@@ -385,7 +385,7 @@ fn derive_employment_registry_address(config: &DaoLaunchConfig) -> PublicKey {
     hasher.update(b"employment_addr");
     hasher.update(config.symbol.as_bytes());
     let id = hasher.finalize();
-    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).unwrap();
+    let key_id: [u8; 32] = <[u8; 32]>::try_from(&id.as_bytes()[0..32]).ok();
 
     // Derive high-entropy, domain-separated public key material from key_id
     let dilithium_pk = {
@@ -445,7 +445,7 @@ mod tests {
             sector: Some(WelfareSector::Education),
         };
 
-        let result = orchestrator.launch_dao(config, &test_public_key(1), 100).unwrap();
+        let result = orchestrator.launch_dao(config, &test_public_key(1), 100).ok();
 
         assert_eq!(result.dao_id.len(), 32);
         assert!(matches!(result.status, LaunchStatus::Launched { .. }));
@@ -470,7 +470,7 @@ mod tests {
             sector: None,
         };
 
-        let result = orchestrator.launch_dao(config, &test_public_key(1), 100).unwrap();
+        let result = orchestrator.launch_dao(config, &test_public_key(1), 100).ok();
 
         assert_eq!(result.dao_id.len(), 32);
         assert!(result.employment_registry_addr.is_some());
@@ -497,7 +497,7 @@ mod tests {
             sector: Some(WelfareSector::Energy),
         };
 
-        let result = orchestrator.launch_dao(config, &test_public_key(1), 100).unwrap();
+        let result = orchestrator.launch_dao(config, &test_public_key(1), 100).ok();
 
         assert_eq!(result.dao_id.len(), 32);
         assert!(matches!(result.status, LaunchStatus::Pending { .. }));
@@ -642,13 +642,13 @@ mod tests {
             sector: Some(WelfareSector::Education),
         };
 
-        let result = orchestrator.launch_dao(config, &test_public_key(1), 100).unwrap();
+        let result = orchestrator.launch_dao(config, &test_public_key(1), 100).ok();
         let dao_id = result.dao_id;
 
         // Should be able to retrieve it
         let retrieved = orchestrator.get_launched_dao(&dao_id);
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().dao_id, dao_id);
+        assert_eq!(retrieved.ok().dao_id, dao_id);
     }
 
     #[test]
@@ -669,7 +669,7 @@ mod tests {
                 approval_verifier_type: ApprovalVerifierType::SimpleMajority,
                 sector: Some(WelfareSector::Energy),
             };
-            orchestrator.launch_dao(config, &test_public_key(1), 100 + i as u64).unwrap();
+            orchestrator.launch_dao(config, &test_public_key(1), 100 + i as u64).ok();
         }
 
         assert_eq!(orchestrator.get_all_launched_daos().len(), 3);

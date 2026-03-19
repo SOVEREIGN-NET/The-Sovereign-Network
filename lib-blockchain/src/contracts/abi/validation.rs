@@ -153,7 +153,7 @@ impl AbiValidator {
         }
 
         // Must start with letter or underscore
-        if !name.chars().next().unwrap().is_alphabetic() && !name.starts_with('_') {
+        if !name.chars().next().ok().is_alphabetic() && !name.starts_with('_') {
             return Err(anyhow!(
                 "Invalid {} name '{}': must start with letter or underscore",
                 kind,

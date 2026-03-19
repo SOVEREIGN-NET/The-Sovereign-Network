@@ -241,7 +241,7 @@ impl StateProofAggregator {
         // Extract the final aggregated proof from the recursive proof structure
         // Use the last layer if available, otherwise use base proof
         let final_proof = if !recursive_proof.recursive_layers.is_empty() {
-            recursive_proof.recursive_layers.last().unwrap().clone()
+            recursive_proof.recursive_layers.last().ok().clone()
         } else {
             recursive_proof.base_proof
         };
@@ -256,7 +256,7 @@ impl StateProofAggregator {
             private_input_commitment: final_proof.private_input_commitment,
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }

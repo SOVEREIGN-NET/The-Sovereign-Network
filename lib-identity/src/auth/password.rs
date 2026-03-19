@@ -560,14 +560,14 @@ mod tests {
         let password = "Valid_Pass123!";
 
         pm.mark_identity_imported(&identity_id);
-        pm.set_password(&identity_id, password, &seed).unwrap();
+        pm.set_password(&identity_id, password, &seed).ok();
 
         // Correct password
-        let validation = pm.validate_password(&identity_id, password, &seed).unwrap();
+        let validation = pm.validate_password(&identity_id, password, &seed).ok();
         assert!(validation.valid);
 
         // Wrong password
-        let validation = pm.validate_password(&identity_id, "wrong", &seed).unwrap();
+        let validation = pm.validate_password(&identity_id, "wrong", &seed).ok();
         assert!(!validation.valid);
     }
 }

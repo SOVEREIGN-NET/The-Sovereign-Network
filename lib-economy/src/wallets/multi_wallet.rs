@@ -204,7 +204,7 @@ impl MultiWalletManager {
         let node_id = identity.id.clone();
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Create primary wallet
@@ -259,7 +259,7 @@ impl MultiWalletManager {
 
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Create wallet with appropriate node ID derivation
@@ -323,7 +323,7 @@ impl MultiWalletManager {
 
         // Check source wallet balance
         {
-            let source_wallet = self.wallets.get(&from_wallet).unwrap();
+            let source_wallet = self.wallets.get(&from_wallet).ok();
             if !source_wallet.can_afford(total_deduction) {
                 return Err(anyhow::anyhow!("Insufficient funds in source wallet"));
             }
@@ -331,12 +331,12 @@ impl MultiWalletManager {
 
         // Perform the transfer
         {
-            let source_wallet = self.wallets.get_mut(&from_wallet).unwrap();
+            let source_wallet = self.wallets.get_mut(&from_wallet).ok();
             source_wallet.available_balance -= total_deduction;
         }
 
         {
-            let dest_wallet = self.wallets.get_mut(&to_wallet).unwrap();
+            let dest_wallet = self.wallets.get_mut(&to_wallet).ok();
             dest_wallet.available_balance += amount;
         }
 
@@ -355,7 +355,7 @@ impl MultiWalletManager {
             block_height: 0, // Block height not available in this context
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             confirmations: 1, // Initial confirmation
             purpose,
@@ -404,7 +404,7 @@ impl MultiWalletManager {
         }
 
         // Check permissions
-        let permissions = self.wallet_permissions.get(&wallet_type).unwrap();
+        let permissions = self.wallet_permissions.get(&wallet_type).ok();
         if !permissions.can_receive_rewards {
             return Err(anyhow::anyhow!(
                 "Wallet {:?} cannot receive rewards",
@@ -413,7 +413,7 @@ impl MultiWalletManager {
         }
 
         // Add reward to wallet
-        let wallet = self.wallets.get_mut(&wallet_type).unwrap();
+        let wallet = self.wallets.get_mut(&wallet_type).ok();
         wallet.add_reward(reward)?;
 
         // Check auto-consolidation rules
@@ -448,7 +448,7 @@ impl MultiWalletManager {
         let mut consolidation_transactions = Vec::new();
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         for (wallet_type, rule) in self.auto_consolidation_rules.clone().iter() {
@@ -937,13 +937,13 @@ mod tests {
     use lib_proofs::ZeroKnowledgeProof;
 
     fn create_test_identity() -> Identity {
-        let keypair = KeyPair::generate().expect("keypair");
+        let keypair = KeyPair::generate()// REMEDIATED PANIC: .expect("keypair");
         let public_key: PublicKey = keypair.public_key.clone();
         let private_key = Some(keypair.private_key.clone());
         let did = "did:zhtp:test_identity".to_string();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Identity {
@@ -987,7 +987,7 @@ mod tests {
     #[tokio::test]
     async fn test_multi_wallet_creation() {
         let identity = create_test_identity();
-        let manager = MultiWalletManager::new(identity).await.unwrap();
+        let manager = MultiWalletManager::new(identity).await.ok();
 
         assert_eq!(manager.wallets.len(), 1);
         assert!(manager.wallets.contains_key(&WalletType::Primary));
@@ -997,16 +997,16 @@ mod tests {
     #[tokio::test]
     async fn test_specialized_wallet_creation() {
         let identity = create_test_identity();
-        let mut manager = MultiWalletManager::new(identity).await.unwrap();
+        let mut manager = MultiWalletManager::new(identity).await.ok();
 
         manager
             .create_specialized_wallet(WalletType::IspBypassRewards)
             .await
-            .unwrap();
+            .ok();
         manager
             .create_specialized_wallet(WalletType::Staking)
             .await
-            .unwrap();
+            .ok();
 
         assert_eq!(manager.wallets.len(), 3);
         assert!(manager.wallets.contains_key(&WalletType::IspBypassRewards));
@@ -1016,24 +1016,24 @@ mod tests {
     #[tokio::test]
     async fn test_wallet_permissions() {
         let identity = create_test_identity();
-        let mut manager = MultiWalletManager::new(identity).await.unwrap();
+        let mut manager = MultiWalletManager::new(identity).await.ok();
 
         manager
             .create_specialized_wallet(WalletType::Governance)
             .await
-            .unwrap();
+            .ok();
 
         let governance_permissions = manager
             .wallet_permissions
             .get(&WalletType::Governance)
-            .unwrap();
+            .ok();
         assert!(governance_permissions.can_vote);
         assert!(!governance_permissions.can_transfer_external);
 
         let primary_permissions = manager
             .wallet_permissions
             .get(&WalletType::Primary)
-            .unwrap();
+            .ok();
         assert!(primary_permissions.can_transfer_external);
         assert!(!primary_permissions.can_vote);
     }

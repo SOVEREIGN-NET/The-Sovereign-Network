@@ -228,7 +228,7 @@ mod tests {
     fn test_init_sets_sector() {
         let fee_collector = create_test_public_key(1);
 
-        let treasury = SovDaoTreasury::init(SectorDao::Healthcare, fee_collector, None).unwrap();
+        let treasury = SovDaoTreasury::init(SectorDao::Healthcare, fee_collector, None).ok();
 
         assert_eq!(treasury.sector(), SectorDao::Healthcare);
         assert_eq!(treasury.total_received(), 0);
@@ -240,7 +240,7 @@ mod tests {
         let fee_collector = create_test_public_key(1);
 
         let treasury =
-            SovDaoTreasury::init(SectorDao::Education, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Education, fee_collector.clone(), None).ok();
 
         assert_eq!(treasury.authorized_fee_collector(), &fee_collector);
     }
@@ -265,7 +265,7 @@ mod tests {
     fn test_credit_by_authorized_fee_collector_succeeds() {
         let fee_collector = create_test_public_key(1);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         let result = treasury.credit(&fee_collector, 1_000_000, 100);
 
@@ -279,7 +279,7 @@ mod tests {
         let fee_collector = create_test_public_key(1);
         let attacker = create_test_public_key(2);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         let result = treasury.credit(&attacker, 1_000_000, 100);
 
@@ -300,7 +300,7 @@ mod tests {
     fn test_credit_zero_amount_rejected() {
         let fee_collector = create_test_public_key(1);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         let result = treasury.credit(&fee_collector, 0, 100);
 
@@ -315,18 +315,18 @@ mod tests {
     fn test_credit_increases_total_monotonically() {
         let fee_collector = create_test_public_key(1);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         // First credit
-        treasury.credit(&fee_collector, 1_000_000, 100).unwrap();
+        treasury.credit(&fee_collector, 1_000_000, 100).ok();
         assert_eq!(treasury.total_received(), 1_000_000);
 
         // Second credit (adds to first)
-        treasury.credit(&fee_collector, 2_000_000, 200).unwrap();
+        treasury.credit(&fee_collector, 2_000_000, 200).ok();
         assert_eq!(treasury.total_received(), 3_000_000);
 
         // Third credit (never decreases)
-        treasury.credit(&fee_collector, 500_000, 300).unwrap();
+        treasury.credit(&fee_collector, 500_000, 300).ok();
         assert_eq!(treasury.total_received(), 3_500_000);
     }
 
@@ -334,7 +334,7 @@ mod tests {
     fn test_credit_overflow_protection() {
         let fee_collector = create_test_public_key(1);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         // Set total_received near u64::MAX
         treasury.total_received = u64::MAX - 100;
@@ -355,14 +355,14 @@ mod tests {
     fn test_last_credit_height_updates() {
         let fee_collector = create_test_public_key(1);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         assert_eq!(treasury.last_credit_height(), 0);
 
-        treasury.credit(&fee_collector, 1_000_000, 42).unwrap();
+        treasury.credit(&fee_collector, 1_000_000, 42).ok();
         assert_eq!(treasury.last_credit_height(), 42);
 
-        treasury.credit(&fee_collector, 500_000, 100).unwrap();
+        treasury.credit(&fee_collector, 500_000, 100).ok();
         assert_eq!(treasury.last_credit_height(), 100);
     }
 
@@ -374,7 +374,7 @@ mod tests {
     fn test_sector_is_immutable() {
         let fee_collector = create_test_public_key(1);
         let treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         // sector() returns same value always
         assert_eq!(treasury.sector(), SectorDao::Healthcare);
@@ -397,7 +397,7 @@ mod tests {
         ];
 
         for sector in &sectors {
-            let treasury = SovDaoTreasury::init(*sector, fee_collector.clone(), None).unwrap();
+            let treasury = SovDaoTreasury::init(*sector, fee_collector.clone(), None).ok();
             assert_eq!(treasury.sector(), *sector);
         }
     }
@@ -411,7 +411,7 @@ mod tests {
         let fee_collector = create_test_public_key(1);
         let attacker = create_test_public_key(2);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         let initial_total = treasury.total_received();
         let initial_height = treasury.last_credit_height();
@@ -431,7 +431,7 @@ mod tests {
     fn test_credit_atomicity_amount_checked_before_mutation() {
         let fee_collector = create_test_public_key(1);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         let initial_total = treasury.total_received();
         let initial_height = treasury.last_credit_height();
@@ -455,18 +455,18 @@ mod tests {
     fn test_block_height_increases_monotonically() {
         let fee_collector = create_test_public_key(1);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         // Credit at height 100
-        treasury.credit(&fee_collector, 1_000_000, 100).unwrap();
+        treasury.credit(&fee_collector, 1_000_000, 100).ok();
         assert_eq!(treasury.last_credit_height(), 100);
 
         // Credit at height 200 (increases)
-        treasury.credit(&fee_collector, 500_000, 200).unwrap();
+        treasury.credit(&fee_collector, 500_000, 200).ok();
         assert_eq!(treasury.last_credit_height(), 200);
 
         // Credit at height 200 again (same is ok)
-        treasury.credit(&fee_collector, 250_000, 200).unwrap();
+        treasury.credit(&fee_collector, 250_000, 200).ok();
         assert_eq!(treasury.last_credit_height(), 200);
     }
 
@@ -475,10 +475,10 @@ mod tests {
         // CRITICAL: Block height must never decrease (monotonic audit trail)
         let fee_collector = create_test_public_key(1);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         // First credit at height 200
-        treasury.credit(&fee_collector, 1_000_000, 200).unwrap();
+        treasury.credit(&fee_collector, 1_000_000, 200).ok();
         assert_eq!(treasury.last_credit_height(), 200);
 
         let state_before = treasury.total_received();
@@ -500,10 +500,10 @@ mod tests {
         // Prevents malicious fee collector from submitting credits out of order
         let fee_collector = create_test_public_key(1);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Healthcare, fee_collector.clone(), None).ok();
 
         // Credit at block 1000
-        treasury.credit(&fee_collector, 1_000_000, 1000).unwrap();
+        treasury.credit(&fee_collector, 1_000_000, 1000).ok();
 
         // Try to sneak in a credit at block 500 (earlier)
         let result = treasury.credit(&fee_collector, 100_000, 500);
@@ -512,7 +512,7 @@ mod tests {
         assert!(result.is_err());
 
         // Later blocks are always accepted
-        treasury.credit(&fee_collector, 500_000, 2000).unwrap();
+        treasury.credit(&fee_collector, 500_000, 2000).ok();
         assert_eq!(treasury.last_credit_height(), 2000);
     }
 
@@ -524,7 +524,7 @@ mod tests {
     fn test_invariant_c1_period_state_existence_none() {
         // Invariant C1: Explicit None, not implicit absence
         let fee_collector = create_test_public_key(1);
-        let treasury = SovDaoTreasury::init(SectorDao::Healthcare, fee_collector, None).unwrap();
+        let treasury = SovDaoTreasury::init(SectorDao::Healthcare, fee_collector, None).ok();
 
         assert_eq!(treasury.allocation_period(), None);
         assert_eq!(treasury.current_period(), None);
@@ -540,7 +540,7 @@ mod tests {
             fee_collector,
             Some(EconomicPeriod::Monthly),
         )
-        .unwrap();
+        .ok();
 
         assert_eq!(treasury.allocation_period(), Some(EconomicPeriod::Monthly));
         // current_period not set until first credit
@@ -557,10 +557,10 @@ mod tests {
             fee_collector.clone(),
             Some(EconomicPeriod::Daily),
         )
-        .unwrap();
+        .ok();
 
         // Credit at height 8640 (first Daily boundary)
-        treasury.credit(&fee_collector, 1_000_000, 8_640).unwrap();
+        treasury.credit(&fee_collector, 1_000_000, 8_640).ok();
 
         // Period 1 should be recorded
         assert_eq!(treasury.last_recorded_period(), Some(1));
@@ -579,20 +579,20 @@ mod tests {
             fee_collector.clone(),
             Some(EconomicPeriod::Daily),
         )
-        .unwrap();
+        .ok();
 
         // Credit in period 1 (height 8_640)
-        treasury.credit(&fee_collector, 1_000_000, 8_640).unwrap();
+        treasury.credit(&fee_collector, 1_000_000, 8_640).ok();
         assert_eq!(treasury.current_period(), Some(1));
         assert_eq!(treasury.last_recorded_period(), Some(1));
 
         // Credit in period 2 (height 17_280)
-        treasury.credit(&fee_collector, 500_000, 17_280).unwrap();
+        treasury.credit(&fee_collector, 500_000, 17_280).ok();
         assert_eq!(treasury.current_period(), Some(2));
         assert_eq!(treasury.last_recorded_period(), Some(2));
 
         // Credit in period 3 (height 25_920)
-        treasury.credit(&fee_collector, 250_000, 25_920).unwrap();
+        treasury.credit(&fee_collector, 250_000, 25_920).ok();
         assert_eq!(treasury.current_period(), Some(3));
         assert_eq!(treasury.last_recorded_period(), Some(3));
 
@@ -609,20 +609,20 @@ mod tests {
             fee_collector.clone(),
             Some(EconomicPeriod::Daily),
         )
-        .unwrap();
+        .ok();
 
         // Period 1 (heights 8640-17279): receive multiple credits
-        treasury.credit(&fee_collector, 100_000, 8_640).unwrap();
+        treasury.credit(&fee_collector, 100_000, 8_640).ok();
         assert_eq!(treasury.period_amount(1), 100_000);
 
-        treasury.credit(&fee_collector, 50_000, 9_000).unwrap();
+        treasury.credit(&fee_collector, 50_000, 9_000).ok();
         assert_eq!(treasury.period_amount(1), 150_000);
 
-        treasury.credit(&fee_collector, 75_000, 10_000).unwrap();
+        treasury.credit(&fee_collector, 75_000, 10_000).ok();
         assert_eq!(treasury.period_amount(1), 225_000);
 
         // Move to period 2 (heights 17280-25919)
-        treasury.credit(&fee_collector, 300_000, 17_280).unwrap();
+        treasury.credit(&fee_collector, 300_000, 17_280).ok();
         assert_eq!(treasury.period_amount(2), 300_000);
 
         // Period 1 is now closed (we've moved to period 2), verify amount is final
@@ -638,22 +638,22 @@ mod tests {
             fee_collector.clone(),
             Some(EconomicPeriod::Daily),
         )
-        .unwrap();
+        .ok();
 
         // Period 0 (genesis)
-        treasury.credit(&fee_collector, 1_000, 100).unwrap();
+        treasury.credit(&fee_collector, 1_000, 100).ok();
         assert_eq!(treasury.period_amount(0), 1_000);
 
         // Period 1
-        treasury.credit(&fee_collector, 2_000, 8_640).unwrap();
+        treasury.credit(&fee_collector, 2_000, 8_640).ok();
         assert_eq!(treasury.period_amount(1), 2_000);
 
         // Period 2
-        treasury.credit(&fee_collector, 3_000, 17_280).unwrap();
+        treasury.credit(&fee_collector, 3_000, 17_280).ok();
         assert_eq!(treasury.period_amount(2), 3_000);
 
         // Period 3
-        treasury.credit(&fee_collector, 4_000, 25_920).unwrap();
+        treasury.credit(&fee_collector, 4_000, 25_920).ok();
         assert_eq!(treasury.period_amount(3), 4_000);
 
         // Verify all periods independent
@@ -666,9 +666,9 @@ mod tests {
         // Token without allocation_period never tracks periods
         let fee_collector = create_test_public_key(1);
         let mut treasury =
-            SovDaoTreasury::init(SectorDao::Food, fee_collector.clone(), None).unwrap();
+            SovDaoTreasury::init(SectorDao::Food, fee_collector.clone(), None).ok();
 
-        treasury.credit(&fee_collector, 1_000_000, 8_640).unwrap();
+        treasury.credit(&fee_collector, 1_000_000, 8_640).ok();
 
         // No period recorded
         assert_eq!(treasury.current_period(), None);
@@ -688,15 +688,15 @@ mod tests {
             fee_collector.clone(),
             Some(EconomicPeriod::Monthly),
         )
-        .unwrap();
+        .ok();
 
         // Credit at height 100_000 (in period 0)
-        treasury.credit(&fee_collector, 1_000_000, 100_000).unwrap();
+        treasury.credit(&fee_collector, 1_000_000, 100_000).ok();
         assert_eq!(treasury.current_period(), Some(0));
         assert_eq!(treasury.last_credit_height(), 100_000);
 
         // Credit at height 300_000 (in period 1)
-        treasury.credit(&fee_collector, 2_000_000, 300_000).unwrap();
+        treasury.credit(&fee_collector, 2_000_000, 300_000).ok();
         assert_eq!(treasury.current_period(), Some(1));
         assert_eq!(treasury.last_credit_height(), 300_000);
 

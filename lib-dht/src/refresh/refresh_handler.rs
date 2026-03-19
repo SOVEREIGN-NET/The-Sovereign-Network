@@ -51,7 +51,7 @@ impl RefreshHandler {
             }
         });
 
-        //handle.join().unwrap();
+        //handle.join().ok();
     }
 
     pub fn stop(&self) {

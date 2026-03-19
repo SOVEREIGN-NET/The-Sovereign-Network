@@ -41,7 +41,7 @@ impl ProofManager {
             cleanup_interval: 3600, // 1 hour
             last_cleanup: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         }
     }
@@ -242,7 +242,7 @@ impl ProofManager {
     pub fn cleanup_expired_challenges(&mut self) -> usize {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Check if cleanup is needed
@@ -395,11 +395,11 @@ mod tests {
 
         manager
             .generate_storage_challenge(content_hash.clone(), 10, "node1".to_string())
-            .unwrap();
+            .ok();
 
         manager
             .generate_retrieval_challenge(content_hash.clone(), 10, "node1".to_string())
-            .unwrap();
+            .ok();
 
         let stats = manager.get_challenge_stats();
         assert_eq!(stats.total_challenges, 2);

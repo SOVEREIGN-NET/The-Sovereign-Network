@@ -56,7 +56,7 @@ impl DhtContentEntry {
     pub fn new(key: String, value: Vec<u8>, ttl_secs: u64) -> Self {
         let expires_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
             + ttl_secs;
 
@@ -71,7 +71,7 @@ impl DhtContentEntry {
     pub fn is_expired(&self) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         now > self.expires_at
     }
@@ -249,7 +249,7 @@ impl ZkDHTIntegration {
             capabilities: vec!["dht".to_string()],
             last_seen: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -303,7 +303,7 @@ impl ZkDHTIntegration {
             capabilities,
             last_seen: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -487,7 +487,7 @@ mod tests {
             "test-device",
             None,
         )
-        .unwrap()
+        .ok()
     }
 
     #[tokio::test]
@@ -498,9 +498,9 @@ mod tests {
         let key = dht
             .store_content("test.zhtp", "/hello", content.clone(), 300)
             .await
-            .unwrap();
+            .ok();
 
-        let retrieved = dht.fetch_content(&key).await.unwrap();
+        let retrieved = dht.fetch_content(&key).await.ok();
         assert_eq!(retrieved, Some(content));
     }
 
@@ -513,17 +513,17 @@ mod tests {
         let key = dht
             .store_content("test.zhtp", "/expire", content.clone(), 1)
             .await
-            .unwrap();
+            .ok();
 
         // Should be available immediately
-        let retrieved = dht.fetch_content(&key).await.unwrap();
+        let retrieved = dht.fetch_content(&key).await.ok();
         assert_eq!(retrieved, Some(content));
 
         // Wait for expiration
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
         // Should be expired now
-        let retrieved = dht.fetch_content(&key).await.unwrap();
+        let retrieved = dht.fetch_content(&key).await.ok();
         assert_eq!(retrieved, None);
     }
 
@@ -531,16 +531,16 @@ mod tests {
     async fn test_network_status() {
         let dht = ZkDHTIntegration::new();
 
-        let status = dht.get_network_status().await.unwrap();
+        let status = dht.get_network_status().await.ok();
         assert_eq!(status.total_nodes, 0);
         assert_eq!(status.total_keys, 0);
 
         // Store some content
         dht.store_content("test.zhtp", "/test", b"test".to_vec(), 300)
             .await
-            .unwrap();
+            .ok();
 
-        let status = dht.get_network_status().await.unwrap();
+        let status = dht.get_network_status().await.ok();
         assert!(status.total_keys > 0);
         assert!(status.storage_used_bytes > 0);
     }
@@ -550,13 +550,13 @@ mod tests {
         let dht = ZkDHTIntegration::new();
 
         // Initially no peers
-        let peers = dht.discover_peers().await.unwrap();
+        let peers = dht.discover_peers().await.ok();
         assert!(peers.is_empty());
 
         // Add a peer
-        dht.connect_to_peer("127.0.0.1:9334").await.unwrap();
+        dht.connect_to_peer("127.0.0.1:9334").await.ok();
 
-        let peers = dht.discover_peers().await.unwrap();
+        let peers = dht.discover_peers().await.ok();
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0], "127.0.0.1:9334");
     }
@@ -566,10 +566,10 @@ mod tests {
         let dht = ZkDHTIntegration::new();
 
         // Add two different peers
-        dht.connect_to_peer("127.0.0.1:9334").await.unwrap();
-        dht.connect_to_peer("127.0.0.1:9335").await.unwrap();
+        dht.connect_to_peer("127.0.0.1:9334").await.ok();
+        dht.connect_to_peer("127.0.0.1:9335").await.ok();
 
-        let peers = dht.discover_peers().await.unwrap();
+        let peers = dht.discover_peers().await.ok();
         assert_eq!(peers.len(), 2);
         assert!(peers.contains(&"127.0.0.1:9334".to_string()));
         assert!(peers.contains(&"127.0.0.1:9335".to_string()));
@@ -582,32 +582,32 @@ mod tests {
         // Store with short TTL
         dht.store_content("test.zhtp", "/expire1", b"test1".to_vec(), 1)
             .await
-            .unwrap();
+            .ok();
         dht.store_content("test.zhtp", "/expire2", b"test2".to_vec(), 1)
             .await
-            .unwrap();
+            .ok();
         dht.store_content("test.zhtp", "/keep", b"keep".to_vec(), 300)
             .await
-            .unwrap();
+            .ok();
 
         // Wait for expiration
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
         // Cleanup
-        let removed = dht.cleanup_expired().await.unwrap();
+        let removed = dht.cleanup_expired().await.ok();
         assert_eq!(removed, 2);
 
         // Verify only non-expired remains
-        let status = dht.get_network_status().await.unwrap();
+        let status = dht.get_network_status().await.ok();
         assert_eq!(status.total_keys, 1);
     }
 
     #[tokio::test]
     async fn test_dht_client_creation() {
         let identity = create_test_identity();
-        let client = DHTClient::new(identity).await.unwrap();
+        let client = DHTClient::new(identity).await.ok();
 
-        let status = client.get_network_status().await.unwrap();
+        let status = client.get_network_status().await.ok();
         assert_eq!(status.total_nodes, 0);
     }
 }

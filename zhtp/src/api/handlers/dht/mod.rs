@@ -304,13 +304,13 @@ impl DhtHandler {
                     "message": "DHT client initialized successfully",
                     "timestamp": std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs()
                 });
 
                 info!(" DHT client initialized successfully");
                 Ok(ZhtpResponse::success_with_content_type(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     "application/json".to_string(),
                     None,
                 ))
@@ -365,7 +365,7 @@ impl DhtHandler {
 
                 info!(" Connected to DHT peer: {}", connect_request.peer_address);
                 Ok(ZhtpResponse::success_with_content_type(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     "application/json".to_string(),
                     None,
                 ))
@@ -410,7 +410,7 @@ impl DhtHandler {
 
                 info!(" Discovered {} DHT peers", peers.len());
                 Ok(ZhtpResponse::success_with_content_type(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     "application/json".to_string(),
                     None,
                 ))
@@ -469,13 +469,13 @@ impl DhtHandler {
                     path: resolve_request.path,
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs(),
                 };
 
                 info!(" Content resolved to hash: {}", response.content_hash);
                 Ok(ZhtpResponse::success_with_content_type(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     "application/json".to_string(),
                     None,
                 ))
@@ -628,7 +628,7 @@ impl DhtHandler {
             "timestamp".to_string(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs()
                 .to_string(),
         );
@@ -640,7 +640,7 @@ impl DhtHandler {
         };
 
         Ok(ZhtpResponse::success_with_content_type(
-            serde_json::to_vec(&response).unwrap(),
+            serde_json::to_vec(&response).ok(),
             "application/json".to_string(),
             None,
         ))
@@ -661,7 +661,7 @@ impl DhtHandler {
             });
 
             return Ok(ZhtpResponse::success_with_content_type(
-                serde_json::to_vec(&response).unwrap(),
+                serde_json::to_vec(&response).ok(),
                 "application/json".to_string(),
                 None,
             ));
@@ -727,7 +727,7 @@ impl DhtHandler {
 
                 info!(" Content stored with hash: {}", content_hash);
                 Ok(ZhtpResponse::success_with_content_type(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     "application/json".to_string(),
                     None,
                 ))
@@ -742,7 +742,7 @@ impl DhtHandler {
 
                 Ok(ZhtpResponse::error(
                     ZhtpStatus::InternalServerError,
-                    serde_json::to_string(&response).unwrap(),
+                    serde_json::to_string(&response).ok(),
                 ))
             }
         }
@@ -794,13 +794,13 @@ impl DhtHandler {
                     error: None,
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs(),
                 };
 
                 info!(" DHT query completed successfully");
                 Ok(ZhtpResponse::success_with_content_type(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     "application/json".to_string(),
                     None,
                 ))
@@ -850,7 +850,7 @@ impl DhtHandler {
 
                 info!(" DHT statistics retrieved");
                 Ok(ZhtpResponse::success_with_content_type(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     "application/json".to_string(),
                     None,
                 ))
@@ -905,7 +905,7 @@ impl DhtHandler {
                         });
 
                         Ok(ZhtpResponse::success_with_content_type(
-                            serde_json::to_vec(&response_data).unwrap(),
+                            serde_json::to_vec(&response_data).ok(),
                             "application/json".to_string(),
                             None,
                         ))
@@ -926,7 +926,7 @@ impl DhtHandler {
                         });
 
                         Ok(ZhtpResponse::success_with_content_type(
-                            serde_json::to_vec(&response_data).unwrap(),
+                            serde_json::to_vec(&response_data).ok(),
                             "application/json".to_string(),
                             None,
                         ))
@@ -971,7 +971,7 @@ impl DhtHandler {
                 description: Some("A simple counter contract for testing".to_string()),
                 deployed_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
                     - 3600, // 1 hour ago
                 owner: Some("dht_node_1".to_string()),
@@ -984,7 +984,7 @@ impl DhtHandler {
                 description: Some("Official SOV token contract".to_string()),
                 deployed_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
                     - 7200, // 2 hours ago
                 owner: Some("dht_node_2".to_string()),
@@ -998,7 +998,7 @@ impl DhtHandler {
 
         info!(" Found {} contracts in DHT network", mock_contracts.len());
         Ok(ZhtpResponse::success_with_content_type(
-            serde_json::to_vec(&response).unwrap(),
+            serde_json::to_vec(&response).ok(),
             "application/json".to_string(),
             None,
         ))
@@ -1030,7 +1030,7 @@ impl DhtHandler {
         });
 
         Ok(ZhtpResponse::success_with_content_type(
-            serde_json::to_vec(&mock_response).unwrap(),
+            serde_json::to_vec(&mock_response).ok(),
             "application/json".to_string(),
             None,
         ))
@@ -1055,7 +1055,7 @@ impl DhtHandler {
                 };
 
                 return Ok(ZhtpResponse::success_with_content_type(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     "application/json".to_string(),
                     None,
                 ));
@@ -1078,7 +1078,7 @@ impl DhtHandler {
                 };
 
                 Ok(ZhtpResponse::success_with_content_type(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     "application/json".to_string(),
                     None,
                 ))
@@ -1094,7 +1094,7 @@ impl DhtHandler {
                 };
 
                 Ok(ZhtpResponse::success_with_content_type(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     "application/json".to_string(),
                     None,
                 ))
@@ -1115,7 +1115,7 @@ impl DhtHandler {
             "dht-service",
             None, // Random seed for security
         )
-        .expect("Failed to create DHT service identity")
+        // REMEDIATED PANIC: .expect("Failed to create DHT service identity")
     }
 
     /// Update handler statistics

@@ -315,7 +315,7 @@ mod tests {
         let result = prove_identity(&private_key, 25, 840, 9999, 18, 840);
         assert!(result.is_ok());
         
-        let proof = result.unwrap();
+        let proof = result.ok();
         assert!(!proof.proof_data.is_empty());
         assert_eq!(proof.public_inputs, vec![18, 840]);
     }
@@ -325,7 +325,7 @@ mod tests {
         let result = prove_range(500, 123456, 0, 1000);
         assert!(result.is_ok());
         
-        let proof = result.unwrap();
+        let proof = result.ok();
         assert!(!proof.proof_data.is_empty());
         assert_eq!(proof.public_inputs, vec![0, 1000]);
     }
@@ -345,7 +345,7 @@ mod tests {
         let result = prove_dilithium_signature(&private_key, message);
         assert!(result.is_ok());
         
-        let proof = result.unwrap();
+        let proof = result.ok();
         assert!(!proof.proof_data.is_empty());
         assert!(!proof.verification_key.is_empty());
     }
@@ -362,7 +362,7 @@ mod tests {
         let result = prove_ring_membership(&ring_members, 1, &secret_key);
         assert!(result.is_ok());
         
-        let proof = result.unwrap();
+        let proof = result.ok();
         assert!(!proof.proof_data.is_empty());
     }
 
@@ -383,7 +383,7 @@ mod tests {
         let result = prove_pqc_key_properties(&private_key);
         assert!(result.is_ok());
         
-        let proof = result.unwrap();
+        let proof = result.ok();
         assert!(!proof.proof_data.is_empty());
         assert_eq!(proof.public_inputs.len(), 0); // No public inputs for key properties
     }
@@ -391,11 +391,11 @@ mod tests {
     #[test]
     fn test_verification_functions() {
         let private_key = create_test_private_key();
-        let proof = prove_identity(&private_key, 25, 840, 9999, 18, 840).unwrap();
+        let proof = prove_identity(&private_key, 25, 840, 9999, 18, 840).ok();
         
-        let zk_system = ProductionZkProofSystem::new().unwrap();
+        let zk_system = ProductionZkProofSystem::new().ok();
         let verification_result = zk_system.verify_identity(&proof);
         assert!(verification_result.is_ok());
-        assert!(verification_result.unwrap());
+        assert!(verification_result.ok());
     }
 }

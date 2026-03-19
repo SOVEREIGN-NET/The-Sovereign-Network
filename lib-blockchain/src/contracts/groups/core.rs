@@ -39,7 +39,7 @@ impl GroupChat {
     ) -> Self {
         let created_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let group_id = crate::contracts::utils::generate_group_id(
@@ -319,7 +319,7 @@ impl GroupContract {
             message,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -353,7 +353,7 @@ impl GroupContract {
         }
 
         // Add user to group
-        let group = self.groups.get_mut(group_id).unwrap();
+        let group = self.groups.get_mut(group_id).ok();
         group.add_member(requesting_user.clone())?;
 
         // Add to user groups
@@ -397,7 +397,7 @@ impl GroupContract {
             message,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -641,9 +641,9 @@ mod tests {
                 false,
                 1000,
             )
-            .unwrap();
+            .ok();
 
-        let group = contract.get_group(&group_id).unwrap();
+        let group = contract.get_group(&group_id).ok();
         assert_eq!(group.name, "Test Group");
         assert_eq!(group.creator, creator);
         assert!(group.is_member(&creator));
@@ -665,12 +665,12 @@ mod tests {
                 false, // public
                 1000,
             )
-            .unwrap();
+            .ok();
 
         // User joins public group
-        contract.join_group(&group_id, user.clone()).unwrap();
+        contract.join_group(&group_id, user.clone()).ok();
 
-        let group = contract.get_group(&group_id).unwrap();
+        let group = contract.get_group(&group_id).ok();
         assert!(group.is_member(&user));
 
         let user_groups = contract.get_user_groups(&user);
@@ -692,7 +692,7 @@ mod tests {
                 true, // private
                 1000,
             )
-            .unwrap();
+            .ok();
 
         // Cannot join private group directly
         assert!(contract.join_group(&group_id, user.clone()).is_err());
@@ -700,12 +700,12 @@ mod tests {
         // Creator invites user
         contract
             .invite_user(&group_id, &creator, user.clone(), "Welcome!".to_string())
-            .unwrap();
+            .ok();
 
         // User accepts invitation
-        contract.accept_invitation(&group_id, &user).unwrap();
+        contract.accept_invitation(&group_id, &user).ok();
 
-        let group = contract.get_group(&group_id).unwrap();
+        let group = contract.get_group(&group_id).ok();
         assert!(group.is_member(&user));
     }
 
@@ -724,19 +724,19 @@ mod tests {
                 true, // private
                 1000,
             )
-            .unwrap();
+            .ok();
 
         // User requests to join
         contract
             .request_to_join(&group_id, user.clone(), "Please let me join!".to_string())
-            .unwrap();
+            .ok();
 
         // Creator approves request
         contract
             .approve_join_request(&group_id, &user, &creator)
-            .unwrap();
+            .ok();
 
-        let group = contract.get_group(&group_id).unwrap();
+        let group = contract.get_group(&group_id).ok();
         assert!(group.is_member(&user));
     }
 
@@ -755,23 +755,23 @@ mod tests {
                 false,
                 1000,
             )
-            .unwrap();
+            .ok();
 
         // Add user to group
-        contract.join_group(&group_id, user.clone()).unwrap();
+        contract.join_group(&group_id, user.clone()).ok();
 
         // Promote user to admin
         contract
             .promote_to_admin(&group_id, &creator, user.clone())
-            .unwrap();
+            .ok();
 
-        let group = contract.get_group(&group_id).unwrap();
+        let group = contract.get_group(&group_id).ok();
         assert!(group.is_admin(&user));
 
         // Remove admin privileges
-        contract.remove_admin(&group_id, &creator, &user).unwrap();
+        contract.remove_admin(&group_id, &creator, &user).ok();
 
-        let group = contract.get_group(&group_id).unwrap();
+        let group = contract.get_group(&group_id).ok();
         assert!(!group.is_admin(&user));
     }
 
@@ -789,7 +789,7 @@ mod tests {
                 false, // public
                 1000,
             )
-            .unwrap();
+            .ok();
 
         contract
             .create_group(
@@ -800,7 +800,7 @@ mod tests {
                 false, // public
                 1000,
             )
-            .unwrap();
+            .ok();
 
         contract
             .create_group(
@@ -811,7 +811,7 @@ mod tests {
                 true, // private
                 2000,
             )
-            .unwrap();
+            .ok();
 
         let results = contract.search_public_groups("programming");
         assert_eq!(results.len(), 1);

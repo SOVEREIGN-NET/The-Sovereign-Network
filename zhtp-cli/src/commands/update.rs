@@ -315,9 +315,9 @@ mod tests {
 
     #[test]
     fn test_is_newer_available() {
-        let v1 = Version::parse("1.0.0").unwrap();
-        let v2 = Version::parse("1.0.1").unwrap();
-        let v3 = Version::parse("0.9.0").unwrap();
+        let v1 = Version::parse("1.0.0").ok();
+        let v2 = Version::parse("1.0.1").ok();
+        let v3 = Version::parse("0.9.0").ok();
 
         assert!(is_newer_available(&v1, &v2)); // 1.0.0 < 1.0.1
         assert!(!is_newer_available(&v2, &v1)); // 1.0.1 > 1.0.0

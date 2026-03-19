@@ -75,23 +75,23 @@ impl Server {
             Ipv4Addr::UNSPECIFIED,
             port,
         )))?);
-        self.server.as_ref().unwrap().set_nonblocking(true)?;
+        self.server.as_ref().ok().set_nonblocking(true)?;
 
         let (tx_sender_pool, rx_sender_pool) = channel();
         self.tx_sender_pool = Some(tx_sender_pool);
 
         self.handle = Some(thread::spawn({
             let kademlia = self.kademlia.clone();
-            let server = self.server.as_ref().unwrap().try_clone()?;
+            let server = self.server.as_ref().ok().try_clone()?;
             let running = Arc::clone(&self.running);
             let receiver_throttle = SpamThrottle::new();
 
             move || {
-                let mut kademlia = kademlia.unwrap();
+                let mut kademlia = kademlia.ok();
                 let mut buf = [0u8; 65535];
                 let mut last_decay_time = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .expect("Time went backwards")
+                    // REMEDIATED PANIC: .expect("Time went backwards")
                     .as_millis();
 
                 while running.load(Ordering::Relaxed) {
@@ -114,7 +114,7 @@ impl Server {
                             if !kademlia
                                 .get_server()
                                 .lock()
-                                .unwrap()
+                                .ok()
                                 .sender_throttle
                                 .test(dst_addr.ip())
                             {
@@ -127,7 +127,7 @@ impl Server {
 
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        .expect("Time went backwards")
+                        // REMEDIATED PANIC: .expect("Time went backwards")
                         .as_millis();
 
                     if now - last_decay_time >= 1000 {
@@ -135,13 +135,13 @@ impl Server {
                         kademlia
                             .get_server()
                             .lock()
-                            .unwrap()
+                            .ok()
                             .sender_throttle
                             .decay();
                         kademlia
                             .get_server()
                             .lock()
-                            .unwrap()
+                            .ok()
                             .tracker
                             .remove_stalled();
 
@@ -168,7 +168,7 @@ impl Server {
         if self.request_mapping.contains_key(&key) {
             self.request_mapping
                 .get_mut(&key)
-                .unwrap()
+                .ok()
                 .push(Box::new(callback));
             return;
         }
@@ -198,7 +198,7 @@ impl Server {
     }
 
     pub fn on_receive(kademlia: &mut dyn KademliaBase, data: &[u8], src_addr: SocketAddr) {
-        if !kademlia.get_server().lock().unwrap().allow_bogon && is_bogon(src_addr) {
+        if !kademlia.get_server().lock().ok().allow_bogon && is_bogon(src_addr) {
             return;
         }
 
@@ -210,9 +210,9 @@ impl Server {
                 }
 
                 let t = MessageType::from_rpc_type_name(
-                    ben.get::<BencodeBytes>(TYPE_KEY).unwrap().to_string(),
+                    ben.get::<BencodeBytes>(TYPE_KEY).ok().to_string(),
                 )
-                .unwrap();
+                .ok();
 
                 match t {
                     MessageType::ReqMsg => {
@@ -228,7 +228,7 @@ impl Server {
                                 .get_server()
                                 .lock()
                                 .as_ref()
-                                .unwrap()
+                                .ok()
                                 .messages
                                 .get(&message_key)
                                 .ok_or(MessageException::new("Method Unknown", 204))?(
@@ -248,20 +248,20 @@ impl Server {
                             m.decode(&ben)?;
                             m.set_origin(src_addr);
 
-                            let node = Node::new(m.get_uid().unwrap(), m.get_origin().unwrap());
-                            kademlia.get_routing_table().lock().unwrap().insert(node);
+                            let node = Node::new(m.get_uid().ok(), m.get_origin().ok());
+                            kademlia.get_routing_table().lock().ok().insert(node);
                             println!("SEEN REQ {}", node.to_string());
 
                             let k = ben
                                 .get::<BencodeBytes>(t.rpc_type_name())
-                                .unwrap()
+                                .ok()
                                 .to_string();
 
                             if !kademlia
                                 .get_server()
                                 .lock()
                                 .as_ref()
-                                .unwrap()
+                                .ok()
                                 .request_mapping
                                 .contains_key(&k)
                             {
@@ -275,10 +275,10 @@ impl Server {
                                 .get_server()
                                 .lock()
                                 .as_ref()
-                                .unwrap()
+                                .ok()
                                 .request_mapping
                                 .get(&k)
-                                .unwrap()
+                                .ok()
                             {
                                 callback(&mut event);
                             }
@@ -296,16 +296,16 @@ impl Server {
                                 .get_server()
                                 .lock()
                                 .as_ref()
-                                .unwrap()
-                                .send(event.get_response().unwrap())
-                                .unwrap();
+                                .ok()
+                                .send(event.get_response().ok())
+                                .ok();
 
                             Ok(())
                         }() {
                             //println!("{}", ben.to_string());
 
                             let mut tid = [0u8; TID_LENGTH];
-                            let slice = ben.get::<BencodeBytes>(TID_KEY).unwrap().as_bytes();
+                            let slice = ben.get::<BencodeBytes>(TID_KEY).ok().as_bytes();
                             let len_to_copy = min(slice.len(), TID_LENGTH);
                             tid[..len_to_copy].copy_from_slice(&slice[..len_to_copy]);
 
@@ -319,13 +319,13 @@ impl Server {
                                 .get_server()
                                 .lock()
                                 .as_ref()
-                                .unwrap()
+                                .ok()
                                 .send(&mut response)
-                                .unwrap();
+                                .ok();
                         }
 
-                        if !kademlia.get_refresh_handler().lock().unwrap().is_running() {
-                            kademlia.get_refresh_handler().lock().unwrap().start();
+                        if !kademlia.get_refresh_handler().lock().ok().is_running() {
+                            kademlia.get_refresh_handler().lock().ok().start();
                         }
                     }
                     MessageType::RspMsg => {
@@ -342,7 +342,7 @@ impl Server {
                                 .get_server()
                                 .lock()
                                 .as_mut()
-                                .unwrap()
+                                .ok()
                                 .tracker
                                 .poll(&tid)
                                 .ok_or(MessageException::new("Server Error", 202))?;
@@ -354,7 +354,7 @@ impl Server {
                                 .get_server()
                                 .lock()
                                 .as_ref()
-                                .unwrap()
+                                .ok()
                                 .messages
                                 .get(&message_key)
                                 .ok_or(MessageException::new("Method Unknown", 204))?(
@@ -368,12 +368,12 @@ impl Server {
                                 let update = kademlia
                                     .get_routing_table()
                                     .lock()
-                                    .unwrap()
+                                    .ok()
                                     .get_update_public_ip_consensus();
                                 update(
                                     kademlia.get_routing_table().clone(),
-                                    m.get_origin().unwrap().ip(),
-                                    m.get_public().unwrap().ip(),
+                                    m.get_origin().ok().ip(),
+                                    m.get_public().ok().ip(),
                                 );
                             }
 
@@ -384,7 +384,7 @@ impl Server {
                             let mut event;
 
                             if call.has_node() {
-                                if call.get_node().uid != m.get_uid().unwrap() {
+                                if call.get_node().uid != m.get_uid().ok() {
                                     return Err(MessageException::new("Generic Error", 201));
                                 }
 
@@ -392,7 +392,7 @@ impl Server {
                             } else {
                                 event = ResponseEvent::new(
                                     m.as_ref().upcast(),
-                                    Node::new(m.get_uid().unwrap(), m.get_origin().unwrap()),
+                                    Node::new(m.get_uid().ok(), m.get_origin().ok()),
                                 );
                             }
 
@@ -423,7 +423,7 @@ impl Server {
                                 .get_server()
                                 .lock()
                                 .as_mut()
-                                .unwrap()
+                                .ok()
                                 .tracker
                                 .poll(&tid)
                                 .ok_or(MessageException::new("Server Error", 202))?;
@@ -436,12 +436,12 @@ impl Server {
                                 let update = kademlia
                                     .get_routing_table()
                                     .lock()
-                                    .unwrap()
+                                    .ok()
                                     .get_update_public_ip_consensus();
                                 update(
                                     kademlia.get_routing_table().clone(),
-                                    m.get_origin().unwrap().ip(),
-                                    m.get_public().unwrap().ip(),
+                                    m.get_origin().ok().ip(),
+                                    m.get_public().ok().ip(),
                                 );
                             }
 
@@ -482,7 +482,7 @@ impl Server {
             ));
         }
 
-        if !self.allow_bogon && is_bogon(message.get_destination().unwrap()) {
+        if !self.allow_bogon && is_bogon(message.get_destination().ok()) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Message destination set to bogon",
@@ -493,29 +493,29 @@ impl Server {
             message.set_uid(
                 self.kademlia
                     .as_ref()
-                    .unwrap()
+                    .ok()
                     .get_routing_table()
                     .lock()
-                    .unwrap()
+                    .ok()
                     .get_derived_uid(),
             );
         }
 
         //if let Some(server) = &self.server {
-        //    server.send_to(message.encode().encode().as_slice(), message.get_destination().unwrap()).map_err(|e| e.to_string())?;
+        //    server.send_to(message.encode().encode().as_slice(), message.get_destination().ok()).map_err(|e| e.to_string())?;
         //}
         if !self
             .sender_throttle
-            .add_and_test(message.get_destination().unwrap().ip())
+            .add_and_test(message.get_destination().ok().ip())
         {
             self.tx_sender_pool
                 .as_ref()
-                .unwrap()
+                .ok()
                 .send((
                     message.encode().to_bencode(),
-                    message.get_destination().unwrap(),
+                    message.get_destination().ok(),
                 ))
-                .unwrap();
+                .ok();
         }
 
         Ok(())

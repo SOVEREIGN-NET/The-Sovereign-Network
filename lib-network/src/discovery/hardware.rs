@@ -443,7 +443,7 @@ mod tests {
 
         // Test primary radio
         assert_eq!(
-            capabilities.primary_lorawan().unwrap().device_name,
+            capabilities.primary_lorawan().ok().device_name,
             "Test EU Radio"
         );
 

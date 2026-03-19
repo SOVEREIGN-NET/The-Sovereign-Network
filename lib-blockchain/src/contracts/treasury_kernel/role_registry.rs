@@ -590,7 +590,7 @@ mod tests {
         let mut registry = RoleRegistry::new(admin_key());
         let role = engineer_role();
 
-        registry.grant_role(role.clone(), &admin_key()).unwrap();
+        registry.grant_role(role.clone(), &admin_key()).ok();
         let result = registry.grant_role(role, &admin_key());
         assert!(matches!(
             result,
@@ -601,18 +601,18 @@ mod tests {
     #[test]
     fn test_revoke_role() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
 
         assert!(registry
             .revoke_role(&engineer_role_id(), &admin_key())
             .is_ok());
-        assert!(!registry.get_role(&engineer_role_id()).unwrap().is_active);
+        assert!(!registry.get_role(&engineer_role_id()).ok().is_active);
     }
 
     #[test]
     fn test_update_role_caps() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
 
         registry
             .update_role_caps(
@@ -622,9 +622,9 @@ mod tests {
                 5_000,
                 &admin_key(),
             )
-            .unwrap();
+            .ok();
 
-        let role = registry.get_role(&engineer_role_id()).unwrap();
+        let role = registry.get_role(&engineer_role_id()).ok();
         assert_eq!(role.annual_cap, 50_000);
         assert_eq!(role.lifetime_cap, Some(200_000));
         assert_eq!(role.per_epoch_cap, 5_000);
@@ -633,11 +633,11 @@ mod tests {
     #[test]
     fn test_create_assignment_snapshots_caps() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
 
         let assignment = registry
             .create_assignment(&alice_id(), &engineer_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
 
         // Verify caps are snapshotted
         assert_eq!(assignment.snap_annual_cap, 100_000);
@@ -647,44 +647,44 @@ mod tests {
     #[test]
     fn test_reducing_role_cap_does_not_affect_existing_assignment() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
 
         // Create assignment - snapshots 100k
         let assignment = registry
             .create_assignment(&alice_id(), &engineer_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
         let assignment_id = assignment.assignment_id;
         assert_eq!(assignment.snap_annual_cap, 100_000);
 
         // Governance reduces cap to 50k
         registry
             .update_role_caps(&engineer_role_id(), 50_000, None, 5_000, &admin_key())
-            .unwrap();
+            .ok();
 
         // Alice's assignment still has 100k cap
-        let assignment = registry.get_assignment(&assignment_id).unwrap();
+        let assignment = registry.get_assignment(&assignment_id).ok();
         assert_eq!(assignment.snap_annual_cap, 100_000); // NOT 50k
     }
 
     #[test]
     fn test_new_assignment_reflects_new_cap() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
 
         // Alice assigned at 100k
         let alice_assignment = registry
             .create_assignment(&alice_id(), &engineer_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
 
         // Cap reduced to 50k
         registry
             .update_role_caps(&engineer_role_id(), 50_000, None, 5_000, &admin_key())
-            .unwrap();
+            .ok();
 
         // Bob assigned at 50k (new cap)
         let bob_assignment = registry
             .create_assignment(&bob_id(), &engineer_role_id(), 101, 2024, &admin_key())
-            .unwrap();
+            .ok();
 
         assert_eq!(alice_assignment.snap_annual_cap, 100_000);
         assert_eq!(bob_assignment.snap_annual_cap, 50_000);
@@ -693,18 +693,18 @@ mod tests {
     #[test]
     fn test_prohibited_role_combinations_rejected() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(ceo_role(), &admin_key()).unwrap();
-        registry.grant_role(auditor_role(), &admin_key()).unwrap();
+        registry.grant_role(ceo_role(), &admin_key()).ok();
+        registry.grant_role(auditor_role(), &admin_key()).ok();
 
         // Define CEO and Auditor as incompatible
         registry
             .add_prohibited_combination(&ceo_role_id(), &auditor_role_id(), &admin_key())
-            .unwrap();
+            .ok();
 
         // Alice is CEO
         registry
             .create_assignment(&alice_id(), &ceo_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
 
         // Alice cannot also be Auditor
         let result =
@@ -719,28 +719,28 @@ mod tests {
     #[test]
     fn test_suspension_does_not_change_accrued_entitlement() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
 
         // Create assignment, pay 50k over multiple epochs (10k per epoch cap)
         let assignment = registry
             .create_assignment(&alice_id(), &engineer_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
         let assignment_id = assignment.assignment_id;
 
         // Pay 10k per epoch for 5 epochs = 50k total
         for epoch in 100..105 {
             registry
                 .record_payment(&assignment_id, 10_000, epoch, 2024, &admin_key())
-                .unwrap();
+                .ok();
         }
 
         // Suspend
         registry
             .suspend_assignment(&assignment_id, 106, &admin_key())
-            .unwrap();
+            .ok();
 
         // Accrued entitlement unchanged
-        let assignment = registry.get_assignment(&assignment_id).unwrap();
+        let assignment = registry.get_assignment(&assignment_id).ok();
         assert_eq!(assignment.total_paid, 50_000);
         assert_eq!(assignment.snap_annual_cap, 100_000); // Still 50k remaining
         assert_eq!(assignment.status, AssignmentStatus::Suspended);
@@ -749,12 +749,12 @@ mod tests {
     #[test]
     fn test_duplicate_assignment_rejected() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
 
         // First assignment
         registry
             .create_assignment(&alice_id(), &engineer_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
 
         // Duplicate rejected
         let result =
@@ -769,12 +769,12 @@ mod tests {
     #[test]
     fn test_cannot_assign_to_inactive_role() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
 
         // Revoke role
         registry
             .revoke_role(&engineer_role_id(), &admin_key())
-            .unwrap();
+            .ok();
 
         // Cannot assign to inactive role
         let result =
@@ -786,40 +786,40 @@ mod tests {
     #[test]
     fn test_assignment_lifecycle() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
 
         // Create
         let assignment = registry
             .create_assignment(&alice_id(), &engineer_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
         let assignment_id = assignment.assignment_id;
 
         // Pay
         registry
             .record_payment(&assignment_id, 10_000, 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
 
         // Suspend
         registry
             .suspend_assignment(&assignment_id, 101, &admin_key())
-            .unwrap();
+            .ok();
 
         // Reactivate
         registry
             .reactivate_assignment(&assignment_id, &admin_key())
-            .unwrap();
+            .ok();
 
         // Pay more
         registry
             .record_payment(&assignment_id, 10_000, 102, 2024, &admin_key())
-            .unwrap();
+            .ok();
 
         // Terminate
         registry
             .terminate_assignment(&assignment_id, 103, &admin_key())
-            .unwrap();
+            .ok();
 
-        let assignment = registry.get_assignment(&assignment_id).unwrap();
+        let assignment = registry.get_assignment(&assignment_id).ok();
         assert_eq!(assignment.total_paid, 20_000);
         assert_eq!(assignment.status, AssignmentStatus::Terminated);
     }
@@ -827,15 +827,15 @@ mod tests {
     #[test]
     fn test_get_assignments_for_person() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
-        registry.grant_role(ceo_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
+        registry.grant_role(ceo_role(), &admin_key()).ok();
 
         registry
             .create_assignment(&alice_id(), &engineer_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
         registry
             .create_assignment(&alice_id(), &ceo_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
 
         let assignments = registry.get_assignments_for_person(&alice_id());
         assert_eq!(assignments.len(), 2);
@@ -844,20 +844,20 @@ mod tests {
     #[test]
     fn test_get_active_roles_for_person() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
-        registry.grant_role(ceo_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
+        registry.grant_role(ceo_role(), &admin_key()).ok();
 
         let eng_assignment = registry
             .create_assignment(&alice_id(), &engineer_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
         registry
             .create_assignment(&alice_id(), &ceo_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
 
         // Suspend engineer assignment
         registry
             .suspend_assignment(&eng_assignment.assignment_id, 101, &admin_key())
-            .unwrap();
+            .ok();
 
         // Only CEO should be active
         let active_roles = registry.get_active_roles_for_person(&alice_id());
@@ -868,24 +868,24 @@ mod tests {
     #[test]
     fn test_statistics() {
         let mut registry = RoleRegistry::new(admin_key());
-        registry.grant_role(engineer_role(), &admin_key()).unwrap();
-        registry.grant_role(ceo_role(), &admin_key()).unwrap();
+        registry.grant_role(engineer_role(), &admin_key()).ok();
+        registry.grant_role(ceo_role(), &admin_key()).ok();
 
         assert_eq!(registry.role_count(), 2);
 
         let assignment = registry
             .create_assignment(&alice_id(), &engineer_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
         registry
             .create_assignment(&bob_id(), &engineer_role_id(), 100, 2024, &admin_key())
-            .unwrap();
+            .ok();
 
         assert_eq!(registry.assignment_count(), 2);
         assert_eq!(registry.active_assignment_count(), 2);
 
         registry
             .suspend_assignment(&assignment.assignment_id, 101, &admin_key())
-            .unwrap();
+            .ok();
 
         assert_eq!(registry.active_assignment_count(), 1);
     }

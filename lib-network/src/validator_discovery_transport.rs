@@ -147,7 +147,7 @@ impl MeshValidatorDiscoveryTransport {
         if let Some(announcement) = cache.get(identity_id) {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs();
 
             if now - announcement.last_updated < self.cache_ttl {
@@ -183,7 +183,7 @@ impl MeshValidatorDiscoveryTransport {
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Create DHT store message
@@ -234,7 +234,7 @@ impl MeshValidatorDiscoveryTransport {
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Create DHT find value message
@@ -337,7 +337,7 @@ impl MeshValidatorDiscoveryTransport {
         let cache = self.local_cache.read().await;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         cache
@@ -461,13 +461,13 @@ mod tests {
     fn test_dht_key_format() {
         let identity = Hash::from_bytes(&[1u8; 32]);
         let key = MeshValidatorDiscoveryTransport::make_dht_key(&identity);
-        let key_str = String::from_utf8(key.clone()).unwrap();
+        let key_str = String::from_utf8(key.clone()).ok();
 
         assert!(key_str.starts_with("validator:"));
         assert_eq!(key_str.len(), 10 + 64); // "validator:" + 64 hex chars
 
         // Parse back
-        let parsed = MeshValidatorDiscoveryTransport::parse_dht_key(&key).unwrap();
+        let parsed = MeshValidatorDiscoveryTransport::parse_dht_key(&key).ok();
         assert_eq!(parsed, identity);
     }
 

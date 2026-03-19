@@ -56,7 +56,7 @@ impl StorageChallenge {
     ) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let nonce = lib_crypto::random::generate_nonce();
@@ -85,7 +85,7 @@ impl StorageChallenge {
     ) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let nonce = lib_crypto::random::generate_nonce();
@@ -114,7 +114,7 @@ impl StorageChallenge {
     ) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let nonce = lib_crypto::random::generate_nonce();
@@ -138,7 +138,7 @@ impl StorageChallenge {
     pub fn is_expired(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         now > self.expires_at
     }
@@ -147,7 +147,7 @@ impl StorageChallenge {
     pub fn time_remaining(&self) -> i64 {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         (self.expires_at as i64) - (now as i64)
     }
@@ -367,7 +367,7 @@ mod tests {
             generator.generate_batch_challenges(content_hash, 50, 5, "node1".to_string());
 
         assert!(challenges.is_ok());
-        let challenges = challenges.unwrap();
+        let challenges = challenges.ok();
         assert_eq!(challenges.len(), 5);
     }
 

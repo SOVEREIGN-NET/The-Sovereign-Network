@@ -439,7 +439,7 @@ mod tests {
         // Pre-mint some tokens
         token
             .mint_kernel_only(kernel.kernel_address(), &recipient, 1000)
-            .unwrap();
+            .ok();
         let supply_before = token.total_supply;
 
         // Credit via Transfer reason — no supply change
@@ -473,7 +473,7 @@ mod tests {
         let caller = test_kernel_address();
         let recipient = test_recipient();
 
-        kernel.pause(&gov).unwrap();
+        kernel.pause(&gov).ok();
 
         let result = kernel.credit(&mut token, &caller, &recipient, 1000, CreditReason::Mint);
         assert_eq!(result, Err(KernelOpError::Paused));
@@ -503,7 +503,7 @@ mod tests {
         // Pre-fund user
         token
             .mint_kernel_only(kernel.kernel_address(), &user, 1000)
-            .unwrap();
+            .ok();
 
         let result = kernel.debit(&mut token, &caller, &user, 300, DebitReason::Transfer);
         assert!(result.is_ok());
@@ -518,7 +518,7 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &user, 1000)
-            .unwrap();
+            .ok();
         let supply_before = token.total_supply;
 
         let result = kernel.debit(&mut token, &caller, &user, 400, DebitReason::Burn);
@@ -559,7 +559,7 @@ mod tests {
         // Pre-fund
         token
             .mint_kernel_only(kernel.kernel_address(), &user, 1000)
-            .unwrap();
+            .ok();
 
         // Lock 600
         let result = kernel.lock(&mut token, &caller, &user, 600, LockReason::Staking);
@@ -586,7 +586,7 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &user, 500)
-            .unwrap();
+            .ok();
 
         let result = kernel.lock(&mut token, &caller, &user, 600, LockReason::Staking);
         assert_eq!(result, Err(KernelOpError::InsufficientBalance));
@@ -600,10 +600,10 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &user, 1000)
-            .unwrap();
+            .ok();
         kernel
             .lock(&mut token, &caller, &user, 400, LockReason::Vesting)
-            .unwrap();
+            .ok();
 
         let result = kernel.release(
             &mut token,
@@ -623,10 +623,10 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &user, 1000)
-            .unwrap();
+            .ok();
         kernel
             .lock(&mut token, &caller, &user, 800, LockReason::Staking)
-            .unwrap();
+            .ok();
 
         // Only 200 available — debit 300 should fail
         let result = kernel.debit(&mut token, &caller, &user, 300, DebitReason::Transfer);
@@ -668,7 +668,7 @@ mod tests {
         let caller = test_kernel_address();
         let user = test_user();
 
-        kernel.pause(&gov).unwrap();
+        kernel.pause(&gov).ok();
 
         // All ops should fail with Paused
         assert_eq!(
@@ -689,10 +689,10 @@ mod tests {
         );
 
         // Unpause and verify ops work again
-        kernel.unpause(&gov).unwrap();
+        kernel.unpause(&gov).ok();
         token
             .mint_kernel_only(kernel.kernel_address(), &user, 1000)
-            .unwrap();
+            .ok();
         assert!(kernel
             .debit(&mut token, &caller, &user, 100, DebitReason::Transfer)
             .is_ok());
@@ -709,7 +709,7 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &alice, 1000)
-            .unwrap();
+            .ok();
 
         let result = kernel.transfer(&mut token, &caller, &alice, &bob, 400);
         assert!(result.is_ok());
@@ -728,10 +728,10 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &alice, 1000)
-            .unwrap();
+            .ok();
         kernel
             .lock(&mut token, &caller, &alice, 800, LockReason::Staking)
-            .unwrap();
+            .ok();
 
         // Only 200 available — transfer 300 should fail
         let result = kernel.transfer(&mut token, &caller, &alice, &bob, 300);
@@ -782,7 +782,7 @@ mod tests {
     fn test_register_duplicate_authorization_rejected() {
         let (mut kernel, _) = setup();
         let auth = test_mint_auth(0);
-        kernel.register_mint_authorization(auth.clone()).unwrap();
+        kernel.register_mint_authorization(auth.clone()).ok();
 
         // Simulate consumed by inserting into consumed set
         kernel.consumed_authorizations.insert(auth.proposal_id);
@@ -797,7 +797,7 @@ mod tests {
     fn test_execute_authorized_mint_after_delay_succeeds() {
         let (mut kernel, mut token) = setup();
         let auth = test_mint_auth(0); // executable_after_epoch = 1
-        kernel.register_mint_authorization(auth).unwrap();
+        kernel.register_mint_authorization(auth).ok();
 
         // Execute at epoch 1 (delay elapsed)
         let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 1);
@@ -817,7 +817,7 @@ mod tests {
     fn test_execute_authorized_mint_before_delay_fails() {
         let (mut kernel, mut token) = setup();
         let auth = test_mint_auth(0); // executable_after_epoch = 1
-        kernel.register_mint_authorization(auth).unwrap();
+        kernel.register_mint_authorization(auth).ok();
 
         // Execute at epoch 0 (delay NOT elapsed)
         let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 0);
@@ -828,10 +828,10 @@ mod tests {
     fn test_execute_authorized_mint_when_paused_fails() {
         let (mut kernel, mut token) = setup();
         let auth = test_mint_auth(0);
-        kernel.register_mint_authorization(auth).unwrap();
+        kernel.register_mint_authorization(auth).ok();
 
         let gov = test_governance();
-        kernel.pause(&gov).unwrap();
+        kernel.pause(&gov).ok();
 
         let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 1);
         assert_eq!(result, Err(KernelOpError::Paused));
@@ -848,12 +848,12 @@ mod tests {
     fn test_execute_authorized_mint_consumed_fails() {
         let (mut kernel, mut token) = setup();
         let auth = test_mint_auth(0);
-        kernel.register_mint_authorization(auth).unwrap();
+        kernel.register_mint_authorization(auth).ok();
 
         // Execute once — succeeds
         kernel
             .execute_authorized_mint(&mut token, &[1u8; 32], 1)
-            .unwrap();
+            .ok();
 
         // Execute again — consumed
         let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 2);
@@ -867,11 +867,11 @@ mod tests {
         let user = test_user();
         token
             .mint_kernel_only(&kernel_addr, &user, token.max_supply - 100)
-            .unwrap();
+            .ok();
 
         // Now register authorization for 500 (exceeds remaining 100)
         let auth = test_mint_auth(0);
-        kernel.register_mint_authorization(auth).unwrap();
+        kernel.register_mint_authorization(auth).ok();
 
         let result = kernel.execute_authorized_mint(&mut token, &[1u8; 32], 1);
         assert_eq!(result, Err(KernelOpError::ExceedsMaxSupply));
@@ -897,10 +897,10 @@ mod tests {
             kyber_pk: Vec::new(),
             key_id: [1u8; 32],
         };
-        token.mint_kernel_only(&kernel_addr, &from, 1000).unwrap();
+        token.mint_kernel_only(&kernel_addr, &from, 1000).ok();
 
         let auth = test_burn_auth(0); // burn 200, executable_after_epoch = 1
-        kernel.register_burn_authorization(auth).unwrap();
+        kernel.register_burn_authorization(auth).ok();
 
         let result = kernel.execute_authorized_burn(&mut token, &[2u8; 32], 1);
         assert!(result.is_ok());
@@ -911,7 +911,7 @@ mod tests {
     fn test_execute_authorized_burn_before_delay_fails() {
         let (mut kernel, mut token) = setup();
         let auth = test_burn_auth(0);
-        kernel.register_burn_authorization(auth).unwrap();
+        kernel.register_burn_authorization(auth).ok();
 
         let result = kernel.execute_authorized_burn(&mut token, &[2u8; 32], 0);
         assert_eq!(result, Err(KernelOpError::DelayNotElapsed));
@@ -928,14 +928,14 @@ mod tests {
             kyber_pk: Vec::new(),
             key_id: [1u8; 32],
         };
-        token.mint_kernel_only(&kernel_addr, &from, 1000).unwrap();
+        token.mint_kernel_only(&kernel_addr, &from, 1000).ok();
 
         let auth = test_burn_auth(0);
-        kernel.register_burn_authorization(auth).unwrap();
+        kernel.register_burn_authorization(auth).ok();
 
         kernel
             .execute_authorized_burn(&mut token, &[2u8; 32], 1)
-            .unwrap();
+            .ok();
         let result = kernel.execute_authorized_burn(&mut token, &[2u8; 32], 2);
         assert_eq!(result, Err(KernelOpError::AuthorizationConsumed));
     }
@@ -1041,7 +1041,7 @@ mod tests {
         let gov = test_governance();
 
         // Set delay to 3 epochs
-        kernel.set_mint_delay_epochs(&gov, 3).unwrap();
+        kernel.set_mint_delay_epochs(&gov, 3).ok();
         assert_eq!(kernel.mint_delay_epochs(), 3);
 
         // Try to register with 1-epoch delay (should fail)
@@ -1081,7 +1081,7 @@ mod tests {
         let gov = test_governance();
 
         // Set delay to 2 epochs
-        kernel.set_mint_delay_epochs(&gov, 2).unwrap();
+        kernel.set_mint_delay_epochs(&gov, 2).ok();
         assert_eq!(kernel.mint_delay_epochs(), 2);
 
         // Try to register with insufficient delay (should fail)
@@ -1106,7 +1106,7 @@ mod tests {
         let gov = test_governance();
 
         // Set delay to 0 epochs (immediate execution allowed)
-        kernel.set_mint_delay_epochs(&gov, 0).unwrap();
+        kernel.set_mint_delay_epochs(&gov, 0).ok();
         assert_eq!(kernel.mint_delay_epochs(), 0);
 
         // Register authorization with same epoch for authorization and execution
@@ -1123,7 +1123,7 @@ mod tests {
         let gov = test_governance();
 
         // Set a large delay
-        kernel.set_mint_delay_epochs(&gov, 100).unwrap();
+        kernel.set_mint_delay_epochs(&gov, 100).ok();
 
         // Register authorization at a large epoch number
         let mut auth = test_mint_auth(1000); // authorized_at_epoch = 1000

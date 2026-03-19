@@ -530,7 +530,7 @@ impl QualityAssurance {
             provider_id: provider_id.clone(),
             start_time: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             last_check: 0,
             current_metrics: QualityMetrics {
@@ -573,7 +573,7 @@ impl QualityAssurance {
             uuid::Uuid::new_v4(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs()
         );
 
@@ -584,11 +584,11 @@ impl QualityAssurance {
             status: TestStatus::Pending,
             start_time: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             expected_completion: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs()
                 + 300, // Default 5 minutes
             priority: TestPriority::Normal,
@@ -702,7 +702,7 @@ impl QualityAssurance {
                     benchmark.excellent_score = result.score;
                     benchmark.last_updated = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs();
                 }
             }
@@ -751,7 +751,7 @@ impl QualityAssurance {
         let snapshot = QualitySnapshot {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             metrics: new_metrics.clone(),
             test_results,
@@ -763,7 +763,7 @@ impl QualityAssurance {
         monitor.quality_history.push(snapshot);
         monitor.last_check = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Check for certification eligibility after metric updates (after updating monitor)
@@ -817,7 +817,7 @@ impl QualityAssurance {
             recommendations,
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -1066,7 +1066,7 @@ impl QualityAssurance {
     ) -> Result<()> {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Check certification levels from highest to lowest
@@ -1263,10 +1263,10 @@ mod tests {
         let config = QualityConfig::default();
         let mut qa = QualityAssurance::new(config);
 
-        qa.start_monitoring("provider1".to_string()).unwrap();
+        qa.start_monitoring("provider1".to_string()).ok();
 
         assert!(qa.quality_monitors.contains_key("provider1"));
-        let monitor = qa.quality_monitors.get("provider1").unwrap();
+        let monitor = qa.quality_monitors.get("provider1").ok();
         assert_eq!(monitor.current_metrics.overall_score, 1.0);
     }
 
@@ -1275,11 +1275,11 @@ mod tests {
         let config = QualityConfig::default();
         let mut qa = QualityAssurance::new(config);
 
-        qa.start_monitoring("provider1".to_string()).unwrap();
+        qa.start_monitoring("provider1".to_string()).ok();
 
         let eligible = qa
             .check_certification_eligibility("provider1", CertificationLevel::Basic)
-            .unwrap();
+            .ok();
         assert!(eligible); // Should be eligible with perfect initial scores
     }
 }

@@ -454,7 +454,7 @@ impl CbeToken {
         }
 
         let unvested: u64 = schedules
-            .unwrap()
+            .ok()
             .iter()
             .map(|s| {
                 let vested = s.calculate_vested(current_block);
@@ -740,7 +740,7 @@ mod tests {
 
         token
             .init(&compensation, &operational, &performance, &strategic)
-            .unwrap();
+            .ok();
         let result = token.init(&compensation, &operational, &performance, &strategic);
 
         assert_eq!(result, Err(CbeTokenError::AlreadyInitialized));
@@ -851,7 +851,7 @@ mod tests {
 
         token
             .init(&compensation, &operational, &performance, &strategic)
-            .unwrap();
+            .ok();
 
         let ctx = create_test_execution_context(&compensation);
         let result = token.transfer(&ctx, &recipient, 1_000_000_000, 0);
@@ -878,7 +878,7 @@ mod tests {
 
         token
             .init(&compensation, &operational, &performance, &strategic)
-            .unwrap();
+            .ok();
 
         let result = token.mint(&compensation, 1000);
         assert_eq!(result, Err(CbeTokenError::MintingDisabled));

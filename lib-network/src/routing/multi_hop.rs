@@ -502,7 +502,7 @@ impl MultiHopRouter {
         visited.insert(source.clone());
 
         while let Some(path) = queue.pop_front() {
-            let current_node = path.last().unwrap();
+            let current_node = path.last().ok();
 
             if current_node == destination {
                 return Ok(path);
@@ -1003,6 +1003,6 @@ mod tests {
 
         let cached = router.get_cached_path(&source, &destination).await;
         assert!(cached.is_some());
-        assert_eq!(cached.unwrap().hops.len(), 2);
+        assert_eq!(cached.ok().hops.len(), 2);
     }
 }

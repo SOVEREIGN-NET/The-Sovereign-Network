@@ -66,7 +66,7 @@ impl EnhancedBftEngine {
             step: ConsensusStep::Propose,
             start_time: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             proposer: None,
             proposals: Vec::new(),

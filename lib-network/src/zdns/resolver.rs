@@ -160,7 +160,7 @@ impl ZdnsResolver {
             name_resolver,
             cache: Arc::new(RwLock::new(LruCache::new(
                 std::num::NonZeroUsize::new(config.cache_size).unwrap_or(
-                    std::num::NonZeroUsize::new(1).unwrap()
+                    std::num::NonZeroUsize::new(1).ok()
                 )
             ))),
             config,

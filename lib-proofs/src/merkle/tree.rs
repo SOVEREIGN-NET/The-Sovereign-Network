@@ -184,7 +184,7 @@ mod tests {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"test_leaf");
 
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
         assert_eq!(tree.leaf_count(), 1);
         assert!(!tree.is_empty());
@@ -199,9 +199,9 @@ mod tests {
         let leaf2 = hash_blake3(b"leaf2");
         let leaf3 = hash_blake3(b"leaf3");
 
-        tree.add_leaf(leaf1).unwrap();
-        tree.add_leaf(leaf2).unwrap();
-        tree.add_leaf(leaf3).unwrap();
+        tree.add_leaf(leaf1).ok();
+        tree.add_leaf(leaf2).ok();
+        tree.add_leaf(leaf3).ok();
 
         assert_eq!(tree.leaf_count(), 3);
         assert_eq!(tree.get_leaf(0), Some(leaf1));
@@ -215,7 +215,7 @@ mod tests {
 
         for i in 0..4 {
             let leaf = hash_blake3(&[i as u8]);
-            tree.add_leaf(leaf).unwrap();
+            tree.add_leaf(leaf).ok();
         }
 
         assert!(tree.is_full());
@@ -231,7 +231,7 @@ mod tests {
         let leaf2 = hash_blake3(b"leaf2");
         let leaves = vec![leaf1, leaf2];
 
-        let tree = ZkMerkleTree::with_leaves(4, leaves).unwrap();
+        let tree = ZkMerkleTree::with_leaves(4, leaves).ok();
 
         assert_eq!(tree.leaf_count(), 2);
         assert!(tree.contains_leaf(leaf1));
@@ -244,7 +244,7 @@ mod tests {
 
         for i in 0..3 {
             let leaf = hash_blake3(&[i as u8]);
-            tree.add_leaf(leaf).unwrap();
+            tree.add_leaf(leaf).ok();
         }
 
         let stats = tree.stats();

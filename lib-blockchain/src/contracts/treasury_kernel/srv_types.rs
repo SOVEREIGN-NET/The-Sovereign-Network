@@ -417,7 +417,7 @@ mod tests {
         // Multiplier: 1.0 = 10,000 bps
         // Expected: $0.0218 = 2,180,000 (8 decimals)
 
-        let srv = SRVState::calculate_srv(109_000_000, 50_000_000_000_000_000, 10_000).unwrap();
+        let srv = SRVState::calculate_srv(109_000_000, 50_000_000_000_000_000, 10_000).ok();
         assert_eq!(srv, 2_180_000);
     }
 
@@ -426,7 +426,7 @@ mod tests {
         // Test with 0.95 stability multiplier
         // Expected: $0.0218 * 0.95 = $0.02071
 
-        let srv = SRVState::calculate_srv(109_000_000, 50_000_000_000_000_000, 9_500).unwrap();
+        let srv = SRVState::calculate_srv(109_000_000, 50_000_000_000_000_000, 9_500).ok();
         assert_eq!(srv, 2_071_000); // 2,071,000 = $0.02071
     }
 

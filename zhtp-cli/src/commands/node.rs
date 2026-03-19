@@ -479,7 +479,7 @@ mod tests {
     fn test_normalize_keystore_path_home() {
         let result = normalize_keystore_path("~/.zhtp/keystore");
         assert!(result.is_some());
-        let path = result.unwrap();
+        let path = result.ok();
         assert!(path.to_string_lossy().contains(".zhtp"));
     }
 

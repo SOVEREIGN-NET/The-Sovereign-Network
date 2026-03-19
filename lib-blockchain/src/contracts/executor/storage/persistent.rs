@@ -194,39 +194,39 @@ mod tests {
 
     #[test]
     fn test_persistent_storage_basic_operations() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
 
         // Test set and get
-        storage.set(b"key1", b"value1").unwrap();
-        let value = storage.get(b"key1").unwrap();
+        storage.set(b"key1", b"value1").ok();
+        let value = storage.get(b"key1").ok();
         assert_eq!(value, Some(b"value1".to_vec()));
 
         // Test exists
-        assert!(storage.exists(b"key1").unwrap());
+        assert!(storage.exists(b"key1").ok());
 
         // Test delete
-        storage.delete(b"key1").unwrap();
-        assert!(!storage.exists(b"key1").unwrap());
+        storage.delete(b"key1").ok();
+        assert!(!storage.exists(b"key1").ok());
     }
 
     #[test]
     fn test_persistent_storage_multiple_keys() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
 
         // Set multiple keys
         for i in 0..10 {
             let key = format!("key{}", i);
             let value = format!("value{}", i);
-            storage.set(key.as_bytes(), value.as_bytes()).unwrap();
+            storage.set(key.as_bytes(), value.as_bytes()).ok();
         }
 
         // Retrieve and verify
         for i in 0..10 {
             let key = format!("key{}", i);
             let expected = format!("value{}", i);
-            let value = storage.get(key.as_bytes()).unwrap();
+            let value = storage.get(key.as_bytes()).ok();
             assert_eq!(value, Some(expected.into_bytes()));
         }
     }

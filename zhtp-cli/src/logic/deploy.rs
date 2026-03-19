@@ -106,12 +106,12 @@ fn is_valid_subdomain(subdomain: &str) -> bool {
     }
 
     // Must start with alphanumeric
-    if !subdomain.chars().next().unwrap().is_alphanumeric() {
+    if !subdomain.chars().next().ok().is_alphanumeric() {
         return false;
     }
 
     // Must end with alphanumeric
-    if !subdomain.chars().last().unwrap().is_alphanumeric() {
+    if !subdomain.chars().last().ok().is_alphanumeric() {
         return false;
     }
 
@@ -237,8 +237,8 @@ mod tests {
 
     #[test]
     fn test_deploy_mode_from_str() {
-        assert_eq!(DeployMode::from_str("spa").unwrap(), DeployMode::Spa);
-        assert_eq!(DeployMode::from_str("static").unwrap(), DeployMode::Static);
+        assert_eq!(DeployMode::from_str("spa").ok(), DeployMode::Spa);
+        assert_eq!(DeployMode::from_str("static").ok(), DeployMode::Static);
         assert!(DeployMode::from_str("invalid").is_err());
     }
 

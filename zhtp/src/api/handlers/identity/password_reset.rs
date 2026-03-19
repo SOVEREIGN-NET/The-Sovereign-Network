@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn test_password_recovery_request_parsing() {
         let json = r#"{"identity_id": "abc123", "recovery_phrase": "word1 word2 ... word20", "new_password": "newpass123"}"#;
-        let req: PasswordRecoveryRequest = serde_json::from_str(json).unwrap();
+        let req: PasswordRecoveryRequest = serde_json::from_str(json).ok();
         assert_eq!(req.identity_id, Some("abc123".to_string()));
         assert_eq!(req.recovery_phrase, "word1 word2 ... word20");
         assert_eq!(req.new_password, "newpass123");
@@ -190,7 +190,7 @@ mod tests {
         // Test with DID
         let json =
             r#"{"did": "did:zhtp:abc123", "recovery_phrase": "words", "new_password": "newpass"}"#;
-        let req: PasswordRecoveryRequest = serde_json::from_str(json).unwrap();
+        let req: PasswordRecoveryRequest = serde_json::from_str(json).ok();
         assert_eq!(req.identity_id, Some("did:zhtp:abc123".to_string()));
     }
 }

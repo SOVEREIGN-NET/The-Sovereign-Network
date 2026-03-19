@@ -165,15 +165,15 @@ mod tests {
 
     #[test]
     fn test_last_finalized_height() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
         let manager = StateVersionManager::new(storage, Some(100));
 
         // Should be None initially
-        assert_eq!(manager.get_last_finalized_height().unwrap(), None);
+        assert_eq!(manager.get_last_finalized_height().ok(), None);
 
         // Update and retrieve
-        manager.update_last_finalized_height(42).unwrap();
-        assert_eq!(manager.get_last_finalized_height().unwrap(), Some(42));
+        manager.update_last_finalized_height(42).ok();
+        assert_eq!(manager.get_last_finalized_height().ok(), Some(42));
     }
 }

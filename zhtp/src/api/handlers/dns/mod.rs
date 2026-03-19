@@ -167,7 +167,7 @@ impl DnsHandler {
 
                         self.update_stats(true).await;
                         return Ok(ZhtpResponse::success_with_content_type(
-                            serde_json::to_vec(&response).unwrap(),
+                            serde_json::to_vec(&response).ok(),
                             "application/json".to_string(),
                             None,
                         ));
@@ -212,7 +212,7 @@ impl DnsHandler {
                 self.update_stats(false).await;
                 return Ok(ZhtpResponse::error(
                     ZhtpStatus::NotFound,
-                    serde_json::to_string(&response).unwrap(),
+                    serde_json::to_string(&response).ok(),
                 ));
             }
 
@@ -257,7 +257,7 @@ impl DnsHandler {
 
                     self.update_stats(true).await;
                     return Ok(ZhtpResponse::success_with_content_type(
-                        serde_json::to_vec(&response).unwrap(),
+                        serde_json::to_vec(&response).ok(),
                         "application/json".to_string(),
                         None,
                     ));
@@ -286,7 +286,7 @@ impl DnsHandler {
                     self.update_stats(false).await;
                     return Ok(ZhtpResponse::error(
                         ZhtpStatus::InternalServerError,
-                        serde_json::to_string(&response).unwrap(),
+                        serde_json::to_string(&response).ok(),
                     ));
                 }
                 Err(e) => {
@@ -310,7 +310,7 @@ impl DnsHandler {
                     self.update_stats(false).await;
                     return Ok(ZhtpResponse::error(
                         ZhtpStatus::InternalServerError,
-                        serde_json::to_string(&response).unwrap(),
+                        serde_json::to_string(&response).ok(),
                     ));
                 }
             }
@@ -340,7 +340,7 @@ impl DnsHandler {
             self.update_stats(false).await;
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::NotFound,
-                serde_json::to_string(&response).unwrap(),
+                serde_json::to_string(&response).ok(),
             ));
         }
     }
@@ -434,7 +434,7 @@ impl DnsHandler {
         });
 
         Ok(ZhtpResponse::success_with_content_type(
-            serde_json::to_vec(&response).unwrap(),
+            serde_json::to_vec(&response).ok(),
             "application/json".to_string(),
             None,
         ))
@@ -466,7 +466,7 @@ impl DnsHandler {
         });
 
         Ok(ZhtpResponse::success_with_content_type(
-            serde_json::to_vec(&response).unwrap(),
+            serde_json::to_vec(&response).ok(),
             "application/json".to_string(),
             None,
         ))

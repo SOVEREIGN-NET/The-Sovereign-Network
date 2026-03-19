@@ -232,17 +232,17 @@ mod tests {
         let leaf2 = hash_blake3(b"leaf2");
         let leaf3 = hash_blake3(b"leaf3");
 
-        tree.add_leaf(leaf1).unwrap();
-        tree.add_leaf(leaf2).unwrap();
-        tree.add_leaf(leaf3).unwrap();
+        tree.add_leaf(leaf1).ok();
+        tree.add_leaf(leaf2).ok();
+        tree.add_leaf(leaf3).ok();
 
         // Generate proof for leaf1
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0).ok();
         assert_eq!(proof.leaf, leaf1);
         assert!(proof.is_valid_structure());
 
         // Generate proof for leaf2
-        let proof = tree.generate_proof(1).unwrap();
+        let proof = tree.generate_proof(1).ok();
         assert_eq!(proof.leaf, leaf2);
         assert!(proof.is_valid_structure());
     }
@@ -252,9 +252,9 @@ mod tests {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"test_leaf");
 
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let proof = tree.generate_proof_for_leaf(leaf).unwrap();
+        let proof = tree.generate_proof_for_leaf(leaf).ok();
         assert_eq!(proof.leaf, leaf);
     }
 
@@ -264,7 +264,7 @@ mod tests {
         let leaf = hash_blake3(b"test_leaf");
         let nonexistent = hash_blake3(b"nonexistent");
 
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
         let result = tree.generate_proof_for_leaf(nonexistent);
         assert!(result.is_err());
@@ -276,10 +276,10 @@ mod tests {
 
         for i in 0..5 {
             let leaf = hash_blake3(&[i]);
-            tree.add_leaf(leaf).unwrap();
+            tree.add_leaf(leaf).ok();
         }
 
-        let proofs = tree.generate_batch_proofs(vec![0, 2, 4]).unwrap();
+        let proofs = tree.generate_batch_proofs(vec![0, 2, 4]).ok();
         assert_eq!(proofs.len(), 3);
 
         for (i, proof) in proofs.iter().enumerate() {
@@ -294,10 +294,10 @@ mod tests {
 
         for i in 0..3 {
             let leaf = hash_blake3(&[i]);
-            tree.add_leaf(leaf).unwrap();
+            tree.add_leaf(leaf).ok();
         }
 
-        let proofs = tree.generate_all_proofs().unwrap();
+        let proofs = tree.generate_all_proofs().ok();
         assert_eq!(proofs.len(), 3);
     }
 
@@ -305,11 +305,11 @@ mod tests {
     fn test_compute_root_from_proof() {
         let mut tree = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"test");
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0).ok();
         let computed_root =
-            compute_root_from_proof(proof.leaf, &proof.path, &proof.indices).unwrap();
+            compute_root_from_proof(proof.leaf, &proof.path, &proof.indices).ok();
 
         assert_eq!(computed_root, tree.root);
     }
@@ -318,9 +318,9 @@ mod tests {
     fn test_proof_optimization() {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"test");
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let mut proof = tree.generate_proof(0).unwrap();
+        let mut proof = tree.generate_proof(0).ok();
         let original_size = proof.size();
 
         proof.optimize();
@@ -333,9 +333,9 @@ mod tests {
     fn test_compact_proof() {
         let mut tree = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"test");
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0).ok();
         let compact = proof.to_compact();
         let restored = compact.to_standard();
 

@@ -203,12 +203,12 @@ impl ZhtpServer {
 
     /// Get server statistics
     pub fn stats(&self) -> ServerStats {
-        self.state.stats.read().unwrap().clone()
+        self.state.stats.read().ok().clone()
     }
 
     /// Check if server is running
     pub fn is_running(&self) -> bool {
-        *self.is_running.read().unwrap()
+        *self.is_running.read().ok()
     }
 
     /// Start the ZHTP server
@@ -237,7 +237,7 @@ impl ZhtpServer {
         }
 
         self.listener = Some(listener);
-        *self.is_running.write().unwrap() = true;
+        *self.is_running.write().ok() = true;
 
         // Start accepting connections
         self.accept_connections().await?;
@@ -253,7 +253,7 @@ impl ZhtpServer {
 
         tracing::info!("Stopping ZHTP Server");
 
-        *self.is_running.write().unwrap() = false;
+        *self.is_running.write().ok() = false;
 
         // Notify event handlers
         for handler in &self.event_handlers {
@@ -264,15 +264,15 @@ impl ZhtpServer {
 
         // Wait for active connections to finish
         let mut wait_count = 0;
-        while *self.state.active_connections.read().unwrap() > 0 && wait_count < 30 {
+        while *self.state.active_connections.read().ok() > 0 && wait_count < 30 {
             tokio::time::sleep(Duration::from_secs(1)).await;
             wait_count += 1;
         }
 
-        if *self.state.active_connections.read().unwrap() > 0 {
+        if *self.state.active_connections.read().ok() > 0 {
             tracing::warn!(
                 "{} connections still active after shutdown",
-                *self.state.active_connections.read().unwrap()
+                *self.state.active_connections.read().ok()
             );
         }
 
@@ -300,7 +300,7 @@ impl ZhtpServer {
                     tracing::debug!("New connection from {}", addr);
 
                     // Increment active connections
-                    *self.state.active_connections.write().unwrap() += 1;
+                    *self.state.active_connections.write().ok() += 1;
 
                     // Handle connection in background
                     let server_state = self.state.clone();
@@ -373,7 +373,7 @@ async fn handle_connection(
 
         // Record request statistics
         {
-            let mut stats = state.stats.write().unwrap();
+            let mut stats = state.stats.write().ok();
             stats.record_request(&request.method, request.body.len());
         }
 
@@ -486,7 +486,7 @@ async fn handle_connection(
 
         // Record response statistics
         {
-            let mut stats = state.stats.write().unwrap();
+            let mut stats = state.stats.write().ok();
             stats.record_response(&final_response.status, final_response.body.len());
         }
 
@@ -510,7 +510,7 @@ async fn handle_connection(
     }
 
     // Decrement active connections
-    *state.active_connections.write().unwrap() -= 1;
+    *state.active_connections.write().ok() -= 1;
 
     Ok(())
 }
@@ -692,7 +692,7 @@ async fn send_response(
 
     // Update statistics
     {
-        let mut stats = state.stats.write().unwrap();
+        let mut stats = state.stats.write().ok();
         stats.record_response(&response.status, response_data.len());
     }
 
@@ -856,11 +856,11 @@ mod tests {
 
     #[test]
     fn test_should_keep_alive() {
-        let request = ZhtpRequest::get("/test".to_string(), None).unwrap();
+        let request = ZhtpRequest::get("/test".to_string(), None).ok();
         let response = ZhtpResponse::success(vec![], None);
         assert!(should_keep_alive(&request, &response));
 
-        let mut close_request = ZhtpRequest::get("/test".to_string(), None).unwrap();
+        let mut close_request = ZhtpRequest::get("/test".to_string(), None).ok();
         close_request.headers.set("Connection", "close".to_string());
         assert!(!should_keep_alive(&close_request, &response));
     }

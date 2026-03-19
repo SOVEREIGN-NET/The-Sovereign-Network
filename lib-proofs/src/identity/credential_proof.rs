@@ -232,7 +232,7 @@ impl ZkCredentialProof {
         // Generate validity proof using ZK circuits
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let validity_proof = match crate::plonky2::ZkProofSystem::new() {
@@ -291,7 +291,7 @@ impl ZkCredentialProof {
         nonce_data.extend_from_slice(
             &std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_nanos()
                 .to_le_bytes(),
         );
@@ -464,7 +464,7 @@ impl ZkCredentialProof {
     pub fn is_expired(&self) -> bool {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         current_time > self.expires_at
@@ -474,7 +474,7 @@ impl ZkCredentialProof {
     pub fn time_until_expiration(&self) -> i64 {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         self.expires_at as i64 - current_time as i64
@@ -557,7 +557,7 @@ impl BatchCredentialProof {
 
         let batch_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Ok(BatchCredentialProof {
@@ -645,7 +645,7 @@ mod tests {
             issuer_signature,
             credential_secret,
         )
-        .unwrap();
+        .ok();
 
         assert!(!proof.is_expired());
         assert!(proof.is_claim_revealed("degree"));
@@ -668,7 +668,7 @@ mod tests {
             issuer_signature,
             credential_secret,
         )
-        .unwrap();
+        .ok();
 
         assert!(proof.is_claim_revealed("company"));
         assert!(proof.is_claim_revealed("position"));
@@ -689,7 +689,7 @@ mod tests {
             issuer_signature,
             credential_secret,
         )
-        .unwrap();
+        .ok();
 
         assert!(proof.is_claim_revealed("license_type"));
         assert!(!proof.is_claim_revealed("license_number"));
@@ -710,7 +710,7 @@ mod tests {
             issuer_signature,
             credential_secret1,
         )
-        .unwrap();
+        .ok();
 
         let proof2 = ZkCredentialProof::generate_employment_proof(
             "Finance Corp".to_string(),
@@ -721,9 +721,9 @@ mod tests {
             issuer_signature,
             credential_secret2,
         )
-        .unwrap();
+        .ok();
 
-        let batch = BatchCredentialProof::create(vec![proof1, proof2]).unwrap();
+        let batch = BatchCredentialProof::create(vec![proof1, proof2]).ok();
 
         assert_eq!(batch.batch_size(), 2);
         assert!(!batch.has_expired_proofs());
@@ -744,12 +744,12 @@ mod tests {
             issuer_signature,
             credential_secret,
         )
-        .unwrap();
+        .ok();
 
         // Set expiry to past
         proof.expires_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
             - 3600; // 1 hour ago
 

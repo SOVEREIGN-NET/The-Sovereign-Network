@@ -1227,7 +1227,7 @@ mod tests {
             Priority::Normal,
             &economic_model,
         )
-        .unwrap();
+        .ok();
 
         // Set the required headers after creating the request
         request.headers.set("X-DAO-Fee", "5000".to_string());
@@ -1247,7 +1247,7 @@ mod tests {
         let result = router
             .economic_requirements_met(&request, &requirements)
             .await
-            .unwrap();
+            .ok();
         assert!(result);
     }
 }

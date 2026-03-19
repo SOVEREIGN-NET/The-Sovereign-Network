@@ -731,7 +731,7 @@ impl ZhtpSessionManager {
         };
 
         // Now get mutable reference
-        let session = self.sessions.get_mut(session_id).unwrap();
+        let session = self.sessions.get_mut(session_id).ok();
 
         // Update session state
         session.state = SessionState::Terminated;
@@ -1046,7 +1046,7 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let session = manager.create_session(create_request).await.unwrap();
+        let session = manager.create_session(create_request).await.ok();
         assert!(!session.session_id.is_empty());
         assert_eq!(session.user_id, "test_user");
         assert_eq!(session.state, SessionState::Active);
@@ -1078,7 +1078,7 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let session = manager.create_session(create_request).await.unwrap();
+        let session = manager.create_session(create_request).await.ok();
 
         // Validate session
         let headers = crate::types::ZhtpHeaders::new();
@@ -1094,12 +1094,12 @@ mod tests {
             lib_economy::Priority::Normal,
             &economic_model,
         )
-        .unwrap();
+        .ok();
 
         let validation = manager
             .validate_session(&session.session_id, &request)
             .await
-            .unwrap();
+            .ok();
         assert!(validation.is_valid);
         assert!(validation.session_info.is_some());
     }

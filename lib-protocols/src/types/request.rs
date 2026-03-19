@@ -381,7 +381,7 @@ mod tests {
             Priority::Normal,
             &economic_model,
         )
-        .unwrap();
+        .ok();
 
         assert_eq!(request.method, ZhtpMethod::Post);
         assert_eq!(request.uri, "/test");
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_convenience_constructors() {
-        let get_req = ZhtpRequest::get("/api/test".to_string(), None).unwrap();
+        let get_req = ZhtpRequest::get("/api/test".to_string(), None).ok();
         assert_eq!(get_req.method, ZhtpMethod::Get);
         assert!(get_req.body.is_empty());
 
@@ -401,7 +401,7 @@ mod tests {
             "text/plain".to_string(),
             None,
         )
-        .unwrap();
+        .ok();
         assert_eq!(post_req.method, ZhtpMethod::Post);
         assert_eq!(post_req.body, b"test data");
         assert_eq!(
@@ -421,9 +421,9 @@ mod tests {
             Priority::Normal,
             &economic_model,
         )
-        .unwrap();
+        .ok();
 
-        assert!(request.validate_dao_fee(&economic_model).unwrap());
+        assert!(request.validate_dao_fee(&economic_model).ok());
     }
 
     #[test]
@@ -439,8 +439,8 @@ mod tests {
             Priority::Normal,
             &economic_model,
         )
-        .unwrap();
-        assert!(small_request.validate_size_limits().unwrap());
+        .ok();
+        assert!(small_request.validate_size_limits().ok());
 
         // Large request should fail
         let large_request = ZhtpRequest::new(
@@ -451,8 +451,8 @@ mod tests {
             Priority::Normal,
             &economic_model,
         )
-        .unwrap();
-        assert!(!large_request.validate_size_limits().unwrap());
+        .ok();
+        assert!(!large_request.validate_size_limits().ok());
     }
 
     #[test]
@@ -466,10 +466,10 @@ mod tests {
             Priority::Normal,
             &economic_model,
         )
-        .unwrap();
+        .ok();
 
         // Current timestamp should be valid
-        assert!(request.validate_timestamp(300).unwrap()); // 5 minutes max age
+        assert!(request.validate_timestamp(300).ok()); // 5 minutes max age
     }
 
     #[test]
@@ -499,7 +499,7 @@ mod tests {
             Priority::Normal,
             &economic_model,
         )
-        .unwrap();
+        .ok();
         assert!(get_req.is_safe());
         assert!(get_req.is_idempotent());
         assert!(!get_req.requires_special_permissions());
@@ -512,7 +512,7 @@ mod tests {
             Priority::Normal,
             &economic_model,
         )
-        .unwrap();
+        .ok();
         assert!(!post_req.is_safe());
         assert!(!post_req.is_idempotent());
         assert!(post_req.requires_special_permissions());

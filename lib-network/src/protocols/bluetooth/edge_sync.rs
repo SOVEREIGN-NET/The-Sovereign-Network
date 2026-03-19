@@ -36,7 +36,7 @@ impl BluetoothMeshProtocol {
             info!(" Message {} bytes, fragmenting for BLE MTU", data.len());
             let message_id = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_millis() as u64;
 
             let fragments = gatt::fragment_large_message(message_id, &data, 512);
@@ -97,15 +97,15 @@ mod tests {
             count: 5,
         };
 
-        let data = gatt::GattMessage::serialize_edge_sync(&msg).unwrap();
+        let data = gatt::GattMessage::serialize_edge_sync(&msg).ok();
         assert!(data.len() > 2);
     }
 
     #[tokio::test]
     async fn test_handle_edge_sync_message_returns_none() {
         let node_id = [9u8; 32];
-        let keypair = KeyPair::generate().unwrap();
-        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+        let keypair = KeyPair::generate().ok();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).ok();
 
         let msg = gatt::EdgeSyncMessage::HeadersRequest {
             request_id: 2,
@@ -116,7 +116,7 @@ mod tests {
         let result = protocol
             .handle_edge_sync_message(&msg, "peer-x")
             .await
-            .unwrap();
+            .ok();
         assert!(result.is_none());
     }
 }

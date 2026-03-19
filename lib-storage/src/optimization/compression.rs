@@ -142,12 +142,12 @@ mod tests {
         let mut compressor = Compressor::new(CompressionAlgorithm::Lz4);
         let data = b"Hello, World! This is test data that should compress well.";
 
-        let compressed = compressor.compress(data).unwrap();
+        let compressed = compressor.compress(data).ok();
         // NOTE: LZ4 may not compress very small data due to frame overhead
         // This test verifies compression works, not that it reduces size
         assert!(!compressed.is_empty());
 
-        let decompressed = compressor.decompress(&compressed).unwrap();
+        let decompressed = compressor.decompress(&compressed).ok();
         assert_eq!(decompressed, data);
     }
 
@@ -156,10 +156,10 @@ mod tests {
         let mut compressor = Compressor::new(CompressionAlgorithm::None);
         let data = b"Test data";
 
-        let compressed = compressor.compress(data).unwrap();
+        let compressed = compressor.compress(data).ok();
         assert_eq!(compressed, data);
 
-        let decompressed = compressor.decompress(&compressed).unwrap();
+        let decompressed = compressor.decompress(&compressed).ok();
         assert_eq!(decompressed, data);
     }
 
@@ -167,8 +167,8 @@ mod tests {
     fn test_compression_stats() {
         let mut compressor = Compressor::new(CompressionAlgorithm::Lz4);
 
-        compressor.compress(b"test1").unwrap();
-        compressor.compress(b"test2").unwrap();
+        compressor.compress(b"test1").ok();
+        compressor.compress(b"test2").ok();
 
         let stats = compressor.get_stats();
         assert_eq!(stats.operations, 2);

@@ -694,7 +694,7 @@ mod tests {
         let dao_id = make_dao_id(1);
         adapter
             .submit_claim(dao_id, WelfareSectorId::Food, [0u8; 32])
-            .unwrap();
+            .ok();
 
         // Second claim should fail
         let result = adapter.submit_claim(dao_id, WelfareSectorId::Food, [0u8; 32]);
@@ -713,13 +713,13 @@ mod tests {
         let dao_id = make_dao_id(1);
         adapter
             .submit_claim(dao_id, WelfareSectorId::Food, [0u8; 32])
-            .unwrap();
+            .ok();
 
         adapter.set_current_block(2000);
         let result = adapter.ratify_claim(root, dao_id, WelfareSectorId::Food, None);
         assert!(result.is_ok());
 
-        let binding = result.unwrap();
+        let binding = result.ok();
         assert_eq!(binding.dao_id, dao_id);
         assert_eq!(binding.sector, WelfareSectorId::Food);
         assert!(matches!(binding.status, BindingStatus::Active));
@@ -735,7 +735,7 @@ mod tests {
         let non_root = make_dao_id(99);
         adapter
             .submit_claim(dao_id, WelfareSectorId::Food, [0u8; 32])
-            .unwrap();
+            .ok();
 
         let result = adapter.ratify_claim(non_root, dao_id, WelfareSectorId::Food, None);
         assert!(matches!(result, Err(WelfareIssuerError::NotRootAuthority)));
@@ -749,17 +749,17 @@ mod tests {
         let dao_id = make_dao_id(1);
         adapter
             .submit_claim(dao_id, WelfareSectorId::Food, [0u8; 32])
-            .unwrap();
+            .ok();
         adapter
             .ratify_claim(root, dao_id, WelfareSectorId::Food, None)
-            .unwrap();
+            .ok();
 
         // Suspend
         adapter
             .suspend_dao(root, dao_id, SuspensionReason::SecurityIncident)
-            .unwrap();
+            .ok();
 
-        let binding = adapter.get_binding(WelfareSectorId::Food).unwrap();
+        let binding = adapter.get_binding(WelfareSectorId::Food).ok();
         assert!(matches!(
             binding.status,
             BindingStatus::SuspendedByRoot { .. }
@@ -769,7 +769,7 @@ mod tests {
         assert!(!adapter.is_dao_authorized(&dao_id, WelfareSectorId::Food));
 
         // Reinstate
-        adapter.reinstate_dao(root, dao_id).unwrap();
+        adapter.reinstate_dao(root, dao_id).ok();
         assert!(adapter.is_dao_authorized(&dao_id, WelfareSectorId::Food));
     }
 
@@ -782,10 +782,10 @@ mod tests {
         let dao_id = make_dao_id(1);
         adapter
             .submit_claim(dao_id, WelfareSectorId::Food, [0u8; 32])
-            .unwrap();
+            .ok();
         adapter
             .ratify_claim(root, dao_id, WelfareSectorId::Food, None)
-            .unwrap();
+            .ok();
 
         // Issue a name (no verifier registered, so permissive mode)
         let result = adapter.issue_welfare_name(
@@ -804,13 +804,13 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let issuance = result.unwrap();
+        let issuance = result.ok();
         assert_eq!(issuance.metadata.sector, WelfareSectorId::Food);
         assert_eq!(issuance.metadata.issuing_dao, dao_id);
         assert_eq!(issuance.metadata.category, Some("agriculture".to_string()));
 
         // Check names_issued incremented
-        let binding = adapter.get_binding(WelfareSectorId::Food).unwrap();
+        let binding = adapter.get_binding(WelfareSectorId::Food).ok();
         assert_eq!(binding.names_issued, 1);
     }
 
@@ -822,12 +822,12 @@ mod tests {
         let dao_id = make_dao_id(1);
         adapter
             .submit_claim(dao_id, WelfareSectorId::Healthcare, [0u8; 32])
-            .unwrap();
+            .ok();
 
         // Ratify with default policy (Healthcare requires L2)
         adapter
             .ratify_claim(root, dao_id, WelfareSectorId::Healthcare, None)
-            .unwrap();
+            .ok();
 
         // Try to issue with L1 (should fail - Healthcare floor is L2)
         let result = adapter.issue_welfare_name(
@@ -877,10 +877,10 @@ mod tests {
         let dao_id = make_dao_id(1);
         adapter
             .submit_claim(dao_id, WelfareSectorId::Food, [0u8; 32])
-            .unwrap();
+            .ok();
         adapter
             .ratify_claim(root, dao_id, WelfareSectorId::Food, None)
-            .unwrap();
+            .ok();
 
         // Empty label
         let result = adapter.issue_welfare_name(

@@ -359,6 +359,6 @@ fn test() {
     let buf = vec![
         0x0, 0x0, 0x0, 0x0, 0x6e, 0x67, 0x2d, 0xa0, 0x9c, 0xf7, 0xc5, 0x80, 0x0, 0x0, 0x0, 0x0,
     ];
-    let record = LocRRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = LocRRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

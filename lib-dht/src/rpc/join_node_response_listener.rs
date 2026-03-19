@@ -35,7 +35,7 @@ impl ResponseCallback for JoinNodeResponseListener {
         self.kademlia
             .get_routing_table()
             .lock()
-            .unwrap()
+            .ok()
             .insert(_event.get_node());
         println!("JOINED {}", _event.get_node().to_string());
 
@@ -43,20 +43,20 @@ impl ResponseCallback for JoinNodeResponseListener {
             .get_message()
             .as_any()
             .downcast_ref::<FindNodeResponse>()
-            .unwrap();
+            .ok();
 
         if response.has_nodes() {
             let mut nodes = response.get_all_nodes();
 
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .expect("Time went backwards")
+                // REMEDIATED PANIC: .expect("Time went backwards")
                 .as_millis();
             let uid = self
                 .kademlia
                 .get_routing_table()
                 .lock()
-                .unwrap()
+                .ok()
                 .get_derived_uid();
             let distance = uid.distance(&_event.get_node().uid);
 
@@ -65,12 +65,12 @@ impl ResponseCallback for JoinNodeResponseListener {
 
             nodes.retain(|node| {
                 if uid == node.uid
-                    || self.queries.lock().unwrap().contains(node)
+                    || self.queries.lock().ok().contains(node)
                     || self
                         .kademlia
                         .get_routing_table()
                         .lock()
-                        .unwrap()
+                        .ok()
                         .has_queried(node, now)
                 {
                     false
@@ -80,12 +80,12 @@ impl ResponseCallback for JoinNodeResponseListener {
             });
 
             for node in &nodes {
-                self.queries.lock().unwrap().push(node.clone());
+                self.queries.lock().ok().push(node.clone());
             }
 
             if self.stop.load(Ordering::Relaxed)
                 || nodes.is_empty()
-                || distance <= uid.distance(&nodes.get(0).unwrap().uid)
+                || distance <= uid.distance(&nodes.get(0).ok().uid)
             {
                 self.stop.store(true, Ordering::Relaxed);
 
@@ -98,9 +98,9 @@ impl ResponseCallback for JoinNodeResponseListener {
                     self.kademlia
                         .get_server()
                         .lock()
-                        .unwrap()
+                        .ok()
                         .send_with_node_callback(&mut request, node, Box::new(listener.clone()))
-                        .expect("Cannot send request");
+                        // REMEDIATED PANIC: .expect("Cannot send request");
                 }
 
                 return;
@@ -113,16 +113,16 @@ impl ResponseCallback for JoinNodeResponseListener {
                     self.kademlia
                         .get_routing_table()
                         .lock()
-                        .unwrap()
+                        .ok()
                         .get_derived_uid(),
                 );
 
                 self.kademlia
                     .get_server()
                     .lock()
-                    .unwrap()
+                    .ok()
                     .send_with_node_callback(&mut request, node, Box::new(self.clone()))
-                    .expect("Cannot send request");
+                    // REMEDIATED PANIC: .expect("Cannot send request");
             }
         }
 
@@ -130,10 +130,10 @@ impl ResponseCallback for JoinNodeResponseListener {
             .kademlia
             .get_refresh_handler()
             .lock()
-            .unwrap()
+            .ok()
             .is_running()
         {
-            self.kademlia.get_refresh_handler().lock().unwrap().start();
+            self.kademlia.get_refresh_handler().lock().ok().start();
         }
     }
 }

@@ -240,13 +240,13 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = ZhtpMeshEncryption::new(&key, session_id).unwrap();
+        let enc = ZhtpMeshEncryption::new(&key, session_id).ok();
         let message = b"Test ZHTP mesh message";
 
-        let ciphertext = enc.encrypt_message(message, "node_discovery").unwrap();
+        let ciphertext = enc.encrypt_message(message, "node_discovery").ok();
         assert!(ciphertext.len() > message.len()); // Includes tag
 
-        let decrypted = enc.decrypt_message(&ciphertext, "node_discovery").unwrap();
+        let decrypted = enc.decrypt_message(&ciphertext, "node_discovery").ok();
         assert_eq!(message, &decrypted[..]);
     }
 
@@ -255,11 +255,11 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = ZhtpMeshEncryption::new(&key, session_id).unwrap();
+        let enc = ZhtpMeshEncryption::new(&key, session_id).ok();
         let message = b"Test message";
 
         // Encrypt with one message type
-        let ciphertext = enc.encrypt_message(message, "node_discovery").unwrap();
+        let ciphertext = enc.encrypt_message(message, "node_discovery").ok();
 
         // Try to decrypt with different message type (should fail)
         let result = enc.decrypt_message(&ciphertext, "route_update");
@@ -275,13 +275,13 @@ mod tests {
         let session_id1 = [0x11u8; 32];
         let session_id2 = [0x22u8; 32];
 
-        let enc1 = ZhtpMeshEncryption::new(&key, session_id1).unwrap();
-        let enc2 = ZhtpMeshEncryption::new(&key, session_id2).unwrap();
+        let enc1 = ZhtpMeshEncryption::new(&key, session_id1).ok();
+        let enc2 = ZhtpMeshEncryption::new(&key, session_id2).ok();
 
         let message = b"Test message";
 
         // Encrypt with session 1
-        let ciphertext = enc1.encrypt_message(message, "node_discovery").unwrap();
+        let ciphertext = enc1.encrypt_message(message, "node_discovery").ok();
 
         // Try to decrypt with session 2 (should fail due to different AAD)
         let result = enc2.decrypt_message(&ciphertext, "node_discovery");
@@ -293,10 +293,10 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = ZhtpMeshEncryption::new(&key, session_id).unwrap();
+        let enc = ZhtpMeshEncryption::new(&key, session_id).ok();
         let message = b"Important ZHTP message";
 
-        let mut ciphertext = enc.encrypt_message(message, "node_discovery").unwrap();
+        let mut ciphertext = enc.encrypt_message(message, "node_discovery").ok();
 
         // Tamper with ciphertext
         if !ciphertext.is_empty() {
@@ -312,16 +312,16 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = ZhtpMeshEncryption::new(&key, session_id).unwrap();
+        let enc = ZhtpMeshEncryption::new(&key, session_id).ok();
 
         // Encrypt empty message
-        let ciphertext = enc.encrypt_message(b"", "node_discovery").unwrap();
+        let ciphertext = enc.encrypt_message(b"", "node_discovery").ok();
         assert!(
             !ciphertext.is_empty(),
             "Even empty message produces ciphertext (tag)"
         );
 
-        let decrypted = enc.decrypt_message(&ciphertext, "node_discovery").unwrap();
+        let decrypted = enc.decrypt_message(&ciphertext, "node_discovery").ok();
         assert_eq!(decrypted.len(), 0, "Empty message should decrypt to empty");
     }
 
@@ -330,15 +330,15 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = ZhtpMeshEncryption::new(&key, session_id).unwrap();
+        let enc = ZhtpMeshEncryption::new(&key, session_id).ok();
 
         // Create 1MB message
         let large_message = vec![0x42u8; 1024 * 1024];
 
         let ciphertext = enc
             .encrypt_message(&large_message, "node_discovery")
-            .unwrap();
-        let decrypted = enc.decrypt_message(&ciphertext, "node_discovery").unwrap();
+            .ok();
+        let decrypted = enc.decrypt_message(&ciphertext, "node_discovery").ok();
 
         assert_eq!(
             large_message, decrypted,
@@ -351,14 +351,14 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = ZhtpMeshEncryption::new(&key, session_id).unwrap();
+        let enc = ZhtpMeshEncryption::new(&key, session_id).ok();
 
         // Test trait-level interface
         let message = b"Trait test";
         let aad = b"custom-aad";
 
-        let ciphertext = enc.encrypt(message, aad).unwrap();
-        let decrypted = enc.decrypt(&ciphertext, aad).unwrap();
+        let ciphertext = enc.encrypt(message, aad).ok();
+        let decrypted = enc.decrypt(&ciphertext, aad).ok();
 
         assert_eq!(message, &decrypted[..]);
         assert_eq!(enc.protocol(), "zhtp-mesh");
@@ -369,7 +369,7 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = ZhtpMeshEncryption::new(&key, session_id).unwrap();
+        let enc = ZhtpMeshEncryption::new(&key, session_id).ok();
 
         // Encrypt different message types
         let types = vec!["node_discovery", "route_update", "key_exchange"];
@@ -377,7 +377,7 @@ mod tests {
 
         let ciphertexts: Vec<_> = types
             .iter()
-            .map(|&msg_type| enc.encrypt_message(message, msg_type).unwrap())
+            .map(|&msg_type| enc.encrypt_message(message, msg_type).ok())
             .collect();
 
         // All should produce different ciphertexts
@@ -392,7 +392,7 @@ mod tests {
 
         // All should decrypt with correct message type
         for (msg_type, ciphertext) in types.iter().zip(ciphertexts.iter()) {
-            let decrypted = enc.decrypt_message(ciphertext, msg_type).unwrap();
+            let decrypted = enc.decrypt_message(ciphertext, msg_type).ok();
             assert_eq!(message, &decrypted[..]);
         }
     }
@@ -402,11 +402,11 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = ZhtpMeshEncryption::new(&key, session_id).unwrap();
+        let enc = ZhtpMeshEncryption::new(&key, session_id).ok();
         let message = b"Critical data";
 
         // Encrypt as node_discovery
-        let ciphertext = enc.encrypt_message(message, "node_discovery").unwrap();
+        let ciphertext = enc.encrypt_message(message, "node_discovery").ok();
 
         // Try all these wrong types
         let wrong_types = vec![

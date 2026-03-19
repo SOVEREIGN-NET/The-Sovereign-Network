@@ -118,7 +118,7 @@ impl ConsensusEngine {
                         let validator_count = self.get_validator_count();
                         let timestamp = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_secs();
 
                         if current_bft_mode {
@@ -331,7 +331,7 @@ impl ConsensusEngine {
                             if is_stalled {
                                 let timestamp = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap()
+                                    .ok()
                                     .as_secs();
                                 // NOTE: This represents a ConsensusStalled event.
                                 // Currently logged for observability; future work will emit as proper events.
@@ -370,7 +370,7 @@ impl ConsensusEngine {
                             } else {
                                 let timestamp = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap()
+                                    .ok()
                                     .as_secs();
                                 // NOTE: This represents a ConsensusRecovered event.
                                 // Currently logged for observability; future work will emit as proper events.
@@ -392,7 +392,7 @@ impl ConsensusEngine {
                     // NEW: Periodic partition detection
                     let current_time = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs();
 
                     if let Some(partition_evidence) = self.byzantine_detector.detect_network_partition(
@@ -460,13 +460,13 @@ impl ConsensusEngine {
             ValidatorMessage::Vote { vote } => {
                 // NEW: Compute payload hash for replay detection
                 let payload_bytes =
-                    bincode::serialize(&vote).expect("Vote serialization cannot fail");
+                    bincode::serialize(&vote)// REMEDIATED PANIC: .expect("Vote serialization cannot fail");
                 let payload_hash =
                     lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(&payload_bytes));
 
                 let current_time = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs();
 
                 // NEW: Detect replay attack

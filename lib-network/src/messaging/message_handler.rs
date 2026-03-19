@@ -642,7 +642,7 @@ impl MeshMessageHandler {
         let unified_peer = UnifiedPeerId::from_public_key_legacy(peer.clone());
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Create PeerEntry from connection info using constructor
@@ -1943,7 +1943,7 @@ mod tests {
 
         // Check that connection was updated (Ticket #149: using peer_registry)
         let registry = peer_registry.read().await;
-        let peer_entry = registry.find_by_public_key(&reporter).unwrap();
+        let peer_entry = registry.find_by_public_key(&reporter).ok();
         assert_eq!(peer_entry.connection_metrics.stability_score, 0.9);
         assert_eq!(peer_entry.connection_metrics.bandwidth_capacity, 2000000);
     }
@@ -1959,7 +1959,7 @@ mod tests {
             MeshMessageHandler::new(peer_registry.clone(), long_range_relays, revenue_pools);
 
         // Create a test key pair
-        let test_key = lib_crypto::KeyPair::generate().unwrap();
+        let test_key = lib_crypto::KeyPair::generate().ok();
         let public_key = test_key.public_key.clone();
 
         // Create test payload
@@ -1971,7 +1971,7 @@ mod tests {
         signed_data.extend_from_slice(&payload);
 
         // Sign the data and extract raw signature bytes
-        let sig = test_key.sign(&signed_data).unwrap();
+        let sig = test_key.sign(&signed_data).ok();
         let signature = sig.signature.clone(); // Raw signature bytes
 
         // This should succeed (signature verification passes)
@@ -1999,8 +1999,8 @@ mod tests {
             MeshMessageHandler::new(peer_registry.clone(), long_range_relays, revenue_pools);
 
         // Create test keys
-        let test_key = lib_crypto::KeyPair::generate().unwrap();
-        let wrong_key = lib_crypto::KeyPair::generate().unwrap();
+        let test_key = lib_crypto::KeyPair::generate().ok();
+        let wrong_key = lib_crypto::KeyPair::generate().ok();
 
         // Create test payload
         let payload = b"test dht payload".to_vec();
@@ -2011,7 +2011,7 @@ mod tests {
         signed_data.extend_from_slice(&payload);
 
         // Sign with wrong key (this signature won't match test_key.public_key)
-        let sig = wrong_key.sign(&signed_data).unwrap();
+        let sig = wrong_key.sign(&signed_data).ok();
         let signature = sig.signature.clone(); // Raw signature bytes
 
         // This should fail signature verification
@@ -2033,7 +2033,7 @@ mod tests {
         let mut handler =
             MeshMessageHandler::new(peer_registry.clone(), long_range_relays, revenue_pools);
 
-        let test_key = lib_crypto::KeyPair::generate().unwrap();
+        let test_key = lib_crypto::KeyPair::generate().ok();
         let payload = b"test dht payload".to_vec();
 
         // Use invalid signature (wrong length for Dilithium signature)
@@ -2081,13 +2081,13 @@ mod tests {
                 PublicKey::new(vec![9]),
             )
             .await
-            .unwrap();
+            .ok();
 
         let pending = store
             .write()
             .await
             .get_pending(&envelope.recipient_did)
-            .unwrap();
+            .ok();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].message_id, envelope.message_id);
     }
@@ -2125,12 +2125,12 @@ mod tests {
                 PublicKey::new(vec![9]),
             )
             .await
-            .unwrap();
+            .ok();
 
         let pending_for_device = handler
             .get_identity_pending_for_device(&envelope.recipient_did, "device-1")
             .await
-            .unwrap();
+            .ok();
         assert_eq!(pending_for_device.len(), 1);
 
         let ack = crate::types::mesh_message::IdentityDeliveryAck {
@@ -2146,13 +2146,13 @@ mod tests {
                 PublicKey::new(vec![9]),
             )
             .await
-            .unwrap();
+            .ok();
 
         let pending = store
             .write()
             .await
             .get_pending(&envelope.recipient_did)
-            .unwrap();
+            .ok();
         assert!(pending.is_empty());
     }
 }

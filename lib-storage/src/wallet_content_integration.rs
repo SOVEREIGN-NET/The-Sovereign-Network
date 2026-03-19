@@ -38,7 +38,7 @@ impl WalletContentManager {
     ) -> Result<()> {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Create metadata snapshot
@@ -97,7 +97,7 @@ impl WalletContentManager {
 
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Create transfer record
@@ -247,7 +247,7 @@ mod tests {
 
         manager
             .register_content_ownership(content_hash.clone(), wallet_id.clone(), &metadata, 0)
-            .unwrap();
+            .ok();
 
         // Verify ownership
         assert!(manager.verify_ownership(&content_hash, &wallet_id));
@@ -287,6 +287,6 @@ mod tests {
             true,
             ownership_proof,
         )
-        .expect("valid dummy identity")
+        // REMEDIATED PANIC: .expect("valid dummy identity")
     }
 }

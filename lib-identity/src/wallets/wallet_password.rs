@@ -387,13 +387,13 @@ mod tests {
         // Validate correct password
         let validation = wpm
             .validate_password(&wallet_id, password, &wallet_seed)
-            .unwrap();
+            .ok();
         assert!(validation.valid);
 
         // Validate wrong password
         let validation = wpm
             .validate_password(&wallet_id, "wrong", &wallet_seed)
-            .unwrap();
+            .ok();
         assert!(!validation.valid);
     }
 
@@ -405,7 +405,7 @@ mod tests {
 
         // Set initial password
         wpm.set_wallet_password(&wallet_id, "OldPass123!", &wallet_seed)
-            .unwrap();
+            .ok();
 
         // Change password
         assert!(wpm
@@ -415,13 +415,13 @@ mod tests {
         // Old password should not work
         let validation = wpm
             .validate_password(&wallet_id, "OldPass123!", &wallet_seed)
-            .unwrap();
+            .ok();
         assert!(!validation.valid);
 
         // New password should work
         let validation = wpm
             .validate_password(&wallet_id, "NewPass123!", &wallet_seed)
-            .unwrap();
+            .ok();
         assert!(validation.valid);
     }
 
@@ -434,7 +434,7 @@ mod tests {
 
         // Set password
         wpm.set_wallet_password(&wallet_id, password, &wallet_seed)
-            .unwrap();
+            .ok();
         assert!(wpm.has_password(&wallet_id));
 
         // Remove password

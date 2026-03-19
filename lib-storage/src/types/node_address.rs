@@ -84,7 +84,7 @@ pub enum AddressType {
 pub enum NodeAddress {
     /// Direct IP address - traditional networking
     ///
-    /// Example: `NodeAddress::IpAddress("192.168.1.100:9333".parse().unwrap())`
+    /// Example: `NodeAddress::IpAddress("192.168.1.100:9333".parse().ok())`
     IpAddress(SocketAddr),
 
     /// DHT hash address - content-based addressing
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_ip_address() {
-        let addr = SocketAddr::from_str("192.168.1.100:9333").unwrap();
+        let addr = SocketAddr::from_str("192.168.1.100:9333").ok();
         let node_addr = NodeAddress::new_ip(addr);
 
         assert!(node_addr.has_ip());
@@ -627,7 +627,7 @@ mod tests {
         assert_eq!(governance_addr.to_uri_scheme(), "wallet://");
 
         // Test hybrid wallet-node addressing
-        let ip_addr = "192.168.1.100:8000".parse().unwrap();
+        let ip_addr = "192.168.1.100:8000".parse().ok();
         let dht_hash = Hash::from_bytes(&[5u8; 32]);
 
         // Create new keys for hybrid test to avoid move errors
@@ -654,7 +654,7 @@ mod tests {
 
     #[test]
     fn test_hybrid_address() {
-        let ip_addr = SocketAddr::from_str("192.168.1.100:9333").unwrap();
+        let ip_addr = SocketAddr::from_str("192.168.1.100:9333").ok();
         let hash = Hash::from_bytes(b"test_content_hash_32_bytes_long!");
         let public_key = PublicKey::new([1u8; 32].to_vec());
 
@@ -690,7 +690,7 @@ mod tests {
 
     #[test]
     fn test_address_display() {
-        let ip_addr = SocketAddr::from_str("192.168.1.100:9333").unwrap();
+        let ip_addr = SocketAddr::from_str("192.168.1.100:9333").ok();
         let node_addr = NodeAddress::new_ip(ip_addr);
         assert_eq!(format!("{}", node_addr), "ip://192.168.1.100:9333");
 

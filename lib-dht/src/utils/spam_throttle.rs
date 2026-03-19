@@ -26,17 +26,17 @@ impl SpamThrottle {
     }
 
     pub fn remove(&self, address: IpAddr) {
-        let mut hit_counter = self.hit_counter.lock().unwrap();
+        let mut hit_counter = self.hit_counter.lock().ok();
         hit_counter.remove(&address);
     }
 
     pub fn test(&self, address: IpAddr) -> bool {
-        let hit_counter = self.hit_counter.lock().unwrap();
+        let hit_counter = self.hit_counter.lock().ok();
         hit_counter.get(&address).cloned().unwrap_or(0) >= BURST
     }
 
     pub fn calculate_delay_and_add(&self, address: IpAddr) -> usize {
-        let mut hit_counter = self.hit_counter.lock().unwrap();
+        let mut hit_counter = self.hit_counter.lock().ok();
         let counter = hit_counter.entry(address).or_insert(0);
         *counter += 1;
 
@@ -49,7 +49,7 @@ impl SpamThrottle {
     }
 
     pub fn saturating_dec(&self, address: IpAddr) {
-        let mut hit_counter = self.hit_counter.lock().unwrap();
+        let mut hit_counter = self.hit_counter.lock().ok();
         if let Some(count) = hit_counter.get_mut(&address) {
             if *count <= 1 {
                 hit_counter.remove(&address);
@@ -60,7 +60,7 @@ impl SpamThrottle {
     }
 
     pub fn saturating_add(&self, address: IpAddr) -> usize {
-        let mut hit_counter = self.hit_counter.lock().unwrap();
+        let mut hit_counter = self.hit_counter.lock().ok();
         let counter = hit_counter.entry(address).or_insert(0);
         *counter = (*counter + 1).min(BURST);
         *counter
@@ -68,7 +68,7 @@ impl SpamThrottle {
 
     pub fn decay(&self) {
         let now = Instant::now();
-        let mut last_decay_time = self.last_decay_time.lock().unwrap();
+        let mut last_decay_time = self.last_decay_time.lock().ok();
         let delta_t = now.duration_since(*last_decay_time).as_secs();
 
         if delta_t < 1 {
@@ -79,7 +79,7 @@ impl SpamThrottle {
 
         let delta_count = (delta_t * PER_SECOND as u64) as usize;
 
-        let mut hit_counter = self.hit_counter.lock().unwrap();
+        let mut hit_counter = self.hit_counter.lock().ok();
         hit_counter.retain(|_, v| *v > delta_count);
         for value in hit_counter.values_mut() {
             *value = value.saturating_sub(delta_count);

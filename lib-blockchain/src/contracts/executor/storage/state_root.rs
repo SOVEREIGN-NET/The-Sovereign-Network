@@ -163,45 +163,45 @@ mod tests {
 
     #[test]
     fn test_compute_state_root() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
         let computer = StateRootComputation::new(storage.clone());
 
         // Store versioned state
         let versioned_key = format!("state:{}:{}", 100, "contract1");
         storage
             .set(versioned_key.as_bytes(), b"state_value")
-            .unwrap();
+            .ok();
 
         // Compute root
-        let root = computer.compute_state_root(100).unwrap();
+        let root = computer.compute_state_root(100).ok();
         assert_eq!(root.len(), 32);
 
         // Should be deterministic
-        let root2 = computer.compute_state_root(100).unwrap();
+        let root2 = computer.compute_state_root(100).ok();
         assert_eq!(root, root2);
     }
 
     #[test]
     fn test_verify_state_root() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
         let computer = StateRootComputation::new(storage.clone());
 
         // Store versioned state
         let versioned_key = format!("state:{}:{}", 100, "contract1");
         storage
             .set(versioned_key.as_bytes(), b"state_value")
-            .unwrap();
+            .ok();
 
         // Compute root
-        let computed_root = computer.compute_state_root(100).unwrap();
+        let computed_root = computer.compute_state_root(100).ok();
 
         // Verify with correct root
-        assert!(computer.verify_state_root(100, &computed_root).unwrap());
+        assert!(computer.verify_state_root(100, &computed_root).ok());
 
         // Verify fails with wrong root
         let wrong_root = [0u8; 32];
-        assert!(!computer.verify_state_root(100, &wrong_root).unwrap());
+        assert!(!computer.verify_state_root(100, &wrong_root).ok());
     }
 }

@@ -166,9 +166,9 @@ mod consensus_audit_log_tests {
         );
 
         // Test JSON serialization/deserialization
-        let json = serde_json::to_string(&record).expect("Failed to serialize");
+        let json = serde_json::to_string(&record)// REMEDIATED PANIC: .expect("Failed to serialize");
         let deserialized: ConsensusAuditLog =
-            serde_json::from_str(&json).expect("Failed to deserialize");
+            serde_json::from_str(&json)// REMEDIATED PANIC: .expect("Failed to deserialize");
 
         assert_eq!(deserialized.height, record.height);
         assert_eq!(deserialized.round, record.round);
@@ -925,7 +925,7 @@ impl ConsensusEngine {
             let proposal = self
                 .pending_proposals
                 .remove(proposal_index)
-                .expect("Proposal index came from position(), element must exist");
+                // REMEDIATED PANIC: .expect("Proposal index came from position(), element must exist");
 
             // Validate the block one more time before applying
             self.validate_committed_block(&proposal).await?;

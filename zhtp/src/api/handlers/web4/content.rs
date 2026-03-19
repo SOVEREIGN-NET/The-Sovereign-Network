@@ -211,7 +211,7 @@ impl Web4Handler {
                 files: std::collections::BTreeMap::new(),
                 created_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
                 created_by: format!("{}", publisher_identity.id),
                 message: Some(format!("Published {}", api_request.path)),
@@ -256,7 +256,7 @@ impl Web4Handler {
                 signature: String::new(), // INSECURE: debug-only; production must use proper signing
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             };
 
@@ -277,7 +277,7 @@ impl Web4Handler {
         let zhtp_url = format!("zhtp://{}{}", api_request.domain, api_request.path);
         let published_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let response = ContentPublishResponse {
@@ -454,7 +454,7 @@ impl Web4Handler {
                 files: std::collections::BTreeMap::new(),
                 created_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
                 created_by: format!("{}", publisher_identity.id),
                 message: Some(format!("Updated {}", content_path)),
@@ -500,7 +500,7 @@ impl Web4Handler {
                 signature: String::new(), // INSECURE: debug-only; production must use proper signing
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             };
 
@@ -521,7 +521,7 @@ impl Web4Handler {
         let zhtp_url = format!("zhtp://{}{}", domain, content_path);
         let updated_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let response = ContentPublishResponse {
@@ -688,7 +688,7 @@ impl Web4Handler {
             "path": content_path,
             "deleted_at": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             "message": "Content deletion acknowledged (stub)"
         });

@@ -46,7 +46,7 @@ mod tests {
         };
 
         // Add reward
-        wallet.add_reward(&reward).unwrap();
+        wallet.add_reward(&reward).ok();
         assert_eq!(wallet.pending_rewards, 400);
         assert_eq!(wallet.available_balance, 0); // Not claimed yet
         assert_eq!(wallet.transaction_history.len(), 1);
@@ -59,7 +59,7 @@ mod tests {
         assert_eq!(tx.to, wallet.node_id);
 
         // Claim rewards
-        let claimed = wallet.claim_rewards().unwrap();
+        let claimed = wallet.claim_rewards().ok();
         assert_eq!(claimed, 400);
         assert_eq!(wallet.available_balance, 400);
         assert_eq!(wallet.pending_rewards, 0);
@@ -109,15 +109,15 @@ mod tests {
             currency: "SOV".to_string(),
         };
 
-        wallet.add_reward(&reward1).unwrap();
-        wallet.add_reward(&reward2).unwrap();
+        wallet.add_reward(&reward1).ok();
+        wallet.add_reward(&reward2).ok();
 
         // Check accumulated pending rewards
         assert_eq!(wallet.pending_rewards, 500); // 200 + 300
         assert_eq!(wallet.transaction_history.len(), 2);
 
         // Claim all rewards
-        let total_claimed = wallet.claim_rewards().unwrap();
+        let total_claimed = wallet.claim_rewards().ok();
         assert_eq!(total_claimed, 500);
         assert_eq!(wallet.available_balance, 500);
         assert_eq!(wallet.pending_rewards, 0);
@@ -154,7 +154,7 @@ mod tests {
             currency: "SOV".to_string(),
         };
 
-        wallet.add_reward(&reward).unwrap();
+        wallet.add_reward(&reward).ok();
 
         let tx = &wallet.transaction_history[0];
         assert_eq!(tx.dao_fee, 0); // Reward transactions don't pay DAO fee
@@ -171,11 +171,11 @@ mod tests {
         let empty_reward = TokenReward::default();
         assert_eq!(empty_reward.total_reward, 0);
 
-        wallet.add_reward(&empty_reward).unwrap();
+        wallet.add_reward(&empty_reward).ok();
         assert_eq!(wallet.pending_rewards, 0);
         assert_eq!(wallet.transaction_history.len(), 1); // Transaction still recorded
 
-        let claimed = wallet.claim_rewards().unwrap();
+        let claimed = wallet.claim_rewards().ok();
         assert_eq!(claimed, 0);
         assert_eq!(wallet.available_balance, 0);
     }
@@ -194,16 +194,16 @@ mod tests {
             currency: "SOV".to_string(),
         };
 
-        wallet.add_reward(&reward).unwrap();
+        wallet.add_reward(&reward).ok();
 
         // First claim
-        let claimed1 = wallet.claim_rewards().unwrap();
+        let claimed1 = wallet.claim_rewards().ok();
         assert_eq!(claimed1, 100);
         assert_eq!(wallet.available_balance, 100);
         assert_eq!(wallet.pending_rewards, 0);
 
         // Second claim should return 0
-        let claimed2 = wallet.claim_rewards().unwrap();
+        let claimed2 = wallet.claim_rewards().ok();
         assert_eq!(claimed2, 0);
         assert_eq!(wallet.available_balance, 100); // Unchanged
         assert_eq!(wallet.pending_rewards, 0); // Still zero

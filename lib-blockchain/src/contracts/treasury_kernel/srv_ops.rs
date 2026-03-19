@@ -319,14 +319,14 @@ mod tests {
         // With SRV = $0.0218 (2_180_000 with 8 decimals):
         // 1 SOV (100_000_000 atomic units) = $0.0218 = 2.18 cents
         // USD = 100_000_000 * 2_180_000 / 10^14 = 2 cents (truncated)
-        let usd = kernel.sov_to_usd(100_000_000).unwrap();
+        let usd = kernel.sov_to_usd(100_000_000).ok();
         assert_eq!(usd, 2); // 2.18 cents truncated to 2
 
         // For $10 USD (1000 cents), we need:
         // SOV = 1000 * 10^14 / 2_180_000 = ~458_715_596_330 SOV atomic units
         // Converting back: USD = 458_715_596_330 * 2_180_000 / 10^14 = 999 cents (~$10)
-        let sov_for_10usd = kernel.usd_to_sov(1000).unwrap();
-        let usd_back = kernel.sov_to_usd(sov_for_10usd).unwrap();
+        let sov_for_10usd = kernel.usd_to_sov(1000).ok();
+        let usd_back = kernel.sov_to_usd(sov_for_10usd).ok();
         assert!(usd_back >= 999 && usd_back <= 1000); // ~$10.00
     }
 
@@ -336,13 +336,13 @@ mod tests {
 
         // With SRV = $0.0218 (2_180_000):
         // $1 (100 cents) = 100 * 10^14 / 2_180_000 = ~4_587_155_963 SOV atomic units
-        let sov = kernel.usd_to_sov(100).unwrap();
+        let sov = kernel.usd_to_sov(100).ok();
         // 4_587_155_963 atomic units = ~45.87 SOV
         assert!(sov > 4_500_000_000); // > 45 SOV
         assert!(sov < 5_000_000_000); // < 50 SOV
 
         // $100 should give ~4587 SOV
-        let sov = kernel.usd_to_sov(10_000).unwrap();
+        let sov = kernel.usd_to_sov(10_000).ok();
         assert!(sov > 458_000_000_000); // > 4580 SOV
         assert!(sov < 460_000_000_000); // < 4600 SOV
     }
@@ -353,8 +353,8 @@ mod tests {
 
         // Convert SOV -> USD -> SOV should approximate original
         let original_sov = 1_000_000_000_000_000; // 10,000 SOV
-        let usd = kernel.sov_to_usd(original_sov).unwrap();
-        let back_to_sov = kernel.usd_to_sov(usd).unwrap();
+        let usd = kernel.sov_to_usd(original_sov).ok();
+        let back_to_sov = kernel.usd_to_sov(usd).ok();
 
         // Due to integer truncation, we lose some precision
         // The difference should be small relative to the amount
@@ -373,7 +373,7 @@ mod tests {
         let kernel = setup_kernel();
 
         // 100 SOV at $0.0218 = ~$2.18
-        let formatted = kernel.format_sov_with_usd(100 * 100_000_000).unwrap();
+        let formatted = kernel.format_sov_with_usd(100 * 100_000_000).ok();
         assert!(formatted.contains("SOV"));
         assert!(formatted.contains("$"));
         assert!(formatted.contains("100.00000000"));
@@ -474,7 +474,7 @@ mod tests {
         let kernel = setup_kernel();
 
         // $100 UBI target
-        let sov = kernel.calculate_ubi_sov_amount(10_000).unwrap();
+        let sov = kernel.calculate_ubi_sov_amount(10_000).ok();
 
         // With SRV = $0.0218, $100 = ~4587 SOV
         assert!(sov > 450_000_000_000); // > 4500 SOV

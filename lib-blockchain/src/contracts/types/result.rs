@@ -177,16 +177,16 @@ mod tests {
         let mut result = ContractResult::success();
         let test_value: u64 = 12345;
 
-        result.set_return_data(&test_value).unwrap();
+        result.set_return_data(&test_value).ok();
         assert!(result.has_return_data());
 
-        let retrieved_value: u64 = result.get_return_data().unwrap();
+        let retrieved_value: u64 = result.get_return_data().ok();
         assert_eq!(retrieved_value, test_value);
 
         // Test with_return_data constructor
-        let result2 = ContractResult::with_return_data(&test_value, 500).unwrap();
+        let result2 = ContractResult::with_return_data(&test_value, 500).ok();
         assert_eq!(result2.gas_used, 500);
-        let retrieved_value2: u64 = result2.get_return_data().unwrap();
+        let retrieved_value2: u64 = result2.get_return_data().ok();
         assert_eq!(retrieved_value2, test_value);
     }
 
@@ -232,14 +232,14 @@ mod tests {
 
         let mut result2 = ContractResult::with_gas(500);
         result2.add_state_change(b"key2".to_vec(), b"value2".to_vec());
-        result2.set_return_data(&42u64).unwrap();
+        result2.set_return_data(&42u64).ok();
 
         result1.merge(result2);
 
         assert_eq!(result1.gas_used, 1500);
         assert_eq!(result1.state_changes.len(), 2);
         assert!(result1.has_return_data());
-        let return_value: u64 = result1.get_return_data().unwrap();
+        let return_value: u64 = result1.get_return_data().ok();
         assert_eq!(return_value, 42);
     }
 
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn test_summary() {
         let mut result = ContractResult::with_gas(1500);
-        result.set_return_data(&"test".to_string()).unwrap();
+        result.set_return_data(&"test".to_string()).ok();
         result.add_state_change(b"key".to_vec(), b"value".to_vec());
 
         let summary = result.summary();

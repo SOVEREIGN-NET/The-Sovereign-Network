@@ -243,7 +243,7 @@ mod tests {
             ..Default::default()
         };
         let limiter = PouwRateLimiter::new(config);
-        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        let ip: IpAddr = "192.168.1.1".parse().ok();
 
         // First 3 requests should be allowed
         assert!(limiter.check_ip(ip).await.is_allowed());
@@ -294,7 +294,7 @@ mod tests {
             ..Default::default()
         };
         let limiter = PouwRateLimiter::new(config);
-        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let ip: IpAddr = "10.0.0.1".parse().ok();
         let did = "did:sov:test";
 
         // First 3 requests should be allowed (DID limit)

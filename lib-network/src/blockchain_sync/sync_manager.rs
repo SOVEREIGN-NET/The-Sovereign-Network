@@ -568,32 +568,32 @@ mod tests {
         let sync_manager = BlockchainSyncManager::new_full_node();
 
         // Create test peer (same peer requests and responds)
-        let peer_keypair = lib_crypto::KeyPair::generate().unwrap();
+        let peer_keypair = lib_crypto::KeyPair::generate().ok();
         let peer_pubkey = peer_keypair.public_key.clone();
 
         // SECURITY: Register peer as authenticated before accepting chunks
         sync_manager.register_authenticated_peer(&peer_pubkey).await;
 
         // Create request (we request blockchain from this peer)
-        let (request_id, _message) = sync_manager.create_blockchain_request(peer_pubkey.clone(), None).await.unwrap();
+        let (request_id, _message) = sync_manager.create_blockchain_request(peer_pubkey.clone(), None).await.ok();
 
         // Create test data
         let test_data = vec![0u8; 500]; // 500 bytes should create 3 chunks
 
         // Chunk the data (peer responds with chunks)
-        let chunks = BlockchainSyncManager::chunk_blockchain_data(peer_pubkey.clone(), request_id, test_data.clone()).unwrap();
+        let chunks = BlockchainSyncManager::chunk_blockchain_data(peer_pubkey.clone(), request_id, test_data.clone()).ok();
         
         assert_eq!(chunks.len(), 3); // 500 bytes / 200 = 3 chunks
 
         // Simulate receiving chunks (with sender parameter for security check)
         for message in chunks {
             if let ZhtpMeshMessage::BlockchainData { sender: _, request_id, chunk_index, total_chunks, data, complete_data_hash } = message {
-                let result = sync_manager.add_chunk(&peer_pubkey, request_id, chunk_index, total_chunks, data, complete_data_hash).await.unwrap();
+                let result = sync_manager.add_chunk(&peer_pubkey, request_id, chunk_index, total_chunks, data, complete_data_hash).await.ok();
                 
                 // Last chunk should return complete data
                 if chunk_index == total_chunks - 1 {
                     assert!(result.is_some());
-                    let reassembled = result.unwrap();
+                    let reassembled = result.ok();
                     assert_eq!(reassembled, test_data);
                 }
             }
@@ -606,14 +606,14 @@ mod tests {
         let requester = PublicKey::new(vec![1, 2, 3]);
         
         // Create request but DON'T register peer as authenticated
-        let (request_id, _message) = sync_manager.create_blockchain_request(requester.clone(), None).await.unwrap();
+        let (request_id, _message) = sync_manager.create_blockchain_request(requester.clone(), None).await.ok();
         
         // Try to send chunk from unauthenticated peer
-        let sender_keypair = lib_crypto::KeyPair::generate().unwrap();
+        let sender_keypair = lib_crypto::KeyPair::generate().ok();
         let sender_pubkey = sender_keypair.public_key;
         
         let test_data = vec![0u8; 100];
-        let chunks = BlockchainSyncManager::chunk_blockchain_data(sender_pubkey.clone(), request_id, test_data).unwrap();
+        let chunks = BlockchainSyncManager::chunk_blockchain_data(sender_pubkey.clone(), request_id, test_data).ok();
         
         if let ZhtpMeshMessage::BlockchainData { sender: _, request_id, chunk_index, total_chunks, data, complete_data_hash } = &chunks[0] {
             // Should fail with authentication error
@@ -629,7 +629,7 @@ mod tests {
         let requester = PublicKey::new(vec![1, 2, 3]);
 
         sync_manager.register_authenticated_peer(&requester).await;
-        let (request_id, _message) = sync_manager.create_blockchain_request(requester.clone(), None).await.unwrap();
+        let (request_id, _message) = sync_manager.create_blockchain_request(requester.clone(), None).await.ok();
 
         // Try to send more than MAX_CHUNKS_PER_SECOND chunks
         for i in 0..(MAX_CHUNKS_PER_SECOND + 10) {
@@ -663,7 +663,7 @@ mod tests {
         let requester = PublicKey::new(vec![1, 2, 3]);
 
         sync_manager.register_authenticated_peer(&requester).await;
-        let (request_id, _message) = sync_manager.create_blockchain_request(requester.clone(), None).await.unwrap();
+        let (request_id, _message) = sync_manager.create_blockchain_request(requester.clone(), None).await.ok();
 
         // Try to send chunks that exceed MAX_CHUNK_BUFFER_SIZE
         let large_chunk = vec![0u8; MAX_CHUNK_BUFFER_SIZE / 2 + 1];
@@ -686,7 +686,7 @@ mod tests {
         let requester = PublicKey::new(vec![1, 2, 3]);
 
         sync_manager.register_authenticated_peer(&requester).await;
-        let (request_id, _message) = sync_manager.create_blockchain_request(requester.clone(), None).await.unwrap();
+        let (request_id, _message) = sync_manager.create_blockchain_request(requester.clone(), None).await.ok();
 
         let test_data = vec![0u8; 100];
         let complete_data_hash = hash_blake3(&test_data);
@@ -707,7 +707,7 @@ mod tests {
         let requester = PublicKey::new(vec![1, 2, 3]);
 
         sync_manager.register_authenticated_peer(&requester).await;
-        let (_request_id, _message) = sync_manager.create_blockchain_request(requester.clone(), None).await.unwrap();
+        let (_request_id, _message) = sync_manager.create_blockchain_request(requester.clone(), None).await.ok();
 
         // Test empty data rejected
         let result = BlockchainSyncManager::chunk_blockchain_data(requester.clone(), 1, vec![]);
@@ -743,7 +743,7 @@ mod tests {
 
         // Create MAX_REQUESTS_PER_PEER requests
         for i in 0..MAX_REQUESTS_PER_PEER {
-            let (_request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.unwrap();
+            let (_request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.ok();
 
             // Send first chunk to create buffer
             let test_data = vec![i as u8; 100];
@@ -753,7 +753,7 @@ mod tests {
         }
 
         // Next request should fail due to per-peer limit
-        let (_request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.unwrap();
+        let (_request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.ok();
         let test_data = vec![0u8; 100];
         let complete_data_hash = hash_blake3(&test_data);
         let result = sync_manager.add_chunk(&peer, (MAX_REQUESTS_PER_PEER + 1) as u64, 0, 10, test_data, complete_data_hash).await;
@@ -767,7 +767,7 @@ mod tests {
         let peer = PublicKey::new(vec![1, 2, 3]);
 
         sync_manager.register_authenticated_peer(&peer).await;
-        let (request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.unwrap();
+        let (request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.ok();
 
         let test_data = vec![0u8; 100];
         let correct_hash = hash_blake3(&test_data);
@@ -788,7 +788,7 @@ mod tests {
         let peer = PublicKey::new(vec![1, 2, 3]);
 
         sync_manager.register_authenticated_peer(&peer).await;
-        let (request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.unwrap();
+        let (request_id, _message) = sync_manager.create_blockchain_request(peer.clone(), None).await.ok();
 
         let test_data = vec![0u8; 100];
         let correct_hash = hash_blake3(&test_data);

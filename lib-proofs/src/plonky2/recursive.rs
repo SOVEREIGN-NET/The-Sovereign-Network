@@ -145,7 +145,7 @@ impl RecursiveProofBuilder {
             proof_system: format!("ZHTP-Recursive-{}", proof1.circuit_id),
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             circuit_id: format!("recursive_{}", proof1.circuit_id),
             private_input_commitment: lib_crypto::hash_blake3(
@@ -215,7 +215,7 @@ impl RecursiveVerifier {
         // Check timestamp is reasonable
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         if proof.generated_at > current_time {

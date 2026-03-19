@@ -206,7 +206,7 @@ impl PricingEngine {
             validity_period: 300, // 5 minutes
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }
@@ -278,7 +278,7 @@ impl PricingEngine {
             tier_summaries,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         }
     }
@@ -332,7 +332,7 @@ mod tests {
             replication_factor: 3,
         };
 
-        let quote = engine.calculate_quote(&request).unwrap();
+        let quote = engine.calculate_quote(&request).ok();
         assert!(quote.final_price > 0);
         assert_eq!(quote.base_price, 100);
     }
@@ -356,8 +356,8 @@ mod tests {
             ..normal_request.clone()
         };
 
-        let normal_quote = engine.calculate_quote(&normal_request).unwrap();
-        let critical_quote = engine.calculate_quote(&critical_request).unwrap();
+        let normal_quote = engine.calculate_quote(&normal_request).ok();
+        let critical_quote = engine.calculate_quote(&critical_request).ok();
 
         assert!(critical_quote.final_price > normal_quote.final_price);
         assert_eq!(critical_quote.urgency_multiplier, 2.0);

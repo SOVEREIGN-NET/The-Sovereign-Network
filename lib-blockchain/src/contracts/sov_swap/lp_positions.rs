@@ -466,7 +466,7 @@ mod tests {
         );
 
         assert!(lp_tokens.is_ok());
-        let tokens = lp_tokens.unwrap();
+        let tokens = lp_tokens.ok();
         assert!(tokens > 0); // Should mint sqrt(10k * 5k) ≈ 7071
     }
 
@@ -486,7 +486,7 @@ mod tests {
                 provider1.clone(),
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Second LP (same ratio)
         let lp_tokens2 = lp_mgr.add_liquidity(
@@ -509,7 +509,7 @@ mod tests {
         // Add liquidity
         let lp_tokens = lp_mgr
             .add_liquidity(10_000_00000000, 5_000_00000000, 0, 0, provider.clone(), 100)
-            .unwrap();
+            .ok();
 
         // Remove half
         let result = lp_mgr.remove_liquidity(
@@ -522,7 +522,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let (sov_out, token_out) = result.unwrap();
+        let (sov_out, token_out) = result.ok();
         assert!(sov_out > 0);
         assert!(token_out > 0);
     }
@@ -535,7 +535,7 @@ mod tests {
         // Add liquidity
         lp_mgr
             .add_liquidity(10_000_00000000, 5_000_00000000, 0, 0, provider.clone(), 100)
-            .unwrap();
+            .ok();
 
         // Fund reward pools
         lp_mgr.base_lp_pool = 1_000_00000000; // 1,000 SOV
@@ -543,7 +543,7 @@ mod tests {
         lp_mgr.ubi_routing_pool = 300_00000000; // 300 SOV
 
         // Claim rewards
-        let rewards = lp_mgr.claim_lp_rewards(&provider, 200).unwrap();
+        let rewards = lp_mgr.claim_lp_rewards(&provider, 200).ok();
         assert!(rewards.total_sov > 0);
         assert!(rewards.base_yield > 0);
     }

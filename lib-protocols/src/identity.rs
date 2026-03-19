@@ -392,7 +392,7 @@ impl ProtocolIdentityService {
         };
 
         // Store session
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write().ok();
         sessions.insert(session_id.clone(), session.clone());
         drop(sessions);
 
@@ -418,13 +418,13 @@ impl ProtocolIdentityService {
 
     /// Get identity session by token
     pub async fn get_session(&self, session_token: &str) -> Result<Option<IdentitySession>> {
-        let sessions = self.sessions.read().unwrap();
+        let sessions = self.sessions.read().ok();
         Ok(sessions.get(session_token).cloned())
     }
 
     /// Invalidate identity session
     pub async fn invalidate_session(&self, session_token: &str) -> Result<bool> {
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write().ok();
         Ok(sessions.remove(session_token).is_some())
     }
 
@@ -441,7 +441,7 @@ impl ProtocolIdentityService {
         details: String,
         resource: Option<String>,
     ) -> Result<()> {
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write().ok();
         if let Some(session) = sessions.get_mut(session_token) {
             session.metadata.activity_log.push(SessionActivity {
                 timestamp: chrono::Utc::now(),
@@ -455,7 +455,7 @@ impl ProtocolIdentityService {
 
     /// Clean up expired sessions
     pub async fn cleanup_expired_sessions(&self) -> Result<usize> {
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write().ok();
         let initial_count = sessions.len();
         let now = chrono::Utc::now();
 
@@ -466,7 +466,7 @@ impl ProtocolIdentityService {
 
     /// Get session statistics
     pub async fn get_session_stats(&self) -> SessionStats {
-        let sessions = self.sessions.read().unwrap();
+        let sessions = self.sessions.read().ok();
         let now = chrono::Utc::now();
 
         let total_sessions = sessions.len();
@@ -688,7 +688,7 @@ impl ZkCredentialExt for ZkCredential {
         // Create a basic credential from bearer token
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Create dummy identity IDs for issuer and subject
@@ -735,7 +735,7 @@ mod tests {
         let config = IdentityServiceConfig::default();
         let service = ProtocolIdentityService::new(identity_manager, config);
 
-        let cleaned = service.cleanup_expired_sessions().await.unwrap();
+        let cleaned = service.cleanup_expired_sessions().await.ok();
         assert_eq!(cleaned, 0);
     }
 }

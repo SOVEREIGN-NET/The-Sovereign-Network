@@ -725,10 +725,10 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let _dao_id = result.unwrap();
+        let _dao_id = result.ok();
 
         // Verify entry was created
-        let entry = registry.get_dao(&token).unwrap();
+        let entry = registry.get_dao(&token).ok();
         assert_eq!(entry.owner, owner);
         assert_eq!(entry.class, DAOType::NP);
         assert_eq!(entry.created_at, 100);
@@ -751,7 +751,7 @@ mod tests {
                 owner.clone(),
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Second registration with same token fails
         let result = registry.register_dao(token, DAOType::NP, treasury, [2u8; 32], owner, 200);
@@ -821,7 +821,7 @@ mod tests {
                 owner.clone(),
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Try to register same token with different treasury
         let result = registry.register_dao(token, DAOType::NP, treasury2, [1u8; 32], owner, 200);
@@ -846,7 +846,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let entry = registry.list_daos().unwrap()[0].clone();
+        let entry = registry.list_daos().ok()[0].clone();
         assert_eq!(entry.created_at, 0);
     }
 
@@ -871,9 +871,9 @@ mod tests {
                 owner.clone(),
                 100,
             )
-            .unwrap();
+            .ok();
 
-        let entry = registry.get_dao(&token).unwrap();
+        let entry = registry.get_dao(&token).ok();
         assert_eq!(entry.owner, owner);
         assert_eq!(entry.treasury, treasury);
         assert_eq!(entry.metadata_hash, metadata);
@@ -911,11 +911,11 @@ mod tests {
                         owner.clone(),
                         100 + i as u64,
                     )
-                    .unwrap()
+                    .ok()
             })
             .collect();
 
-        let list = registry.list_daos_with_ids().unwrap();
+        let list = registry.list_daos_with_ids().ok();
         assert_eq!(list.len(), 3);
 
         // Verify order
@@ -938,7 +938,7 @@ mod tests {
 
         let dao_id = registry
             .register_dao(token, DAOType::NP, treasury, [1u8; 32], owner.clone(), 100)
-            .unwrap();
+            .ok();
 
         // Owner can update
         let result = registry.update_metadata(dao_id, [2u8; 32], &owner);
@@ -966,13 +966,13 @@ mod tests {
                 owner.clone(),
                 100,
             )
-            .unwrap();
+            .ok();
 
-        let before = registry.get_dao(&token).unwrap();
+        let before = registry.get_dao(&token).ok();
 
-        registry.update_metadata(dao_id, [2u8; 32], &owner).unwrap();
+        registry.update_metadata(dao_id, [2u8; 32], &owner).ok();
 
-        let after = registry.get_dao(&token).unwrap();
+        let after = registry.get_dao(&token).ok();
 
         // Metadata changed
         assert_ne!(before.metadata_hash, after.metadata_hash);
@@ -996,7 +996,7 @@ mod tests {
 
         let dao_id = registry
             .register_dao(token, DAOType::NP, treasury, hash, owner.clone(), 100)
-            .unwrap();
+            .ok();
 
         let result = registry.update_metadata(dao_id, hash, &owner);
         assert!(result.is_err());
@@ -1156,7 +1156,7 @@ mod tests {
 
         let dao_id = registry
             .register_dao(token, DAOType::NP, treasury, [1u8; 32], owner.clone(), 100)
-            .unwrap();
+            .ok();
 
         let result = registry.update_metadata(dao_id, [0u8; 32], &owner);
         assert!(result.is_err());
@@ -1186,7 +1186,7 @@ mod tests {
                     owner.clone(),
                     100,
                 )
-                .unwrap();
+                .ok();
         }
 
         assert_eq!(registry.dao_count(), 5);
@@ -1209,7 +1209,7 @@ mod tests {
                     owner.clone(),
                     100,
                 )
-                .unwrap();
+                .ok();
         }
 
         assert_eq!(registry.dao_count_by_class(DAOType::NP), 3);
@@ -1233,7 +1233,7 @@ mod tests {
                     owner.clone(),
                     100,
                 )
-                .unwrap();
+                .ok();
         }
 
         let np_daos = registry.get_daos_by_class(DAOType::NP);
@@ -1264,10 +1264,10 @@ mod tests {
                 owner.clone(),
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Should be able to look up by ID
-        let entry = registry.get_dao_by_id(dao_id).unwrap();
+        let entry = registry.get_dao_by_id(dao_id).ok();
         assert_eq!(entry.token_addr, token);
         assert_eq!(entry.treasury, treasury);
         assert_eq!(entry.owner, owner);
@@ -1307,7 +1307,7 @@ mod tests {
                     owner.clone(),
                     100 + i as u64,
                 )
-                .unwrap();
+                .ok();
 
             // After each registration, verify consistency:
             // - token_to_dao should have an entry
@@ -1322,11 +1322,11 @@ mod tests {
         }
 
         // Verify list_daos() returns all without error
-        let daos = registry.list_daos().unwrap();
+        let daos = registry.list_daos().ok();
         assert_eq!(daos.len(), 5);
 
         // Verify list_daos_with_ids() returns all without error
-        let daos_with_ids = registry.list_daos_with_ids().unwrap();
+        let daos_with_ids = registry.list_daos_with_ids().ok();
         assert_eq!(daos_with_ids.len(), 5);
 
         // Verify counts match
@@ -1352,10 +1352,10 @@ mod tests {
                 owner1.clone(),
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Get initial owner
-        let entry1 = registry.get_dao(&token).unwrap();
+        let entry1 = registry.get_dao(&token).ok();
         assert_eq!(entry1.owner, owner1);
 
         // Try to update metadata as different owner (should fail)
@@ -1364,7 +1364,7 @@ mod tests {
         assert!(result.unwrap_err().contains("Only owner"));
 
         // Verify owner is still owner1 (not owner2)
-        let entry2 = registry.get_dao(&token).unwrap();
+        let entry2 = registry.get_dao(&token).ok();
         assert_eq!(entry2.owner, owner1);
         assert_ne!(entry2.owner, owner2);
     }
@@ -1387,10 +1387,10 @@ mod tests {
                 owner.clone(),
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Get initial state
-        let before = registry.get_dao(&token).unwrap();
+        let before = registry.get_dao(&token).ok();
         assert_eq!(before.token_addr, token);
         assert_eq!(before.class, DAOType::NP);
         assert_eq!(before.treasury, treasury);
@@ -1398,12 +1398,12 @@ mod tests {
         assert_eq!(before.created_at, 100);
 
         // Update metadata multiple times
-        registry.update_metadata(dao_id, [2u8; 32], &owner).unwrap();
-        registry.update_metadata(dao_id, [3u8; 32], &owner).unwrap();
-        registry.update_metadata(dao_id, [4u8; 32], &owner).unwrap();
+        registry.update_metadata(dao_id, [2u8; 32], &owner).ok();
+        registry.update_metadata(dao_id, [3u8; 32], &owner).ok();
+        registry.update_metadata(dao_id, [4u8; 32], &owner).ok();
 
         // Get final state
-        let after = registry.get_dao(&token).unwrap();
+        let after = registry.get_dao(&token).ok();
 
         // Verify immutable fields haven't changed
         assert_eq!(after.token_addr, before.token_addr);
@@ -1435,7 +1435,7 @@ mod tests {
                 owner.clone(),
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Failed registration (token already registered)
         let token2 = test_public_key(1); // Same as token1

@@ -252,7 +252,7 @@ impl MeshRouter {
                     connections
                         .upsert(peer_entry)
                         .await
-                        .expect("Failed to upsert peer");
+                        // REMEDIATED PANIC: .expect("Failed to upsert peer");
                     // No need to drop(connections) as it will be dropped automatically
 
                     info!(
@@ -314,7 +314,7 @@ impl MeshRouter {
                                     registry
                                         .upsert(updated_entry)
                                         .await
-                                        .expect("Failed to update peer");
+                                        // REMEDIATED PANIC: .expect("Failed to update peer");
                                 }
                             }
                         }

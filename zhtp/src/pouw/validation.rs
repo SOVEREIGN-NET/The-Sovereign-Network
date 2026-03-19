@@ -884,15 +884,15 @@ mod tests {
         let challenge_response = generator
             .generate_challenge(Some("hash"), None, None, None)
             .await
-            .unwrap();
+            .ok();
 
         // Decode the token to get nonce and task_id
         let token_bytes = base64::Engine::decode(
             &base64::engine::general_purpose::STANDARD,
             &challenge_response.token,
         )
-        .unwrap();
-        let token: ChallengeToken = serde_json::from_slice(&token_bytes).unwrap();
+        .ok();
+        let token: ChallengeToken = serde_json::from_slice(&token_bytes).ok();
 
         // Create a receipt with matching binding
         let receipt = Receipt {

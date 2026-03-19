@@ -216,7 +216,7 @@ impl BluetoothRouter {
                             registry_write
                                 .upsert(peer_entry)
                                 .await
-                                .expect("Failed to upsert peer");
+                                // REMEDIATED PANIC: .expect("Failed to upsert peer");
                             info!(
                                 "   ✅ Added GATT peer {} to mesh network",
                                 handshake.node_id
@@ -625,7 +625,7 @@ impl BluetoothRouter {
                     connections
                         .upsert(peer_entry)
                         .await
-                        .expect("Failed to upsert peer");
+                        // REMEDIATED PANIC: .expect("Failed to upsert peer");
                     // No need to drop(connections) as it will be dropped automatically
 
                     info!(

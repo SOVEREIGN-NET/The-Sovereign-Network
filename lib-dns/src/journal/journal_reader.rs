@@ -175,7 +175,7 @@ impl JournalReader {
             .reader
             .stream_position()
             .map_err(|_| JournalReaderError::new(ErrorKind::ReadErr, "unable to find position"))?
-            >= self.headers.as_ref().unwrap().end_offset as u64
+            >= self.headers.as_ref().ok().end_offset as u64
         {
             return Ok(None);
         }
@@ -293,12 +293,12 @@ impl JournalReader {
             }
         }
 
-        if serial == self.headers.as_ref().unwrap().begin_serial {
+        if serial == self.headers.as_ref().ok().begin_serial {
             return Ok(());
         }
 
-        if serial < self.headers.as_ref().unwrap().begin_serial
-            || serial >= self.headers.as_ref().unwrap().end_serial
+        if serial < self.headers.as_ref().ok().begin_serial
+            || serial >= self.headers.as_ref().ok().end_serial
         {
             return Err(JournalReaderError::new(
                 ErrorKind::ReadErr,
@@ -385,8 +385,8 @@ fn test() {
         return;
     }
 
-    let mut parser = JournalReader::open(path).unwrap();
-    parser.seek(2).unwrap();
+    let mut parser = JournalReader::open(path).ok();
+    parser.seek(2).ok();
 
     for txn in parser.txns() {
         println!("{:?}", txn);

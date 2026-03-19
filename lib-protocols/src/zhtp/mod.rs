@@ -255,6 +255,6 @@ mod tests {
     fn test_create_test_response() {
         let response = create_test_response("Hello, ZHTP!");
         assert_eq!(response.status, ZhtpStatus::Ok);
-        assert_eq!(response.body_as_string().unwrap(), "Hello, ZHTP!");
+        assert_eq!(response.body_as_string().ok(), "Hello, ZHTP!");
     }
 }

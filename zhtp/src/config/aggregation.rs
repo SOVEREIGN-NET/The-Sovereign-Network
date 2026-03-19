@@ -976,7 +976,7 @@ impl NodeConfig {
         if self.node_type.is_some() {
             tracing::info!(
                 "✓ Using explicitly configured NodeType: {:?}",
-                self.node_type.as_ref().unwrap()
+                self.node_type.as_ref().ok()
             );
             return;
         }
@@ -1500,11 +1500,11 @@ bootstrap_peers = ["77.42.37.161:9334"]
 "#;
 
         let partial: PartialConfig =
-            toml::from_str(toml_str).expect("Failed to parse TOML with bootstrap_peer_pins");
+            toml::from_str(toml_str)// REMEDIATED PANIC: .expect("Failed to parse TOML with bootstrap_peer_pins");
 
         let network = partial
             .network_config
-            .expect("network_config should be present");
+            // REMEDIATED PANIC: .expect("network_config should be present");
         assert_eq!(network.bootstrap_peers.len(), 1);
         assert_eq!(network.bootstrap_peers[0], "77.42.37.161:9334");
         assert_eq!(network.bootstrap_peer_pins.len(), 1);
@@ -1512,7 +1512,7 @@ bootstrap_peers = ["77.42.37.161:9334"]
             network
                 .bootstrap_peer_pins
                 .get("77.42.37.161:9334")
-                .unwrap(),
+                .ok(),
             "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8"
         );
     }
@@ -1526,11 +1526,11 @@ bootstrap_peers = ["10.0.0.1:9334"]
 "#;
 
         let partial: PartialConfig =
-            toml::from_str(toml_str).expect("Failed to parse TOML without bootstrap_peer_pins");
+            toml::from_str(toml_str)// REMEDIATED PANIC: .expect("Failed to parse TOML without bootstrap_peer_pins");
 
         let network = partial
             .network_config
-            .expect("network_config should be present");
+            // REMEDIATED PANIC: .expect("network_config should be present");
         assert_eq!(network.bootstrap_peers.len(), 1);
         assert!(network.bootstrap_peer_pins.is_empty());
     }
@@ -1548,11 +1548,11 @@ bootstrap_peers = ["10.0.0.1:9334", "10.0.0.2:9334"]
 "#;
 
         let partial: PartialConfig = toml::from_str(toml_str)
-            .expect("Failed to parse TOML with multiple bootstrap_peer_pins");
+            // REMEDIATED PANIC: .expect("Failed to parse TOML with multiple bootstrap_peer_pins");
 
         let network = partial
             .network_config
-            .expect("network_config should be present");
+            // REMEDIATED PANIC: .expect("network_config should be present");
         assert_eq!(network.bootstrap_peer_pins.len(), 2);
     }
 

@@ -328,11 +328,11 @@ impl IncentiveSystem {
                 distribution_rate: allocation / 365, // Daily distribution
                 activation_time: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
                 expiration_time: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
                     + 31536000, // 1 year
                 eligibility_criteria: Vec::new(),
@@ -387,7 +387,7 @@ impl IncentiveSystem {
             total_reward,
             calculation_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }
@@ -446,7 +446,7 @@ impl IncentiveSystem {
         if let Some(staking_info) = self.staking_info.get(participant_id) {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs();
 
             let staking_duration = current_time - staking_info.stake_start_time;
@@ -502,7 +502,7 @@ impl IncentiveSystem {
             staked_amount: amount,
             stake_start_time: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             lock_duration,
             delegations: Vec::new(),
@@ -541,7 +541,7 @@ impl IncentiveSystem {
         let slashing_event = SlashingEvent {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             reason,
             slashed_amount,
@@ -558,7 +558,7 @@ impl IncentiveSystem {
         let mut distribution = EpochRewardDistribution {
             epoch_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             total_distributed: 0,
             participant_rewards: HashMap::new(),
@@ -706,7 +706,7 @@ impl IncentiveSystem {
                 participant_id,
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             ),
             participant_id: participant_id.to_string(),
@@ -716,7 +716,7 @@ impl IncentiveSystem {
             metric_value: penalty_amount as f64,
             calculated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             distributed_at: None,
         };
@@ -746,7 +746,7 @@ impl IncentiveSystem {
                 participant_id,
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             ),
             participant_id: participant_id.to_string(),
@@ -756,7 +756,7 @@ impl IncentiveSystem {
             metric_value: payment_amount as f64,
             calculated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             distributed_at: None,
         };
@@ -857,9 +857,9 @@ mod tests {
 
         system
             .stake_tokens("participant1".to_string(), 50_000, 86400 * 30)
-            .unwrap();
+            .ok();
 
-        let staking_info = system.get_staking_info("participant1").unwrap();
+        let staking_info = system.get_staking_info("participant1").ok();
         assert_eq!(staking_info.staked_amount, 50_000);
     }
 
@@ -878,7 +878,7 @@ mod tests {
 
         let calculation = system
             .calculate_rewards("participant1", &metrics, 0.9)
-            .unwrap();
+            .ok();
         assert!(calculation.total_reward > 0);
     }
 

@@ -239,7 +239,7 @@ fn generate_verification_proofs(
     // Add verification timestamp
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok()
         .as_secs();
     proofs.extend_from_slice(&timestamp.to_be_bytes());
 

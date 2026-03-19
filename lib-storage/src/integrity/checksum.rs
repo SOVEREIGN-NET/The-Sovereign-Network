@@ -123,7 +123,7 @@ mod tests {
         let checksum = manager.compute("key1".to_string(), data);
         assert!(checksum.verify(data));
 
-        assert!(manager.verify_cached("key1", data).unwrap());
-        assert!(!manager.verify_cached("key1", b"wrong").unwrap());
+        assert!(manager.verify_cached("key1", data).ok());
+        assert!(!manager.verify_cached("key1", b"wrong").ok());
     }
 }

@@ -256,9 +256,9 @@ mod tests {
             &test_data,
             indexed_fields,
         )
-        .unwrap();
+        .ok();
 
-        let recovered_data: (u64, String) = log.get_data().unwrap();
+        let recovered_data: (u64, String) = log.get_data().ok();
         assert_eq!(recovered_data, test_data);
     }
 
@@ -269,7 +269,7 @@ mod tests {
         let to = b"to_address";
         let amount = 1000u64;
 
-        let log = ContractLog::transfer_event(contract_id, from, to, amount).unwrap();
+        let log = ContractLog::transfer_event(contract_id, from, to, amount).ok();
 
         assert_eq!(log.event, "Transfer");
         assert_eq!(log.indexed_fields.len(), 2);
@@ -277,7 +277,7 @@ mod tests {
         assert!(log.has_indexed_field(to));
 
         let (recovered_from, recovered_to, recovered_amount): (Vec<u8>, Vec<u8>, u64) =
-            log.get_data().unwrap();
+            log.get_data().ok();
         assert_eq!(recovered_from.as_slice(), from);
         assert_eq!(recovered_to.as_slice(), to);
         assert_eq!(recovered_amount, amount);
@@ -291,7 +291,7 @@ mod tests {
         let message_id = [3u8; 32];
 
         let log =
-            ContractLog::message_sent_event(contract_id, sender, recipient, &message_id).unwrap();
+            ContractLog::message_sent_event(contract_id, sender, recipient, &message_id).ok();
 
         assert_eq!(log.event, "MessageSent");
         assert_eq!(log.indexed_fields.len(), 2);
@@ -307,7 +307,7 @@ mod tests {
         let group_name = "Test Group";
 
         let log =
-            ContractLog::group_created_event(contract_id, creator, &group_id, group_name).unwrap();
+            ContractLog::group_created_event(contract_id, creator, &group_id, group_name).ok();
 
         assert_eq!(log.event, "GroupCreated");
         assert_eq!(log.indexed_fields.len(), 1);

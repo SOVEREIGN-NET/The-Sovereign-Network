@@ -127,19 +127,19 @@ mod tests {
 
     #[test]
     fn test_peer_id_display() {
-        let udp = PeerId::Udp("127.0.0.1:8080".parse().unwrap());
+        let udp = PeerId::Udp("127.0.0.1:8080".parse().ok());
         assert_eq!(udp.to_string(), "127.0.0.1:8080");
 
         let ble = PeerId::Bluetooth("AA:BB:CC:DD:EE:FF".to_string());
         assert_eq!(ble.to_string(), "gatt://AA:BB:CC:DD:EE:FF");
 
-        let quic = PeerId::Quic("10.0.0.1:443".parse().unwrap());
+        let quic = PeerId::Quic("10.0.0.1:443".parse().ok());
         assert_eq!(quic.to_string(), "quic://10.0.0.1:443");
     }
 
     #[test]
     fn test_peer_id_protocol() {
-        let udp = PeerId::Udp("127.0.0.1:8080".parse().unwrap());
+        let udp = PeerId::Udp("127.0.0.1:8080".parse().ok());
         assert_eq!(udp.protocol(), "udp");
 
         let ble = PeerId::Bluetooth("test".to_string());
@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn test_socket_addr_extraction() {
-        let udp = PeerId::Udp("127.0.0.1:8080".parse().unwrap());
+        let udp = PeerId::Udp("127.0.0.1:8080".parse().ok());
         assert!(udp.socket_addr().is_some());
 
         let ble = PeerId::Bluetooth("test".to_string());

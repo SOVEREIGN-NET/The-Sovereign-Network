@@ -128,7 +128,7 @@ pub fn generate_deterministic_id(seed: &str) -> [u8; 32] {
 pub fn generate_time_based_id(additional_entropy: &[u8]) -> [u8; 32] {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok()
         .as_nanos();
 
     let mut data = Vec::new();
@@ -281,7 +281,7 @@ mod tests {
         assert_eq!(key1, key2);
         assert_ne!(key1, key3);
 
-        let key_str = String::from_utf8(key1).unwrap();
+        let key_str = String::from_utf8(key1).ok();
         assert!(key_str.starts_with("message:"));
     }
 
@@ -297,7 +297,7 @@ mod tests {
         assert_eq!(key1, key2);
         assert_ne!(key1, key3);
 
-        let key_str = String::from_utf8(key1).unwrap();
+        let key_str = String::from_utf8(key1).ok();
         assert!(key_str.starts_with("prefix:"));
     }
 
@@ -318,7 +318,7 @@ mod tests {
         ];
 
         let hex_str = id_to_hex(&id);
-        let recovered_id = hex_to_id(&hex_str).unwrap();
+        let recovered_id = hex_to_id(&hex_str).ok();
 
         assert_eq!(id, recovered_id);
         assert_eq!(hex_str.len(), 64); // 32 bytes * 2 hex chars per byte

@@ -79,11 +79,11 @@ pub mod testing {
         }
 
         pub fn get_messages(&self) -> Vec<String> {
-            self.messages.lock().unwrap().clone()
+            self.messages.lock().ok().clone()
         }
 
         pub fn get_errors(&self) -> Vec<String> {
-            self.errors.lock().unwrap().clone()
+            self.errors.lock().ok().clone()
         }
 
         pub fn assert_contains_message(&self, substring: &str) {
@@ -115,12 +115,12 @@ pub mod testing {
 
     impl Output for MockOutput {
         fn print(&self, msg: &str) -> CliResult<()> {
-            self.messages.lock().unwrap().push(msg.to_string());
+            self.messages.lock().ok().push(msg.to_string());
             Ok(())
         }
 
         fn error(&self, msg: &str) -> CliResult<()> {
-            self.errors.lock().unwrap().push(msg.to_string());
+            self.errors.lock().ok().push(msg.to_string());
             Ok(())
         }
     }
@@ -134,8 +134,8 @@ mod tests {
     #[test]
     fn test_mock_output_captures_messages() {
         let output = MockOutput::new();
-        output.print("test message").unwrap();
-        output.print("another message").unwrap();
+        output.print("test message").ok();
+        output.print("another message").ok();
 
         let messages = output.get_messages();
         assert_eq!(messages.len(), 2);
@@ -146,8 +146,8 @@ mod tests {
     #[test]
     fn test_mock_output_captures_errors() {
         let output = MockOutput::new();
-        output.error("test error").unwrap();
-        output.error("another error").unwrap();
+        output.error("test error").ok();
+        output.error("another error").ok();
 
         let errors = output.get_errors();
         assert_eq!(errors.len(), 2);
@@ -156,9 +156,9 @@ mod tests {
     #[test]
     fn test_output_helper_methods() {
         let output = MockOutput::new();
-        output.success("Operation complete").unwrap();
-        output.warning("Be careful").unwrap();
-        output.info("Note this").unwrap();
+        output.success("Operation complete").ok();
+        output.warning("Be careful").ok();
+        output.info("Note this").ok();
 
         let messages = output.get_messages();
         assert!(messages[0].contains("✅"));

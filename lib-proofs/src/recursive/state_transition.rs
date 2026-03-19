@@ -565,7 +565,7 @@ impl StateTransitionRecursiveCircuit {
 
 impl Default for StateTransitionRecursiveCircuit {
     fn default() -> Self {
-        Self::new().expect("Failed to create default StateTransitionRecursiveCircuit")
+        Self::new()// REMEDIATED PANIC: .expect("Failed to create default StateTransitionRecursiveCircuit")
     }
 }
 

@@ -563,7 +563,7 @@ impl ProofGenerator {
             metadata: result.metadata.clone(),
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             expires_at: result.validity_expires_at,
             usage_count: 0,

@@ -797,7 +797,7 @@ impl ZkProofSystem {
             proof_system: "ZHTP-Optimized-Range".to_string(),
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             circuit_id: "range_v1".to_string(),
             private_input_commitment: proof_hash,
@@ -882,7 +882,7 @@ impl ZkProofSystem {
             };
         let proof_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Ok(Plonky2Proof {
@@ -970,7 +970,7 @@ impl ZkProofSystem {
             proof_system: "ZHTP-Optimized-StorageAccess".to_string(),
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             circuit_id: "storage_access_v1".to_string(),
             private_input_commitment: proof_hash,
@@ -1050,7 +1050,7 @@ impl ZkProofSystem {
             proof_system: "ZHTP-Optimized-Routing".to_string(),
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             circuit_id: "routing_privacy_v1".to_string(),
             private_input_commitment: proof_hash,
@@ -1168,7 +1168,7 @@ impl ZkProofSystem {
             proof_system: "ZHTP-Optimized-DataIntegrity".to_string(),
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             circuit_id: "data_integrity_v1".to_string(),
             private_input_commitment: proof_hash,

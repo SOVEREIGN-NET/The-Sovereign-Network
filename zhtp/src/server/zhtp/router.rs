@@ -512,7 +512,7 @@ mod tests {
             auth_proof: None,
         };
 
-        let response = router.route_request(request).await.unwrap();
+        let response = router.route_request(request).await.ok();
         assert_eq!(response.status, ZhtpStatus::Ok);
     }
 
@@ -532,7 +532,7 @@ mod tests {
             auth_proof: None,
         };
 
-        let response = router.route_request(request).await.unwrap();
+        let response = router.route_request(request).await.ok();
         assert_eq!(response.status, ZhtpStatus::Ok);
     }
 
@@ -551,7 +551,7 @@ mod tests {
             auth_proof: None,
         };
 
-        let response = router.route_request(request).await.unwrap();
+        let response = router.route_request(request).await.ok();
         assert_eq!(response.status, ZhtpStatus::NotFound);
     }
 }

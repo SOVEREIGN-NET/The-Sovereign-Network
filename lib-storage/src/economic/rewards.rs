@@ -159,7 +159,7 @@ impl StorageRewardTracker {
             .ok_or_else(|| anyhow!("Provider performance not found"))?;
 
         let tier = self.determine_tier(performance);
-        let threshold = self.tier_thresholds.get(&tier).unwrap();
+        let threshold = self.tier_thresholds.get(&tier).ok();
 
         // Base reward calculation
         let base_reward = storage_provided / 1_000_000; // 1 SOV per MB
@@ -229,7 +229,7 @@ impl StorageRewardTracker {
             reason,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -401,7 +401,7 @@ mod tests {
 
         let rewards = manager
             .calculate_provider_rewards(&node_id, 100_000_000)
-            .unwrap();
+            .ok();
         assert!(rewards > 100); // Should have tier multiplier applied
     }
 }

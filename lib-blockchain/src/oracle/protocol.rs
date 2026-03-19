@@ -235,7 +235,7 @@ impl OracleProtocolConfig {
     /// Returns true if an activation was cancelled, false if nothing was pending.
     pub fn cancel_pending_activation(&mut self) -> bool {
         if self.pending_activation.is_some() {
-            let pending = self.pending_activation.take().unwrap();
+            let pending = self.pending_activation.take().ok();
             info!(
                 "🔮 Oracle protocol upgrade cancelled (was scheduled for height {})",
                 pending.activate_at_height
@@ -673,7 +673,7 @@ mod tests {
         assert!(result.is_ok());
         assert!(config.has_pending_activation());
         assert_eq!(
-            config.pending_activation().unwrap().target_version,
+            config.pending_activation().ok().target_version,
             OracleProtocolVersion::V1StrictSpec
         );
     }
@@ -769,7 +769,7 @@ mod tests {
 
         config
             .schedule_activation(OracleProtocolVersion::V1StrictSpec, 1000, 100, None)
-            .unwrap();
+            .ok();
 
         let result = config.schedule_activation(
             OracleProtocolVersion::V1StrictSpec,
@@ -792,7 +792,7 @@ mod tests {
 
         config
             .schedule_activation(OracleProtocolVersion::V1StrictSpec, 1000, 100, None)
-            .unwrap();
+            .ok();
 
         // Before activation height
         let result = config.apply_pending_activation(999);
@@ -817,7 +817,7 @@ mod tests {
 
         config
             .schedule_activation(OracleProtocolVersion::V1StrictSpec, 1000, 100, None)
-            .unwrap();
+            .ok();
 
         // Skip past activation height (node was offline)
         let result = config.apply_pending_activation(1500);
@@ -836,7 +836,7 @@ mod tests {
 
         config
             .schedule_activation(OracleProtocolVersion::V1StrictSpec, 1000, 100, None)
-            .unwrap();
+            .ok();
 
         assert!(config.cancel_pending_activation());
         assert!(!config.has_pending_activation());
@@ -873,10 +873,10 @@ mod tests {
                 100,
                 Some([1u8; 32]),
             )
-            .unwrap();
+            .ok();
 
-        let serialized = bincode::serialize(&config).unwrap();
-        let deserialized: OracleProtocolConfig = bincode::deserialize(&serialized).unwrap();
+        let serialized = bincode::serialize(&config).ok();
+        let deserialized: OracleProtocolConfig = bincode::deserialize(&serialized).ok();
 
         assert_eq!(config.current_version, deserialized.current_version);
         assert_eq!(config.pending_activation, deserialized.pending_activation);

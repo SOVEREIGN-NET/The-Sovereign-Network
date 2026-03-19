@@ -300,37 +300,37 @@ mod tests {
 
     #[test]
     fn test_cache_get_put() {
-        let cache = StateCache::new().unwrap();
+        let cache = StateCache::new().ok();
 
         // Initially miss
-        assert_eq!(cache.get(b"key1").unwrap(), None);
+        assert_eq!(cache.get(b"key1").ok(), None);
 
         // Put and hit
-        cache.put(b"key1".to_vec(), b"value1".to_vec()).unwrap();
-        assert_eq!(cache.get(b"key1").unwrap(), Some(b"value1".to_vec()));
+        cache.put(b"key1".to_vec(), b"value1".to_vec()).ok();
+        assert_eq!(cache.get(b"key1").ok(), Some(b"value1".to_vec()));
     }
 
     #[test]
     fn test_cache_invalidation() {
-        let cache = StateCache::new().unwrap();
+        let cache = StateCache::new().ok();
 
-        cache.put(b"key1".to_vec(), b"value1".to_vec()).unwrap();
-        assert_eq!(cache.get(b"key1").unwrap(), Some(b"value1".to_vec()));
+        cache.put(b"key1".to_vec(), b"value1".to_vec()).ok();
+        assert_eq!(cache.get(b"key1").ok(), Some(b"value1".to_vec()));
 
-        cache.invalidate(b"key1").unwrap();
-        assert_eq!(cache.get(b"key1").unwrap(), None);
+        cache.invalidate(b"key1").ok();
+        assert_eq!(cache.get(b"key1").ok(), None);
     }
 
     #[test]
     fn test_cache_stats() {
-        let cache = StateCache::new().unwrap();
+        let cache = StateCache::new().ok();
 
-        cache.put(b"key1".to_vec(), b"value1".to_vec()).unwrap();
-        cache.get(b"key1").unwrap();
-        cache.get(b"key2").unwrap(); // Miss
-        cache.get(b"key1").unwrap();
+        cache.put(b"key1".to_vec(), b"value1".to_vec()).ok();
+        cache.get(b"key1").ok();
+        cache.get(b"key2").ok(); // Miss
+        cache.get(b"key1").ok();
 
-        let stats = cache.stats().unwrap();
+        let stats = cache.stats().ok();
         assert_eq!(stats.hits, 2);
         assert_eq!(stats.misses, 1);
         assert!(stats.hit_rate() > 50.0 && stats.hit_rate() < 80.0);
@@ -338,18 +338,18 @@ mod tests {
 
     #[test]
     fn test_cache_clear() {
-        let cache = StateCache::new().unwrap();
+        let cache = StateCache::new().ok();
 
-        cache.put(b"key1".to_vec(), b"value1".to_vec()).unwrap();
-        cache.put(b"key2".to_vec(), b"value2".to_vec()).unwrap();
+        cache.put(b"key1".to_vec(), b"value1".to_vec()).ok();
+        cache.put(b"key2".to_vec(), b"value2".to_vec()).ok();
 
-        cache.clear().unwrap();
+        cache.clear().ok();
 
-        assert_eq!(cache.get(b"key1").unwrap(), None);
-        assert_eq!(cache.get(b"key2").unwrap(), None);
+        assert_eq!(cache.get(b"key1").ok(), None);
+        assert_eq!(cache.get(b"key2").ok(), None);
 
         // Verify size tracking is reset
-        let stats = cache.stats().unwrap();
+        let stats = cache.stats().ok();
         assert_eq!(stats.current_size_bytes, 0);
     }
 
@@ -360,17 +360,17 @@ mod tests {
             max_size_bytes: 1024,
             track_stats: true,
         };
-        let cache = StateCache::with_config(config).unwrap();
+        let cache = StateCache::with_config(config).ok();
 
         // Add entries that will exceed the limit
         // Each entry: key (4 bytes) + value (100 bytes) + CacheEntry overhead (64 bytes) ≈ 168 bytes
         for i in 0..10 {
             let key = format!("key{}", i).into_bytes();
             let value = vec![i as u8; 100];
-            cache.put(key, value).unwrap();
+            cache.put(key, value).ok();
         }
 
-        let stats = cache.stats().unwrap();
+        let stats = cache.stats().ok();
 
         // Verify the cache stayed within byte limits
         assert!(
@@ -397,46 +397,46 @@ mod tests {
             max_size_bytes: 100,
             track_stats: true,
         };
-        let cache = StateCache::with_config(config).unwrap();
+        let cache = StateCache::with_config(config).ok();
 
         // Try to add an entry larger than the limit
         let key = b"key1".to_vec();
         let value = vec![1u8; 200]; // 200 bytes, exceeds 100 byte limit
 
-        cache.put(key.clone(), value).unwrap();
+        cache.put(key.clone(), value).ok();
 
         // Verify the entry was not cached
-        assert_eq!(cache.get(&key).unwrap(), None);
+        assert_eq!(cache.get(&key).ok(), None);
 
-        let stats = cache.stats().unwrap();
+        let stats = cache.stats().ok();
         assert_eq!(stats.entry_count, 0);
         assert_eq!(stats.current_size_bytes, 0);
     }
 
     #[test]
     fn test_size_tracking_accuracy() {
-        let cache = StateCache::new().unwrap();
+        let cache = StateCache::new().ok();
 
         let key1 = b"key1".to_vec();
         let value1 = vec![1u8; 50];
-        cache.put(key1.clone(), value1).unwrap();
+        cache.put(key1.clone(), value1).ok();
 
-        let stats1 = cache.stats().unwrap();
+        let stats1 = cache.stats().ok();
         let size1 = stats1.current_size_bytes;
         assert!(size1 > 0);
 
         // Add another entry
         let key2 = b"key2".to_vec();
         let value2 = vec![2u8; 75];
-        cache.put(key2.clone(), value2).unwrap();
+        cache.put(key2.clone(), value2).ok();
 
-        let stats2 = cache.stats().unwrap();
+        let stats2 = cache.stats().ok();
         assert!(stats2.current_size_bytes > size1);
 
         // Invalidate first entry
-        cache.invalidate(&key1).unwrap();
+        cache.invalidate(&key1).ok();
 
-        let stats3 = cache.stats().unwrap();
+        let stats3 = cache.stats().ok();
         assert!(stats3.current_size_bytes < stats2.current_size_bytes);
         assert_eq!(stats3.entry_count, 1);
     }

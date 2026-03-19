@@ -387,7 +387,7 @@ impl ContractManager {
 
         let expires_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
             + terms.duration;
 
@@ -410,7 +410,7 @@ impl ContractManager {
             },
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             expires_at,
             signatures: ContractSignatures {
@@ -461,7 +461,7 @@ impl ContractManager {
                 contract_id: contract_id.to_string(),
                 start_time: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
                 last_check: 0,
                 metrics: PerformanceMetrics {
@@ -507,7 +507,7 @@ impl ContractManager {
                     let violation = SlaViolation {
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_secs(),
                         violation_type: SlaViolationType::UptimeViolation,
                         severity: if uptime < contract.sla.min_uptime * 0.9 {
@@ -536,7 +536,7 @@ impl ContractManager {
                     let violation = SlaViolation {
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_secs(),
                         violation_type: SlaViolationType::LatencyViolation,
                         severity: ViolationSeverity::Moderate,
@@ -558,7 +558,7 @@ impl ContractManager {
                     let violation = SlaViolation {
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_secs(),
                         violation_type: SlaViolationType::ThroughputViolation,
                         severity: ViolationSeverity::Moderate,
@@ -835,7 +835,7 @@ impl ContractManager {
                 c.expires_at
                     > std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs()
             })
             .count() as u64;
@@ -913,7 +913,7 @@ impl ContractManager {
             recommendations,
             evaluation_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }
@@ -1086,11 +1086,11 @@ mod tests {
                 sla,
                 payment,
             )
-            .unwrap();
+            .ok();
 
         assert!(manager.get_contract(&contract_id).is_some());
         assert_eq!(
-            manager.get_contract(&contract_id).unwrap().status,
+            manager.get_contract(&contract_id).ok().status,
             ContractStatus::Draft
         );
     }
@@ -1135,7 +1135,7 @@ mod tests {
                 sla,
                 vec![StorageTier::Cold, StorageTier::Archive],
             )
-            .unwrap();
+            .ok();
 
         // Test template retrieval
         assert!(manager.get_template(&template_id).is_some());
@@ -1175,10 +1175,10 @@ mod tests {
                 payment,
                 Some(customizations),
             )
-            .unwrap();
+            .ok();
 
         // Verify the contract was created with customizations
-        let contract = manager.get_contract(&contract_id).unwrap();
+        let contract = manager.get_contract(&contract_id).ok();
         assert_eq!(contract.terms.storage_size, 2 * 1024 * 1024 * 1024);
         assert_eq!(contract.terms.duration, 86400 * 60);
         assert_eq!(contract.terms.tier, StorageTier::Archive);
@@ -1224,7 +1224,7 @@ mod tests {
                 sla,
                 vec![StorageTier::Hot],
             )
-            .unwrap();
+            .ok();
 
         let cold_terms = ContractTerms {
             storage_size: 1024 * 1024 * 1024,
@@ -1261,7 +1261,7 @@ mod tests {
                 cold_sla,
                 vec![StorageTier::Cold, StorageTier::Archive],
             )
-            .unwrap();
+            .ok();
 
         // Test tier filtering
         let hot_templates = manager.find_templates_by_tier(&StorageTier::Hot);

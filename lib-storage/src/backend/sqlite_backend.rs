@@ -1432,7 +1432,7 @@ mod tests {
     use super::*;
 
     async fn create_test_backend() -> SqliteBackend {
-        SqliteBackend::open_in_memory().await.unwrap()
+        SqliteBackend::open_in_memory().await.ok()
     }
 
     fn get_test_timestamp() -> i64 {
@@ -1458,12 +1458,12 @@ mod tests {
         };
 
         // Insert
-        backend.upsert_content_metadata(&metadata).await.unwrap();
+        backend.upsert_content_metadata(&metadata).await.ok();
 
         // Get
-        let retrieved = backend.get_content_metadata(&content_hash).await.unwrap();
+        let retrieved = backend.get_content_metadata(&content_hash).await.ok();
         assert!(retrieved.is_some());
-        let retrieved = retrieved.unwrap();
+        let retrieved = retrieved.ok();
         assert_eq!(retrieved.size, 1024);
         assert_eq!(retrieved.owner_id, "owner1");
 
@@ -1473,19 +1473,19 @@ mod tests {
             updated_at: now + 1,
             ..metadata.clone()
         };
-        backend.upsert_content_metadata(&updated).await.unwrap();
+        backend.upsert_content_metadata(&updated).await.ok();
 
-        let retrieved = backend.get_content_metadata(&content_hash).await.unwrap();
-        assert_eq!(retrieved.unwrap().size, 2048);
+        let retrieved = backend.get_content_metadata(&content_hash).await.ok();
+        assert_eq!(retrieved.ok().size, 2048);
 
         // Delete
         let deleted = backend
             .delete_content_metadata(&content_hash)
             .await
-            .unwrap();
+            .ok();
         assert!(deleted);
 
-        let retrieved = backend.get_content_metadata(&content_hash).await.unwrap();
+        let retrieved = backend.get_content_metadata(&content_hash).await.ok();
         assert!(retrieved.is_none());
     }
 
@@ -1507,20 +1507,20 @@ mod tests {
                 tags: None,
                 description: None,
             };
-            backend.upsert_content_metadata(&metadata).await.unwrap();
+            backend.upsert_content_metadata(&metadata).await.ok();
         }
 
         let results = backend
             .list_content_by_owner("owner1", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 3);
 
         // Test pagination
         let results = backend
             .list_content_by_owner("owner1", Some(2), None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 2);
     }
 
@@ -1542,7 +1542,7 @@ mod tests {
             tags: None,
             description: None,
         };
-        backend.upsert_content_metadata(&metadata).await.unwrap();
+        backend.upsert_content_metadata(&metadata).await.ok();
 
         // Insert contract with pending status (so we can transition to active)
         let contract = StorageContractRow {
@@ -1558,30 +1558,30 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        backend.insert_contract(&contract).await.unwrap();
+        backend.insert_contract(&contract).await.ok();
 
         // Get
-        let retrieved = backend.get_contract("contract1").await.unwrap();
+        let retrieved = backend.get_contract("contract1").await.ok();
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().status, "pending");
+        assert_eq!(retrieved.ok().status, "pending");
 
         // Update status: pending -> active (valid transition)
         backend
             .update_contract_status("contract1", ContractStatus::Active)
             .await
-            .unwrap();
+            .ok();
 
-        let retrieved = backend.get_contract("contract1").await.unwrap();
-        assert_eq!(retrieved.unwrap().status, "active");
+        let retrieved = backend.get_contract("contract1").await.ok();
+        assert_eq!(retrieved.ok().status, "active");
 
         // Update status: active -> expired (valid transition)
         backend
             .update_contract_status("contract1", ContractStatus::Expired)
             .await
-            .unwrap();
+            .ok();
 
-        let retrieved = backend.get_contract("contract1").await.unwrap();
-        assert_eq!(retrieved.unwrap().status, "expired");
+        let retrieved = backend.get_contract("contract1").await.ok();
+        assert_eq!(retrieved.ok().status, "expired");
 
         // Test invalid state transition: expired -> active should fail
         let result = backend
@@ -1608,7 +1608,7 @@ mod tests {
             tags: None,
             description: None,
         };
-        backend.upsert_content_metadata(&metadata).await.unwrap();
+        backend.upsert_content_metadata(&metadata).await.ok();
 
         let contract = StorageContractRow {
             contract_id: "pay_contract".to_string(),
@@ -1623,16 +1623,16 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        backend.insert_contract(&contract).await.unwrap();
+        backend.insert_contract(&contract).await.ok();
 
         // Update payment with payment_id
         backend
             .update_contract_payment("pay_contract", "payment-001", 500)
             .await
-            .unwrap();
+            .ok();
 
-        let retrieved = backend.get_contract("pay_contract").await.unwrap();
-        assert_eq!(retrieved.unwrap().total_paid, 500);
+        let retrieved = backend.get_contract("pay_contract").await.ok();
+        assert_eq!(retrieved.ok().total_paid, 500);
 
         // Test negative payment rejection
         let result = backend
@@ -1646,20 +1646,20 @@ mod tests {
         let backend = create_test_backend().await;
 
         // Record some retrievals
-        backend.record_successful_retrieval("node1").await.unwrap();
-        backend.record_successful_retrieval("node1").await.unwrap();
-        backend.record_failed_retrieval("node1").await.unwrap();
+        backend.record_successful_retrieval("node1").await.ok();
+        backend.record_successful_retrieval("node1").await.ok();
+        backend.record_failed_retrieval("node1").await.ok();
 
-        let reputation = backend.get_reputation("node1").await.unwrap().unwrap();
+        let reputation = backend.get_reputation("node1").await.ok().ok();
         assert_eq!(reputation.successful_retrievals, 2);
         assert_eq!(reputation.failed_retrievals, 1);
 
         // Recalculate score
-        let score = backend.recalculate_reputation("node1").await.unwrap();
+        let score = backend.recalculate_reputation("node1").await.ok();
         assert!(score > 0.0 && score <= 1.0);
 
         // Get top nodes
-        let top = backend.get_top_nodes(10).await.unwrap();
+        let top = backend.get_top_nodes(10).await.ok();
         assert_eq!(top.len(), 1);
     }
 
@@ -1706,11 +1706,11 @@ mod tests {
                 Some(r#"{"size": 1024}"#),
             )
             .await
-            .unwrap();
+            .ok();
         let id2 = backend
             .append_audit_log("content_retrieved", Some("node2"), None, None)
             .await
-            .unwrap();
+            .ok();
 
         assert!(id1 > 0);
         assert!(id2 > id1);
@@ -1719,11 +1719,11 @@ mod tests {
         let logs = backend
             .get_audit_logs_by_type("content_stored", 100)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(logs.len(), 1);
 
         // Get by node
-        let logs = backend.get_audit_logs_by_node("node1", 100).await.unwrap();
+        let logs = backend.get_audit_logs_by_node("node1", 100).await.ok();
         assert_eq!(logs.len(), 1);
 
         // Get by time range
@@ -1731,7 +1731,7 @@ mod tests {
         let logs = backend
             .get_audit_logs(now - 60, now + 60, 100)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(logs.len(), 2);
     }
 
@@ -1753,7 +1753,7 @@ mod tests {
             tags: None,
             description: None,
         };
-        backend.upsert_content_metadata(&metadata).await.unwrap();
+        backend.upsert_content_metadata(&metadata).await.ok();
 
         // Insert contracts
         for i in 0..3 {
@@ -1770,10 +1770,10 @@ mod tests {
                 created_at: now,
                 updated_at: now,
             };
-            backend.insert_contract(&contract).await.unwrap();
+            backend.insert_contract(&contract).await.ok();
         }
 
-        let stats = backend.get_contract_stats().await.unwrap();
+        let stats = backend.get_contract_stats().await.ok();
         assert_eq!(stats.total_contracts, 3);
         assert_eq!(stats.active_contracts, 1);
         assert_eq!(stats.total_revenue, 600); // 100 + 200 + 300
@@ -1829,42 +1829,42 @@ mod tests {
                 tags: Some(tags.to_string()),
                 description: Some(format!("Content {}", i)),
             };
-            backend.upsert_content_metadata(&metadata).await.unwrap();
+            backend.upsert_content_metadata(&metadata).await.ok();
         }
 
         // Search for "rust" tag
         let results = backend
             .search_content_by_tag("rust", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 2);
 
         // Search for "backend" tag
         let results = backend
             .search_content_by_tag("backend", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 2);
 
         // Search for "python" tag
         let results = backend
             .search_content_by_tag("python", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 1);
 
         // Search for non-existent tag
         let results = backend
             .search_content_by_tag("nonexistent", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 0);
 
         // Test pagination
         let results = backend
             .search_content_by_tag("rust", Some(1), None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 1);
     }
 
@@ -1887,14 +1887,14 @@ mod tests {
                 tags: None,
                 description: None,
             };
-            backend.upsert_content_metadata(&metadata).await.unwrap();
+            backend.upsert_content_metadata(&metadata).await.ok();
         }
 
         // List hot tier
         let results = backend
             .list_content_by_tier("hot", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tier, "hot");
 
@@ -1902,7 +1902,7 @@ mod tests {
         let results = backend
             .list_content_by_tier("warm", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tier, "warm");
 
@@ -1910,7 +1910,7 @@ mod tests {
         let results = backend
             .list_content_by_tier("cold", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tier, "cold");
 
@@ -1918,7 +1918,7 @@ mod tests {
         let results = backend
             .list_content_by_tier("archive", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 0);
     }
 
@@ -1940,7 +1940,7 @@ mod tests {
             tags: None,
             description: None,
         };
-        backend.upsert_content_metadata(&metadata).await.unwrap();
+        backend.upsert_content_metadata(&metadata).await.ok();
 
         // Insert contracts with different providers
         for i in 0..3 {
@@ -1957,28 +1957,28 @@ mod tests {
                 created_at: now,
                 updated_at: now,
             };
-            backend.insert_contract(&contract).await.unwrap();
+            backend.insert_contract(&contract).await.ok();
         }
 
         // List contracts by provider0
         let results = backend
             .list_contracts_by_provider("provider0", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 2); // contracts 0 and 2
 
         // List contracts by provider1
         let results = backend
             .list_contracts_by_provider("provider1", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 1); // contract 1
 
         // List contracts by non-existent provider
         let results = backend
             .list_contracts_by_provider("provider999", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 0);
     }
 
@@ -2000,7 +2000,7 @@ mod tests {
             tags: None,
             description: None,
         };
-        backend.upsert_content_metadata(&metadata).await.unwrap();
+        backend.upsert_content_metadata(&metadata).await.ok();
 
         // Insert contracts with different clients
         for i in 0..3 {
@@ -2017,28 +2017,28 @@ mod tests {
                 created_at: now,
                 updated_at: now,
             };
-            backend.insert_contract(&contract).await.unwrap();
+            backend.insert_contract(&contract).await.ok();
         }
 
         // List contracts by client0
         let results = backend
             .list_contracts_by_client("client0", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 2); // contracts 0 and 2
 
         // List contracts by client1
         let results = backend
             .list_contracts_by_client("client1", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 1); // contract 1
 
         // List contracts by non-existent client
         let results = backend
             .list_contracts_by_client("client999", None, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 0);
     }
 
@@ -2060,7 +2060,7 @@ mod tests {
             tags: None,
             description: None,
         };
-        backend.upsert_content_metadata(&metadata).await.unwrap();
+        backend.upsert_content_metadata(&metadata).await.ok();
 
         // Insert contracts with different expiration times (within clock drift limits)
         // Contract 0 expires in 60 seconds, 1 in 120 seconds, 2 in 180 seconds
@@ -2078,28 +2078,28 @@ mod tests {
                 created_at: now,
                 updated_at: now,
             };
-            backend.insert_contract(&contract).await.unwrap();
+            backend.insert_contract(&contract).await.ok();
         }
 
         // List contracts expiring before 90 seconds from now
         let results = backend
             .list_expiring_contracts(now + 90, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 1); // Only contract 0
 
         // List contracts expiring before 150 seconds from now
         let results = backend
             .list_expiring_contracts(now + 150, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 2); // Contracts 0 and 1
 
         // List contracts expiring before 200 seconds from now
         let results = backend
             .list_expiring_contracts(now + 200, None)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(results.len(), 3); // All contracts
     }
 
@@ -2129,11 +2129,11 @@ mod tests {
                 tags: None,
                 description: None,
             };
-            backend.upsert_content_metadata(&metadata).await.unwrap();
+            backend.upsert_content_metadata(&metadata).await.ok();
         }
 
         // Get storage by tier
-        let results = backend.get_storage_by_tier().await.unwrap();
+        let results = backend.get_storage_by_tier().await.ok();
 
         // Find hot tier total
         let hot_total = results
@@ -2172,27 +2172,27 @@ mod tests {
                     Some(&format!("Details {}", i)),
                 )
                 .await
-                .unwrap();
+                .ok();
         }
 
         // Get count before pruning
         let all_logs = backend
             .get_audit_logs(now - 3600, now + 300, 100)
             .await
-            .unwrap();
+            .ok();
         let initial_count = all_logs.len();
         assert_eq!(initial_count, 5);
 
         // Prune logs "older" than now + 200 seconds (within clock drift limit)
         // This should delete all logs since they were created at "now"
-        let deleted = backend.prune_audit_logs(now + 200).await.unwrap();
+        let deleted = backend.prune_audit_logs(now + 200).await.ok();
         assert_eq!(deleted, 5);
 
         // Verify no logs remain
         let final_logs = backend
             .get_audit_logs(now - 3600, now + 300, 100)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(final_logs.len(), 0);
     }
 

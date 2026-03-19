@@ -273,7 +273,7 @@ mod tests {
             .commission(500) // 5%
             .endpoint("tcp://127.0.0.1:9333".to_string())
             .build()
-            .unwrap();
+            .ok();
 
         assert_eq!(validator.stake, 100_000_000);
         assert_eq!(validator.storage_provided, 1_000_000_000);

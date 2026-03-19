@@ -87,7 +87,7 @@ mod tests {
     fn test_expand_home_directory_with_tilde() {
         let result = expand_home_directory("~/config");
         assert!(result.is_ok());
-        let path = result.unwrap();
+        let path = result.ok();
         assert!(path.to_string_lossy().contains("config"));
     }
 
@@ -95,15 +95,15 @@ mod tests {
     fn test_expand_home_directory_with_just_tilde() {
         let result = expand_home_directory("~");
         assert!(result.is_ok());
-        let path = result.unwrap();
-        assert_eq!(path, dirs::home_dir().unwrap());
+        let path = result.ok();
+        assert_eq!(path, dirs::home_dir().ok());
     }
 
     #[test]
     fn test_expand_absolute_path() {
         let result = expand_home_directory("/tmp/test");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), PathBuf::from("/tmp/test"));
+        assert_eq!(result.ok(), PathBuf::from("/tmp/test"));
     }
 
     #[test]
@@ -143,7 +143,7 @@ mod tests {
         let path = PathBuf::from("/home/user/config.toml");
         let filename = get_filename(&path);
         assert!(filename.is_ok());
-        assert_eq!(filename.unwrap(), "config.toml");
+        assert_eq!(filename.ok(), "config.toml");
     }
 
     #[test]
@@ -151,7 +151,7 @@ mod tests {
         let path = PathBuf::from("/home/user/config");
         let parent = get_parent_dir(&path);
         assert!(parent.is_ok());
-        assert_eq!(parent.unwrap(), PathBuf::from("/home/user"));
+        assert_eq!(parent.ok(), PathBuf::from("/home/user"));
     }
 
     #[test]
@@ -159,6 +159,6 @@ mod tests {
         let base = PathBuf::from("/home/user");
         let result = join_paths(&base, "config");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), PathBuf::from("/home/user/config"));
+        assert_eq!(result.ok(), PathBuf::from("/home/user/config"));
     }
 }

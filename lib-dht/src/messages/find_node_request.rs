@@ -105,12 +105,12 @@ impl MessageBase for FindNodeRequest {
         ben.put(self.get_type().rpc_type_name(), self.get_method());
         ben.put(self.get_type().inner_key(), BencodeObject::new());
         ben.get_mut::<BencodeObject>(self.get_type().inner_key())
-            .unwrap()
-            .put("id", self.uid.unwrap().bytes().clone());
+            .ok()
+            .put("id", self.uid.ok().bytes().clone());
 
         if let Some(target) = self.target {
             ben.get_mut::<BencodeObject>(self.get_type().inner_key())
-                .unwrap()
+                .ok()
                 .put("target", target.bytes().clone());
         }
 
@@ -127,7 +127,7 @@ impl MessageBase for FindNodeRequest {
 
         match ben
             .get::<BencodeObject>(self.get_type().inner_key())
-            .unwrap()
+            .ok()
             .get::<BencodeBytes>("id")
         {
             Some(id) => {
@@ -145,7 +145,7 @@ impl MessageBase for FindNodeRequest {
 
         match ben
             .get::<BencodeObject>(self.get_type().inner_key())
-            .unwrap()
+            .ok()
             .get::<BencodeBytes>("target")
         {
             Some(target) => {

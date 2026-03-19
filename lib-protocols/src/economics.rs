@@ -200,7 +200,7 @@ impl ZhtpEconomics {
                 amount: per_participant,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             });
         }
@@ -371,11 +371,11 @@ mod tests {
     #[test]
     fn test_fee_calculation() {
         let config = EconomicConfig::default();
-        let economics = ZhtpEconomics::new(config).unwrap();
+        let economics = ZhtpEconomics::new(config).ok();
 
         let assessment = economics
             .calculate_operation_fees("GET", 1024, Priority::Normal)
-            .unwrap();
+            .ok();
 
         assert!(assessment.total_fee > 0);
         assert!(assessment.dao_fee > 0); // Should have DAO fee
@@ -389,7 +389,7 @@ mod tests {
     fn test_dao_fee_validation() {
         let mut config = EconomicConfig::default();
         config.dao_fee_percentage = 2.0; // 2% DAO fee
-        let economics = ZhtpEconomics::new(config).unwrap();
+        let economics = ZhtpEconomics::new(config).ok();
 
         // Valid payment with proper proof
         let payment_proof = b"valid_payment_proof_hash_12345678901234567890";

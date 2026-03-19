@@ -531,23 +531,23 @@ mod tests {
     fn test_signin_request_parsing() {
         // Test with DID
         let json = r#"{"did": "did:zhtp:abc123", "password": "test"}"#;
-        let req: SigninRequest = serde_json::from_str(json).unwrap();
+        let req: SigninRequest = serde_json::from_str(json).ok();
         assert_eq!(req.did, Some("did:zhtp:abc123".to_string()));
         assert_eq!(req.password, "test");
 
         // Test with identity_id
         let json = r#"{"identity_id": "abc123", "password": "test"}"#;
-        let req: SigninRequest = serde_json::from_str(json).unwrap();
+        let req: SigninRequest = serde_json::from_str(json).ok();
         assert_eq!(req.identity_id, Some("abc123".to_string()));
 
         // Test with passphrase alias
         let json = r#"{"did": "did:zhtp:abc123", "passphrase": "test"}"#;
-        let req: SigninRequest = serde_json::from_str(json).unwrap();
+        let req: SigninRequest = serde_json::from_str(json).ok();
         assert_eq!(req.password, "test");
 
         // Test with identifier alias
         let json = r#"{"identifier": "did:zhtp:abc123", "password": "test"}"#;
-        let req: SigninRequest = serde_json::from_str(json).unwrap();
+        let req: SigninRequest = serde_json::from_str(json).ok();
         assert_eq!(req.did, Some("did:zhtp:abc123".to_string()));
     }
 }

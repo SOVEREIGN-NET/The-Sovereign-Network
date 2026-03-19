@@ -323,7 +323,7 @@ impl BlockchainStorageManager {
                 replica_count: 5, // From quality requirements
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             },
             error: None,
@@ -444,7 +444,7 @@ impl BlockchainStorageManager {
                 replica_count: 3,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             },
             error: None,
@@ -606,7 +606,7 @@ impl BlockchainStorageManager {
                 replica_count: 2,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             },
             error: None,
@@ -693,7 +693,7 @@ impl BlockchainStorageManager {
                 replica_count: 5,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             },
             error: None,
@@ -716,7 +716,7 @@ impl BlockchainStorageManager {
                 "utxo_set_{}.dat",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             ),
             mime_type: "application/octet-stream".to_string(),
@@ -735,7 +735,7 @@ impl BlockchainStorageManager {
                 expires_at: Some(
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs()
                         + 30 * 24 * 3600,
                 ), // Expire after 30 days
@@ -780,7 +780,7 @@ impl BlockchainStorageManager {
                 replica_count: 3,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             },
             error: None,
@@ -800,7 +800,7 @@ impl BlockchainStorageManager {
                 "mempool_{}.dat",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             ),
             mime_type: "application/octet-stream".to_string(),
@@ -815,7 +815,7 @@ impl BlockchainStorageManager {
                 expires_at: Some(
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs()
                         + 24 * 3600,
                 ), // Expire after 1 day
@@ -860,7 +860,7 @@ impl BlockchainStorageManager {
                 replica_count: 1,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             },
             error: None,
@@ -905,7 +905,7 @@ impl BlockchainStorageManager {
                             replica_count: 0,
                             timestamp: std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
+                                .ok()
                                 .as_secs(),
                         },
                         error: Some(e.to_string()),
@@ -1076,7 +1076,7 @@ impl BlockchainStorageManager {
         let latest = results
             .into_iter()
             .max_by_key(|meta| meta.created_at)
-            .unwrap();
+            .ok();
 
         let download_request = DownloadRequest {
             content_hash: latest.hash,
@@ -1318,7 +1318,7 @@ impl BlockchainStorageManager {
             created_at: 0,
             last_active: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             recovery_keys: vec![],
             owner_identity_id: None, // System identity has no owner
@@ -1610,7 +1610,7 @@ mod tests {
         // This needs to be fixed in lib-storage, but for now we can verify storage works.
 
         // TODO: Re-enable retrieval test once lib-storage encryption key management is fixed
-        // let content_hash = store_result.content_hash.unwrap();
+        // let content_hash = store_result.content_hash.ok();
         // let retrieved_blockchain = manager.retrieve_blockchain_state(content_hash).await?;
         // assert_eq!(retrieved_blockchain.height, blockchain.height);
         // assert_eq!(retrieved_blockchain.difficulty, blockchain.difficulty);
@@ -1633,7 +1633,7 @@ mod tests {
         assert!(store_result.content_hash.is_some());
 
         // Retrieve block
-        let content_hash = store_result.content_hash.unwrap();
+        let content_hash = store_result.content_hash.ok();
         let retrieved_block = manager.retrieve_block(content_hash).await?;
 
         assert_eq!(retrieved_block.height(), genesis_block.height());

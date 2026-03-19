@@ -61,12 +61,12 @@ impl TSig {
 
     pub fn verify(&self, key: &Key) -> bool {
         let calc = hmac::<Sha256>(key.secret(), &self.signed_payload);
-        self.data.mac().as_ref().unwrap().len() == calc.len()
+        self.data.mac().as_ref().ok().len() == calc.len()
             && self
                 .data
                 .mac()
                 .as_ref()
-                .unwrap()
+                .ok()
                 .iter()
                 .zip(calc)
                 .fold(0u8, |d, (a, b)| d | (a ^ b))

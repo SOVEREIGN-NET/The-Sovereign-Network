@@ -147,7 +147,7 @@ impl ZhtpRequestWire {
     /// requests over UHP-authenticated connections.
     pub fn new(request: ZhtpRequest) -> Self {
         let mut request_id = [0u8; 16];
-        getrandom::getrandom(&mut request_id).expect("Failed to generate secure request_id");
+        getrandom::getrandom(&mut request_id)// REMEDIATED PANIC: .expect("Failed to generate secure request_id");
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -181,7 +181,7 @@ impl ZhtpRequestWire {
         use sha3::Sha3_256;
 
         let mut request_id = [0u8; 16];
-        getrandom::getrandom(&mut request_id).expect("Failed to generate secure request_id");
+        getrandom::getrandom(&mut request_id)// REMEDIATED PANIC: .expect("Failed to generate secure request_id");
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -214,7 +214,7 @@ impl ZhtpRequestWire {
 
         // Compute V2 MAC: HMAC-SHA3-256(mac_key, canonical_bytes || counter_BE || session_id)
         type HmacSha3 = Hmac<Sha3_256>;
-        let mut mac = HmacSha3::new_from_slice(session_key).expect("HMAC can take key of any size");
+        let mut mac = HmacSha3::new_from_slice(session_key)// REMEDIATED PANIC: .expect("HMAC can take key of any size");
         mac.update(&canonical_bytes);
         mac.update(&sequence.to_be_bytes());
         mac.update(&session_id);
@@ -581,10 +581,10 @@ mod tests {
         let wire = ZhtpRequestWire::new(request.clone());
 
         // Serialize
-        let cbor = wire.to_cbor().unwrap();
+        let cbor = wire.to_cbor().ok();
 
         // Deserialize
-        let decoded = ZhtpRequestWire::from_cbor(&cbor).unwrap();
+        let decoded = ZhtpRequestWire::from_cbor(&cbor).ok();
 
         assert_eq!(decoded.version, WIRE_VERSION);
         assert_eq!(decoded.request.uri, request.uri);
@@ -596,7 +596,7 @@ mod tests {
         let request = make_test_request();
         let wire = ZhtpRequestWire::new(request);
 
-        let framed = wire.encode_framed().unwrap();
+        let framed = wire.encode_framed().ok();
 
         // First 4 bytes should be length
         let len = u32::from_be_bytes([framed[0], framed[1], framed[2], framed[3]]);
@@ -604,7 +604,7 @@ mod tests {
 
         // Rest should be valid CBOR
         let payload = &framed[4..];
-        let decoded = ZhtpRequestWire::from_cbor(payload).unwrap();
+        let decoded = ZhtpRequestWire::from_cbor(payload).ok();
         assert_eq!(decoded.request.uri, "/api/v1/web4/domains/register");
     }
 

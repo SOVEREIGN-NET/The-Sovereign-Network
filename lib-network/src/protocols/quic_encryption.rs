@@ -240,13 +240,13 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
+        let enc = QuicApplicationEncryption::new(&key, session_id).ok();
         let message = b"QUIC application message";
 
-        let ciphertext = enc.encrypt_message(message, "data").unwrap();
+        let ciphertext = enc.encrypt_message(message, "data").ok();
         assert!(ciphertext.len() > message.len()); // Includes tag
 
-        let decrypted = enc.decrypt_message(&ciphertext, "data").unwrap();
+        let decrypted = enc.decrypt_message(&ciphertext, "data").ok();
         assert_eq!(message, &decrypted[..]);
     }
 
@@ -255,10 +255,10 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
+        let enc = QuicApplicationEncryption::new(&key, session_id).ok();
         let message = b"Test message";
 
-        let ciphertext = enc.encrypt_message(message, "handshake").unwrap();
+        let ciphertext = enc.encrypt_message(message, "handshake").ok();
 
         // Try to decrypt with different message type
         let result = enc.decrypt_message(&ciphertext, "data");
@@ -274,12 +274,12 @@ mod tests {
         let session_id1 = [0x11u8; 32];
         let session_id2 = [0x22u8; 32];
 
-        let enc1 = QuicApplicationEncryption::new(&key, session_id1).unwrap();
-        let enc2 = QuicApplicationEncryption::new(&key, session_id2).unwrap();
+        let enc1 = QuicApplicationEncryption::new(&key, session_id1).ok();
+        let enc2 = QuicApplicationEncryption::new(&key, session_id2).ok();
 
         let message = b"Test message";
 
-        let ciphertext = enc1.encrypt_message(message, "data").unwrap();
+        let ciphertext = enc1.encrypt_message(message, "data").ok();
 
         // Try to decrypt with different session
         let result = enc2.decrypt_message(&ciphertext, "data");
@@ -291,10 +291,10 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
+        let enc = QuicApplicationEncryption::new(&key, session_id).ok();
         let message = b"Important QUIC data";
 
-        let mut ciphertext = enc.encrypt_message(message, "data").unwrap();
+        let mut ciphertext = enc.encrypt_message(message, "data").ok();
 
         // Tamper with ciphertext
         if !ciphertext.is_empty() {
@@ -310,16 +310,16 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
+        let enc = QuicApplicationEncryption::new(&key, session_id).ok();
 
         // Encrypt empty message
-        let ciphertext = enc.encrypt_message(b"", "data").unwrap();
+        let ciphertext = enc.encrypt_message(b"", "data").ok();
         assert!(
             !ciphertext.is_empty(),
             "Even empty message produces ciphertext (tag)"
         );
 
-        let decrypted = enc.decrypt_message(&ciphertext, "data").unwrap();
+        let decrypted = enc.decrypt_message(&ciphertext, "data").ok();
         assert_eq!(decrypted.len(), 0, "Empty message should decrypt to empty");
     }
 
@@ -328,13 +328,13 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
+        let enc = QuicApplicationEncryption::new(&key, session_id).ok();
 
         // Create 10MB message (QUIC can handle large streams)
         let large_message = vec![0x42u8; 10 * 1024 * 1024];
 
-        let ciphertext = enc.encrypt_message(&large_message, "data").unwrap();
-        let decrypted = enc.decrypt_message(&ciphertext, "data").unwrap();
+        let ciphertext = enc.encrypt_message(&large_message, "data").ok();
+        let decrypted = enc.decrypt_message(&ciphertext, "data").ok();
 
         assert_eq!(large_message, decrypted, "Large message should round-trip");
     }
@@ -344,13 +344,13 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
+        let enc = QuicApplicationEncryption::new(&key, session_id).ok();
 
         let message = b"Trait test";
         let aad = b"custom-aad";
 
-        let ciphertext = enc.encrypt(message, aad).unwrap();
-        let decrypted = enc.decrypt(&ciphertext, aad).unwrap();
+        let ciphertext = enc.encrypt(message, aad).ok();
+        let decrypted = enc.decrypt(&ciphertext, aad).ok();
 
         assert_eq!(message, &decrypted[..]);
         assert_eq!(enc.protocol(), "quic");
@@ -362,7 +362,7 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
+        let enc = QuicApplicationEncryption::new(&key, session_id).ok();
 
         // QUIC message types
         let types = vec!["handshake", "data", "ack", "control", "crypto"];
@@ -370,7 +370,7 @@ mod tests {
 
         let ciphertexts: Vec<_> = types
             .iter()
-            .map(|&msg_type| enc.encrypt_message(message, msg_type).unwrap())
+            .map(|&msg_type| enc.encrypt_message(message, msg_type).ok())
             .collect();
 
         // All should produce different ciphertexts
@@ -385,7 +385,7 @@ mod tests {
 
         // All should decrypt with correct message type
         for (msg_type, ciphertext) in types.iter().zip(ciphertexts.iter()) {
-            let decrypted = enc.decrypt_message(ciphertext, msg_type).unwrap();
+            let decrypted = enc.decrypt_message(ciphertext, msg_type).ok();
             assert_eq!(message, &decrypted[..]);
         }
     }
@@ -400,14 +400,14 @@ mod tests {
             .map(|i| {
                 let mut sid = [0u8; 32];
                 sid[0] = i as u8;
-                QuicApplicationEncryption::new(&key, sid).unwrap()
+                QuicApplicationEncryption::new(&key, sid).ok()
             })
             .collect();
 
         // Encrypt same message with each session
         let ciphertexts: Vec<_> = sessions
             .iter()
-            .map(|enc| enc.encrypt_message(message, "data").unwrap())
+            .map(|enc| enc.encrypt_message(message, "data").ok())
             .collect();
 
         // All ciphertexts should be different (different AAD)
@@ -422,7 +422,7 @@ mod tests {
 
         // Each session should only decrypt its own ciphertext
         for (i, (session, ciphertext)) in sessions.iter().zip(ciphertexts.iter()).enumerate() {
-            let decrypted = session.decrypt_message(ciphertext, "data").unwrap();
+            let decrypted = session.decrypt_message(ciphertext, "data").ok();
             assert_eq!(message, &decrypted[..]);
 
             // Try to decrypt other ciphertexts with this session (should fail)
@@ -445,11 +445,11 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
+        let enc = QuicApplicationEncryption::new(&key, session_id).ok();
         let message = b"Critical QUIC data";
 
         // Encrypt as "data"
-        let ciphertext = enc.encrypt_message(message, "data").unwrap();
+        let ciphertext = enc.encrypt_message(message, "data").ok();
 
         // Try all these wrong types
         let wrong_types = vec![
@@ -478,7 +478,7 @@ mod tests {
         let key = create_test_key();
         let session_id = create_test_session_id();
 
-        let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
+        let enc = QuicApplicationEncryption::new(&key, session_id).ok();
 
         let stats = enc.stats();
         assert_eq!(stats.protocol, "quic");
@@ -489,7 +489,7 @@ mod tests {
         let key = create_test_key();
         let session_id = [0xFFu8; 32];
 
-        let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
+        let enc = QuicApplicationEncryption::new(&key, session_id).ok();
 
         assert_eq!(
             enc.session_id(),
@@ -499,8 +499,8 @@ mod tests {
 
         // Encrypt and decrypt
         let message = b"Test";
-        let ciphertext = enc.encrypt_message(message, "data").unwrap();
-        let decrypted = enc.decrypt_message(&ciphertext, "data").unwrap();
+        let ciphertext = enc.encrypt_message(message, "data").ok();
+        let decrypted = enc.decrypt_message(&ciphertext, "data").ok();
 
         assert_eq!(message, &decrypted[..]);
         assert_eq!(

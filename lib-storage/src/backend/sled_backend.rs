@@ -863,8 +863,8 @@ mod tests {
     use tempfile::TempDir;
 
     async fn create_test_backend() -> (SledBackend, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let backend = SledBackend::open(temp_dir.path()).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let backend = SledBackend::open(temp_dir.path()).ok();
         (backend, temp_dir)
     }
 
@@ -872,8 +872,8 @@ mod tests {
     async fn test_basic_put_get() {
         let (backend, _dir) = create_test_backend().await;
 
-        backend.put(b"key1", b"value1").await.unwrap();
-        let value = backend.get(b"key1").await.unwrap();
+        backend.put(b"key1", b"value1").await.ok();
+        let value = backend.get(b"key1").await.ok();
 
         assert_eq!(value, Some(b"value1".to_vec()));
     }
@@ -882,7 +882,7 @@ mod tests {
     async fn test_get_nonexistent() {
         let (backend, _dir) = create_test_backend().await;
 
-        let value = backend.get(b"nonexistent").await.unwrap();
+        let value = backend.get(b"nonexistent").await.ok();
         assert_eq!(value, None);
     }
 
@@ -890,35 +890,35 @@ mod tests {
     async fn test_delete() {
         let (backend, _dir) = create_test_backend().await;
 
-        backend.put(b"key1", b"value1").await.unwrap();
-        assert!(backend.contains(b"key1").await.unwrap());
+        backend.put(b"key1", b"value1").await.ok();
+        assert!(backend.contains(b"key1").await.ok());
 
-        backend.delete(b"key1").await.unwrap();
-        assert!(!backend.contains(b"key1").await.unwrap());
+        backend.delete(b"key1").await.ok();
+        assert!(!backend.contains(b"key1").await.ok());
     }
 
     #[tokio::test]
     async fn test_contains() {
         let (backend, _dir) = create_test_backend().await;
 
-        assert!(!backend.contains(b"key1").await.unwrap());
-        backend.put(b"key1", b"value1").await.unwrap();
-        assert!(backend.contains(b"key1").await.unwrap());
+        assert!(!backend.contains(b"key1").await.ok());
+        backend.put(b"key1", b"value1").await.ok();
+        assert!(backend.contains(b"key1").await.ok());
     }
 
     #[tokio::test]
     async fn test_scan_prefix() {
         let (backend, _dir) = create_test_backend().await;
 
-        backend.put(b"user:1", b"alice").await.unwrap();
-        backend.put(b"user:2", b"bob").await.unwrap();
-        backend.put(b"user:3", b"charlie").await.unwrap();
-        backend.put(b"peer:1", b"peer_data").await.unwrap();
+        backend.put(b"user:1", b"alice").await.ok();
+        backend.put(b"user:2", b"bob").await.ok();
+        backend.put(b"user:3", b"charlie").await.ok();
+        backend.put(b"peer:1", b"peer_data").await.ok();
 
-        let users = backend.scan_prefix(b"user:", None).await.unwrap();
+        let users = backend.scan_prefix(b"user:", None).await.ok();
         assert_eq!(users.len(), 3);
 
-        let peers = backend.scan_prefix(b"peer:", None).await.unwrap();
+        let peers = backend.scan_prefix(b"peer:", None).await.ok();
         assert_eq!(peers.len(), 1);
     }
 
@@ -928,10 +928,10 @@ mod tests {
 
         for i in 0..100 {
             let key = format!("item:{:03}", i);
-            backend.put(key.as_bytes(), b"value").await.unwrap();
+            backend.put(key.as_bytes(), b"value").await.ok();
         }
 
-        let limited = backend.scan_prefix(b"item:", Some(10)).await.unwrap();
+        let limited = backend.scan_prefix(b"item:", Some(10)).await.ok();
         assert_eq!(limited.len(), 10);
     }
 
@@ -954,18 +954,18 @@ mod tests {
             },
         ];
 
-        backend.write_batch(&ops).await.unwrap();
+        backend.write_batch(&ops).await.ok();
 
         assert_eq!(
-            backend.get(b"batch:1").await.unwrap(),
+            backend.get(b"batch:1").await.ok(),
             Some(b"value1".to_vec())
         );
         assert_eq!(
-            backend.get(b"batch:2").await.unwrap(),
+            backend.get(b"batch:2").await.ok(),
             Some(b"value2".to_vec())
         );
         assert_eq!(
-            backend.get(b"batch:3").await.unwrap(),
+            backend.get(b"batch:3").await.ok(),
             Some(b"value3".to_vec())
         );
     }
@@ -974,7 +974,7 @@ mod tests {
     async fn test_batch_mixed_operations() {
         let (backend, _dir) = create_test_backend().await;
 
-        backend.put(b"to_delete", b"will_be_deleted").await.unwrap();
+        backend.put(b"to_delete", b"will_be_deleted").await.ok();
 
         let ops = vec![
             BatchOp::Put {
@@ -986,13 +986,13 @@ mod tests {
             },
         ];
 
-        backend.write_batch(&ops).await.unwrap();
+        backend.write_batch(&ops).await.ok();
 
         assert_eq!(
-            backend.get(b"new_key").await.unwrap(),
+            backend.get(b"new_key").await.ok(),
             Some(b"new_value".to_vec())
         );
-        assert_eq!(backend.get(b"to_delete").await.unwrap(), None);
+        assert_eq!(backend.get(b"to_delete").await.ok(), None);
     }
 
     #[tokio::test]
@@ -1000,16 +1000,16 @@ mod tests {
         let (backend, _dir) = create_test_backend().await;
 
         // Insert initial value
-        backend.put(b"cas_key", b"initial").await.unwrap();
+        backend.put(b"cas_key", b"initial").await.ok();
 
         // CAS should succeed
         backend
             .compare_and_swap(b"cas_key", Some(b"initial"), Some(b"updated"))
             .await
-            .unwrap();
+            .ok();
 
         assert_eq!(
-            backend.get(b"cas_key").await.unwrap(),
+            backend.get(b"cas_key").await.ok(),
             Some(b"updated".to_vec())
         );
     }
@@ -1018,7 +1018,7 @@ mod tests {
     async fn test_compare_and_swap_conflict() {
         let (backend, _dir) = create_test_backend().await;
 
-        backend.put(b"cas_key", b"actual").await.unwrap();
+        backend.put(b"cas_key", b"actual").await.ok();
 
         // CAS should fail - expected value doesn't match
         let result = backend
@@ -1027,7 +1027,7 @@ mod tests {
 
         assert!(matches!(result, Err(StorageError::CasConflict)));
         assert_eq!(
-            backend.get(b"cas_key").await.unwrap(),
+            backend.get(b"cas_key").await.ok(),
             Some(b"actual".to_vec())
         );
     }
@@ -1040,10 +1040,10 @@ mod tests {
         backend
             .compare_and_swap(b"new_cas_key", None, Some(b"value"))
             .await
-            .unwrap();
+            .ok();
 
         assert_eq!(
-            backend.get(b"new_cas_key").await.unwrap(),
+            backend.get(b"new_cas_key").await.ok(),
             Some(b"value".to_vec())
         );
 
@@ -1059,19 +1059,19 @@ mod tests {
     async fn test_named_trees() {
         let (backend, _dir) = create_test_backend().await;
 
-        let dht_tree = backend.open_tree("dht").unwrap();
-        let peer_tree = backend.open_tree("peers").unwrap();
+        let dht_tree = backend.open_tree("dht").ok();
+        let peer_tree = backend.open_tree("peers").ok();
 
         // Trees are isolated
-        dht_tree.put(b"key1", b"dht_value").await.unwrap();
-        peer_tree.put(b"key1", b"peer_value").await.unwrap();
+        dht_tree.put(b"key1", b"dht_value").await.ok();
+        peer_tree.put(b"key1", b"peer_value").await.ok();
 
         assert_eq!(
-            dht_tree.get(b"key1").await.unwrap(),
+            dht_tree.get(b"key1").await.ok(),
             Some(b"dht_value".to_vec())
         );
         assert_eq!(
-            peer_tree.get(b"key1").await.unwrap(),
+            peer_tree.get(b"key1").await.ok(),
             Some(b"peer_value".to_vec())
         );
     }
@@ -1080,14 +1080,14 @@ mod tests {
     async fn test_tree_clear() {
         let (backend, _dir) = create_test_backend().await;
 
-        let tree = backend.open_tree("test_clear").unwrap();
+        let tree = backend.open_tree("test_clear").ok();
 
-        tree.put(b"key1", b"value1").await.unwrap();
-        tree.put(b"key2", b"value2").await.unwrap();
+        tree.put(b"key1", b"value1").await.ok();
+        tree.put(b"key2", b"value2").await.ok();
 
         assert_eq!(tree.len(), 2);
 
-        tree.clear().unwrap();
+        tree.clear().ok();
 
         assert_eq!(tree.len(), 0);
         assert!(tree.is_empty());
@@ -1097,30 +1097,30 @@ mod tests {
     async fn test_flush() {
         let (backend, _dir) = create_test_backend().await;
 
-        backend.put(b"key1", b"value1").await.unwrap();
-        backend.flush().await.unwrap();
+        backend.put(b"key1", b"value1").await.ok();
+        backend.flush().await.ok();
 
-        let value = backend.get(b"key1").await.unwrap();
+        let value = backend.get(b"key1").await.ok();
         assert_eq!(value, Some(b"value1".to_vec()));
     }
 
     #[tokio::test]
     async fn test_persistence_across_reopen() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let path = temp_dir.path().to_path_buf();
 
         {
-            let backend = SledBackend::open(&path).unwrap();
+            let backend = SledBackend::open(&path).ok();
             backend
                 .put(b"persistent_key", b"persistent_value")
                 .await
-                .unwrap();
-            backend.flush().await.unwrap();
+                .ok();
+            backend.flush().await.ok();
         }
 
         {
-            let backend = SledBackend::open(&path).unwrap();
-            let value = backend.get(b"persistent_key").await.unwrap();
+            let backend = SledBackend::open(&path).ok();
+            let value = backend.get(b"persistent_key").await.ok();
             assert_eq!(value, Some(b"persistent_value".to_vec()));
         }
     }
@@ -1130,9 +1130,9 @@ mod tests {
         let (backend, _dir) = create_test_backend().await;
 
         let large_value = vec![0u8; 1024 * 1024]; // 1 MB
-        backend.put(b"large_key", &large_value).await.unwrap();
+        backend.put(b"large_key", &large_value).await.ok();
 
-        let retrieved = backend.get(b"large_key").await.unwrap();
+        let retrieved = backend.get(b"large_key").await.ok();
         assert_eq!(retrieved, Some(large_value));
     }
 
@@ -1143,9 +1143,9 @@ mod tests {
         let binary_key = vec![0x00, 0x01, 0xFF, 0xFE];
         let binary_value = vec![0xDE, 0xAD, 0xBE, 0xEF];
 
-        backend.put(&binary_key, &binary_value).await.unwrap();
+        backend.put(&binary_key, &binary_value).await.ok();
 
-        let retrieved = backend.get(&binary_key).await.unwrap();
+        let retrieved = backend.get(&binary_key).await.ok();
         assert_eq!(retrieved, Some(binary_value));
     }
 
@@ -1153,11 +1153,11 @@ mod tests {
     async fn test_overwrite_value() {
         let (backend, _dir) = create_test_backend().await;
 
-        backend.put(b"key", b"value1").await.unwrap();
-        assert_eq!(backend.get(b"key").await.unwrap(), Some(b"value1".to_vec()));
+        backend.put(b"key", b"value1").await.ok();
+        assert_eq!(backend.get(b"key").await.ok(), Some(b"value1".to_vec()));
 
-        backend.put(b"key", b"value2").await.unwrap();
-        assert_eq!(backend.get(b"key").await.unwrap(), Some(b"value2".to_vec()));
+        backend.put(b"key", b"value2").await.ok();
+        assert_eq!(backend.get(b"key").await.ok(), Some(b"value2".to_vec()));
     }
 
     // Security tests
@@ -1230,12 +1230,12 @@ mod tests {
         for i in 0..100 {
             let key = format!("key_{}", i);
             let value = format!("value_{}", i);
-            backend.put(key.as_bytes(), value.as_bytes()).await.unwrap();
+            backend.put(key.as_bytes(), value.as_bytes()).await.ok();
         }
 
-        backend.flush().await.unwrap();
+        backend.flush().await.ok();
 
-        let size = backend.size_on_disk().unwrap();
+        let size = backend.size_on_disk().ok();
         assert!(size > 0, "Database should have non-zero size");
     }
 }

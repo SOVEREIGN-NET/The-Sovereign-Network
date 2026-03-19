@@ -343,12 +343,12 @@ mod tests {
             0x00, 0x01, // Class: IN
         ];
 
-        let packet = DnsPacket::parse(&query_bytes).unwrap();
+        let packet = DnsPacket::parse(&query_bytes).ok();
         assert_eq!(packet.id, 0x1234);
         assert!(!packet.is_response);
         assert!(packet.question.is_some());
 
-        let q = packet.question.as_ref().unwrap();
+        let q = packet.question.as_ref().ok();
         assert_eq!(q.name, "example.com");
         assert_eq!(q.qtype, 1); // A
         assert_eq!(q.qclass, 1); // IN
@@ -374,7 +374,7 @@ mod tests {
 
         // Serialize and parse back
         let bytes = response.serialize();
-        let parsed = DnsPacket::parse(&bytes).unwrap();
+        let parsed = DnsPacket::parse(&bytes).ok();
 
         assert_eq!(parsed.id, 0xABCD);
         assert!(parsed.is_response);
@@ -401,7 +401,7 @@ mod tests {
         assert!(response.answers.is_empty());
 
         let bytes = response.serialize();
-        let parsed = DnsPacket::parse(&bytes).unwrap();
+        let parsed = DnsPacket::parse(&bytes).ok();
         assert_eq!(parsed.rcode, 3);
     }
 

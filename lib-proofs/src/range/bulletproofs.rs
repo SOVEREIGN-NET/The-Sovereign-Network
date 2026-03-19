@@ -597,7 +597,7 @@ mod tests {
         let value = 100u64;
         let blinding = [1u8; 32];
 
-        let proof = BulletproofRangeProof::generate(value, 16, blinding).unwrap();
+        let proof = BulletproofRangeProof::generate(value, 16, blinding).ok();
 
         assert_eq!(proof.n_bits, 16);
         assert_eq!(proof.max_value(), 65535);
@@ -617,11 +617,11 @@ mod tests {
     fn test_bulletproof_typed_generation() {
         let blinding = [2u8; 32];
 
-        let proof8 = BulletproofRangeProof::generate_8bit(255, blinding).unwrap();
+        let proof8 = BulletproofRangeProof::generate_8bit(255, blinding).ok();
         assert_eq!(proof8.n_bits, 8);
         assert_eq!(proof8.max_value(), 255);
 
-        let proof32 = BulletproofRangeProof::generate_32bit(1000000, blinding).unwrap();
+        let proof32 = BulletproofRangeProof::generate_32bit(1000000, blinding).ok();
         assert_eq!(proof32.n_bits, 32);
         assert_eq!(proof32.max_value(), u32::MAX as u64);
     }
@@ -631,9 +631,9 @@ mod tests {
         let value = 42u64;
         let blinding = [3u8; 32];
 
-        let proof = BulletproofRangeProof::generate(value, 8, blinding).unwrap();
+        let proof = BulletproofRangeProof::generate(value, 8, blinding).ok();
         let bytes = proof.to_bytes();
-        let deserialized = BulletproofRangeProof::from_bytes(&bytes).unwrap();
+        let deserialized = BulletproofRangeProof::from_bytes(&bytes).ok();
 
         assert_eq!(proof.n_bits, deserialized.n_bits);
         assert_eq!(
@@ -650,11 +650,11 @@ mod tests {
         let blinding2 = [2u8; 32];
         let blinding3 = [3u8; 32];
 
-        let proof1 = BulletproofRangeProof::generate(10, 8, blinding1).unwrap();
-        let proof2 = BulletproofRangeProof::generate(20, 8, blinding2).unwrap();
-        let proof3 = BulletproofRangeProof::generate(30, 8, blinding3).unwrap();
+        let proof1 = BulletproofRangeProof::generate(10, 8, blinding1).ok();
+        let proof2 = BulletproofRangeProof::generate(20, 8, blinding2).ok();
+        let proof3 = BulletproofRangeProof::generate(30, 8, blinding3).ok();
 
-        let aggregated = AggregatedBulletproof::aggregate(vec![proof1, proof2, proof3]).unwrap();
+        let aggregated = AggregatedBulletproof::aggregate(vec![proof1, proof2, proof3]).ok();
 
         assert_eq!(aggregated.num_proofs, 3);
         assert_eq!(aggregated.n_bits, 8);
@@ -672,8 +672,8 @@ mod tests {
     fn test_aggregated_bulletproof_mismatched_bits() {
         let blinding = [1u8; 32];
 
-        let proof1 = BulletproofRangeProof::generate(10, 8, blinding).unwrap();
-        let proof2 = BulletproofRangeProof::generate(20, 16, blinding).unwrap();
+        let proof1 = BulletproofRangeProof::generate(10, 8, blinding).ok();
+        let proof2 = BulletproofRangeProof::generate(20, 16, blinding).ok();
 
         let result = AggregatedBulletproof::aggregate(vec![proof1, proof2]);
         assert!(result.is_err());
@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn test_bulletproof_properties() {
-        let proof = BulletproofRangeProof::generate_32bit(1000, [4u8; 32]).unwrap();
+        let proof = BulletproofRangeProof::generate_32bit(1000, [4u8; 32]).ok();
 
         assert_eq!(proof.log_rounds(), 5); // log2(32) = 5
         assert!(proof.proof_size() > 0);
@@ -692,7 +692,7 @@ mod tests {
     fn test_bulletproof_verification() {
         let value = 42u64;
         let blinding = [5u8; 32];
-        let proof = BulletproofRangeProof::generate(value, 8, blinding).unwrap();
+        let proof = BulletproofRangeProof::generate(value, 8, blinding).ok();
 
         // Valid proof should verify
         match proof.verify() {
@@ -710,30 +710,30 @@ mod tests {
     fn test_bulletproof_batch_verification() {
         let blinding = [7u8; 32];
 
-        let proof1 = BulletproofRangeProof::generate(10, 8, blinding).unwrap();
-        let proof2 = BulletproofRangeProof::generate(20, 8, blinding).unwrap();
-        let proof3 = BulletproofRangeProof::generate(30, 8, blinding).unwrap();
+        let proof1 = BulletproofRangeProof::generate(10, 8, blinding).ok();
+        let proof2 = BulletproofRangeProof::generate(20, 8, blinding).ok();
+        let proof3 = BulletproofRangeProof::generate(30, 8, blinding).ok();
 
         let proofs = vec![proof1, proof2, proof3];
 
         // Batch verification should succeed
-        assert!(BulletproofRangeProof::batch_verify(&proofs).unwrap());
+        assert!(BulletproofRangeProof::batch_verify(&proofs).ok());
 
         // Empty batch should succeed
-        assert!(BulletproofRangeProof::batch_verify(&[]).unwrap());
+        assert!(BulletproofRangeProof::batch_verify(&[]).ok());
     }
 
     #[test]
     fn test_bulletproof_batch_verification_mixed_bits() {
         let blinding = [8u8; 32];
 
-        let proof1 = BulletproofRangeProof::generate(10, 8, blinding).unwrap();
-        let proof2 = BulletproofRangeProof::generate(20, 16, blinding).unwrap(); // Different bit length
+        let proof1 = BulletproofRangeProof::generate(10, 8, blinding).ok();
+        let proof2 = BulletproofRangeProof::generate(20, 16, blinding).ok(); // Different bit length
 
         let proofs = vec![proof1, proof2];
 
         // Should fail due to mixed bit lengths
-        assert!(!BulletproofRangeProof::batch_verify(&proofs).unwrap());
+        assert!(!BulletproofRangeProof::batch_verify(&proofs).ok());
     }
 
     #[test]
@@ -742,14 +742,14 @@ mod tests {
         let blinding2 = [10u8; 32];
         let blinding3 = [11u8; 32];
 
-        let proof1 = BulletproofRangeProof::generate(10, 8, blinding1).unwrap();
-        let proof2 = BulletproofRangeProof::generate(20, 8, blinding2).unwrap();
-        let proof3 = BulletproofRangeProof::generate(30, 8, blinding3).unwrap();
+        let proof1 = BulletproofRangeProof::generate(10, 8, blinding1).ok();
+        let proof2 = BulletproofRangeProof::generate(20, 8, blinding2).ok();
+        let proof3 = BulletproofRangeProof::generate(30, 8, blinding3).ok();
 
-        let aggregated = AggregatedBulletproof::aggregate(vec![proof1, proof2, proof3]).unwrap();
+        let aggregated = AggregatedBulletproof::aggregate(vec![proof1, proof2, proof3]).ok();
 
         // Should verify successfully
-        assert!(aggregated.verify().unwrap());
+        assert!(aggregated.verify().ok());
 
         // Test with public commitments
         let public_commitments = vec![[12u8; 32], [13u8; 32], [14u8; 32]];
@@ -761,26 +761,26 @@ mod tests {
     fn test_aggregated_bulletproof_verification_wrong_commitments() {
         let blinding = [15u8; 32];
 
-        let proof1 = BulletproofRangeProof::generate(10, 8, blinding).unwrap();
-        let proof2 = BulletproofRangeProof::generate(20, 8, blinding).unwrap();
+        let proof1 = BulletproofRangeProof::generate(10, 8, blinding).ok();
+        let proof2 = BulletproofRangeProof::generate(20, 8, blinding).ok();
 
-        let aggregated = AggregatedBulletproof::aggregate(vec![proof1, proof2]).unwrap();
+        let aggregated = AggregatedBulletproof::aggregate(vec![proof1, proof2]).ok();
 
         // Wrong number of commitments should fail
         let wrong_commitments = vec![[16u8; 32]]; // Only 1 commitment for 2 proofs
         let result = aggregated.verify_with_commitments(&wrong_commitments);
-        assert!(!result.unwrap());
+        assert!(!result.ok());
     }
 
     #[test]
     fn test_bulletproof_invalid_structure() {
-        let mut proof = BulletproofRangeProof::generate(10, 8, [17u8; 32]).unwrap();
+        let mut proof = BulletproofRangeProof::generate(10, 8, [17u8; 32]).ok();
 
         // Corrupt the proof by making commitment zero
         proof.commitment.commitment = [0u8; 32];
 
         // Should fail verification
-        assert!(!proof.verify().unwrap());
+        assert!(!proof.verify().ok());
     }
 
     #[test]
@@ -788,10 +788,10 @@ mod tests {
         let large_value = u32::MAX as u64;
         let blinding = [18u8; 32];
 
-        let proof = BulletproofRangeProof::generate_32bit(large_value as u32, blinding).unwrap();
+        let proof = BulletproofRangeProof::generate_32bit(large_value as u32, blinding).ok();
 
         // Should verify even for large values
-        assert!(proof.verify().unwrap());
+        assert!(proof.verify().ok());
         assert_eq!(proof.max_value(), u32::MAX as u64);
     }
 
@@ -800,11 +800,11 @@ mod tests {
         let blinding = [19u8; 32];
 
         // Test minimum value (0)
-        let proof_zero = BulletproofRangeProof::generate(0, 8, blinding).unwrap();
-        assert!(proof_zero.verify().unwrap());
+        let proof_zero = BulletproofRangeProof::generate(0, 8, blinding).ok();
+        assert!(proof_zero.verify().ok());
 
         // Test maximum value for bit length
-        let proof_max = BulletproofRangeProof::generate(255, 8, blinding).unwrap();
-        assert!(proof_max.verify().unwrap());
+        let proof_max = BulletproofRangeProof::generate(255, 8, blinding).ok();
+        assert!(proof_max.verify().ok());
     }
 }

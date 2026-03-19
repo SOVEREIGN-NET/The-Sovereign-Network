@@ -155,6 +155,6 @@ fn test() {
     let buf = vec![
         0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1,
     ];
-    let record = AaaaRRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = AaaaRRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

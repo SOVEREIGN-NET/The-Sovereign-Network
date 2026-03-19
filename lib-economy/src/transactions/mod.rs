@@ -28,7 +28,7 @@ mod tests {
     #[test]
     fn test_transaction_creation() {
         // Test normal payment transaction
-        let tx = Transaction::new_payment([1u8; 32], [2u8; 32], 5000, Priority::Normal).unwrap();
+        let tx = Transaction::new_payment([1u8; 32], [2u8; 32], 5000, Priority::Normal).ok();
 
         assert_eq!(tx.amount, 5000);
         assert_eq!(tx.tx_type, TransactionType::Payment);
@@ -42,7 +42,7 @@ mod tests {
     #[test]
     fn test_fee_exempt_transactions() {
         // Test UBI distribution (should be fee-free)
-        let ubi_tx = Transaction::new_ubi_distribution([3u8; 32], 1000).unwrap();
+        let ubi_tx = Transaction::new_ubi_distribution([3u8; 32], 1000).ok();
         assert_eq!(ubi_tx.amount, 1000);
         assert_eq!(ubi_tx.dao_fee, 0);
         assert_eq!(ubi_tx.base_fee, 0);
@@ -51,7 +51,7 @@ mod tests {
         assert!(ubi_tx.dao_fee_proof.is_none()); // No proof needed for fee-free
 
         // Test welfare distribution (should be fee-free)
-        let welfare_tx = Transaction::new_welfare_distribution([4u8; 32], 2000).unwrap();
+        let welfare_tx = Transaction::new_welfare_distribution([4u8; 32], 2000).ok();
         assert_eq!(welfare_tx.amount, 2000);
         assert_eq!(welfare_tx.dao_fee, 0);
         assert_eq!(welfare_tx.base_fee, 0);
@@ -75,7 +75,7 @@ mod tests {
             tx_size,
             Priority::Low,
         )
-        .unwrap();
+        .ok();
         let tx_normal = Transaction::new(
             from,
             to,
@@ -84,7 +84,7 @@ mod tests {
             tx_size,
             Priority::Normal,
         )
-        .unwrap();
+        .ok();
         let tx_high = Transaction::new(
             from,
             to,
@@ -93,7 +93,7 @@ mod tests {
             tx_size,
             Priority::High,
         )
-        .unwrap();
+        .ok();
         let tx_urgent = Transaction::new(
             from,
             to,
@@ -102,7 +102,7 @@ mod tests {
             tx_size,
             Priority::Urgent,
         )
-        .unwrap();
+        .ok();
 
         // Network fees should scale with priority
         assert!(tx_low.base_fee < tx_normal.base_fee);
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_transaction_properties() {
-        let tx = Transaction::new_payment([5u8; 32], [6u8; 32], 7500, Priority::High).unwrap();
+        let tx = Transaction::new_payment([5u8; 32], [6u8; 32], 7500, Priority::High).ok();
 
         // Test total cost calculation
         let expected_cost = tx.amount + tx.total_fee;
@@ -137,12 +137,12 @@ mod tests {
         // Test transaction summary
         let summary = tx.summary();
         assert_eq!(summary["amount"], 7500);
-        assert!(summary["has_dao_proof"].as_bool().unwrap());
+        assert!(summary["has_dao_proof"].as_bool().ok());
     }
 
     #[test]
     fn test_reward_transactions() {
-        let reward_tx = Transaction::new_reward([7u8; 32], 350).unwrap();
+        let reward_tx = Transaction::new_reward([7u8; 32], 350).ok();
 
         assert_eq!(reward_tx.amount, 350);
         assert_eq!(reward_tx.tx_type, TransactionType::Reward);
@@ -153,8 +153,8 @@ mod tests {
 
     #[test]
     fn test_dao_distribution_transactions() {
-        let ubi_tx = Transaction::new_ubi_distribution([8u8; 32], 500).unwrap();
-        let welfare_tx = Transaction::new_welfare_distribution([9u8; 32], 750).unwrap();
+        let ubi_tx = Transaction::new_ubi_distribution([8u8; 32], 500).ok();
+        let welfare_tx = Transaction::new_welfare_distribution([9u8; 32], 750).ok();
 
         // Both should be DAO distributions
         assert!(ubi_tx.is_dao_distribution());
@@ -171,10 +171,10 @@ mod tests {
 
     #[test]
     fn test_signing_hash_consistency() {
-        let tx1 = Transaction::new_payment([10u8; 32], [11u8; 32], 1000, Priority::Normal).unwrap();
+        let tx1 = Transaction::new_payment([10u8; 32], [11u8; 32], 1000, Priority::Normal).ok();
 
         // Use different parameters to ensure different hash
-        let tx2 = Transaction::new_payment([12u8; 32], [13u8; 32], 1001, Priority::Normal).unwrap();
+        let tx2 = Transaction::new_payment([12u8; 32], [13u8; 32], 1001, Priority::Normal).ok();
 
         // Different transactions should have different signing hashes
         assert_ne!(tx1.signing_hash(), tx2.signing_hash());

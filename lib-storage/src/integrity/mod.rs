@@ -129,7 +129,7 @@ impl IntegrityMetadata {
             total_blocks: blocks.len(),
             last_check: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             algorithm,
             erasure_params: None,
@@ -150,7 +150,7 @@ impl IntegrityMetadata {
     pub fn update_check_time(&mut self) {
         self.last_check = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
     }
 
@@ -163,7 +163,7 @@ impl IntegrityMetadata {
     pub fn time_since_last_check(&self) -> u64 {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         now.saturating_sub(self.last_check)
     }
@@ -294,10 +294,10 @@ impl IntegrityManager {
                 let erasure_params = self
                     .metadata
                     .get(content_id)
-                    .unwrap()
+                    .ok()
                     .erasure_params
                     .as_ref()
-                    .unwrap()
+                    .ok()
                     .clone();
 
                 // Attempt healing using erasure codes
@@ -321,7 +321,7 @@ impl IntegrityManager {
     pub fn list_content_needing_check(&self) -> Vec<String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         self.metadata
@@ -342,7 +342,7 @@ impl IntegrityManager {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         let needs_check = self
             .metadata
@@ -406,8 +406,8 @@ mod tests {
                 .with_erasure_params(4, 2);
 
         assert!(metadata.has_erasure_coding());
-        assert_eq!(metadata.erasure_params.as_ref().unwrap().data_shards, 4);
-        assert_eq!(metadata.erasure_params.as_ref().unwrap().parity_shards, 2);
+        assert_eq!(metadata.erasure_params.as_ref().ok().data_shards, 4);
+        assert_eq!(metadata.erasure_params.as_ref().ok().parity_shards, 2);
     }
 
     #[test]
@@ -438,7 +438,7 @@ mod tests {
 
         let status = manager.verify_content("test_content", &blocks);
         assert!(status.is_ok());
-        assert!(status.unwrap().is_valid());
+        assert!(status.ok().is_valid());
     }
 
     #[test]
@@ -459,7 +459,7 @@ mod tests {
         let status = manager.verify_content("test_content", &corrupted_blocks);
         assert!(status.is_ok());
 
-        let status = status.unwrap();
+        let status = status.ok();
         assert!(status.is_corrupted());
 
         if let IntegrityStatus::Corrupted(issues) = status {

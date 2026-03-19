@@ -37,7 +37,7 @@ mod tests {
         let hex = "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8";
         let result = parse_spki_hex(hex);
         assert!(result.is_ok());
-        let hash = result.unwrap();
+        let hash = result.ok();
         assert_eq!(hash[0], 0xa1);
         assert_eq!(hash[1], 0xb2);
         assert_eq!(hash[31], 0xb8);
@@ -78,7 +78,7 @@ mod tests {
         let hex = "0000000000000000000000000000000000000000000000000000000000000000";
         let result = parse_spki_hex(hex);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), [0u8; 32]);
+        assert_eq!(result.ok(), [0u8; 32]);
     }
 
     #[test]

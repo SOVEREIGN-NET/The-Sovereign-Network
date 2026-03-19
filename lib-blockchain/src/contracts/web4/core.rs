@@ -109,7 +109,7 @@ impl Web4Contract {
                 "Domain {} registered successfully for {} years",
                 domain, duration_years
             ),
-            data: Some(serde_json::to_value(&self.domain_record).unwrap()),
+            data: Some(serde_json::to_value(&self.domain_record).ok()),
         })
     }
 
@@ -206,7 +206,7 @@ impl Web4Contract {
 
         Ok(Web4Response::Success {
             message: "Website metadata updated successfully".to_string(),
-            data: Some(serde_json::to_value(&self.metadata).unwrap()),
+            data: Some(serde_json::to_value(&self.metadata).ok()),
         })
     }
 
@@ -225,7 +225,7 @@ impl Web4Contract {
 
         Ok(Web4Response::Success {
             message: format!("Ownership of {} transferred successfully", domain),
-            data: Some(serde_json::to_value(&self.domain_record).unwrap()),
+            data: Some(serde_json::to_value(&self.domain_record).ok()),
         })
     }
 
@@ -549,7 +549,7 @@ impl Web4Contract {
         }
 
         // Extract subdomain part (everything before .zhtp)
-        let subdomain = domain.strip_suffix(".zhtp").unwrap();
+        let subdomain = domain.strip_suffix(".zhtp").ok();
 
         // Check that all characters are valid
         if !domain

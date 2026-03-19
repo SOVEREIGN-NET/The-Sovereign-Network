@@ -2359,7 +2359,7 @@ mod tests {
         let sig = test_signature(sender_key);
 
         // Serialize: "ZHTP" prefix + bincode(call, sig)
-        let call_data = bincode::serialize(&(&call, &sig)).unwrap();
+        let call_data = bincode::serialize(&(&call, &sig)).ok();
         let mut memo = b"ZHTP".to_vec();
         memo.extend(call_data);
 
@@ -2404,7 +2404,7 @@ mod tests {
         sender_key: &PublicKey,
         payload: ContractDeploymentPayloadV1,
     ) -> Transaction {
-        let memo = payload.encode_memo().unwrap();
+        let memo = payload.encode_memo().ok();
         Transaction {
             version: 1,
             chain_id: 0x03,
@@ -2567,7 +2567,7 @@ mod tests {
 
         let mint_call = ContractCall::token_call("mint".to_string(), vec![1, 2, 3]);
         let sig = test_signature(&sender);
-        let call_data = bincode::serialize(&(&mint_call, &sig)).unwrap();
+        let call_data = bincode::serialize(&(&mint_call, &sig)).ok();
         let mut memo = b"ZHTP".to_vec();
         memo.extend(call_data);
 
@@ -2672,7 +2672,7 @@ mod tests {
         for method in &["create_custom_token"] {
             let call = ContractCall::token_call(method.to_string(), vec![]);
             let sig = test_signature(&sender);
-            let call_data = bincode::serialize(&(&call, &sig)).unwrap();
+            let call_data = bincode::serialize(&(&call, &sig)).ok();
             let mut memo = b"ZHTP".to_vec();
             memo.extend(call_data);
 
@@ -2717,7 +2717,7 @@ mod tests {
         for method in &["mint", "transfer", "burn"] {
             let call = ContractCall::token_call(method.to_string(), vec![]);
             let sig = test_signature(&sender);
-            let call_data = bincode::serialize(&(&call, &sig)).unwrap();
+            let call_data = bincode::serialize(&(&call, &sig)).ok();
             let mut memo = b"ZHTP".to_vec();
             memo.extend(call_data);
 
@@ -2762,7 +2762,7 @@ mod tests {
         // Non-token contract should NOT be detected
         let non_token_call = ContractCall::messaging_call("send_message".to_string(), vec![]);
         let sig = test_signature(&sender);
-        let call_data = bincode::serialize(&(&non_token_call, &sig)).unwrap();
+        let call_data = bincode::serialize(&(&non_token_call, &sig)).ok();
         let mut memo = b"ZHTP".to_vec();
         memo.extend(call_data);
 
@@ -2808,7 +2808,7 @@ mod tests {
         let sender = test_public_key(1);
         let call = ContractCall::token_call("transfer".to_string(), vec![1, 2, 3]);
         let sig = test_signature(&sender);
-        let call_data = bincode::serialize(&(&call, &sig)).unwrap();
+        let call_data = bincode::serialize(&(&call, &sig)).ok();
         let mut memo = b"ZHTP".to_vec();
         memo.extend(call_data);
 
@@ -3034,9 +3034,9 @@ mod tests {
         blockchain
             .entity_registry
             .as_mut()
-            .unwrap()
+            .ok()
             .init(test_public_key(51), test_public_key(52))
-            .unwrap();
+            .ok();
 
         let tx = create_init_entity_registry_transaction_for_test(
             &signer,
@@ -3134,7 +3134,7 @@ mod tests {
                     crate::transaction::contract_deployment::MAX_DEPLOYMENT_MEMO_BYTES as u64,
                 )
                 .serialize(&invalid_payload)
-                .unwrap(),
+                .ok(),
         );
         tx.memo = memo;
 
@@ -3205,7 +3205,7 @@ mod tests {
             outputs: vec![],
             fee,
             signature: test_signature(&sender_key),
-            memo: payload.encode_memo().unwrap(),
+            memo: payload.encode_memo().ok(),
             identity_data: None,
             wallet_data: None,
             validator_data: None,

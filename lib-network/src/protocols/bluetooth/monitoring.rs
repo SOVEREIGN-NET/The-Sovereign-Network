@@ -125,8 +125,8 @@ mod tests {
     #[tokio::test]
     async fn test_mesh_status_empty() {
         let node_id = [2u8; 32];
-        let keypair = KeyPair::generate().unwrap();
-        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+        let keypair = KeyPair::generate().ok();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).ok();
 
         let status: BluetoothMeshStatus = protocol.get_mesh_status().await;
         assert_eq!(status.connected_peers, 0);

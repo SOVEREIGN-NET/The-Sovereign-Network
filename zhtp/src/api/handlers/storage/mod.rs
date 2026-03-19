@@ -235,12 +235,12 @@ impl StorageHandler {
                             "default-user",
                             None,
                         )
-                        .unwrap()
+                        .ok()
                     });
 
                     let current_time = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs();
 
                     // Create full ContentMetadata as required

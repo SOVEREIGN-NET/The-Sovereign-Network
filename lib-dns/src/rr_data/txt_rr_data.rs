@@ -145,6 +145,6 @@ impl fmt::Display for TxtRRData {
 #[test]
 fn test() {
     let buf = vec![0x9, 0x76, 0x3d, 0x62, 0x6c, 0x61, 0x20, 0x62, 0x6c, 0x61];
-    let record = TxtRRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = TxtRRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

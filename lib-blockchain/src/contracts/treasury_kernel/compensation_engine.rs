@@ -405,12 +405,12 @@ mod tests {
         // First computation
         let calc1 = engine
             .compute_payout(&metrics, &role, &assignment, 1, &constants)
-            .unwrap();
+            .ok();
 
         // Second computation with same inputs
         let calc2 = engine
             .compute_payout(&metrics, &role, &assignment, 1, &constants)
-            .unwrap();
+            .ok();
 
         // MUST be identical
         assert_eq!(calc1.final_amount, calc2.final_amount);
@@ -464,7 +464,7 @@ mod tests {
 
         let calc = engine
             .compute_payout(&metrics, &role, &assignment, 1, &constants)
-            .unwrap();
+            .ok();
 
         // Should be capped at 50k
         assert_eq!(calc.final_amount, 50_000);
@@ -494,7 +494,7 @@ mod tests {
 
         let calc = engine
             .compute_payout(&metrics, &role, &assignment, 1, &constants)
-            .unwrap();
+            .ok();
 
         // Verification should pass
         assert!(engine
@@ -519,7 +519,7 @@ mod tests {
 
         let calc = engine
             .compute_payout(&metrics, &role, &assignment, 1, &constants)
-            .unwrap();
+            .ok();
 
         assert_eq!(calc.final_amount, 0);
     }
@@ -536,7 +536,7 @@ mod tests {
 
         let calc = engine
             .compute_payout(&metrics, &role, &assignment, 1, &constants)
-            .unwrap();
+            .ok();
 
         // Only 10k remaining in annual cap
         assert_eq!(calc.final_amount, 10_000);
@@ -555,7 +555,7 @@ mod tests {
 
         let calc = engine
             .compute_payout(&metrics, &role, &assignment, 1, &constants)
-            .unwrap();
+            .ok();
 
         // Only 20k remaining in lifetime cap
         assert_eq!(calc.final_amount, 20_000);

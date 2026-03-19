@@ -355,7 +355,7 @@ impl ZdnsServer {
     /// Process ZDNS query and return response
     pub async fn process_query(&self, query: ZdnsQuery) -> Result<ZdnsResponse> {
         let start_time = std::time::Instant::now();
-        let mut stats = self.query_stats.write().unwrap();
+        let mut stats = self.query_stats.write().ok();
         stats.total_queries += 1;
         drop(stats);
 
@@ -365,7 +365,7 @@ impl ZdnsServer {
         // Check cache first
         let cache_key = format!("{}:{:?}", query.name, query.record_type);
         if let Some(cached) = self.check_cache(&cache_key) {
-            let mut stats = self.query_stats.write().unwrap();
+            let mut stats = self.query_stats.write().ok();
             stats.cache_hits += 1;
             drop(stats);
 
@@ -373,7 +373,7 @@ impl ZdnsServer {
         }
 
         // Cache miss - resolve from records
-        let mut stats = self.query_stats.write().unwrap();
+        let mut stats = self.query_stats.write().ok();
         stats.cache_misses += 1;
         drop(stats);
 
@@ -399,7 +399,7 @@ impl ZdnsServer {
         let processing_time = start_time.elapsed().as_millis() as u64;
 
         // Update stats
-        let mut stats = self.query_stats.write().unwrap();
+        let mut stats = self.query_stats.write().ok();
         stats.average_response_time_ms = (stats.average_response_time_ms
             * (stats.total_queries - 1) as f64
             + processing_time as f64)
@@ -448,7 +448,7 @@ impl ZdnsServer {
         }
 
         // Store record
-        let mut records = self.records.write().unwrap();
+        let mut records = self.records.write().ok();
         let domain_records = records.entry(record.name.clone()).or_insert_with(Vec::new);
 
         // Replace existing record of same type or add new one
@@ -467,7 +467,7 @@ impl ZdnsServer {
     /// Update existing ZDNS record
     pub async fn update_record(&self, record: ZdnsRecord) -> Result<()> {
         // Validate that record exists and ownership is valid
-        let records = self.records.read().unwrap();
+        let records = self.records.read().ok();
         let domain_records = records
             .get(&record.name)
             .ok_or_else(|| ProtocolError::InvalidRequest("Domain not found".to_string()))?;
@@ -491,8 +491,8 @@ impl ZdnsServer {
         self.validate_ownership_proof(&record)?;
         self.validate_dao_fee_proof(&record)?;
 
-        let mut records = self.records.write().unwrap();
-        let domain_records = records.get_mut(&record.name).unwrap();
+        let mut records = self.records.write().ok();
+        let domain_records = records.get_mut(&record.name).ok();
 
         if let Some(pos) = domain_records
             .iter()
@@ -511,7 +511,7 @@ impl ZdnsServer {
         record_type: &ZdnsRecordType,
         owner_id: &str,
     ) -> Result<()> {
-        let mut records = self.records.write().unwrap();
+        let mut records = self.records.write().ok();
         let domain_records = records
             .get_mut(name)
             .ok_or_else(|| ProtocolError::InvalidRequest("Domain not found".to_string()))?;
@@ -535,7 +535,7 @@ impl ZdnsServer {
 
     /// Get query statistics
     pub fn get_stats(&self) -> QueryStats {
-        self.query_stats.read().unwrap().clone()
+        self.query_stats.read().ok().clone()
     }
 
     // Private helper methods
@@ -557,7 +557,7 @@ impl ZdnsServer {
     }
 
     fn check_cache(&self, cache_key: &str) -> Option<ZdnsRecord> {
-        let cache = self.cache.read().unwrap();
+        let cache = self.cache.read().ok();
         if let Some(cached) = cache.get(cache_key) {
             if cached.expires_at > chrono::Utc::now() {
                 return Some(cached.record.clone());
@@ -567,7 +567,7 @@ impl ZdnsServer {
     }
 
     fn resolve_records(&self, name: &str, record_type: &ZdnsRecordType) -> Result<Vec<ZdnsRecord>> {
-        let records = self.records.read().unwrap();
+        let records = self.records.read().ok();
 
         if let Some(domain_records) = records.get(name) {
             let matching: Vec<ZdnsRecord> = domain_records
@@ -664,7 +664,7 @@ impl ZdnsServer {
                 access_count: 1,
             };
 
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = self.cache.write().ok();
             cache.insert(cache_key.to_string(), cached);
 
             // Simple cache cleanup - remove expired entries
@@ -677,7 +677,7 @@ impl ZdnsServer {
         query: ZdnsQuery,
         cached_record: ZdnsRecord,
     ) -> ZdnsResponse {
-        let stats = self.query_stats.read().unwrap();
+        let stats = self.query_stats.read().ok();
         let hit_ratio = if stats.total_queries > 0 {
             stats.cache_hits as f64 / stats.total_queries as f64
         } else {
@@ -1359,7 +1359,7 @@ mod tests {
         let response = server.process_query(query).await;
         assert!(response.is_ok());
 
-        let response = response.unwrap();
+        let response = response.ok();
         assert_eq!(response.answers.len(), 1);
         assert_eq!(response.answers[0].value, "192.168.1.1");
     }

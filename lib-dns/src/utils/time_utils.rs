@@ -23,12 +23,12 @@ impl TimeUtils for u32 {
     }
 
     fn from_time_format(s: &str) -> Self {
-        let year = s[0..4].parse::<i32>().unwrap();
-        let month = s[4..6].parse::<u32>().unwrap();
-        let day = s[6..8].parse::<u32>().unwrap();
-        let hour = s[8..10].parse::<u32>().unwrap();
-        let min = s[10..12].parse::<u32>().unwrap();
-        let sec = s[12..14].parse::<u32>().unwrap();
+        let year = s[0..4].parse::<i32>().ok();
+        let month = s[4..6].parse::<u32>().ok();
+        let day = s[6..8].parse::<u32>().ok();
+        let hour = s[8..10].parse::<u32>().ok();
+        let min = s[10..12].parse::<u32>().ok();
+        let sec = s[12..14].parse::<u32>().ok();
 
         let days = days_since_unix_epoch(year, month, day);
         let total_seconds = days * 86400 + hour * 3600 + min * 60 + sec;

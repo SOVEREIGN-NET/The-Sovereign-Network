@@ -962,7 +962,7 @@ mod tests {
         let content = b"Hello, ZHTP Content Management!";
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let metadata = ContentMetadata {
@@ -1006,18 +1006,18 @@ mod tests {
             Priority::Normal,
             &economic_model,
         )
-        .unwrap();
+        .ok();
 
         let content_id = manager
             .store_content(content, metadata, &request)
             .await
-            .unwrap();
+            .ok();
         assert!(!content_id.is_empty());
 
         let retrieved = manager
             .retrieve_content(&content_id, &request)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(retrieved, Some(content.to_vec()));
     }
 
@@ -1062,7 +1062,7 @@ mod tests {
         const CONTENT_SIZE: usize = 1024; // 1KB
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let metadata = ContentMetadata {
@@ -1106,11 +1106,11 @@ mod tests {
             Priority::Normal,
             &economic_model,
         )
-        .unwrap();
+        .ok();
 
         let assessment = manager
             .calculate_storage_fees(CONTENT_SIZE, &metadata, &request)
-            .unwrap();
+            .ok();
         assert!(assessment.total_fees > 0);
         assert!(assessment.dao_fees > 0);
         assert!(assessment.ubi_contribution > 0);

@@ -1194,7 +1194,7 @@ impl MeshMessageRouter {
             .await;
 
         // Return first hop
-        let first_hop = full_route.first().unwrap();
+        let first_hop = full_route.first().ok();
         info!(
             " Calculated new route, first hop: {:?}",
             hex::encode(&first_hop.peer_id.public_key().key_id[0..4])
@@ -1396,6 +1396,6 @@ mod tests {
 
         let cached = router.get_cached_route(&destination).await;
         assert!(cached.is_some());
-        assert_eq!(cached.unwrap().hops.len(), 1);
+        assert_eq!(cached.ok().hops.len(), 1);
     }
 }

@@ -754,7 +754,7 @@ mod tests {
         assert_eq!(bytes[0], FRAGMENT_HEADER_VERSION);
         assert_eq!(bytes[1], 0); // flags = 0
 
-        let decoded = FragmentHeaderV1::from_bytes(&bytes).unwrap();
+        let decoded = FragmentHeaderV1::from_bytes(&bytes).ok();
         assert_eq!(header, decoded);
     }
 
@@ -776,7 +776,7 @@ mod tests {
 
         assert_eq!(bytes.len(), FragmentHeaderV1::SIZE + 5);
 
-        let decoded = FragmentV1::from_bytes(&bytes).unwrap();
+        let decoded = FragmentV1::from_bytes(&bytes).ok();
         assert_eq!(fragment.header, decoded.header);
         assert_eq!(fragment.payload, decoded.payload);
     }
@@ -788,7 +788,7 @@ mod tests {
     #[test]
     fn test_fragmentation_simple() {
         let payload = vec![0u8; 500];
-        let fragments = fragment_message_v2(0, &payload, 100).unwrap();
+        let fragments = fragment_message_v2(0, &payload, 100).ok();
 
         assert_eq!(fragments.len(), 5);
         assert_eq!(fragments[0].header.total_fragments, 5);
@@ -799,7 +799,7 @@ mod tests {
     #[test]
     fn test_fragmentation_exact_fit() {
         let payload = vec![0u8; 300];
-        let fragments = fragment_message_v2(0, &payload, 100).unwrap();
+        let fragments = fragment_message_v2(0, &payload, 100).ok();
 
         assert_eq!(fragments.len(), 3);
         assert!(fragments.iter().all(|f| f.payload.len() == 100));
@@ -808,7 +808,7 @@ mod tests {
     #[test]
     fn test_fragmentation_uneven_split() {
         let payload = vec![0u8; 250];
-        let fragments = fragment_message_v2(0, &payload, 100).unwrap();
+        let fragments = fragment_message_v2(0, &payload, 100).ok();
 
         assert_eq!(fragments.len(), 3);
         assert_eq!(fragments[0].payload.len(), 100);
@@ -819,7 +819,7 @@ mod tests {
     #[test]
     fn test_fragmentation_empty() {
         let payload = vec![];
-        let fragments = fragment_message_v2(0, &payload, 100).unwrap();
+        let fragments = fragment_message_v2(0, &payload, 100).ok();
 
         assert_eq!(fragments.len(), 0);
     }
@@ -827,7 +827,7 @@ mod tests {
     #[test]
     fn test_fragmentation_single_fragment() {
         let payload = vec![42u8; 50];
-        let fragments = fragment_message_v2(0, &payload, 100).unwrap();
+        let fragments = fragment_message_v2(0, &payload, 100).ok();
 
         assert_eq!(fragments.len(), 1);
         assert_eq!(fragments[0].header.total_fragments, 1);
@@ -867,10 +867,10 @@ mod tests {
         let mut reassembler = FragmentReassemblerV2::new(session_id, config);
 
         let payload = vec![42u8; 1000];
-        let fragments = fragment_message_v2(0, &payload, 200).unwrap();
+        let fragments = fragment_message_v2(0, &payload, 200).ok();
 
         for (i, fragment) in fragments.iter().enumerate() {
-            let result = reassembler.add_fragment(fragment.clone()).unwrap();
+            let result = reassembler.add_fragment(fragment.clone()).ok();
 
             if i < fragments.len() - 1 {
                 assert!(result.is_none());
@@ -878,7 +878,7 @@ mod tests {
             } else {
                 assert!(result.is_some());
                 assert_eq!(reassembler.pending_count(), 0);
-                assert_eq!(result.unwrap(), payload);
+                assert_eq!(result.ok(), payload);
             }
         }
 
@@ -897,21 +897,21 @@ mod tests {
         let mut reassembler = FragmentReassemblerV2::new(session_id, config);
 
         let payload = vec![42u8; 600];
-        let mut fragments = fragment_message_v2(0, &payload, 200).unwrap();
+        let mut fragments = fragment_message_v2(0, &payload, 200).ok();
 
         // Deliver in reverse order
         fragments.reverse();
 
         let mut complete_msg = None;
         for fragment in fragments {
-            let result = reassembler.add_fragment(fragment).unwrap();
+            let result = reassembler.add_fragment(fragment).ok();
             if result.is_some() {
                 complete_msg = result;
             }
         }
 
         assert!(complete_msg.is_some());
-        assert_eq!(complete_msg.unwrap(), payload);
+        assert_eq!(complete_msg.ok(), payload);
     }
 
     #[test]
@@ -926,9 +926,9 @@ mod tests {
         let mut reassembler = FragmentReassemblerV2::new(session_id, config);
 
         let payload = vec![1u8; 200];
-        let fragments = fragment_message_v2(0, &payload, 100).unwrap();
+        let fragments = fragment_message_v2(0, &payload, 100).ok();
 
-        reassembler.add_fragment(fragments[0].clone()).unwrap();
+        reassembler.add_fragment(fragments[0].clone()).ok();
         let result = reassembler.add_fragment(fragments[0].clone());
 
         assert!(result.is_err());
@@ -954,29 +954,29 @@ mod tests {
         let payload = vec![99u8; 400];
 
         // Message A with message_seq=0
-        let fragments_a = fragment_message_v2(0, &payload, 100).unwrap();
+        let fragments_a = fragment_message_v2(0, &payload, 100).ok();
 
         // Message B with IDENTICAL payload but different message_seq
-        let fragments_b = fragment_message_v2(1, &payload, 100).unwrap();
+        let fragments_b = fragment_message_v2(1, &payload, 100).ok();
 
         // Interleave fragments
-        reassembler.add_fragment(fragments_a[0].clone()).unwrap();
-        reassembler.add_fragment(fragments_b[0].clone()).unwrap();
-        reassembler.add_fragment(fragments_a[1].clone()).unwrap();
-        reassembler.add_fragment(fragments_b[1].clone()).unwrap();
-        reassembler.add_fragment(fragments_a[2].clone()).unwrap();
-        reassembler.add_fragment(fragments_b[2].clone()).unwrap();
+        reassembler.add_fragment(fragments_a[0].clone()).ok();
+        reassembler.add_fragment(fragments_b[0].clone()).ok();
+        reassembler.add_fragment(fragments_a[1].clone()).ok();
+        reassembler.add_fragment(fragments_b[1].clone()).ok();
+        reassembler.add_fragment(fragments_a[2].clone()).ok();
+        reassembler.add_fragment(fragments_b[2].clone()).ok();
 
         // Complete message A
-        let result_a = reassembler.add_fragment(fragments_a[3].clone()).unwrap();
+        let result_a = reassembler.add_fragment(fragments_a[3].clone()).ok();
         assert!(result_a.is_some());
-        assert_eq!(result_a.unwrap(), payload);
+        assert_eq!(result_a.ok(), payload);
         assert_eq!(reassembler.pending_count(), 1); // B still pending
 
         // Complete message B
-        let result_b = reassembler.add_fragment(fragments_b[3].clone()).unwrap();
+        let result_b = reassembler.add_fragment(fragments_b[3].clone()).ok();
         assert!(result_b.is_some());
-        assert_eq!(result_b.unwrap(), payload);
+        assert_eq!(result_b.ok(), payload);
         assert_eq!(reassembler.pending_count(), 0); // Both complete
     }
 
@@ -995,45 +995,45 @@ mod tests {
         let payload2 = vec![2u8; 400];
         let payload3 = vec![3u8; 200];
 
-        let frags1 = fragment_message_v2(0, &payload1, 100).unwrap();
-        let frags2 = fragment_message_v2(1, &payload2, 100).unwrap();
-        let frags3 = fragment_message_v2(2, &payload3, 100).unwrap();
+        let frags1 = fragment_message_v2(0, &payload1, 100).ok();
+        let frags2 = fragment_message_v2(1, &payload2, 100).ok();
+        let frags3 = fragment_message_v2(2, &payload3, 100).ok();
 
         // Complex interleaving
-        reassembler.add_fragment(frags1[0].clone()).unwrap();
+        reassembler.add_fragment(frags1[0].clone()).ok();
         assert_eq!(reassembler.pending_count(), 1);
 
-        reassembler.add_fragment(frags2[0].clone()).unwrap();
+        reassembler.add_fragment(frags2[0].clone()).ok();
         assert_eq!(reassembler.pending_count(), 2);
 
-        reassembler.add_fragment(frags3[0].clone()).unwrap();
+        reassembler.add_fragment(frags3[0].clone()).ok();
         assert_eq!(reassembler.pending_count(), 3);
 
-        reassembler.add_fragment(frags1[1].clone()).unwrap();
+        reassembler.add_fragment(frags1[1].clone()).ok();
         assert_eq!(reassembler.pending_count(), 3);
 
-        reassembler.add_fragment(frags2[1].clone()).unwrap();
+        reassembler.add_fragment(frags2[1].clone()).ok();
         assert_eq!(reassembler.pending_count(), 3);
 
-        let result3 = reassembler.add_fragment(frags3[1].clone()).unwrap();
+        let result3 = reassembler.add_fragment(frags3[1].clone()).ok();
         // Message 3 is complete (2/2 fragments)
         assert!(result3.is_some());
-        assert_eq!(result3.unwrap(), payload3);
+        assert_eq!(result3.ok(), payload3);
         assert_eq!(reassembler.pending_count(), 2);
 
-        reassembler.add_fragment(frags2[2].clone()).unwrap();
+        reassembler.add_fragment(frags2[2].clone()).ok();
         assert_eq!(reassembler.pending_count(), 2);
 
-        let result1 = reassembler.add_fragment(frags1[2].clone()).unwrap();
+        let result1 = reassembler.add_fragment(frags1[2].clone()).ok();
         // Message 1 is complete (3/3 fragments)
         assert!(result1.is_some());
-        assert_eq!(result1.unwrap(), payload1);
+        assert_eq!(result1.ok(), payload1);
         assert_eq!(reassembler.pending_count(), 1);
 
-        let result2 = reassembler.add_fragment(frags2[3].clone()).unwrap();
+        let result2 = reassembler.add_fragment(frags2[3].clone()).ok();
         // Message 2 is complete (4/4 fragments)
         assert!(result2.is_some());
-        assert_eq!(result2.unwrap(), payload2);
+        assert_eq!(result2.ok(), payload2);
         assert_eq!(reassembler.pending_count(), 0);
     }
 
@@ -1054,10 +1054,10 @@ mod tests {
         let mut reassembler = FragmentReassemblerV2::new(session_id, config);
 
         let payload = vec![99u8; 300];
-        let fragments = fragment_message_v2(0, &payload, 100).unwrap();
+        let fragments = fragment_message_v2(0, &payload, 100).ok();
 
         // Add first fragment
-        reassembler.add_fragment(fragments[0].clone()).unwrap();
+        reassembler.add_fragment(fragments[0].clone()).ok();
         assert_eq!(reassembler.pending_count(), 1);
 
         // Simulate timeout by manually triggering cleanup at future time
@@ -1082,10 +1082,10 @@ mod tests {
         let mut reassembler = FragmentReassemblerV2::new(session_id, config);
 
         let payload = vec![99u8; 300];
-        let fragments = fragment_message_v2(0, &payload, 100).unwrap();
+        let fragments = fragment_message_v2(0, &payload, 100).ok();
 
         // Add first fragment
-        reassembler.add_fragment(fragments[0].clone()).unwrap();
+        reassembler.add_fragment(fragments[0].clone()).ok();
         assert_eq!(reassembler.pending_count(), 1);
 
         // Simulate long idle period with cleanup
@@ -1116,7 +1116,7 @@ mod tests {
         // Try to create 6 messages (should fail on 6th)
         for msg_seq in 0..6 {
             let payload = vec![msg_seq as u8; 100];
-            let fragments = fragment_message_v2(msg_seq, &payload, 50).unwrap();
+            let fragments = fragment_message_v2(msg_seq, &payload, 50).ok();
 
             if msg_seq < 5 {
                 // First 5 should succeed
@@ -1169,7 +1169,7 @@ mod tests {
 
         // Try to start a message larger than max
         let payload = vec![0u8; 500];
-        let fragments = fragment_message_v2(0, &payload, 100).unwrap();
+        let fragments = fragment_message_v2(0, &payload, 100).ok();
 
         // The first fragment should be accepted (we can't know total size yet)
         // But when reassembled, it would exceed the limit
@@ -1210,12 +1210,12 @@ mod tests {
         let payload1 = vec![1u8; 200];
         let payload2 = vec![2u8; 200];
 
-        let frags1 = fragment_message_v2(100, &payload1, 100).unwrap();
-        let frags2 = fragment_message_v2(200, &payload2, 100).unwrap();
+        let frags1 = fragment_message_v2(100, &payload1, 100).ok();
+        let frags2 = fragment_message_v2(200, &payload2, 100).ok();
 
         // Add fragments with different message_seq
-        reassembler.add_fragment(frags1[0].clone()).unwrap();
-        reassembler.add_fragment(frags2[0].clone()).unwrap();
+        reassembler.add_fragment(frags1[0].clone()).ok();
+        reassembler.add_fragment(frags2[0].clone()).ok();
 
         // Both should be tracked independently
         assert!(reassembler.has_message(100));
@@ -1239,10 +1239,10 @@ mod tests {
         let mut reassembler = FragmentReassemblerV2::new(session_id, config);
 
         let payload = vec![0u8; 300];
-        let fragments = fragment_message_v2(0, &payload, 100).unwrap();
+        let fragments = fragment_message_v2(0, &payload, 100).ok();
 
         for fragment in &fragments {
-            reassembler.add_fragment(fragment.clone()).unwrap();
+            reassembler.add_fragment(fragment.clone()).ok();
         }
 
         let stats = reassembler.stats();

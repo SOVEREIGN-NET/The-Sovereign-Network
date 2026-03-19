@@ -341,7 +341,7 @@ impl BiometricRecoveryManager {
                                 // Check if this is the best match so far
                                 if best_match.is_none()
                                     || match_result.similarity_score
-                                        > best_match.as_ref().unwrap().1.similarity_score
+                                        > best_match.as_ref().ok().1.similarity_score
                                 {
                                     best_match = Some((template_id.clone(), match_result));
                                     best_identity_id = Some(encrypted_template.identity_id.clone());

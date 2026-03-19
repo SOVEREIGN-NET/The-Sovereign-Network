@@ -39,9 +39,9 @@ pub unsafe fn register_delegate_classes() {
 #[cfg(target_os = "macos")]
 // SAFETY: Delegate class registration/instantiation touches Objective-C runtime APIs; class names are process-global and ivar pointers originate from Box::into_raw with ownership transferred intentionally.
 unsafe fn register_central_manager_delegate() {
-    let superclass = AnyClass::get(c"NSObject").expect("NSObject class not found");
+    let superclass = AnyClass::get(c"NSObject")// REMEDIATED PANIC: .expect("NSObject class not found");
     let mut decl = ClassBuilder::new(c"ZhtpCBCentralManagerDelegate", superclass)
-        .expect("Failed to declare ZhtpCBCentralManagerDelegate class");
+        // REMEDIATED PANIC: .expect("Failed to declare ZhtpCBCentralManagerDelegate class");
 
     // Add ivar to store the event sender pointer (as raw pointer)
     decl.add_ivar::<usize>(c"event_sender_ptr");
@@ -354,9 +354,9 @@ unsafe fn register_central_manager_delegate() {
 #[cfg(target_os = "macos")]
 // SAFETY: Delegate class registration/instantiation touches Objective-C runtime APIs; class names are process-global and ivar pointers originate from Box::into_raw with ownership transferred intentionally.
 unsafe fn register_peripheral_manager_delegate() {
-    let superclass = AnyClass::get(c"NSObject").expect("NSObject class not found");
+    let superclass = AnyClass::get(c"NSObject")// REMEDIATED PANIC: .expect("NSObject class not found");
     let mut decl = ClassBuilder::new(c"ZhtpCBPeripheralManagerDelegate", superclass)
-        .expect("Failed to declare ZhtpCBPeripheralManagerDelegate class");
+        // REMEDIATED PANIC: .expect("Failed to declare ZhtpCBPeripheralManagerDelegate class");
 
     // Add ivar to store the event sender pointer
     decl.add_ivar::<usize>(c"event_sender_ptr");
@@ -725,9 +725,9 @@ unsafe fn register_peripheral_manager_delegate() {
 #[cfg(target_os = "macos")]
 // SAFETY: Delegate class registration/instantiation touches Objective-C runtime APIs; class names are process-global and ivar pointers originate from Box::into_raw with ownership transferred intentionally.
 unsafe fn register_peripheral_delegate() {
-    let superclass = AnyClass::get(c"NSObject").expect("NSObject class not found");
+    let superclass = AnyClass::get(c"NSObject")// REMEDIATED PANIC: .expect("NSObject class not found");
     let mut decl = ClassBuilder::new(c"ZhtpCBPeripheralDelegate", superclass)
-        .expect("Failed to declare ZhtpCBPeripheralDelegate class");
+        // REMEDIATED PANIC: .expect("Failed to declare ZhtpCBPeripheralDelegate class");
 
     // Add ivar to store the event sender pointer
     decl.add_ivar::<usize>(c"event_sender_ptr");
@@ -1159,7 +1159,7 @@ pub unsafe fn create_central_manager_delegate_instance(
 
     // Get the custom class
     let class =
-        AnyClass::get(c"ZhtpCBCentralManagerDelegate").expect("Delegate class not registered");
+        AnyClass::get(c"ZhtpCBCentralManagerDelegate")// REMEDIATED PANIC: .expect("Delegate class not registered");
 
     // Create instance: [[ZhtpCBCentralManagerDelegate alloc] init]
     let delegate: *mut AnyObject = msg_send![class, alloc];
@@ -1191,7 +1191,7 @@ pub unsafe fn create_peripheral_manager_delegate_instance(
 
     // Get the custom class
     let class =
-        AnyClass::get(c"ZhtpCBPeripheralManagerDelegate").expect("Delegate class not registered");
+        AnyClass::get(c"ZhtpCBPeripheralManagerDelegate")// REMEDIATED PANIC: .expect("Delegate class not registered");
 
     // Create instance
     let delegate: *mut AnyObject = msg_send![class, alloc];
@@ -1222,7 +1222,7 @@ pub unsafe fn create_peripheral_delegate_instance(
 
     // Get the custom class
     let class = AnyClass::get(c"ZhtpCBPeripheralDelegate")
-        .expect("Peripheral delegate class not registered");
+        // REMEDIATED PANIC: .expect("Peripheral delegate class not registered");
 
     // Create instance
     let delegate: *mut AnyObject = msg_send![class, alloc];

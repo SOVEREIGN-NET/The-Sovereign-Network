@@ -616,7 +616,7 @@ impl DhtProtocolHandler {
                 },
                 expires_at: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
                     + store.duration as u64,
             };
@@ -711,7 +711,7 @@ impl DhtProtocolHandler {
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Ok(PostQuantumSignature {
@@ -788,7 +788,7 @@ impl DhtProtocolHandler {
             payload_length: 0,                    // Will be calculated during serialization
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             reserved: [0; 32],
         };
@@ -952,7 +952,7 @@ impl DhtProtocolHandler {
             payload_length: 0,  // Will be calculated during serialization
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             reserved: [0; 32],
         };
@@ -1055,8 +1055,8 @@ mod tests {
             signature: PostQuantumSignature::default(),
         };
 
-        let serialized = bincode::serialize(&packet).unwrap();
-        let deserialized: DhtPacket = bincode::deserialize(&serialized).unwrap();
+        let serialized = bincode::serialize(&packet).ok();
+        let deserialized: DhtPacket = bincode::deserialize(&serialized).ok();
 
         assert_eq!(packet.header.version, deserialized.header.version);
         assert_eq!(packet.header.operation, deserialized.header.operation);

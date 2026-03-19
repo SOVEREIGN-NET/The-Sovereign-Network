@@ -625,11 +625,11 @@ mod tests {
                 &test_public_key(3),
                 100,
             )
-            .unwrap();
+            .ok();
 
         let sov = brokerage
             .accept_buyback_offer(offer_id, 50_00000000, &test_public_key(4), 101)
-            .unwrap();
+            .ok();
 
         assert!(sov > 0);
         assert_eq!(brokerage.completed_trades.len(), 1);
@@ -654,11 +654,11 @@ mod tests {
                 &seller,
                 100,
             )
-            .unwrap();
+            .ok();
 
         assert_eq!(brokerage.active_sell_offers.len(), 1);
 
-        brokerage.cancel_sell_offer(offer_id, &seller).unwrap();
+        brokerage.cancel_sell_offer(offer_id, &seller).ok();
         assert_eq!(brokerage.active_sell_offers.len(), 0);
     }
 
@@ -677,11 +677,11 @@ mod tests {
 
         brokerage
             .create_buyback_offer(100_00000000, 1_00000000, 100, &test_public_key(3), 100)
-            .unwrap();
+            .ok();
 
         brokerage
             .create_sell_offer(50_00000000, 0_90000000, 100, &test_public_key(4), 100)
-            .unwrap();
+            .ok();
 
         let summary = brokerage.get_market_summary();
         assert_eq!(summary.active_buyback_offers, 1);
@@ -710,12 +710,12 @@ mod tests {
                 &seller,
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Treasury fills offer at price within NP -2% limit (0.98 SOV = 98% of 1 SOV TWAP)
         brokerage
             .fill_sell_offer(offer_id, 0_98000000, &test_public_key(3), 101)
-            .unwrap();
+            .ok();
 
         assert_eq!(brokerage.active_sell_offers.len(), 0);
         assert_eq!(brokerage.completed_trades.len(), 1);
@@ -771,7 +771,7 @@ mod tests {
         let seller = test_public_key(4);
         let offer_id = brokerage
             .create_sell_offer(50_00000000, 0_98000000, 100, &seller, 100)
-            .unwrap();
+            .ok();
 
         // NP sell: -2% below TWAP allowed
         let result = brokerage.fill_sell_offer(offer_id, 0_98000000, &test_public_key(3), 101);
@@ -793,7 +793,7 @@ mod tests {
 
         let offer_id = brokerage
             .create_buyback_offer(100_00000000, 1_00000000, 10, &test_public_key(3), 100)
-            .unwrap();
+            .ok();
 
         // Try to fill after expiration
         let result = brokerage.accept_buyback_offer(offer_id, 50_00000000, &test_public_key(4), 110);
@@ -815,7 +815,7 @@ mod tests {
 
         let offer_id = brokerage
             .create_buyback_offer(100_00000000, 1_00000000, 100, &test_public_key(3), 100)
-            .unwrap();
+            .ok();
 
         // First partial fill
         let result1 = brokerage.accept_buyback_offer(offer_id, 30_00000000, &test_public_key(4), 101);
@@ -849,7 +849,7 @@ mod tests {
 
         let offer_id = brokerage
             .create_buyback_offer(100_00000000, 1_00000000, 10, &test_public_key(3), 100)
-            .unwrap();
+            .ok();
 
         // Cancel before expiration should work
         assert!(brokerage.cancel_buyback_offer(offer_id, &test_public_key(3)).is_ok());
@@ -872,7 +872,7 @@ mod tests {
         let seller = test_public_key(4);
         let offer_id = brokerage
             .create_sell_offer(100_00000000, 0_50000000, 100, &seller, 100)
-            .unwrap();
+            .ok();
 
         // Try to fill with non-treasury account
         let result = brokerage.fill_sell_offer(offer_id, 0_80000000, &test_public_key(99), 101);

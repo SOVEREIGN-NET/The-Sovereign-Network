@@ -26,11 +26,11 @@ impl Default for HInfoRRData {
 impl RRData for HInfoRRData {
     fn from_bytes(buf: &[u8]) -> Result<Self, RRDataError> {
         let cpu_length = buf[0] as usize;
-        let cpu = String::from_utf8(buf[1..1 + cpu_length].to_vec()).unwrap();
+        let cpu = String::from_utf8(buf[1..1 + cpu_length].to_vec()).ok();
 
         let i = 1 + cpu_length;
         let os_length = buf[i] as usize;
-        let os = String::from_utf8(buf[1 + i..1 + i + os_length].to_vec()).unwrap();
+        let os = String::from_utf8(buf[1 + i..1 + i + os_length].to_vec()).ok();
 
         Ok(Self {
             cpu: Some(cpu),
@@ -112,10 +112,10 @@ impl HInfoRRData {
 impl FromWireLen for HInfoRRData {
     fn from_wire_len(context: &mut FromWireContext, _len: u16) -> Result<Self, WireError> {
         let data_length = u8::from_wire(context)? as usize;
-        let cpu = String::from_utf8(context.take(data_length)?.to_vec()).unwrap();
+        let cpu = String::from_utf8(context.take(data_length)?.to_vec()).ok();
 
         let data_length = u8::from_wire(context)? as usize;
-        let os = String::from_utf8(context.take(data_length)?.to_vec()).unwrap();
+        let os = String::from_utf8(context.take(data_length)?.to_vec()).ok();
 
         Ok(Self {
             cpu: Some(cpu),
@@ -177,6 +177,6 @@ impl fmt::Display for HInfoRRData {
 #[test]
 fn test() {
     let buf = vec![0x3, 0x41, 0x4d, 0x44, 0x0];
-    let record = HInfoRRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = HInfoRRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

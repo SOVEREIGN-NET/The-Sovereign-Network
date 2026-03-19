@@ -962,12 +962,12 @@ mod tests {
         // Lookup by NodeId
         let found = mapper.lookup_by_node_id(&identity.node_id);
         assert!(found.is_some());
-        assert_eq!(found.unwrap(), peer_id);
+        assert_eq!(found.ok(), peer_id);
 
         // Lookup by PublicKey
         let found = mapper.lookup_by_public_key(&identity.public_key);
         assert!(found.is_some());
-        assert_eq!(found.unwrap(), peer_id);
+        assert_eq!(found.ok(), peer_id);
 
         // Lookup by DID
         let found = mapper.lookup_by_did(&identity.did);
@@ -1020,7 +1020,7 @@ mod tests {
         // Unregister
         let removed = mapper.unregister(&identity.node_id);
         assert!(removed.is_some());
-        let removed_peer = removed.unwrap();
+        let removed_peer = removed.ok();
         assert_eq!(*removed_peer, peer_id);
         assert_eq!(mapper.peer_count(), 0);
 
@@ -1080,7 +1080,7 @@ mod tests {
             .collect();
 
         // Wait for all and collect results
-        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().ok()).collect();
 
         // Verify exactly 1 succeeded, 99 failed
         let successes = results.iter().filter(|r| r.is_ok()).count();
@@ -1117,15 +1117,15 @@ mod tests {
                 let mapper = mapper.clone();
                 thread::spawn(move || {
                     let device = format!("attack-device-{:03}", i);
-                    let identity = create_test_identity(&device, Some(seed)).unwrap();
-                    let peer_id = UnifiedPeerId::from_zhtp_identity(&identity).unwrap();
+                    let identity = create_test_identity(&device, Some(seed)).ok();
+                    let peer_id = UnifiedPeerId::from_zhtp_identity(&identity).ok();
                     mapper.register(peer_id)
                 })
             })
             .collect();
 
         // Wait for all and collect results
-        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().ok()).collect();
 
         // Count successes and failures
         let successes = results.iter().filter(|r| r.is_ok()).count();
@@ -1379,7 +1379,7 @@ mod tests {
             .collect();
 
         // Wait for all and collect results
-        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().ok()).collect();
 
         // Verify exactly 1 returned Some, 9 returned None
         let successes = results.iter().filter(|r| r.is_some()).count();

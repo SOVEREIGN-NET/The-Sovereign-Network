@@ -237,7 +237,7 @@ impl fmt::Display for SvcParams {
                 if raw.len() % 16 == 0 {
                     let mut ips = Vec::new();
                     for chunk in raw.chunks_exact(16) {
-                        let arr: [u8; 16] = chunk.try_into().unwrap();
+                        let arr: [u8; 16] = chunk.try_into().ok();
                         ips.push(Ipv6Addr::from(arr).to_string());
                     }
                     return write!(f, "{}={}", self.key(), ips.join(","));

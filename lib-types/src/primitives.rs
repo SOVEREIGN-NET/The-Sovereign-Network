@@ -292,8 +292,8 @@ mod tests {
     #[test]
     fn test_serialization_roundtrip() {
         let hash = BlockHash::new([42u8; 32]);
-        let serialized = bincode::serialize(&hash).unwrap();
-        let deserialized: BlockHash = bincode::deserialize(&serialized).unwrap();
+        let serialized = bincode::serialize(&hash).ok();
+        let deserialized: BlockHash = bincode::deserialize(&serialized).ok();
         assert_eq!(hash, deserialized);
     }
 

@@ -516,7 +516,7 @@ mod tests {
         let mock = MockMessageBroadcaster::new(5);
         let target = vec![];
 
-        let count = mock.reachable_validator_count(&target).await.unwrap();
+        let count = mock.reachable_validator_count(&target).await.ok();
         assert_eq!(count, 0);
     }
 
@@ -528,7 +528,7 @@ mod tests {
         let reachable = mock
             .is_validator_reachable(&validator_pubkey)
             .await
-            .unwrap();
+            .ok();
         assert!(reachable);
     }
 }

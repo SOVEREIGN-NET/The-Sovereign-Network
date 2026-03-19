@@ -148,7 +148,7 @@ impl MeshHandler {
             "mesh_{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs()
         );
 
@@ -162,7 +162,7 @@ impl MeshHandler {
                     genesis_height: 0,
                     created_at: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs(),
                     message: format!("Mesh blockchain '{}' created successfully", create_req.name),
                 };
@@ -170,7 +170,7 @@ impl MeshHandler {
                 info!(" Mesh blockchain created (PLACEHOLDER): {}", mesh_id);
                 warn!("Mesh blockchain creation is currently a placeholder - implement mesh server methods");
                 Ok(ZhtpResponse::success(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     None,
                 ))
             }
@@ -230,7 +230,7 @@ impl MeshHandler {
                 );
                 warn!("Transaction submission is currently a placeholder");
                 Ok(ZhtpResponse::success(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     None,
                 ))
             }
@@ -272,7 +272,7 @@ impl MeshHandler {
                     mesh_id: mesh_id.clone(),
                     produced_at: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs(),
                     message: format!(
                         "Block {} produced with {} transactions",
@@ -286,7 +286,7 @@ impl MeshHandler {
                 );
                 warn!("Block production is currently a placeholder");
                 Ok(ZhtpResponse::success(
-                    serde_json::to_vec(&response).unwrap(),
+                    serde_json::to_vec(&response).ok(),
                     None,
                 ))
             }
@@ -310,7 +310,7 @@ impl MeshHandler {
             is_syncing: false,
             last_block_time: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             sync_status: MeshSyncStatus {
                 global_height: 0,
@@ -323,7 +323,7 @@ impl MeshHandler {
         info!(" Retrieved status for mesh {} (PLACEHOLDER)", mesh_id);
         warn!("Mesh status query is currently a placeholder");
         Ok(ZhtpResponse::success(
-            serde_json::to_vec(&response).unwrap(),
+            serde_json::to_vec(&response).ok(),
             None,
         ))
     }
@@ -352,7 +352,7 @@ impl MeshHandler {
         info!(" Retrieved sync proof for mesh {} (PLACEHOLDER)", mesh_id);
         warn!("Sync proof retrieval is currently a placeholder");
         Ok(ZhtpResponse::success(
-            serde_json::to_vec(&response).unwrap(),
+            serde_json::to_vec(&response).ok(),
             None,
         ))
     }

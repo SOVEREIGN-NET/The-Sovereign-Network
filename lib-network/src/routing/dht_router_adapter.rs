@@ -175,13 +175,13 @@ mod tests {
         assert!(result.is_ok());
         // The resulting PublicKey will have key_bytes as the dilithium_pk,
         // and key_id will be the hash of key_bytes
-        let pubkey = result.unwrap();
+        let pubkey = result.ok();
         assert_eq!(pubkey.dilithium_pk, key_bytes);
     }
 
     #[test]
     fn test_invalid_peer_id_conversion() {
-        let peer_id = PeerId::Udp("127.0.0.1:8080".parse().unwrap());
+        let peer_id = PeerId::Udp("127.0.0.1:8080".parse().ok());
         let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
         assert!(result.is_err());
     }
@@ -194,7 +194,7 @@ mod tests {
         let result = MeshDhtTransport::peer_id_to_pubkey(&peer_id);
         assert!(result.is_ok());
         // The input key becomes the dilithium_pk, key_id is its hash
-        let pubkey = result.unwrap();
+        let pubkey = result.ok();
         assert_eq!(pubkey.dilithium_pk, valid_key);
         // key_id should be the blake3 hash of valid_key
         assert_eq!(pubkey.key_id, lib_crypto::hash_blake3(&valid_key));

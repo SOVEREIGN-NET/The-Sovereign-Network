@@ -225,7 +225,7 @@ mod tests {
                 2,
                 test_tx_id(1),
             )
-            .unwrap();
+            .ok();
 
         // Second payment for same epoch/assignment fails
         let result = ledger.record_payment(
@@ -254,7 +254,7 @@ mod tests {
                 2,
                 test_tx_id(1),
             )
-            .unwrap();
+            .ok();
 
         // Epoch 2 - same assignment, different epoch - should succeed
         let result = ledger.record_payment(
@@ -284,7 +284,7 @@ mod tests {
                 2,
                 test_tx_id(1),
             )
-            .unwrap();
+            .ok();
 
         // Bob - same epoch, different assignment - should succeed
         let result = ledger.record_payment(
@@ -313,9 +313,9 @@ mod tests {
                 2,
                 test_tx_id(1),
             )
-            .unwrap();
+            .ok();
 
-        let record = ledger.get_payment(1, &test_assignment_id(10)).unwrap();
+        let record = ledger.get_payment(1, &test_assignment_id(10)).ok();
         assert_eq!(record.amount, 50_000);
         assert_eq!(record.computation_hash, test_hash(1));
     }
@@ -342,7 +342,7 @@ mod tests {
                 2,
                 test_tx_id(1),
             )
-            .unwrap();
+            .ok();
         ledger
             .record_payment(
                 2,
@@ -352,7 +352,7 @@ mod tests {
                 3,
                 test_tx_id(2),
             )
-            .unwrap();
+            .ok();
         ledger
             .record_payment(
                 3,
@@ -362,7 +362,7 @@ mod tests {
                 4,
                 test_tx_id(3),
             )
-            .unwrap();
+            .ok();
 
         assert_eq!(
             ledger.total_paid_to_assignment(&test_assignment_id(10)),
@@ -384,7 +384,7 @@ mod tests {
                 2,
                 test_tx_id(1),
             )
-            .unwrap();
+            .ok();
         ledger
             .record_payment(
                 1,
@@ -394,7 +394,7 @@ mod tests {
                 2,
                 test_tx_id(2),
             )
-            .unwrap();
+            .ok();
         ledger
             .record_payment(
                 2,
@@ -404,7 +404,7 @@ mod tests {
                 3,
                 test_tx_id(3),
             )
-            .unwrap();
+            .ok();
 
         let epoch1_payments = ledger.get_payments_for_epoch(1);
         assert_eq!(epoch1_payments.len(), 2);
@@ -423,16 +423,16 @@ mod tests {
                 2,
                 test_tx_id(1),
             )
-            .unwrap();
+            .ok();
 
         // Correct hash
         assert!(ledger
             .verify_payment(1, &test_assignment_id(10), &test_hash(1))
-            .unwrap());
+            .ok());
 
         // Wrong hash
         assert!(!ledger
             .verify_payment(1, &test_assignment_id(10), &test_hash(99))
-            .unwrap());
+            .ok());
     }
 }

@@ -270,7 +270,7 @@ mod tests {
             index: 42,
         };
         let key = utxo_key(&outpoint);
-        let parsed = parse_utxo_key(&key).unwrap();
+        let parsed = parse_utxo_key(&key).ok();
 
         assert_eq!(parsed.tx, outpoint.tx);
         assert_eq!(parsed.index, outpoint.index);
@@ -290,7 +290,7 @@ mod tests {
         let token = TokenId([0xcd; 32]);
         let addr = Address([0xef; 32]);
         let key = token_balance_key(&token, &addr);
-        let (parsed_token, parsed_addr) = parse_token_balance_key(&key).unwrap();
+        let (parsed_token, parsed_addr) = parse_token_balance_key(&key).ok();
 
         assert_eq!(parsed_token, token);
         assert_eq!(parsed_addr, addr);
@@ -376,7 +376,7 @@ mod tests {
         let height = 12345u64;
         let key = identity_by_height_key(height, &did_hash);
 
-        let (parsed_height, parsed_hash) = parse_identity_by_height_key(&key).unwrap();
+        let (parsed_height, parsed_hash) = parse_identity_by_height_key(&key).ok();
         assert_eq!(parsed_height, height);
         assert_eq!(parsed_hash, did_hash);
     }

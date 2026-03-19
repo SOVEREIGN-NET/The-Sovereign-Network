@@ -50,37 +50,37 @@ impl RoutingTable for MRoutingTable {
 
         routing_table
             .lock()
-            .unwrap()
+            .ok()
             .as_any_mut()
             .downcast_mut::<Self>()
-            .unwrap()
+            .ok()
             .origin_pairs
             .insert(source, addr);
 
         if routing_table
             .lock()
-            .unwrap()
+            .ok()
             .as_any()
             .downcast_ref::<Self>()
-            .unwrap()
+            .ok()
             .origin_pairs
             .len()
             > 20
             && addr
                 != routing_table
                     .lock()
-                    .unwrap()
+                    .ok()
                     .as_any()
                     .downcast_ref::<Self>()
-                    .unwrap()
+                    .ok()
                     .consensus_external_address
         {
             let k: Vec<IpAddr> = routing_table
                 .lock()
-                .unwrap()
+                .ok()
                 .as_any()
                 .downcast_ref::<Self>()
-                .unwrap()
+                .ok()
                 .origin_pairs
                 .values();
             let mut res = 0;
@@ -97,19 +97,19 @@ impl RoutingTable for MRoutingTable {
 
             if routing_table
                 .lock()
-                .unwrap()
+                .ok()
                 .as_any()
                 .downcast_ref::<Self>()
-                .unwrap()
+                .ok()
                 .consensus_external_address
                 != k[res]
             {
                 routing_table
                     .lock()
-                    .unwrap()
+                    .ok()
                     .as_any_mut()
                     .downcast_mut::<Self>()
-                    .unwrap()
+                    .ok()
                     .consensus_external_address = k[res];
                 Self::restart(routing_table);
             }
@@ -197,7 +197,7 @@ impl RoutingTable for MRoutingTable {
     }
 
     fn get_derived_uid(&self) -> UID {
-        self.uid.unwrap()
+        self.uid.ok()
     }
 
     fn is_secure_only(&self) -> bool {
@@ -247,18 +247,18 @@ impl RoutingTable for MRoutingTable {
     fn restart(routing_table: Arc<Mutex<dyn RoutingTable>>) {
         routing_table
             .lock()
-            .unwrap()
+            .ok()
             .as_any_mut()
             .downcast_mut::<Self>()
-            .unwrap()
+            .ok()
             .derive_uid();
 
         if routing_table
             .lock()
-            .unwrap()
+            .ok()
             .as_any()
             .downcast_ref::<Self>()
-            .unwrap()
+            .ok()
             .listeners
             .is_empty()
         {
@@ -267,10 +267,10 @@ impl RoutingTable for MRoutingTable {
 
         let listeners = routing_table
             .lock()
-            .unwrap()
+            .ok()
             .as_any()
             .downcast_ref::<Self>()
-            .unwrap()
+            .ok()
             .listeners
             .clone();
         for listener in &listeners {

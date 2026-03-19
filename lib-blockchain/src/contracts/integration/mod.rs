@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_transaction_builder() {
-        let keypair = KeyPair::generate().unwrap();
+        let keypair = KeyPair::generate().ok();
         let mut builder = ContractTransactionBuilder::new();
 
         let call = ContractCall {
@@ -499,7 +499,7 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let signature = keypair.sign(&bincode::serialize(&call).unwrap()).unwrap();
+        let signature = keypair.sign(&bincode::serialize(&call).ok()).ok();
 
         builder.add_call(call, signature);
 
@@ -520,7 +520,7 @@ mod tests {
         builder.add_output(output);
         builder.set_fee(100);
 
-        let transaction = builder.build(&keypair).unwrap();
+        let transaction = builder.build(&keypair).ok();
         assert!(!transaction.inputs.is_empty());
         assert!(!transaction.outputs.is_empty());
         assert!(!transaction.memo.is_empty());
@@ -528,8 +528,8 @@ mod tests {
 
     #[test]
     fn test_contract_events() {
-        let keypair1 = KeyPair::generate().unwrap();
-        let keypair2 = KeyPair::generate().unwrap();
+        let keypair1 = KeyPair::generate().ok();
+        let keypair2 = KeyPair::generate().ok();
 
         let event = ContractEvent::TokenTransfer {
             token_id: [1u8; 32],
@@ -540,8 +540,8 @@ mod tests {
 
         assert_eq!(event.event_type(), "TokenTransfer");
 
-        let serialized = event.to_bytes().unwrap();
-        let deserialized = ContractEvent::from_bytes(&serialized).unwrap();
+        let serialized = event.to_bytes().ok();
+        let deserialized = ContractEvent::from_bytes(&serialized).ok();
 
         match deserialized {
             ContractEvent::TokenTransfer { amount, .. } => assert_eq!(amount, 1000),
@@ -578,8 +578,8 @@ mod tests {
 
         publisher.add_listener(Box::new(listener));
 
-        let keypair1 = KeyPair::generate().unwrap();
-        let keypair2 = KeyPair::generate().unwrap();
+        let keypair1 = KeyPair::generate().ok();
+        let keypair2 = KeyPair::generate().ok();
 
         let event = ContractEvent::TokenTransfer {
             token_id: [1u8; 32],

@@ -722,7 +722,7 @@ mod tests {
     }
 
     fn create_test_record(name: &str) -> NameRecord {
-        let parsed = parse_and_validate(name).unwrap();
+        let parsed = parse_and_validate(name).ok();
         RegisterGuard::create_record(
             &parsed,
             test_owner(),
@@ -738,7 +738,7 @@ mod tests {
 
     #[test]
     fn test_register_preconditions() {
-        let parsed = parse_and_validate("mystore.sov").unwrap();
+        let parsed = parse_and_validate("mystore.sov").ok();
 
         // Should succeed with proper verification and fee
         let result = RegisterGuard::check_preconditions(
@@ -781,7 +781,7 @@ mod tests {
 
     #[test]
     fn test_register_welfare_requires_approval() {
-        let parsed = parse_and_validate("kitchen.food.sov").unwrap();
+        let parsed = parse_and_validate("kitchen.food.sov").ok();
 
         // Should fail without welfare approval
         let result = RegisterGuard::check_preconditions(

@@ -300,29 +300,29 @@ mod tests {
     #[test]
     fn test_wifi_e2e_encrypt_decrypt() {
         let key = create_test_key();
-        let enc = WiFiDirectEncryption::new_with_session_key(&key).unwrap();
+        let enc = WiFiDirectEncryption::new_with_session_key(&key).ok();
 
         assert!(enc.is_e2e_encrypted(), "Should be in E2E mode");
 
         let message = b"WiFi Direct E2E message";
 
-        let ciphertext = enc.encrypt_message(message, "service_discovery").unwrap();
+        let ciphertext = enc.encrypt_message(message, "service_discovery").ok();
         assert!(ciphertext.len() > message.len()); // Includes tag
 
         let decrypted = enc
             .decrypt_message(&ciphertext, "service_discovery")
-            .unwrap();
+            .ok();
         assert_eq!(message, &decrypted[..]);
     }
 
     #[test]
     fn test_wifi_e2e_message_type_separation() {
         let key = create_test_key();
-        let enc = WiFiDirectEncryption::new_with_session_key(&key).unwrap();
+        let enc = WiFiDirectEncryption::new_with_session_key(&key).ok();
 
         let message = b"Test message";
 
-        let ciphertext = enc.encrypt_message(message, "service_discovery").unwrap();
+        let ciphertext = enc.encrypt_message(message, "service_discovery").ok();
 
         // Wrong message type should fail
         let result = enc.decrypt_message(&ciphertext, "go_negotiation");
@@ -332,11 +332,11 @@ mod tests {
     #[test]
     fn test_wifi_e2e_tampering_detection() {
         let key = create_test_key();
-        let enc = WiFiDirectEncryption::new_with_session_key(&key).unwrap();
+        let enc = WiFiDirectEncryption::new_with_session_key(&key).ok();
 
         let message = b"Important WiFi Direct data";
 
-        let mut ciphertext = enc.encrypt_message(message, "service_discovery").unwrap();
+        let mut ciphertext = enc.encrypt_message(message, "service_discovery").ok();
 
         // Tamper
         if !ciphertext.is_empty() {
@@ -362,13 +362,13 @@ mod tests {
         let message = b"WiFi Direct fallback message";
 
         // Encrypt returns plaintext
-        let encrypted = enc.encrypt_message(message, "service_discovery").unwrap();
+        let encrypted = enc.encrypt_message(message, "service_discovery").ok();
         assert_eq!(message, &encrypted[..], "Fallback should return plaintext");
 
         // Decrypt returns same plaintext
         let decrypted = enc
             .decrypt_message(&encrypted, "service_discovery")
-            .unwrap();
+            .ok();
         assert_eq!(
             message,
             &decrypted[..],
@@ -383,7 +383,7 @@ mod tests {
         let original = b"Test data";
 
         // Encrypt
-        let result1 = enc.encrypt_message(original, "go_negotiation").unwrap();
+        let result1 = enc.encrypt_message(original, "go_negotiation").ok();
         assert_eq!(
             original.len(),
             result1.len(),
@@ -391,7 +391,7 @@ mod tests {
         );
 
         // Decrypt
-        let result2 = enc.decrypt_message(&result1, "go_negotiation").unwrap();
+        let result2 = enc.decrypt_message(&result1, "go_negotiation").ok();
         assert_eq!(
             original,
             &result2[..],
@@ -410,10 +410,10 @@ mod tests {
         ];
 
         for msg in messages {
-            let encrypted = enc.encrypt_message(&msg, "service_discovery").unwrap();
+            let encrypted = enc.encrypt_message(&msg, "service_discovery").ok();
             let decrypted = enc
                 .decrypt_message(&encrypted, "service_discovery")
-                .unwrap();
+                .ok();
 
             assert_eq!(msg, decrypted, "Fallback roundtrip failed");
         }
@@ -424,13 +424,13 @@ mod tests {
     #[test]
     fn test_wifi_trait_e2e_mode() {
         let key = create_test_key();
-        let enc = WiFiDirectEncryption::new_with_session_key(&key).unwrap();
+        let enc = WiFiDirectEncryption::new_with_session_key(&key).ok();
 
         let message = b"Trait test";
         let aad = b"custom-aad";
 
-        let ciphertext = enc.encrypt(message, aad).unwrap();
-        let decrypted = enc.decrypt(&ciphertext, aad).unwrap();
+        let ciphertext = enc.encrypt(message, aad).ok();
+        let decrypted = enc.decrypt(&ciphertext, aad).ok();
 
         assert_eq!(message, &decrypted[..]);
         assert_eq!(enc.protocol(), "wifi-direct");
@@ -443,10 +443,10 @@ mod tests {
         let message = b"Fallback trait test";
         let aad = b"aad";
 
-        let encrypted = enc.encrypt(message, aad).unwrap();
+        let encrypted = enc.encrypt(message, aad).ok();
         assert_eq!(message, &encrypted[..], "Fallback should pass through");
 
-        let decrypted = enc.decrypt(&encrypted, aad).unwrap();
+        let decrypted = enc.decrypt(&encrypted, aad).ok();
         assert_eq!(message, &decrypted[..], "Fallback should pass through");
 
         assert_eq!(enc.protocol(), "wifi-direct");
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn test_wifi_stats_e2e() {
         let key = create_test_key();
-        let enc = WiFiDirectEncryption::new_with_session_key(&key).unwrap();
+        let enc = WiFiDirectEncryption::new_with_session_key(&key).ok();
 
         let stats = enc.stats();
         assert_eq!(stats.protocol, "wifi-direct");
@@ -476,16 +476,16 @@ mod tests {
     #[test]
     fn test_wifi_e2e_large_message() {
         let key = create_test_key();
-        let enc = WiFiDirectEncryption::new_with_session_key(&key).unwrap();
+        let enc = WiFiDirectEncryption::new_with_session_key(&key).ok();
 
         let large_message = vec![0x42u8; 1024 * 1024]; // 1MB
 
         let ciphertext = enc
             .encrypt_message(&large_message, "service_discovery")
-            .unwrap();
+            .ok();
         let decrypted = enc
             .decrypt_message(&ciphertext, "service_discovery")
-            .unwrap();
+            .ok();
 
         assert_eq!(large_message, decrypted, "Large message should round-trip");
     }
@@ -493,9 +493,9 @@ mod tests {
     #[test]
     fn test_wifi_e2e_empty_message() {
         let key = create_test_key();
-        let enc = WiFiDirectEncryption::new_with_session_key(&key).unwrap();
+        let enc = WiFiDirectEncryption::new_with_session_key(&key).ok();
 
-        let ciphertext = enc.encrypt_message(b"", "service_discovery").unwrap();
+        let ciphertext = enc.encrypt_message(b"", "service_discovery").ok();
         assert!(
             !ciphertext.is_empty(),
             "Even empty message produces ciphertext (tag)"
@@ -503,21 +503,21 @@ mod tests {
 
         let decrypted = enc
             .decrypt_message(&ciphertext, "service_discovery")
-            .unwrap();
+            .ok();
         assert_eq!(decrypted.len(), 0, "Should decrypt to empty");
     }
 
     #[test]
     fn test_wifi_multiple_message_types() {
         let key = create_test_key();
-        let enc = WiFiDirectEncryption::new_with_session_key(&key).unwrap();
+        let enc = WiFiDirectEncryption::new_with_session_key(&key).ok();
 
         let message_types = vec!["service_discovery", "go_negotiation", "handshake"];
         let message = b"Test";
 
         let ciphertexts: Vec<_> = message_types
             .iter()
-            .map(|&msg_type| enc.encrypt_message(message, msg_type).unwrap())
+            .map(|&msg_type| enc.encrypt_message(message, msg_type).ok())
             .collect();
 
         // Different message types → different ciphertexts
@@ -529,7 +529,7 @@ mod tests {
 
         // Each decrypts with correct type
         for (msg_type, ciphertext) in message_types.iter().zip(ciphertexts.iter()) {
-            let decrypted = enc.decrypt_message(ciphertext, msg_type).unwrap();
+            let decrypted = enc.decrypt_message(ciphertext, msg_type).ok();
             assert_eq!(message, &decrypted[..]);
         }
     }

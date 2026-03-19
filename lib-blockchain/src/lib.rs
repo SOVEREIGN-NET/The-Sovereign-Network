@@ -307,7 +307,7 @@ pub fn get_blockchain_health() -> Result<BlockchainHealth, String> {
         mempool_size: 42,
         last_block_time: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs(),
         difficulty: INITIAL_DIFFICULTY,
         network_hashrate: 1000000, // Example hashrate
@@ -327,7 +327,7 @@ pub fn get_blockchain_info() -> Result<BlockchainInfo, String> {
         testnet: false,
         keypoololdest: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs(),
         keypoolsize: 100,
         paytxfee: 0.0001,

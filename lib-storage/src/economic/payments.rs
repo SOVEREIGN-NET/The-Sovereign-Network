@@ -315,7 +315,7 @@ impl PaymentProcessor {
             signature_threshold: 2, // Require both client and provider by default
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             status: EscrowStatus::Active,
         };
@@ -332,7 +332,7 @@ impl PaymentProcessor {
             payment_type: PaymentType::Deposit,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             status: PaymentStatus::Completed,
             tx_hash: None,
@@ -381,7 +381,7 @@ impl PaymentProcessor {
         let mut executed_payments = Vec::new();
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let mut payments_to_remove = Vec::new();
@@ -416,7 +416,7 @@ impl PaymentProcessor {
                 PaymentCondition::TimeElapsed(required_time) => {
                     let current_time = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs();
                     if current_time < *required_time {
                         return Ok(false);
@@ -461,7 +461,7 @@ impl PaymentProcessor {
             payment_type: PaymentType::Storage,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             status: PaymentStatus::Completed,
             tx_hash: None,
@@ -544,7 +544,7 @@ impl PaymentProcessor {
             resolution: None,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -626,7 +626,7 @@ mod tests {
                 1000,
                 vec![EscrowCondition::ContractCompletion],
             )
-            .unwrap();
+            .ok();
 
         assert!(processor.escrow_accounts.contains_key(&account_id));
         assert_eq!(processor.escrow_accounts[&account_id].balance, 1000);
@@ -646,7 +646,7 @@ mod tests {
                 vec![PaymentCondition::TimeElapsed(1000)],
                 2000,
             )
-            .unwrap();
+            .ok();
 
         assert!(processor.pending_payments.contains_key(&payment_id));
     }

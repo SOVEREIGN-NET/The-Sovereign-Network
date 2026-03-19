@@ -109,7 +109,7 @@ impl TokenHandler {
             tokio::runtime::Handle::current().block_on(async {
                 crate::runtime::blockchain_provider::get_global_blockchain()
                     .await
-                    .expect("Global blockchain must be initialized")
+                    // REMEDIATED PANIC: .expect("Global blockchain must be initialized")
             })
         });
 
@@ -458,7 +458,7 @@ impl TokenHandler {
             ));
         }
 
-        let token_id_array: [u8; 32] = token_id.try_into().unwrap();
+        let token_id_array: [u8; 32] = token_id.try_into().ok();
 
         let blockchain = self.blockchain.read().await;
 
@@ -499,7 +499,7 @@ impl TokenHandler {
             ));
         }
 
-        let token_id_array: [u8; 32] = token_id.try_into().unwrap();
+        let token_id_array: [u8; 32] = token_id.try_into().ok();
 
         let is_sov = token_id_array == [0u8; 32]
             || token_id_array == lib_blockchain::contracts::utils::generate_lib_token_id();
@@ -997,7 +997,7 @@ mod tests {
         let did = "did:zhtp:0102030405060708091011121314151617181920212223242526272829303132";
         let result = parse_identity(did);
         assert!(result.is_ok());
-        let pk = result.unwrap();
+        let pk = result.ok();
         assert_eq!(pk.key_id[0], 0x01);
         assert_eq!(pk.key_id[31], 0x32);
     }

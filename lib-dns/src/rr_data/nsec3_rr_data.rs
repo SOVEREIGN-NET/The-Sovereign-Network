@@ -137,7 +137,7 @@ impl RRData for NSec3RRData {
                 buf.push(window as u8);
 
                 // Find max offset to determine bitmap size
-                let max_offset = *offsets.iter().max().unwrap() as usize;
+                let max_offset = *offsets.iter().max().ok() as usize;
                 let bitmap_size = (max_offset / 8) + 1;
 
                 // Create bitmap
@@ -406,6 +406,6 @@ fn test() {
     // Then loops for type windows (none in this case)
     // Must have at least 6 bytes before hash_len can be read at i+1
     let buf = vec![0u8, 0u8, 0u8, 1u8, 0u8, 0u8];
-    let record = NSec3RRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = NSec3RRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

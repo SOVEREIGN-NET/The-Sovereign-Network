@@ -399,12 +399,12 @@ mod tests {
         let mut store = EvidenceStore::new();
         let evidence = create_double_sign_evidence(100);
 
-        let id = store.submit(evidence, 100).unwrap();
+        let id = store.submit(evidence, 100).ok();
         assert_eq!(store.pending_count(), 1);
 
         store.mark_processed(&id, 101, 5_000_000, true);
 
-        let record = store.get(&id).unwrap();
+        let record = store.get(&id).ok();
         assert_eq!(record.processed_at, Some(101));
         assert_eq!(record.slash_amount, Some(5_000_000));
         assert!(record.jailed);

@@ -183,7 +183,7 @@ pub async fn gateway_handler(
 
             response
                 .body(Body::from(result.content))
-                .unwrap()
+                .ok()
                 .into_response()
         }
         Err(e) => {

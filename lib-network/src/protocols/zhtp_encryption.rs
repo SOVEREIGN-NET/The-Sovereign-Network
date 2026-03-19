@@ -86,7 +86,7 @@ impl ZhtpEncryptionSession {
             shared_secret: None,
             session_start: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             messages_encrypted: 0,
             messages_decrypted: 0,
@@ -104,7 +104,7 @@ impl ZhtpEncryptionSession {
             kyber_public_key: self.local_kyber_public.clone(),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             session_id,
         })
@@ -140,7 +140,7 @@ impl ZhtpEncryptionSession {
             kyber_ciphertext: ciphertext,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }
@@ -206,7 +206,7 @@ impl ZhtpEncryptionSession {
             sequence: self.messages_encrypted,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }

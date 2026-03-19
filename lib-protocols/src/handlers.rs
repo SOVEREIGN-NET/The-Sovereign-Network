@@ -1838,7 +1838,7 @@ mod tests {
         let handlers = ZhtpHandlers::new(config);
 
         let request = create_test_request(ZhtpMethod::Get, "/capabilities");
-        let response = handlers.handle_get(request).await.unwrap();
+        let response = handlers.handle_get(request).await.ok();
 
         assert_eq!(response.status, ZhtpStatus::Ok);
     }
@@ -1849,7 +1849,7 @@ mod tests {
         let handlers = ZhtpHandlers::new(config);
 
         let request = create_test_request(ZhtpMethod::Options, "/api/v1/test");
-        let response = handlers.handle_options(request).await.unwrap();
+        let response = handlers.handle_options(request).await.ok();
 
         assert_eq!(response.status, ZhtpStatus::Ok);
         assert!(response
@@ -1882,7 +1882,7 @@ mod tests {
             .headers
             .set("X-ZK-Proof", "test_zk_proof_".to_string() + &"a".repeat(64)); // Test mode proof
 
-        let response = handlers.handle_post(request).await.unwrap();
+        let response = handlers.handle_post(request).await.ok();
 
         assert_eq!(response.status, ZhtpStatus::Ok);
     }
@@ -1894,7 +1894,7 @@ mod tests {
 
         // Test that capabilities endpoint returns Ok
         let request = create_test_request(ZhtpMethod::Get, "/.well-known/zhtp");
-        let response = handlers.handle_get(request).await.unwrap();
+        let response = handlers.handle_get(request).await.ok();
 
         assert_eq!(response.status, ZhtpStatus::Ok);
     }

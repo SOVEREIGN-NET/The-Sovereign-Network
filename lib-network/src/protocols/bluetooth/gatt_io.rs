@@ -1486,7 +1486,7 @@ mod tests {
             char_uuid: &str,
             data: &[u8],
         ) -> Result<()> {
-            self.writes.lock().unwrap().push((
+            self.writes.lock().ok().push((
                 device_address.to_string(),
                 char_uuid.to_string(),
                 data.to_vec(),
@@ -1495,7 +1495,7 @@ mod tests {
         }
 
         async fn discover_services(&self, _device_address: &str) -> Result<Vec<String>> {
-            let mut calls = self.discovery_calls.lock().unwrap();
+            let mut calls = self.discovery_calls.lock().ok();
             *calls += 1;
             if self.discovery_error {
                 Err(anyhow!("discovery failed"))
@@ -1509,7 +1509,7 @@ mod tests {
             _device_address: &str,
             _char_uuid: &str,
         ) -> Result<()> {
-            let mut calls = self.enable_calls.lock().unwrap();
+            let mut calls = self.enable_calls.lock().ok();
             *calls += 1;
             Ok(())
         }
@@ -1519,7 +1519,7 @@ mod tests {
             _device_address: &str,
             _char_uuid: &str,
         ) -> Result<()> {
-            let mut calls = self.disable_calls.lock().unwrap();
+            let mut calls = self.disable_calls.lock().ok();
             *calls += 1;
             Ok(())
         }
@@ -1529,7 +1529,7 @@ mod tests {
             _device_address: &str,
             _char_uuid: &str,
         ) -> Result<Vec<u8>> {
-            let mut calls = self.wait_calls.lock().unwrap();
+            let mut calls = self.wait_calls.lock().ok();
             *calls += 1;
             Ok(self.notification_data.clone())
         }
@@ -1537,8 +1537,8 @@ mod tests {
 
     fn protocol() -> BluetoothMeshProtocol {
         let node_id = [9u8; 32];
-        let keypair = KeyPair::generate().unwrap();
-        BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap()
+        let keypair = KeyPair::generate().ok();
+        BluetoothMeshProtocol::new(node_id, keypair.public_key).ok()
     }
 
     #[tokio::test]
@@ -1556,8 +1556,8 @@ mod tests {
             .await;
         assert!(result.is_ok());
 
-        assert_eq!(*backend.discovery_calls.lock().unwrap(), 1);
-        let writes = backend.writes.lock().unwrap();
+        assert_eq!(*backend.discovery_calls.lock().ok(), 1);
+        let writes = backend.writes.lock().ok();
         assert_eq!(writes.len(), 1);
         assert_eq!(writes[0].0, "peer");
         assert_eq!(writes[0].1, "char");
@@ -1576,10 +1576,10 @@ mod tests {
         let result = protocol
             .listen_for_gatt_notification("peer", "char", 1)
             .await
-            .unwrap();
+            .ok();
         assert_eq!(result, vec![7, 8, 9]);
-        assert_eq!(*backend.enable_calls.lock().unwrap(), 1);
-        assert_eq!(*backend.wait_calls.lock().unwrap(), 1);
-        assert_eq!(*backend.disable_calls.lock().unwrap(), 1);
+        assert_eq!(*backend.enable_calls.lock().ok(), 1);
+        assert_eq!(*backend.wait_calls.lock().ok(), 1);
+        assert_eq!(*backend.disable_calls.lock().ok(), 1);
     }
 }

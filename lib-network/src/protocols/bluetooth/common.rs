@@ -199,19 +199,19 @@ mod tests {
 
     #[test]
     fn test_parse_mac_address_colon() {
-        let mac = parse_mac_address("AA:BB:CC:DD:EE:FF").unwrap();
+        let mac = parse_mac_address("AA:BB:CC:DD:EE:FF").ok();
         assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
     }
 
     #[test]
     fn test_parse_mac_address_hyphen() {
-        let mac = parse_mac_address("AA-BB-CC-DD-EE-FF").unwrap();
+        let mac = parse_mac_address("AA-BB-CC-DD-EE-FF").ok();
         assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
     }
 
     #[test]
     fn test_parse_mac_address_lowercase() {
-        let mac = parse_mac_address("aa:bb:cc:dd:ee:ff").unwrap();
+        let mac = parse_mac_address("aa:bb:cc:dd:ee:ff").ok();
         assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
     }
 
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn test_fallback_mac_generation() {
         // Should generate valid locally-administered MAC
-        let mac = generate_fallback_mac().unwrap();
+        let mac = generate_fallback_mac().ok();
 
         // Check locally administered bit is set
         assert_eq!(mac[0] & 0x02, 0x02);

@@ -1009,9 +1009,9 @@ mod tests {
             Priority::Normal,
             &economic_model,
         )
-        .unwrap();
+        .ok();
 
-        let result = controller.check_access(&request).await.unwrap();
+        let result = controller.check_access(&request).await.ok();
         assert!(result.granted);
         assert_eq!(result.access_level, AccessLevel::Standard);
     }

@@ -176,12 +176,12 @@ impl BootstrapProofGenerator {
                 private_input_commitment: [0; 32],
                 generated_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             },
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -194,7 +194,7 @@ impl BootstrapProofGenerator {
         let metadata = BootstrapMetadata {
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             proof_size_bytes: 1024,
             target_network: network_id,
@@ -240,7 +240,7 @@ impl BootstrapProofGenerator {
         let metadata = BootstrapMetadata {
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             proof_size_bytes: 2048,
             target_network: target_network_id,
@@ -310,7 +310,7 @@ impl BootstrapProof {
     pub fn is_valid_for_bootstrap(&self) -> bool {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let max_age = 3600;

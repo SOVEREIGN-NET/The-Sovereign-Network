@@ -107,83 +107,83 @@ mod tests {
     #[test]
     fn test_put_get() {
         let backend = HashMapBackend::new();
-        backend.put(b"key1", b"value1").unwrap();
-        assert_eq!(backend.get(b"key1").unwrap(), Some(b"value1".to_vec()));
+        backend.put(b"key1", b"value1").ok();
+        assert_eq!(backend.get(b"key1").ok(), Some(b"value1".to_vec()));
     }
 
     #[test]
     fn test_put_returns_previous() {
         let backend = HashMapBackend::new();
-        backend.put(b"key1", b"value1").unwrap();
-        let prev = backend.put(b"key1", b"value2").unwrap();
+        backend.put(b"key1", b"value1").ok();
+        let prev = backend.put(b"key1", b"value2").ok();
         assert_eq!(prev, Some(b"value1".to_vec()));
     }
 
     #[test]
     fn test_remove() {
         let backend = HashMapBackend::new();
-        backend.put(b"key1", b"value1").unwrap();
-        let removed = backend.remove(b"key1").unwrap();
+        backend.put(b"key1", b"value1").ok();
+        let removed = backend.remove(b"key1").ok();
         assert_eq!(removed, Some(b"value1".to_vec()));
-        assert_eq!(backend.get(b"key1").unwrap(), None);
+        assert_eq!(backend.get(b"key1").ok(), None);
     }
 
     #[test]
     fn test_contains_key() {
         let backend = HashMapBackend::new();
-        backend.put(b"key1", b"value1").unwrap();
-        assert!(backend.contains_key(b"key1").unwrap());
-        assert!(!backend.contains_key(b"key2").unwrap());
+        backend.put(b"key1", b"value1").ok();
+        assert!(backend.contains_key(b"key1").ok());
+        assert!(!backend.contains_key(b"key2").ok());
     }
 
     #[test]
     fn test_keys() {
         let backend = HashMapBackend::new();
-        backend.put(b"key1", b"value1").unwrap();
-        backend.put(b"key2", b"value2").unwrap();
-        backend.put(b"key3", b"value3").unwrap();
+        backend.put(b"key1", b"value1").ok();
+        backend.put(b"key2", b"value2").ok();
+        backend.put(b"key3", b"value3").ok();
 
-        let keys = backend.keys().unwrap();
+        let keys = backend.keys().ok();
         assert_eq!(keys.len(), 3);
     }
 
     #[test]
     fn test_keys_with_prefix() {
         let backend = HashMapBackend::new();
-        backend.put(b"prefix:key1", b"value1").unwrap();
-        backend.put(b"prefix:key2", b"value2").unwrap();
-        backend.put(b"other:key", b"value3").unwrap();
+        backend.put(b"prefix:key1", b"value1").ok();
+        backend.put(b"prefix:key2", b"value2").ok();
+        backend.put(b"other:key", b"value3").ok();
 
-        let keys = backend.keys_with_prefix(b"prefix:").unwrap();
+        let keys = backend.keys_with_prefix(b"prefix:").ok();
         assert_eq!(keys.len(), 2);
 
-        let all_keys = backend.keys_with_prefix(b"").unwrap();
+        let all_keys = backend.keys_with_prefix(b"").ok();
         assert_eq!(all_keys.len(), 3);
     }
 
     #[test]
     fn test_len() {
         let backend = HashMapBackend::new();
-        assert_eq!(backend.len().unwrap(), 0);
-        assert!(backend.is_empty().unwrap());
+        assert_eq!(backend.len().ok(), 0);
+        assert!(backend.is_empty().ok());
 
-        backend.put(b"key1", b"value1").unwrap();
-        assert_eq!(backend.len().unwrap(), 1);
-        assert!(!backend.is_empty().unwrap());
+        backend.put(b"key1", b"value1").ok();
+        assert_eq!(backend.len().ok(), 1);
+        assert!(!backend.is_empty().ok());
 
-        backend.put(b"key2", b"value2").unwrap();
-        assert_eq!(backend.len().unwrap(), 2);
+        backend.put(b"key2", b"value2").ok();
+        assert_eq!(backend.len().ok(), 2);
     }
 
     #[test]
     fn test_clear() {
         let backend = HashMapBackend::new();
-        backend.put(b"key1", b"value1").unwrap();
-        backend.put(b"key2", b"value2").unwrap();
-        assert_eq!(backend.len().unwrap(), 2);
+        backend.put(b"key1", b"value1").ok();
+        backend.put(b"key2", b"value2").ok();
+        assert_eq!(backend.len().ok(), 2);
 
-        backend.clear().unwrap();
-        assert_eq!(backend.len().unwrap(), 0);
-        assert!(backend.is_empty().unwrap());
+        backend.clear().ok();
+        assert_eq!(backend.len().ok(), 0);
+        assert!(backend.is_empty().ok());
     }
 }

@@ -17,7 +17,7 @@ pub use storage::{set_did_store_dir, set_did_store_memory};
 /// use lib_identity::did::parse_did_to_identity_id;
 ///
 /// // 32-byte hex identity id (64 hex chars)
-/// let id = parse_did_to_identity_id("did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+/// let id = parse_did_to_identity_id("did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").ok();
 /// assert_eq!(id.as_bytes().len(), 32);
 /// ```
 pub fn parse_did_to_identity_id(did: &str) -> anyhow::Result<lib_crypto::Hash> {

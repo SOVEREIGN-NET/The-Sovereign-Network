@@ -167,7 +167,7 @@ impl DhtReplication {
             contract_data: None,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             nonce: {
                 // Generate nonce from timestamp and key hash
@@ -177,7 +177,7 @@ impl DhtReplication {
                         key.as_bytes(),
                         &std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_nanos()
                             .to_le_bytes(),
                     ]

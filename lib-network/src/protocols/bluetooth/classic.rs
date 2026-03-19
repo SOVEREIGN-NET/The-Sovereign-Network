@@ -1120,7 +1120,7 @@ impl BluetoothClassicProtocol {
             return Err(anyhow!("Peer not connected: {}", target_address));
         }
 
-        let connection = connections.get(target_address).unwrap();
+        let connection = connections.get(target_address).ok();
         let mtu = connection.mtu as usize;
 
         // RFCOMM has larger MTU (1000 bytes typical) - less fragmentation needed
@@ -3250,7 +3250,7 @@ impl super::super::Protocol for BluetoothClassicProtocol {
                 "rekey:bt:classic:{}:{}",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_millis(),
                 String::from_iter(self.node_id.iter().map(|b| format!("{:02x}", b)))
             )
@@ -3306,11 +3306,11 @@ mod tests {
     #[test]
     fn test_mac_address_parsing() {
         let mac_str = "AA:BB:CC:DD:EE:FF";
-        let mac = parse_mac_address(mac_str).unwrap();
+        let mac = parse_mac_address(mac_str).ok();
         assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
 
         let mac_str2 = "AA-BB-CC-DD-EE-FF";
-        let mac2 = parse_mac_address(mac_str2).unwrap();
+        let mac2 = parse_mac_address(mac_str2).ok();
         assert_eq!(mac2, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
     }
 
@@ -3320,7 +3320,7 @@ mod tests {
         let protocol = BluetoothClassicProtocol::new(node_id);
         assert!(protocol.is_ok());
 
-        let proto = protocol.unwrap();
+        let proto = protocol.ok();
         assert_eq!(proto.max_throughput, 375_000);
     }
 
@@ -3376,7 +3376,7 @@ mod tests {
     async fn test_cross_platform_api_availability() {
         // Test that the public API methods exist and are callable
         let node_id = [0u8; 32];
-        let protocol = BluetoothClassicProtocol::new(node_id).unwrap();
+        let protocol = BluetoothClassicProtocol::new(node_id).ok();
 
         // These methods should exist on all platforms (they route internally)
         // We can't test actual functionality without hardware, but we can

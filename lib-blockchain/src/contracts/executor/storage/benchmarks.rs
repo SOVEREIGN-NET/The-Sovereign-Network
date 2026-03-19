@@ -53,21 +53,21 @@ mod benchmarks {
     #[test]
     #[ignore]
     fn bench_cache_hits() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
-        let cached = CachedPersistentStorage::new(storage).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
+        let cached = CachedPersistentStorage::new(storage).ok();
 
         // Populate cache with 1000 entries
         for i in 0..1000 {
             let key = format!("key_{}", i).into_bytes();
             let value = format!("value_{}", i).into_bytes();
             let mut cached_mut = cached.clone();
-            cached_mut.set(&key, &value).unwrap();
+            cached_mut.set(&key, &value).ok();
         }
 
         // Warm up JIT
         for _ in 0..100 {
-            let _ = cached.get(b"key_0").unwrap();
+            let _ = cached.get(b"key_0").ok();
         }
 
         // Benchmark repeated access
@@ -76,7 +76,7 @@ mod benchmarks {
 
         for i in 0..num_ops {
             let key = format!("key_{}", i % 1000).into_bytes();
-            let _ = cached.get(&key).unwrap();
+            let _ = cached.get(&key).ok();
         }
 
         let elapsed = start.elapsed();
@@ -89,7 +89,7 @@ mod benchmarks {
         println!("\n=== Cache Hit Benchmark ===");
         result.print();
 
-        let stats = cached.cache_stats().unwrap();
+        let stats = cached.cache_stats().ok();
         println!(
             "Cache stats: hits={}, misses={}, hit_rate={:.1}%\n",
             stats.hits,
@@ -107,20 +107,20 @@ mod benchmarks {
     #[test]
     #[ignore]
     fn bench_cache_misses() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
-        let cached = CachedPersistentStorage::new(storage).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
+        let cached = CachedPersistentStorage::new(storage).ok();
 
         // Populate storage with 10k entries (but not in cache)
         for i in 0..10_000 {
             let key = format!("key_{}", i).into_bytes();
             let value = format!("value_{}", i).into_bytes();
             let mut cached_mut = cached.clone();
-            cached_mut.set(&key, &value).unwrap();
+            cached_mut.set(&key, &value).ok();
         }
 
         // Clear cache to force misses
-        cached.clear_cache().unwrap();
+        cached.clear_cache().ok();
 
         // Benchmark cache misses (cold reads)
         let num_ops = 10_000;
@@ -128,7 +128,7 @@ mod benchmarks {
 
         for i in 0..num_ops {
             let key = format!("key_{}", i % 1000).into_bytes();
-            let _ = cached.get(&key).unwrap();
+            let _ = cached.get(&key).ok();
         }
 
         let elapsed = start.elapsed();
@@ -141,7 +141,7 @@ mod benchmarks {
         println!("\n=== Cache Miss Benchmark ===");
         result.print();
 
-        let stats = cached.cache_stats().unwrap();
+        let stats = cached.cache_stats().ok();
         println!(
             "Cache stats after cold reads: hits={}, misses={}, hit_rate={:.1}%\n",
             stats.hits,
@@ -154,9 +154,9 @@ mod benchmarks {
     #[test]
     #[ignore]
     fn bench_writes() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
-        let mut cached = CachedPersistentStorage::new(storage).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
+        let mut cached = CachedPersistentStorage::new(storage).ok();
 
         let num_ops = 100_000;
         let start = Instant::now();
@@ -164,7 +164,7 @@ mod benchmarks {
         for i in 0..num_ops {
             let key = format!("key_{}", i).into_bytes();
             let value = format!("value_data_{}", i).into_bytes();
-            cached.set(&key, &value).unwrap();
+            cached.set(&key, &value).ok();
         }
 
         let elapsed = start.elapsed();
@@ -182,15 +182,15 @@ mod benchmarks {
     #[test]
     #[ignore]
     fn bench_deletes() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
-        let mut cached = CachedPersistentStorage::new(storage).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
+        let mut cached = CachedPersistentStorage::new(storage).ok();
 
         // Pre-populate
         for i in 0..50_000 {
             let key = format!("key_{}", i).into_bytes();
             let value = format!("value_{}", i).into_bytes();
-            cached.set(&key, &value).unwrap();
+            cached.set(&key, &value).ok();
         }
 
         let num_ops = 50_000;
@@ -198,7 +198,7 @@ mod benchmarks {
 
         for i in 0..num_ops {
             let key = format!("key_{}", i).into_bytes();
-            cached.delete(&key).unwrap();
+            cached.delete(&key).ok();
         }
 
         let elapsed = start.elapsed();
@@ -216,8 +216,8 @@ mod benchmarks {
     #[test]
     #[ignore]
     fn bench_state_root_computation() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
 
         // Add state entries at various scales
         let test_sizes = vec![1_000, 10_000, 100_000];
@@ -233,13 +233,13 @@ mod benchmarks {
             for i in 0..size {
                 let key = format!("state:100:contract_{}", i).into_bytes();
                 let value = format!("state_value_{}", i).into_bytes();
-                storage.set(&key, &value).unwrap();
+                storage.set(&key, &value).ok();
             }
 
             let computer = StateRootComputation::new(storage.clone());
 
             let start = Instant::now();
-            let _root = computer.compute_state_root(100).unwrap();
+            let _root = computer.compute_state_root(100).ok();
             let elapsed = start.elapsed();
 
             let per_1k = (elapsed.as_secs_f64() * 1000.0) / (size as f64 / 1000.0);
@@ -259,8 +259,8 @@ mod benchmarks {
     #[test]
     #[ignore]
     fn bench_wal_recovery() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
 
         // Create WAL entries at various scales
         let test_sizes = vec![100, 1_000, 10_000];
@@ -273,20 +273,20 @@ mod benchmarks {
 
         for size in test_sizes {
             // Create fresh storage for each test
-            let temp_dir = TempDir::new().unwrap();
-            let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+            let temp_dir = TempDir::new().ok();
+            let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
 
             // Create WAL entries
             for height in 0..size {
                 let key = format!("wal:{}", height).into_bytes();
                 let value = b"incomplete_block".to_vec();
-                storage.set(&key, &value).unwrap();
+                storage.set(&key, &value).ok();
             }
 
             let recovery = WalRecoveryManager::new(storage.clone());
 
             let start = Instant::now();
-            let stats = recovery.recover_from_crash().unwrap();
+            let stats = recovery.recover_from_crash().ok();
             let elapsed = start.elapsed();
 
             let per_entry = (elapsed.as_secs_f64() * 1_000_000.0) / size as f64;
@@ -311,8 +311,8 @@ mod benchmarks {
     #[test]
     #[ignore]
     fn bench_versioning() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
         let version_mgr = StateVersionManager::new(storage.clone(), Some(1000));
 
         println!("\n=== Version Manager Benchmark ===");
@@ -325,7 +325,7 @@ mod benchmarks {
             for i in 0..100 {
                 let key = format!("contract:balance:user_{}", i).into_bytes();
                 let value = format!("balance_{}", height * 100 + i).into_bytes();
-                version_mgr.store_versioned(height, &key, &value).unwrap();
+                version_mgr.store_versioned(height, &key, &value).ok();
             }
         }
 
@@ -344,7 +344,7 @@ mod benchmarks {
         for _ in 0..1000 {
             for i in 0..10 {
                 let key = format!("contract:balance:user_{}", i).into_bytes();
-                let _val = version_mgr.get_versioned(&key, 50).unwrap();
+                let _val = version_mgr.get_versioned(&key, 50).ok();
             }
         }
 
@@ -372,31 +372,31 @@ mod benchmarks {
         let cache_sizes = vec![4, 16, 64, 128];
 
         for cache_size_mb in cache_sizes {
-            let temp_dir = TempDir::new().unwrap();
-            let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+            let temp_dir = TempDir::new().ok();
+            let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
 
             let cache_config = super::super::CacheConfig {
                 max_size_bytes: cache_size_mb * 1024 * 1024,
                 track_stats: true,
             };
 
-            let cached = CachedPersistentStorage::with_cache_config(storage, cache_config).unwrap();
+            let cached = CachedPersistentStorage::with_cache_config(storage, cache_config).ok();
 
             // Populate with varied key distribution
             for i in 0..10_000 {
                 let key = format!("key_{}", i).into_bytes();
                 let value = format!("value_{}", i % 100).into_bytes();
                 let mut cached_mut = cached.clone();
-                cached_mut.set(&key, &value).unwrap();
+                cached_mut.set(&key, &value).ok();
             }
 
             // Simulate workload with temporal locality
             for i in 0..50_000 {
                 let key = format!("key_{}", i % 1000).into_bytes();
-                let _ = cached.get(&key).unwrap();
+                let _ = cached.get(&key).ok();
             }
 
-            let stats = cached.cache_stats().unwrap();
+            let stats = cached.cache_stats().ok();
             println!(
                 "{:<15} | {:>12.1} | {:>12} | {:>12}",
                 cache_size_mb,
@@ -416,16 +416,16 @@ mod benchmarks {
         use std::sync::Arc;
         use std::thread;
 
-        let temp_dir = Arc::new(TempDir::new().unwrap());
+        let temp_dir = Arc::new(TempDir::new().ok());
         let storage =
-            Arc::new(PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap());
-        let mut cached = CachedPersistentStorage::new((*storage).clone()).unwrap();
+            Arc::new(PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok());
+        let mut cached = CachedPersistentStorage::new((*storage).clone()).ok();
 
         // Pre-populate
         for i in 0..1_000 {
             let key = format!("key_{}", i).into_bytes();
             let value = format!("value_{}", i).into_bytes();
-            cached.set(&key, &value).unwrap();
+            cached.set(&key, &value).ok();
         }
 
         // Wrap in Arc for concurrent access
@@ -444,14 +444,14 @@ mod benchmarks {
                     for i in 0..ops_per_thread {
                         let key =
                             format!("key_{}", (thread_id * ops_per_thread + i) % 1000).into_bytes();
-                        let _ = cached_clone.get(&key).unwrap();
+                        let _ = cached_clone.get(&key).ok();
                     }
                 });
                 handles.push(handle);
             }
 
             for handle in handles {
-                handle.join().unwrap();
+                handle.join().ok();
             }
 
             let elapsed = start.elapsed();

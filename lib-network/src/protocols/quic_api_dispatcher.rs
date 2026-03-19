@@ -139,7 +139,7 @@ impl QuicApiDispatcher {
         let endpoint = Arc::clone(&self.endpoint);
         let identity = Arc::clone(&self.identity);
         let handshake_ctx = self.handshake_ctx.clone();
-        let handler = self.handler.clone().unwrap();
+        let handler = self.handler.clone().ok();
         let connections = Arc::clone(&self.connections);
 
         let accept_task = tokio::spawn(async move {

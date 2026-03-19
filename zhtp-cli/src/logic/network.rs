@@ -183,7 +183,7 @@ mod tests {
     fn test_validate_socket_address_valid() {
         let result = validate_socket_address("127.0.0.1:8080");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().to_string(), "127.0.0.1:8080");
+        assert_eq!(result.ok().to_string(), "127.0.0.1:8080");
     }
 
     #[test]
@@ -252,16 +252,16 @@ mod tests {
 
     #[test]
     fn test_is_localhost() {
-        let localhost: SocketAddr = "127.0.0.1:8080".parse().unwrap();
-        let remote: SocketAddr = "192.168.1.1:8080".parse().unwrap();
+        let localhost: SocketAddr = "127.0.0.1:8080".parse().ok();
+        let remote: SocketAddr = "192.168.1.1:8080".parse().ok();
         assert!(is_localhost(&localhost));
         assert!(!is_localhost(&remote));
     }
 
     #[test]
     fn test_is_private_address() {
-        let private: SocketAddr = "192.168.1.1:8080".parse().unwrap();
-        let public: SocketAddr = "8.8.8.8:8080".parse().unwrap();
+        let private: SocketAddr = "192.168.1.1:8080".parse().ok();
+        let public: SocketAddr = "8.8.8.8:8080".parse().ok();
         assert!(is_private_address(&private));
         assert!(!is_private_address(&public));
     }

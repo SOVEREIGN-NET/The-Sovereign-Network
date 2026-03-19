@@ -400,21 +400,21 @@ mod tests {
     fn test_parse_version_valid() {
         let result = CallValidator::parse_version("1.2.3");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), (1, 2, 3));
+        assert_eq!(result.ok(), (1, 2, 3));
     }
 
     #[test]
     fn test_parse_version_zeros() {
         let result = CallValidator::parse_version("0.0.0");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), (0, 0, 0));
+        assert_eq!(result.ok(), (0, 0, 0));
     }
 
     #[test]
     fn test_parse_version_large_numbers() {
         let result = CallValidator::parse_version("256.512.1024");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), (256, 512, 1024));
+        assert_eq!(result.ok(), (256, 512, 1024));
     }
 
     #[test]
@@ -479,7 +479,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        match result.unwrap() {
+        match result.ok() {
             ValidationResult::Valid {
                 method,
                 parameter_count,

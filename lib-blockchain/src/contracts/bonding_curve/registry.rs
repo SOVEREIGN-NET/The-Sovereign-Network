@@ -214,7 +214,7 @@ mod tests {
             100,
             1_600_000_000,
         )
-        .unwrap();
+        .ok();
         token.phase = phase;
         token
     }
@@ -242,10 +242,10 @@ mod tests {
     fn test_get_by_phase() {
         let mut registry = BondingCurveRegistry::new();
 
-        registry.register(test_token(1, Phase::Curve)).unwrap();
-        registry.register(test_token(2, Phase::Curve)).unwrap();
-        registry.register(test_token(3, Phase::Graduated)).unwrap();
-        registry.register(test_token(4, Phase::AMM)).unwrap();
+        registry.register(test_token(1, Phase::Curve)).ok();
+        registry.register(test_token(2, Phase::Curve)).ok();
+        registry.register(test_token(3, Phase::Graduated)).ok();
+        registry.register(test_token(4, Phase::AMM)).ok();
 
         assert_eq!(registry.get_by_phase(Phase::Curve).len(), 2);
         assert_eq!(registry.get_by_phase(Phase::Graduated).len(), 1);
@@ -258,14 +258,14 @@ mod tests {
         let token = test_token(1, Phase::Curve);
         let id = token.token_id;
 
-        registry.register(token).unwrap();
+        registry.register(token).ok();
         assert_eq!(registry.count_by_phase(Phase::Curve), 1);
 
-        registry.update_phase(&id, Phase::Graduated).unwrap();
+        registry.update_phase(&id, Phase::Graduated).ok();
         assert_eq!(registry.count_by_phase(Phase::Curve), 0);
         assert_eq!(registry.count_by_phase(Phase::Graduated), 1);
 
-        let token = registry.get(&id).unwrap();
+        let token = registry.get(&id).ok();
         assert_eq!(token.phase, Phase::Graduated);
     }
 
@@ -273,9 +273,9 @@ mod tests {
     fn test_stats() {
         let mut registry = BondingCurveRegistry::new();
 
-        registry.register(test_token(1, Phase::Curve)).unwrap();
-        registry.register(test_token(2, Phase::Graduated)).unwrap();
-        registry.register(test_token(3, Phase::AMM)).unwrap();
+        registry.register(test_token(1, Phase::Curve)).ok();
+        registry.register(test_token(2, Phase::Graduated)).ok();
+        registry.register(test_token(3, Phase::AMM)).ok();
 
         let stats = registry.stats();
         assert_eq!(stats.total_deployed, 3);

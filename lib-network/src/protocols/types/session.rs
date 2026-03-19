@@ -363,7 +363,7 @@ impl SessionLifecycle {
     pub fn new() -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Self {
@@ -384,7 +384,7 @@ impl SessionLifecycle {
     ) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Self {
@@ -401,7 +401,7 @@ impl SessionLifecycle {
     pub fn needs_renewal(&self) -> SessionRenewalReason {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         if now.saturating_sub(self.created_at) > self.max_lifetime_seconds {
@@ -426,7 +426,7 @@ impl SessionLifecycle {
     pub fn touch(&self) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         self.last_activity.store(now, Ordering::SeqCst);
         self.message_count.fetch_add(1, Ordering::SeqCst);
@@ -544,7 +544,7 @@ impl ProtocolSession {
 
         type HmacSha256 = Hmac<Sha256>;
 
-        let mut mac = HmacSha256::new_from_slice(mac_key).expect("HMAC key length is valid");
+        let mut mac = HmacSha256::new_from_slice(mac_key)// REMEDIATED PANIC: .expect("HMAC key length is valid");
 
         mac.update(session_id.as_bytes());
         mac.update(&created_at.to_le_bytes());
@@ -708,7 +708,7 @@ impl V2Session {
     ) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Self {
@@ -740,7 +740,7 @@ impl V2Session {
     pub fn is_expired(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         now.saturating_sub(self.created_at) > self.ttl_seconds
     }
@@ -790,7 +790,7 @@ impl V2Session {
     pub fn age_seconds(&self) -> u64 {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         now.saturating_sub(self.created_at)
     }

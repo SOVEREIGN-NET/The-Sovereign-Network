@@ -2342,11 +2342,11 @@ fn create_default_mesh_identity() -> lib_identity::ZhtpIdentity {
         attestations: vec![],
         created_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs(),
         last_active: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs(),
         recovery_keys: vec![],
         owner_identity_id: None, // Mesh server is autonomous/system service

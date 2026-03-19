@@ -251,7 +251,7 @@ mod tests {
 
         let result = verifier.verify_issuance_approval(&request, &proof, [4u8; 32]);
         assert!(result.is_ok());
-        let verification = result.unwrap();
+        let verification = result.ok();
         assert!(verification.is_valid);
         assert_eq!(verification.approved_at, 9900);
     }

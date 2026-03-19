@@ -440,7 +440,7 @@ impl EnhancedTransactionCreator {
                 algorithm: crate::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             },
             memo: Vec::new(),

@@ -160,8 +160,8 @@ mod tests {
     #[test]
     fn test_is_advertising_reflects_state() {
         let node_id = [8u8; 32];
-        let keypair = KeyPair::generate().unwrap();
-        let mut protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+        let keypair = KeyPair::generate().ok();
+        let mut protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).ok();
 
         assert!(!protocol.is_advertising());
         protocol.discovery_active = true;

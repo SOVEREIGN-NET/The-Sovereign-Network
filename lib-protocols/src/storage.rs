@@ -302,7 +302,7 @@ impl StorageIntegration {
                         metadata: metadata.clone(),
                         cached_at: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_secs(),
                         access_count: 1,
                     };
@@ -387,7 +387,7 @@ impl StorageIntegration {
         }
 
         // Sort by relevance (descending)
-        results.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap());
+        results.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).ok());
 
         tracing::info!("Search completed: {} results found", results.len());
         Ok(results)
@@ -500,7 +500,7 @@ impl StorageIntegration {
         // Remove old cached content (simplified)
         let cutoff_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
             - 3600; // 1 hour
 
@@ -599,7 +599,7 @@ impl StorageIntegration {
 fn current_timestamp() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok()
         .as_secs()
 }
 
@@ -668,7 +668,7 @@ mod tests {
             return;
         }
 
-        let mut storage = storage_result.unwrap();
+        let mut storage = storage_result.ok();
 
         let metadata = ContentMetadata {
             content_type: "text/plain".to_string(),
@@ -811,7 +811,7 @@ mod tests {
         use lib_crypto::KeyPair;
         use lib_identity::{IdentityType, ZhtpIdentity};
 
-        let keypair = KeyPair::generate().unwrap();
+        let keypair = KeyPair::generate().ok();
 
         ZhtpIdentity::new(
             IdentityType::Human,
@@ -823,7 +823,7 @@ mod tests {
             true,
             lib_proofs::ZeroKnowledgeProof::default(),
         )
-        .unwrap()
+        .ok()
     }
 
     fn create_test_zhtp_request() -> crate::types::ZhtpRequest {

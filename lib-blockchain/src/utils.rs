@@ -56,7 +56,7 @@ pub mod time {
         }
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
     }
 

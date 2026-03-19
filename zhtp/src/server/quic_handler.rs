@@ -1629,7 +1629,7 @@ mod tests {
     //     let (mut send, recv) = tokio::io::duplex(64);
     //
     //     // Write test data
-    //     send.write_all(b"world").await.unwrap();
+    //     send.write_all(b"world").await.ok();
     //     drop(send);
     //
     //     // Create buffered stream with prefix
@@ -1638,11 +1638,11 @@ mod tests {
     //
     //     // Read should return prefix first
     //     let mut buf = vec![0u8; 20];
-    //     let n = buffered.read(&mut buf).await.unwrap().unwrap();
+    //     let n = buffered.read(&mut buf).await.ok().ok();
     //     assert_eq!(&buf[..n], b"hello ");
     //
     //     // Next read should return stream data
-    //     let n = buffered.read(&mut buf).await.unwrap().unwrap();
+    //     let n = buffered.read(&mut buf).await.ok().ok();
     //     assert_eq!(&buf[..n], b"world");
     // }
 }

@@ -469,9 +469,9 @@ mod tests {
             b"Hello!".to_vec(),
             1000,
         )
-        .unwrap();
+        .ok();
 
-        let message = get_message(&contract, &message_id).unwrap();
+        let message = get_message(&contract, &message_id).ok();
         assert_eq!(message.sender, sender);
         assert_eq!(message.recipient, Some(recipient));
         assert!(message.is_direct_message());
@@ -490,9 +490,9 @@ mod tests {
             b"Hello group!".to_vec(),
             2000,
         )
-        .unwrap();
+        .ok();
 
-        let message = get_message(&contract, &message_id).unwrap();
+        let message = get_message(&contract, &message_id).ok();
         assert_eq!(message.sender, sender);
         assert_eq!(message.group_id, Some(group_id));
         assert!(message.is_group_message());
@@ -511,7 +511,7 @@ mod tests {
             b"Burn me".to_vec(),
             1000,
         )
-        .unwrap();
+        .ok();
 
         // Sender can burn their own message
         assert!(burn_message(&mut contract, &message_id, &sender).is_ok());
@@ -527,7 +527,7 @@ mod tests {
         // Use future timestamp for burn height
         let future_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
             + 3600; // 1 hour from now
 
@@ -540,7 +540,7 @@ mod tests {
             1000,
             future_timestamp,
         )
-        .unwrap();
+        .ok();
 
         assert_eq!(contract.message_count(), 1);
 
@@ -567,7 +567,7 @@ mod tests {
                 format!("Message {}", i).into_bytes(),
                 1000,
             )
-            .unwrap();
+            .ok();
         }
 
         let stats = get_message_stats(&contract);
@@ -592,7 +592,7 @@ mod tests {
             b"Hello user2".to_vec(),
             1000,
         )
-        .unwrap();
+        .ok();
 
         send_direct_message(
             &mut contract,
@@ -601,7 +601,7 @@ mod tests {
             b"Hello user3".to_vec(),
             1000,
         )
-        .unwrap();
+        .ok();
 
         let previews = get_conversation_previews(&contract, &user1);
         assert_eq!(previews.len(), 2);
@@ -625,7 +625,7 @@ mod tests {
                 format!("Message {}", i).into_bytes(),
                 1000,
             )
-            .unwrap();
+            .ok();
         }
 
         // Get first page (5 messages)

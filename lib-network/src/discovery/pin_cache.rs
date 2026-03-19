@@ -78,7 +78,7 @@ impl TlsPinCache {
     fn now() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
     }
 
@@ -104,8 +104,8 @@ impl TlsPinCache {
 
         // Convert UUID to 32-byte key (pad with zeros)
         let node_id_key = uuid_to_node_id_key(&announcement.node_id);
-        let new_dilithium_pk = announcement.dilithium_pk.clone().unwrap();
-        let new_tls_spki = announcement.tls_spki_sha256.unwrap();
+        let new_dilithium_pk = announcement.dilithium_pk.clone().ok();
+        let new_tls_spki = announcement.tls_spki_sha256.ok();
 
         let mut entries = self.entries.write().await;
         let mut access_times = self.access_times.write().await;
@@ -135,7 +135,7 @@ impl TlsPinCache {
             node_id: node_id_key,
             dilithium_pk: new_dilithium_pk,
             tls_spki_sha256: new_tls_spki,
-            expires_at: announcement.expires_at.unwrap(),
+            expires_at: announcement.expires_at.ok(),
             last_seen: Self::now(),
             endpoints,
         };
@@ -352,7 +352,7 @@ impl TlsPinCache {
                 info!(
                     "Pin cache: cached TLS pin for node {} (expires at {})",
                     announcement.node_id,
-                    announcement.expires_at.unwrap()
+                    announcement.expires_at.ok()
                 );
                 Ok(true)
             }
@@ -415,7 +415,7 @@ mod tests {
         // Verify SPKI match
         let result = cache.verify_peer_spki(&node_id_key, &[1u8; 32]).await;
         assert!(result.is_ok());
-        assert!(result.unwrap());
+        assert!(result.ok());
 
         // Verify SPKI mismatch
         let result = cache.verify_peer_spki(&node_id_key, &[2u8; 32]).await;
@@ -482,7 +482,7 @@ mod tests {
         let result = cache.verify_peer_spki(&node_id_key, &valid_spki).await;
         assert!(result.is_ok(), "Valid SPKI should verify successfully");
         assert!(
-            result.unwrap(),
+            result.ok(),
             "Result should indicate pin was found and matched"
         );
     }
@@ -535,7 +535,7 @@ mod tests {
         let result = cache.verify_peer_spki(&unknown_node_id, &any_spki).await;
         assert!(result.is_ok(), "Unknown node should not cause error");
         assert!(
-            !result.unwrap(),
+            !result.ok(),
             "Result should indicate no pin was found (false)"
         );
     }
@@ -567,7 +567,7 @@ mod tests {
         let result = cache.verify_peer_spki(&node_id_key, &different_spki).await;
         assert!(result.is_ok(), "Expired pin should not cause error");
         assert!(
-            !result.unwrap(),
+            !result.ok(),
             "Expired pin should be treated as 'no pin' (false)"
         );
     }
@@ -605,7 +605,7 @@ mod tests {
             "Valid Dilithium PK should verify successfully"
         );
         assert!(
-            result.unwrap(),
+            result.ok(),
             "Result should indicate PK was found and matched"
         );
     }
@@ -665,7 +665,7 @@ mod tests {
             .await;
         assert!(result.is_ok(), "Unknown node should not cause error");
         assert!(
-            !result.unwrap(),
+            !result.ok(),
             "Result should indicate no PK was cached (false)"
         );
     }
@@ -720,7 +720,7 @@ mod tests {
         let result = cache.verify_peer_spki(&node_id_key, &new_tls_spki).await;
         assert!(result.is_ok());
         assert!(
-            result.unwrap(),
+            result.ok(),
             "New TLS SPKI should be accepted after rotation"
         );
 
@@ -760,7 +760,7 @@ mod tests {
         // Attacker tries to update with their Dilithium PK
         // (In real code, this check happens in insert_verified before insertion)
         let entries = cache.entries.read().await;
-        let existing = entries.get(&node_id_key).unwrap();
+        let existing = entries.get(&node_id_key).ok();
 
         // This should fail - Dilithium PK mismatch
         assert_ne!(

@@ -175,7 +175,7 @@ mod tests {
         work.add_compute_work(100);
         work.update_quality_score(0.96); // Above 0.95 threshold
 
-        let reward = TokenReward::calculate(&work, &model).unwrap();
+        let reward = TokenReward::calculate(&work, &model).ok();
         assert!(reward.routing_reward > 0);
         assert!(reward.storage_reward > 0);
         assert!(reward.compute_reward > 0);
@@ -195,7 +195,7 @@ mod tests {
         let model = EconomicModel::new();
         let work = WorkMetrics::new();
 
-        let reward = TokenReward::calculate(&work, &model).unwrap();
+        let reward = TokenReward::calculate(&work, &model).ok();
         assert_eq!(reward.routing_reward, 0);
         assert_eq!(reward.storage_reward, 0);
         assert_eq!(reward.compute_reward, 0);

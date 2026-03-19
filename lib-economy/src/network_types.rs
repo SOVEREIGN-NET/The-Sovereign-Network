@@ -196,7 +196,7 @@ pub async fn get_network_statistics() -> Result<NetworkStatistics> {
         discovery_stats: DiscoveryStatistics::default(),
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs(),
         average_latency_ms: 150,
         transactions_per_second: 25.0,

@@ -441,7 +441,7 @@ impl StorageMarket {
                 },
                 last_updated: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             },
             regions: HashMap::new(),
@@ -480,7 +480,7 @@ impl StorageMarket {
 
         provider.last_seen = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         self.update_market_stats();
@@ -498,7 +498,7 @@ impl StorageMarket {
         }
 
         // Sort by match score descending
-        matches.sort_by(|a, b| b.match_score.partial_cmp(&a.match_score).unwrap());
+        matches.sort_by(|a, b| b.match_score.partial_cmp(&a.match_score).ok());
 
         Ok(ProviderSearchResult {
             total_matches: matches.len() as u32,
@@ -506,7 +506,7 @@ impl StorageMarket {
             search_criteria: criteria,
             search_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }
@@ -626,7 +626,7 @@ impl StorageMarket {
     /// Get top providers by reputation
     pub fn get_top_providers(&self, limit: usize) -> Vec<&StorageProvider> {
         let mut providers: Vec<_> = self.providers.values().collect();
-        providers.sort_by(|a, b| b.reputation_score.partial_cmp(&a.reputation_score).unwrap());
+        providers.sort_by(|a, b| b.reputation_score.partial_cmp(&a.reputation_score).ok());
         providers.into_iter().take(limit).collect()
     }
 
@@ -679,7 +679,7 @@ impl StorageMarket {
         // Check if advertisement is still valid
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         if ad.valid_until <= current_time {
@@ -694,7 +694,7 @@ impl StorageMarket {
     pub fn get_active_advertisements(&self) -> Vec<&ServiceAdvertisement> {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         self.service_ads
@@ -726,7 +726,7 @@ impl StorageMarket {
     pub fn clean_expired_advertisements(&mut self) -> usize {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let initial_count = self.service_ads.len();
@@ -838,7 +838,7 @@ impl StorageMarket {
         }
 
         // Sort by match score descending
-        matches.sort_by(|a, b| b.match_score.partial_cmp(&a.match_score).unwrap());
+        matches.sort_by(|a, b| b.match_score.partial_cmp(&a.match_score).ok());
         matches
     }
 
@@ -1076,7 +1076,7 @@ impl StorageMarket {
 
         self.market_stats.last_updated = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
     }
 }
@@ -1183,7 +1183,7 @@ impl QualityRequirementsExt for crate::types::QualityRequirements {
 
     fn has_geographic_constraints(&self) -> bool {
         self.geographic_distribution.is_some()
-            && !self.geographic_distribution.as_ref().unwrap().is_empty()
+            && !self.geographic_distribution.as_ref().ok().is_empty()
     }
 
     fn requires_certifications(&self) -> bool {
@@ -1256,7 +1256,7 @@ mod tests {
         let mut market = StorageMarket::new();
 
         let provider = create_test_provider();
-        market.register_provider(provider).unwrap();
+        market.register_provider(provider).ok();
 
         assert_eq!(market.providers.len(), 1);
         assert_eq!(market.market_stats.total_providers, 1);
@@ -1267,7 +1267,7 @@ mod tests {
         let mut market = StorageMarket::new();
 
         let request = create_test_storage_request();
-        let request_id = market.add_pending_request(request.clone()).unwrap();
+        let request_id = market.add_pending_request(request.clone()).ok();
 
         assert_eq!(market.pending_requests.len(), 1);
         assert!(market.get_pending_request(&request_id).is_some());
@@ -1284,11 +1284,11 @@ mod tests {
 
         // Add a provider first
         let provider = create_test_provider();
-        market.register_provider(provider).unwrap();
+        market.register_provider(provider).ok();
 
         // Add advertisement
         let ad = create_test_advertisement();
-        market.add_service_advertisement(ad).unwrap();
+        market.add_service_advertisement(ad).ok();
 
         assert_eq!(market.service_ads.len(), 1);
 
@@ -1304,14 +1304,14 @@ mod tests {
         let mut market = StorageMarket::new();
 
         let region = create_test_region();
-        market.add_region(region).unwrap();
+        market.add_region(region).ok();
 
         assert_eq!(market.regions.len(), 1);
         assert!(market.get_region("us-west").is_some());
 
         // Add provider in region
         let provider = create_test_provider();
-        market.register_provider(provider).unwrap();
+        market.register_provider(provider).ok();
 
         let providers_in_region = market.get_providers_in_region("us-west");
         assert_eq!(providers_in_region.len(), 1);
@@ -1319,7 +1319,7 @@ mod tests {
         let regional_stats = market.get_regional_stats("us-west");
         assert!(regional_stats.is_some());
 
-        let stats = regional_stats.unwrap();
+        let stats = regional_stats.ok();
         assert_eq!(stats.provider_count, 1);
         assert!(stats.total_capacity > 0);
     }
@@ -1330,14 +1330,14 @@ mod tests {
 
         // Setup provider and advertisement
         let provider = create_test_provider();
-        market.register_provider(provider).unwrap();
+        market.register_provider(provider).ok();
 
         let ad = create_test_advertisement();
-        market.add_service_advertisement(ad).unwrap();
+        market.add_service_advertisement(ad).ok();
 
         // Add pending request
         let request = create_test_storage_request();
-        market.add_pending_request(request).unwrap();
+        market.add_pending_request(request).ok();
 
         // Find matches
         let matches = market.match_requests_with_ads();
@@ -1385,14 +1385,14 @@ mod tests {
                 conditions: vec!["First month only".to_string()],
                 expires_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
                     + 86400 * 30,
                 max_usage_count: Some(100),
             }],
             valid_until: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs()
                 + 86400 * 7, // Valid for 7 days
             target_segments: vec![CustomerSegment::SmallBusiness, CustomerSegment::Developer],
@@ -1463,7 +1463,7 @@ mod tests {
                 volume_discounts: Vec::new(),
                 pricing_valid_until: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
                     + 86400,
             },
@@ -1486,7 +1486,7 @@ mod tests {
             },
             last_seen: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             is_online: true,
         }

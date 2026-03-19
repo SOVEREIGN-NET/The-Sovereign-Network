@@ -59,7 +59,7 @@ impl StorageProof {
     ) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Self {
@@ -83,7 +83,7 @@ impl StorageProof {
     pub fn is_expired(&self, expiry_seconds: u64) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         now > self.timestamp + expiry_seconds
     }
@@ -128,7 +128,7 @@ impl RetrievalProof {
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Self {
@@ -155,7 +155,7 @@ impl RetrievalProof {
     pub fn is_expired(&self, expiry_seconds: u64) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         now > self.timestamp + expiry_seconds
     }
@@ -311,7 +311,7 @@ mod tests {
         let proof = generate_storage_proof(content_hash, &blocks, 12345, 1, "node1".to_string());
 
         assert!(proof.is_ok());
-        let proof = proof.unwrap();
+        let proof = proof.ok();
         assert_eq!(proof.block_index, 1);
         assert_eq!(proof.challenged_block, b"block1");
     }
@@ -329,7 +329,7 @@ mod tests {
         let proof = generate_retrieval_proof(content_hash, &blocks, 2, 54321, "node1".to_string());
 
         assert!(proof.is_ok());
-        let proof = proof.unwrap();
+        let proof = proof.ok();
         assert_eq!(proof.sample_indices.len(), 2);
         assert_eq!(proof.sample_hashes.len(), 2);
         assert!(proof.verify_combined_hash());

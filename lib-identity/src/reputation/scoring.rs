@@ -163,7 +163,7 @@ fn calculate_penalty_deductions(identity: &ZhtpIdentity) -> u32 {
     // Check for expired credentials
     let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok()
         .as_secs();
 
     for (_credential_type, credential) in &identity.credentials {

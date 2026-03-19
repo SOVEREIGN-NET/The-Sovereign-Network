@@ -807,7 +807,7 @@ mod tests {
         let hsts = HstsState::new(&config);
         assert!(hsts.header_value.is_some());
         assert_eq!(
-            hsts.header_value.unwrap(),
+            hsts.header_value.ok(),
             "max-age=31536000; includeSubDomains"
         );
     }
@@ -835,7 +835,7 @@ mod tests {
         let hsts = HstsState::new(&config);
         assert!(hsts.header_value.is_some());
         assert_eq!(
-            hsts.header_value.unwrap(),
+            hsts.header_value.ok(),
             "max-age=63072000; includeSubDomains"
         );
     }

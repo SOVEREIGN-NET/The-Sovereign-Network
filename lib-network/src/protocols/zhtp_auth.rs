@@ -109,7 +109,7 @@ impl ZhtpAuthManager {
         nonce[..12].copy_from_slice(&nonce_12);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Generate unique challenge ID
@@ -181,7 +181,7 @@ impl ZhtpAuthManager {
             signature,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             capabilities,
         };
@@ -211,7 +211,7 @@ impl ZhtpAuthManager {
         // Check timestamp freshness (5 minute window)
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         if current_time.saturating_sub(challenge.timestamp) > 300 {
@@ -299,7 +299,7 @@ impl ZhtpAuthManager {
     pub async fn cleanup_expired_challenges(&self) {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let mut challenges = self.active_challenges.write().await;
@@ -333,11 +333,11 @@ mod tests {
         let node_a_pubkey = PublicKey::new(vec![1u8; 32]);
         let node_b_pubkey = PublicKey::new(vec![2u8; 32]);
 
-        let node_a = ZhtpAuthManager::new(node_a_pubkey).unwrap();
-        let node_b = ZhtpAuthManager::new(node_b_pubkey).unwrap();
+        let node_a = ZhtpAuthManager::new(node_a_pubkey).ok();
+        let node_b = ZhtpAuthManager::new(node_b_pubkey).ok();
 
         // Node A creates challenge
-        let challenge = node_a.create_challenge().await.unwrap();
+        let challenge = node_a.create_challenge().await.ok();
 
         // Node B responds to challenge
         let capabilities = NodeCapabilities {
@@ -351,10 +351,10 @@ mod tests {
 
         let response = node_b
             .respond_to_challenge(&challenge, capabilities)
-            .unwrap();
+            .ok();
 
         // Node A verifies response
-        let verification = node_a.verify_response(&response).await.unwrap();
+        let verification = node_a.verify_response(&response).await.ok();
 
         assert!(verification.authenticated);
         assert!(verification.trust_score > 0.7); // Should have high trust score

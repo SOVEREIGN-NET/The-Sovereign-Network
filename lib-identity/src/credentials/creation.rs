@@ -186,7 +186,7 @@ impl CredentialFactory {
             Some(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
                     + (365 * 24 * 3600),
             ), // Valid for 1 year
@@ -212,7 +212,7 @@ impl CredentialFactory {
             Some(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
                     + (30 * 24 * 3600),
             ), // Valid for 30 days
@@ -333,7 +333,7 @@ impl CredentialFactory {
         CreationMetadata {
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             creator_id,
             creation_method: method,
@@ -371,7 +371,7 @@ mod tests {
                 issuer_id,
             )
             .await
-            .unwrap();
+            .ok();
 
         assert!(result.success);
         assert_eq!(
@@ -395,7 +395,7 @@ mod tests {
         let result = factory
             .create_reputation_credential(subject_id.clone(), 750, issuer_id)
             .await
-            .unwrap();
+            .ok();
 
         assert!(result.success);
         assert_eq!(

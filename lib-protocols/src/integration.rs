@@ -1039,7 +1039,7 @@ mod tests {
         config.blockchain_enabled = false;
         config.identity_enabled = false;
 
-        let mut integration = ZhtpIntegration::new(config).await.unwrap();
+        let mut integration = ZhtpIntegration::new(config).await.ok();
 
         let request = ZhtpRequest {
             method: ZhtpMethod::Get,
@@ -1049,7 +1049,7 @@ mod tests {
             body: vec![],
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             requester: None,
             auth_proof: None,

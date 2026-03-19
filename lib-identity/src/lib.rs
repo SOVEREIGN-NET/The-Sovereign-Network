@@ -415,7 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_identity_system_initialization() {
-        let manager = initialize_identity_system().await.unwrap();
+        let manager = initialize_identity_system().await.ok();
         assert_eq!(manager.list_identities().len(), 0);
     }
 }

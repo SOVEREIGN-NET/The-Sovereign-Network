@@ -209,7 +209,7 @@ mod tests {
             char_uuid: &str,
             data: &[u8],
         ) -> Result<()> {
-            self.writes.lock().unwrap().push((
+            self.writes.lock().ok().push((
                 device_address.to_string(),
                 char_uuid.to_string(),
                 data.to_vec(),
@@ -248,8 +248,8 @@ mod tests {
 
     fn protocol() -> BluetoothMeshProtocol {
         let node_id = [7u8; 32];
-        let keypair = KeyPair::generate().unwrap();
-        BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap()
+        let keypair = KeyPair::generate().ok();
+        BluetoothMeshProtocol::new(node_id, keypair.public_key).ok()
     }
 
     #[tokio::test]
@@ -262,9 +262,9 @@ mod tests {
         protocol
             .write_handshake_via_backend("peer", "char", &data)
             .await
-            .unwrap();
+            .ok();
 
-        let writes = backend.writes.lock().unwrap();
+        let writes = backend.writes.lock().ok();
         assert_eq!(writes.len(), 1);
         assert_eq!(writes[0].0, "peer");
         assert_eq!(writes[0].1, "char");

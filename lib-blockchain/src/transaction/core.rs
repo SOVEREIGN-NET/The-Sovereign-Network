@@ -991,7 +991,7 @@ impl Transaction {
             did_document_hash: Hash::default(),
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             registration_fee: 0,
             dao_fee: 0,
@@ -2095,7 +2095,7 @@ impl IdentityTransactionData {
             did_document_hash,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             registration_fee,
             dao_fee,
@@ -2126,7 +2126,7 @@ impl IdentityTransactionData {
             did_document_hash,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             registration_fee,
             dao_fee,

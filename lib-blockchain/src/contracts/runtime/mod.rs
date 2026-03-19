@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn test_native_runtime() {
         let mut runtime = NativeRuntime::new();
-        let keypair = KeyPair::generate().unwrap();
+        let keypair = KeyPair::generate().ok();
 
         let context = RuntimeContext {
             caller: keypair.public_key,
@@ -329,7 +329,7 @@ mod tests {
                 &context,
                 &config,
             )
-            .unwrap();
+            .ok();
 
         assert!(result.success);
         assert_eq!(result.return_data, b"test_params");
@@ -340,7 +340,7 @@ mod tests {
         let config = RuntimeConfig::default();
         let factory = RuntimeFactory::new(config);
 
-        let runtime = factory.create_runtime("test").unwrap();
+        let runtime = factory.create_runtime("test").ok();
 
         // Minimal valid WASM module (empty module with magic + version)
         // Magic: \0asm, Version: 1 (little-endian 4 bytes)

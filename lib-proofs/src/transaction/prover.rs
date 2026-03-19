@@ -383,7 +383,7 @@ mod tests {
         let result = prover.prove_simple_transaction(amount, sender_secret);
         assert!(result.is_ok());
 
-        let proof = result.unwrap();
+        let proof = result.ok();
         assert!(proof.is_plonky2());
         assert!(!proof.has_empty_proofs());
     }
@@ -410,7 +410,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let proof = result.unwrap();
+        let proof = result.ok();
         assert!(proof.is_plonky2());
     }
 }

@@ -150,7 +150,7 @@ impl NodeAnnouncement {
         self.expires_at = Some(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs()
                 + DEFAULT_RECORD_VALIDITY_SECS,
         );
@@ -187,7 +187,7 @@ impl NodeAnnouncement {
         if let Some(expires_at) = self.expires_at {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs();
             now < expires_at
         } else {
@@ -324,7 +324,7 @@ async fn send_immediate_announcement(
         ],
         announced_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs(),
         ..Default::default()
     };
@@ -411,7 +411,7 @@ async fn broadcast_announcements(
             ],
             announced_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             ..Default::default()
         };
@@ -641,7 +641,7 @@ pub async fn discover_local_peers() -> Result<Vec<NodeAnnouncement>> {
         "type": "discovery_request",
         "timestamp": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
     });
 

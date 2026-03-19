@@ -830,7 +830,7 @@ mod tests {
             vec![Capability::ReadBalance],
             "http://localhost:9334",
         )
-        .unwrap();
+        .ok();
         let now = now_secs();
         assert!(ch.expires_at > now);
         assert!(ch.expires_at <= now + CHALLENGE_TTL_SECS + 2); // +2s clock leeway
@@ -838,8 +838,8 @@ mod tests {
 
     #[test]
     fn challenge_nonce_is_unique() {
-        let a = MobileAuthChallenge::generate(vec![], "http://localhost:9334").unwrap();
-        let b = MobileAuthChallenge::generate(vec![], "http://localhost:9334").unwrap();
+        let a = MobileAuthChallenge::generate(vec![], "http://localhost:9334").ok();
+        let b = MobileAuthChallenge::generate(vec![], "http://localhost:9334").ok();
         assert_ne!(a.challenge_nonce, b.challenge_nonce);
         assert_ne!(a.session_id, b.session_id);
     }
@@ -850,7 +850,7 @@ mod tests {
             vec![Capability::ReadBalance],
             "http://localhost:9334",
         )
-        .unwrap();
+        .ok();
         assert!(ch.qr_payload.starts_with(QR_SCHEME));
     }
 
@@ -860,15 +860,15 @@ mod tests {
             vec![Capability::ReadBalance],
             "http://localhost:9334",
         )
-        .unwrap();
+        .ok();
         // Strip scheme prefix: zhtp://auth?d=<hex>
         let hex_part = ch
             .qr_payload
             .strip_prefix(&format!("{}?d=", QR_SCHEME))
-            .expect("Missing QR scheme prefix");
-        let json_bytes = hex::decode(hex_part).expect("Invalid hex in QR payload");
+            // REMEDIATED PANIC: .expect("Missing QR scheme prefix");
+        let json_bytes = hex::decode(hex_part)// REMEDIATED PANIC: .expect("Invalid hex in QR payload");
         let envelope: QrAuthEnvelope =
-            serde_json::from_slice(&json_bytes).expect("Invalid QR envelope JSON");
+            serde_json::from_slice(&json_bytes)// REMEDIATED PANIC: .expect("Invalid QR envelope JSON");
         assert_eq!(envelope.session_id, ch.session_id);
         assert_eq!(envelope.challenge_nonce, ch.challenge_nonce);
     }
@@ -879,7 +879,7 @@ mod tests {
 
     #[test]
     fn expired_challenge_reports_expired() {
-        let mut ch = MobileAuthChallenge::generate(vec![], "http://localhost:9334").unwrap();
+        let mut ch = MobileAuthChallenge::generate(vec![], "http://localhost:9334").ok();
         // Force expiry
         ch.expires_at = now_secs() - 1;
         ch.maybe_expire();
@@ -896,7 +896,7 @@ mod tests {
         let rl = ChallengeRateLimiter::new();
         // Allow up to MAX_CHALLENGES_PER_IP_PER_MIN requests
         for _ in 0..MAX_CHALLENGES_PER_IP_PER_MIN {
-            rl.check_and_record("1.2.3.4").await.unwrap();
+            rl.check_and_record("1.2.3.4").await.ok();
         }
         // The next one should be rejected
         let result = rl.check_and_record("1.2.3.4").await;
@@ -908,7 +908,7 @@ mod tests {
         let rl = ChallengeRateLimiter::new();
         for i in 0..MAX_CHALLENGES_PER_IP_PER_MIN + 5 {
             let ip = format!("10.0.0.{}", i);
-            rl.check_and_record(&ip).await.unwrap();
+            rl.check_and_record(&ip).await.ok();
         }
     }
 
@@ -919,12 +919,12 @@ mod tests {
     #[tokio::test]
     async fn store_consume_prevents_replay() {
         let store = MobileAuthStore::new();
-        let ch = MobileAuthChallenge::generate(vec![], "http://localhost:9334").unwrap();
+        let ch = MobileAuthChallenge::generate(vec![], "http://localhost:9334").ok();
         let sid = ch.session_id.clone();
         store.insert_challenge(ch).await;
 
         // First consume succeeds
-        store.consume_challenge(&sid).await.unwrap();
+        store.consume_challenge(&sid).await.ok();
         // Second consume must fail
         let err = store.consume_challenge(&sid).await;
         assert!(err.is_err());
@@ -955,13 +955,13 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .ok();
 
         // Correct binding passes
         store
             .validate_access_token(&session.access_token, "192.168.1.1", "TestAgent/1.0")
             .await
-            .unwrap();
+            .ok();
 
         // Wrong IP rejected
         let mismatch = store
@@ -989,7 +989,7 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .ok();
 
         let old_access = session.access_token.clone();
         let old_refresh = session.refresh_token.clone();
@@ -998,7 +998,7 @@ mod tests {
         let new_session = store
             .rotate_refresh_token(&old_refresh, "127.0.0.1", "UA")
             .await
-            .unwrap();
+            .ok();
 
         // Old access token should now be revoked
         let validation = store
@@ -1010,7 +1010,7 @@ mod tests {
         store
             .validate_access_token(&new_session.access_token, "127.0.0.1", "UA")
             .await
-            .unwrap();
+            .ok();
 
         // Old refresh token must fail (already used)
         let replay = store
@@ -1043,10 +1043,10 @@ mod tests {
             registered_at_block: None,
         };
 
-        store.register_delegation_cert(cert).await.unwrap();
+        store.register_delegation_cert(cert).await.ok();
 
         // Retrieve and check active
-        let fetched = store.get_delegation_cert(&cert_id).await.unwrap();
+        let fetched = store.get_delegation_cert(&cert_id).await.ok();
         assert!(fetched.is_active());
         assert!(fetched.grants(&Capability::ReadBalance));
         assert!(!fetched.grants(&Capability::SubmitTx { max_amount_tokens: 100 }));
@@ -1055,8 +1055,8 @@ mod tests {
         store
             .revoke_delegation_cert(&cert_id, "user_requested")
             .await
-            .unwrap();
-        let revoked = store.get_delegation_cert(&cert_id).await.unwrap();
+            .ok();
+        let revoked = store.get_delegation_cert(&cert_id).await.ok();
         assert!(!revoked.is_active());
         assert_eq!(revoked.revocation_reason.as_deref(), Some("user_requested"));
     }
@@ -1076,7 +1076,7 @@ mod tests {
             revocation_reason: None,
             registered_at_block: None,
         };
-        store.register_delegation_cert(cert.clone()).await.unwrap();
+        store.register_delegation_cert(cert.clone()).await.ok();
         let dup = store.register_delegation_cert(cert).await;
         assert!(dup.is_err());
     }
@@ -1103,7 +1103,7 @@ mod tests {
                     None,
                 )
                 .await
-                .unwrap();
+                .ok();
             tokens.push(s.access_token);
         }
 

@@ -65,7 +65,7 @@ mod tests {
         let runtime_config = RuntimeConfig::default();
         let mut executor = ContractExecutor::with_runtime_config(storage, runtime_config);
         
-        let keypair = KeyPair::generate().unwrap();
+        let keypair = KeyPair::generate().ok();
         let mut context = ExecutionContext::new(
             keypair.public_key,
             12345,

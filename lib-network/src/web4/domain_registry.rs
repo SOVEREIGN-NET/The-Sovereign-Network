@@ -1641,17 +1641,17 @@ mod tests {
         async fn store_domain_record(&self, domain: &str, data: Vec<u8>) -> Result<()> {
             self.domains
                 .write()
-                .unwrap()
+                .ok()
                 .insert(domain.to_string(), data);
             Ok(())
         }
 
         async fn load_domain_record(&self, domain: &str) -> Result<Option<Vec<u8>>> {
-            Ok(self.domains.read().unwrap().get(domain).cloned())
+            Ok(self.domains.read().ok().get(domain).cloned())
         }
 
         async fn delete_domain_record(&self, domain: &str) -> Result<()> {
-            self.domains.write().unwrap().remove(domain);
+            self.domains.write().ok().remove(domain);
             Ok(())
         }
 
@@ -1659,7 +1659,7 @@ mod tests {
             Ok(self
                 .domains
                 .read()
-                .unwrap()
+                .ok()
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect())
@@ -1668,13 +1668,13 @@ mod tests {
         async fn store_manifest(&self, domain: &str, manifest_data: Vec<u8>) -> Result<()> {
             self.manifests
                 .write()
-                .unwrap()
+                .ok()
                 .insert(domain.to_string(), manifest_data);
             Ok(())
         }
 
         async fn load_manifest(&self, domain: &str) -> Result<Option<Vec<u8>>> {
-            Ok(self.manifests.read().unwrap().get(domain).cloned())
+            Ok(self.manifests.read().ok().get(domain).cloned())
         }
 
         fn is_stub(&self) -> bool {
@@ -1693,20 +1693,20 @@ mod tests {
 
     fn get_test_storage(path: &std::path::Path) -> Arc<dyn UnifiedStorage> {
         let map = get_test_storage_map();
-        let mut map = map.lock().unwrap();
+        let mut map = map.lock().ok();
 
         let key = path.to_string_lossy().to_string();
         if !map.contains_key(&key) {
             map.insert(key.clone(), Arc::new(TestStorage::default()));
         }
 
-        map.get(&key).unwrap().clone() as Arc<dyn UnifiedStorage>
+        map.get(&key).ok().clone() as Arc<dyn UnifiedStorage>
     }
 
     /// Clear test storage between tests (call at start of each test for isolation)
     fn clear_test_storage_for_path(path: &std::path::Path) {
         let map = get_test_storage_map();
-        let mut map = map.lock().unwrap();
+        let mut map = map.lock().ok();
         let key = path.to_string_lossy().to_string();
         map.remove(&key);
     }
@@ -1727,12 +1727,12 @@ mod tests {
             "test_domain_owner",
             None,
         )
-        .unwrap()
+        .ok()
     }
 
     #[tokio::test]
     async fn test_domain_persistence_round_trip() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let persist_path = temp_dir.path().join("dht_storage.bin");
 
         // Clear test storage for isolation
@@ -1747,7 +1747,7 @@ mod tests {
         // Create registry and register a domain
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.ok();
 
             // Register domain
             let registration_proof = ZeroKnowledgeProof::new(
@@ -1780,26 +1780,26 @@ mod tests {
                 deploy_manifest_cid: None,
             };
 
-            let response = registry.register_domain(request).await.unwrap();
+            let response = registry.register_domain(request).await.ok();
             assert!(response.success, "Domain registration should succeed");
 
             // Verify domain exists
-            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            let lookup = registry.lookup_domain(domain_name).await.ok();
             assert!(lookup.found, "Domain should be found");
         }
 
         // Create new registry with same storage path and verify domain persists
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.ok();
 
             // Domain should be loaded from persistence
-            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            let lookup = registry.lookup_domain(domain_name).await.ok();
             assert!(
                 lookup.found,
                 "Domain should persist across registry restarts"
             );
-            assert_eq!(lookup.record.as_ref().unwrap().domain, domain_name);
+            assert_eq!(lookup.record.as_ref().ok().domain, domain_name);
         }
 
         // Clean up
@@ -1808,7 +1808,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_update_persists() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let persist_path = temp_dir.path().join("dht_storage_update.bin");
 
         // Clear test storage for isolation
@@ -1824,7 +1824,7 @@ mod tests {
         // Create registry, register domain, then update it
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.ok();
 
             // Register domain
             let registration_proof = ZeroKnowledgeProof::new(
@@ -1857,15 +1857,15 @@ mod tests {
                 deploy_manifest_cid: None,
             };
 
-            let response = registry.register_domain(request).await.unwrap();
+            let response = registry.register_domain(request).await.ok();
             assert!(response.success);
 
             // Get initial manifest CID
-            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            let lookup = registry.lookup_domain(domain_name).await.ok();
             initial_manifest_cid = lookup
                 .record
                 .as_ref()
-                .unwrap()
+                .ok()
                 .current_web4_manifest_cid
                 .clone();
 
@@ -1877,11 +1877,11 @@ mod tests {
                 signature: String::new(),
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             };
 
-            let update_response = registry.update_domain(update_request).await.unwrap();
+            let update_response = registry.update_domain(update_request).await.ok();
             assert!(update_response.success, "Domain update should succeed");
             assert_eq!(update_response.new_version, 2);
         }
@@ -1889,11 +1889,11 @@ mod tests {
         // Verify update persisted across restart
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.ok();
 
-            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            let lookup = registry.lookup_domain(domain_name).await.ok();
             assert!(lookup.found);
-            let record = lookup.record.unwrap();
+            let record = lookup.record.ok();
             assert_eq!(record.version, 2, "Version should be updated");
             assert_eq!(
                 record.current_web4_manifest_cid, updated_manifest_cid,
@@ -1906,7 +1906,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_domain_release_persists() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let persist_path = temp_dir.path().join("dht_storage_release.bin");
 
         // Clear test storage for isolation
@@ -1920,7 +1920,7 @@ mod tests {
         // Create registry and register a domain
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.ok();
 
             let registration_proof = ZeroKnowledgeProof::new(
                 "Plonky2".to_string(),
@@ -1952,24 +1952,24 @@ mod tests {
                 deploy_manifest_cid: None,
             };
 
-            let response = registry.register_domain(request).await.unwrap();
+            let response = registry.register_domain(request).await.ok();
             assert!(response.success);
 
             // Release the domain
-            let release_result = registry.release_domain(domain_name, &owner).await.unwrap();
+            let release_result = registry.release_domain(domain_name, &owner).await.ok();
             assert!(release_result, "Domain release should succeed");
 
             // Verify domain no longer exists
-            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            let lookup = registry.lookup_domain(domain_name).await.ok();
             assert!(!lookup.found, "Domain should not be found after release");
         }
 
         // Verify release persisted across restart
         {
             let storage = create_test_storage_with_persistence(persist_path.clone()).await;
-            let registry = DomainRegistry::new(storage).await.unwrap();
+            let registry = DomainRegistry::new(storage).await.ok();
 
-            let lookup = registry.lookup_domain(domain_name).await.unwrap();
+            let lookup = registry.lookup_domain(domain_name).await.ok();
             assert!(!lookup.found, "Domain should remain deleted after restart");
         }
 

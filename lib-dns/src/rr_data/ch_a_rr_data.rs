@@ -155,6 +155,6 @@ fn test() {
     let buf = vec![
         0x7, 0x43, 0x48, 0x2d, 0x41, 0x44, 0x44, 0x52, 0x0, 0x6, 0x61,
     ];
-    let record = ChARRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = ChARRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

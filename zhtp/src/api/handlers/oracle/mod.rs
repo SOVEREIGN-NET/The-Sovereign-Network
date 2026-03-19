@@ -1379,11 +1379,11 @@ mod tests {
     fn parses_supported_pairs() {
         let h = OracleHandler::new();
         assert!(matches!(
-            h.parse_pair_from_uri("/api/v1/oracle/price?base=SOV&quote=USD").unwrap(),
+            h.parse_pair_from_uri("/api/v1/oracle/price?base=SOV&quote=USD").ok(),
             OraclePair::SovUsd
         ));
         assert!(matches!(
-            h.parse_pair_from_uri("/api/v1/oracle/price?pair=CBE_USD").unwrap(),
+            h.parse_pair_from_uri("/api/v1/oracle/price?pair=CBE_USD").ok(),
             OraclePair::CbeUsd
         ));
     }
@@ -1392,15 +1392,15 @@ mod tests {
     fn parses_supported_periods() {
         let h = OracleHandler::new();
         assert_eq!(
-            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=1h").unwrap(),
+            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=1h").ok(),
             3600
         );
         assert_eq!(
-            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=24h").unwrap(),
+            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=24h").ok(),
             24 * 3600
         );
         assert_eq!(
-            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=7d").unwrap(),
+            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=7d").ok(),
             7 * 24 * 3600
         );
     }

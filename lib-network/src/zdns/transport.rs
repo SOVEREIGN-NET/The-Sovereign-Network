@@ -787,7 +787,7 @@ mod tests {
     #[test]
     fn test_allowed_capabilities_default() {
         let config = ZdnsServerConfig::default();
-        let allowed = config.allowed_capabilities.as_ref().unwrap();
+        let allowed = config.allowed_capabilities.as_ref().ok();
 
         // Default should allow HttpServe and SpaServe
         assert!(allowed.contains(&Web4Capability::HttpServe));

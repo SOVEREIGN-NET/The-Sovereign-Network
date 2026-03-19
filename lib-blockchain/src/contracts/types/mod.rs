@@ -103,8 +103,8 @@ mod tests {
     #[test]
     fn test_message_type_serialization() {
         let message_type = MessageType::DirectMessage;
-        let serialized = bincode::serialize(&message_type).unwrap();
-        let deserialized: MessageType = bincode::deserialize(&serialized).unwrap();
+        let serialized = bincode::serialize(&message_type).ok();
+        let deserialized: MessageType = bincode::deserialize(&serialized).ok();
         assert_eq!(message_type, deserialized);
     }
 }

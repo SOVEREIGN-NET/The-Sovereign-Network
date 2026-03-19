@@ -96,13 +96,13 @@ mod tests {
             0xfc, 0x3b, 0x79, 0x3e, 0x16, 0x05, 0x00, 0x00, 0x00, 0x00,
         ];
 
-        let message = Message::from_bytes(&x).unwrap();
+        let message = Message::from_bytes(&x).ok();
 
         //println!("{}", message);
         //println!("{:x?}", message.to_bytes(512));
         println!("{:?}", message);
 
-        //println!("{:x?}", message.section(2).get(0).unwrap().data().unwrap().to_bytes().unwrap());
+        //println!("{:x?}", message.section(2).get(0).ok().data().ok().to_bytes().ok());
 
         //assert_eq!(x, message.to_bytes(512));
     }
@@ -117,11 +117,11 @@ mod tests {
         }
 
         let mut store = ZoneStore::new();
-        store.open(path, "find9.net", RRClasses::In).unwrap();
+        store.open(path, "find9.net", RRClasses::In).ok();
 
         //println!("{:?}", store.get_deepest_zone("x1.find9.net"));
         //println!("{:?}", store.get_deepest_zone_with_name("find9.net"));
-        //println!("{:?}", store.get_zone_exact("find9.net").unwrap().get_all_records(""));
-        //println!("{:?}", store.get_zone_exact("find9.net").unwrap().get_records(&RRQuery::new("", RRTypes::A, RRClasses::In)));
+        //println!("{:?}", store.get_zone_exact("find9.net").ok().get_all_records(""));
+        //println!("{:?}", store.get_zone_exact("find9.net").ok().get_records(&RRQuery::new("", RRTypes::A, RRClasses::In)));
     }
 }

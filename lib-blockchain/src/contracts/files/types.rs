@@ -57,7 +57,7 @@ impl SharedFile {
     ) -> Self {
         let upload_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let file_id = crate::contracts::utils::id_generation::generate_file_id(
@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_file_creation() {
-        let owner_keypair = KeyPair::generate().unwrap();
+        let owner_keypair = KeyPair::generate().ok();
         let content_hash = [1u8; 32];
 
         let file = SharedFile::new(
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn test_file_contract() {
         let mut contract = FileContract::new();
-        let owner_keypair = KeyPair::generate().unwrap();
+        let owner_keypair = KeyPair::generate().ok();
         let content_hash = [1u8; 32];
 
         let file = SharedFile::new(
@@ -609,8 +609,8 @@ mod tests {
     #[test]
     fn test_file_access_management() {
         let mut contract = FileContract::new();
-        let owner_keypair = KeyPair::generate().unwrap();
-        let user_keypair = KeyPair::generate().unwrap();
+        let owner_keypair = KeyPair::generate().ok();
+        let user_keypair = KeyPair::generate().ok();
         let content_hash = [1u8; 32];
 
         let file = SharedFile::new(
@@ -632,21 +632,21 @@ mod tests {
         assert!(contract.add_file(file).is_ok());
 
         // User should not have access initially
-        let file = contract.get_file(&file_id).unwrap();
+        let file = contract.get_file(&file_id).ok();
         assert!(!file.has_access(&user_keypair.public_key));
 
         // Grant access to user
         assert!(contract
             .grant_file_access(&file_id, user_keypair.public_key.clone())
             .is_ok());
-        let file = contract.get_file(&file_id).unwrap();
+        let file = contract.get_file(&file_id).ok();
         assert!(file.has_access(&user_keypair.public_key));
 
         // Revoke access
         assert!(contract
             .revoke_file_access(&file_id, &user_keypair.public_key)
             .is_ok());
-        let file = contract.get_file(&file_id).unwrap();
+        let file = contract.get_file(&file_id).ok();
         assert!(!file.has_access(&user_keypair.public_key));
     }
 }

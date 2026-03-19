@@ -157,7 +157,7 @@ async fn verify_ubi_economic_constraints(amount: u64, round: u64) -> Result<bool
     // Check if round is reasonable (simplified - would use actual current round in implementation)
     let current_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .ok()
         .as_secs();
     let estimated_current_round = current_time / 86400; // Daily rounds
 
@@ -332,6 +332,6 @@ mod tests {
     async fn test_batch_ubi_proofs_empty() {
         let result = verify_batch_ubi_proofs(&[]).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 0);
+        assert_eq!(result.ok().len(), 0);
     }
 }

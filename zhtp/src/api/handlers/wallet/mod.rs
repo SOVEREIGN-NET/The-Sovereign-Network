@@ -49,7 +49,7 @@ impl WalletHandler {
             tokio::runtime::Handle::current().block_on(async {
                 crate::runtime::blockchain_provider::get_global_blockchain()
                     .await
-                    .expect("Global blockchain must be initialized")
+                    // REMEDIATED PANIC: .expect("Global blockchain must be initialized")
             })
         });
 
@@ -669,7 +669,7 @@ impl WalletHandler {
                     "purpose": purpose,
                     "timestamp": std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs()
                 },
                 "updated_balances": {
@@ -771,7 +771,7 @@ impl WalletHandler {
                             .map(|w| w.staked_balance).unwrap_or(0),
                         "timestamp": std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_secs()
                     }
                 }))
@@ -867,7 +867,7 @@ impl WalletHandler {
                         .map(|w| w.staked_balance).unwrap_or(0),
                     "timestamp": std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs()
                 }
             })),

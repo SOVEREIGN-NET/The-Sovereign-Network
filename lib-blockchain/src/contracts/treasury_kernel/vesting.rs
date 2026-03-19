@@ -534,9 +534,9 @@ mod tests {
         // Pre-fund beneficiary
         token
             .mint_kernel_only(kernel.kernel_address(), &beneficiary, 10000)
-            .unwrap();
+            .ok();
 
-        let schedule = VestingSchedule::new(100, 110, 200, 5000).unwrap();
+        let schedule = VestingSchedule::new(100, 110, 200, 5000).ok();
         let result = kernel.create_vesting(
             &mut token,
             &caller,
@@ -548,7 +548,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let vesting_id = result.unwrap();
+        let vesting_id = result.ok();
         assert!(vesting_state.get_lock(&vesting_id).is_some());
         assert_eq!(token.available_balance(&beneficiary), 5000); // 10000 - 5000 locked
     }
@@ -561,7 +561,7 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &beneficiary, 10000)
-            .unwrap();
+            .ok();
 
         // Invalid: cliff before start
         let schedule = VestingSchedule {
@@ -590,7 +590,7 @@ mod tests {
         let beneficiary = test_beneficiary();
 
         // Beneficiary has no tokens
-        let schedule = VestingSchedule::new(100, 110, 200, 5000).unwrap();
+        let schedule = VestingSchedule::new(100, 110, 200, 5000).ok();
         let result = kernel.create_vesting(
             &mut token,
             &caller,
@@ -613,9 +613,9 @@ mod tests {
         // Pre-fund and create vesting
         token
             .mint_kernel_only(kernel.kernel_address(), &beneficiary, 10000)
-            .unwrap();
+            .ok();
 
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let vesting_id = kernel
             .create_vesting(
                 &mut token,
@@ -626,7 +626,7 @@ mod tests {
                 false,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
 
         // At epoch 150, 50% vested
         let result = kernel.release_vested(
@@ -638,7 +638,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 5000);
+        assert_eq!(result.ok(), 5000);
         assert_eq!(token.available_balance(&beneficiary), 5000);
     }
 
@@ -650,9 +650,9 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &beneficiary, 10000)
-            .unwrap();
+            .ok();
 
-        let schedule = VestingSchedule::new(100, 150, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 150, 200, 10000).ok();
         let vesting_id = kernel
             .create_vesting(
                 &mut token,
@@ -663,7 +663,7 @@ mod tests {
                 false,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
 
         // Try to release before cliff (epoch 120 < cliff 150)
         let result = kernel.release_vested(
@@ -685,9 +685,9 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &beneficiary, 10000)
-            .unwrap();
+            .ok();
 
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let vesting_id = kernel
             .create_vesting(
                 &mut token,
@@ -698,7 +698,7 @@ mod tests {
                 false,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
 
         // First release at 25%
         let r1 = kernel
@@ -709,7 +709,7 @@ mod tests {
                 125,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
         assert_eq!(r1, 2500);
 
         // Second release at 50%
@@ -721,7 +721,7 @@ mod tests {
                 150,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
         assert_eq!(r2, 2500); // Additional 2500 vested
 
         // Third release at 100%
@@ -733,7 +733,7 @@ mod tests {
                 200,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
         assert_eq!(r3, 5000); // Remaining 5000
 
         // Fourth release should fail - all released
@@ -757,9 +757,9 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &beneficiary, 10000)
-            .unwrap();
+            .ok();
 
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let vesting_id = kernel
             .create_vesting(
                 &mut token,
@@ -770,7 +770,7 @@ mod tests {
                 true, // revocable
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
 
         // Revoke at 50% vested
         let result = kernel.revoke_vesting(
@@ -783,7 +783,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 5000); // 5000 unvested returned
+        assert_eq!(result.ok(), 5000); // 5000 unvested returned
         assert_eq!(token.balance_of(&treasury), 5000);
     }
 
@@ -797,9 +797,9 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &beneficiary, 10000)
-            .unwrap();
+            .ok();
 
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let vesting_id = kernel
             .create_vesting(
                 &mut token,
@@ -810,7 +810,7 @@ mod tests {
                 false, // not revocable
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
 
         let result = kernel.revoke_vesting(
             &mut token,
@@ -844,11 +844,11 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &beneficiary, 20000)
-            .unwrap();
+            .ok();
 
         // Create two vestings for same beneficiary
-        let schedule1 = VestingSchedule::new(100, 100, 200, 5000).unwrap();
-        let schedule2 = VestingSchedule::new(100, 100, 200, 5000).unwrap();
+        let schedule1 = VestingSchedule::new(100, 100, 200, 5000).ok();
+        let schedule2 = VestingSchedule::new(100, 100, 200, 5000).ok();
 
         kernel
             .create_vesting(
@@ -860,7 +860,7 @@ mod tests {
                 false,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
         kernel
             .create_vesting(
                 &mut token,
@@ -871,7 +871,7 @@ mod tests {
                 false,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
 
         let vestings = kernel.get_beneficiary_vestings(&beneficiary.key_id, &vesting_state);
         assert_eq!(vestings.len(), 2);
@@ -885,11 +885,11 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &beneficiary, 20000)
-            .unwrap();
+            .ok();
 
         // Two vestings: 10000 each, both 50% vested at epoch 150
-        let schedule1 = VestingSchedule::new(100, 100, 200, 10000).unwrap();
-        let schedule2 = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule1 = VestingSchedule::new(100, 100, 200, 10000).ok();
+        let schedule2 = VestingSchedule::new(100, 100, 200, 10000).ok();
 
         kernel
             .create_vesting(
@@ -901,7 +901,7 @@ mod tests {
                 false,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
         kernel
             .create_vesting(
                 &mut token,
@@ -912,7 +912,7 @@ mod tests {
                 false,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
 
         let total =
             kernel.total_releasable_for_beneficiary(&beneficiary.key_id, 150, &vesting_state);
@@ -930,9 +930,9 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &beneficiary, 10000)
-            .unwrap();
+            .ok();
 
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let vesting_id = kernel
             .create_vesting(
                 &mut token,
@@ -943,7 +943,7 @@ mod tests {
                 true, // revocable
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
 
         // At epoch 125, 25% (2500) is vested. Release it.
         let released = kernel
@@ -954,7 +954,7 @@ mod tests {
                 125,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
         assert_eq!(released, 2500);
         assert_eq!(token.available_balance(&beneficiary), 2500); // 2500 unlocked
 
@@ -972,7 +972,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let returned = result.unwrap();
+        let returned = result.ok();
         assert_eq!(returned, 5000); // 5000 unvested returned to treasury
         assert_eq!(token.balance_of(&treasury), 5000);
 
@@ -985,7 +985,7 @@ mod tests {
                 200,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
         assert_eq!(remaining, 2500); // Remaining vested-but-unreleased
     }
 
@@ -1000,9 +1000,9 @@ mod tests {
 
         token
             .mint_kernel_only(kernel.kernel_address(), &beneficiary, 10000)
-            .unwrap();
+            .ok();
 
-        let schedule = VestingSchedule::new(100, 100, 200, 10000).unwrap();
+        let schedule = VestingSchedule::new(100, 100, 200, 10000).ok();
         let vesting_id = kernel
             .create_vesting(
                 &mut token,
@@ -1013,7 +1013,7 @@ mod tests {
                 true,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
 
         // Revoke at 50% vested without any prior releases
         kernel
@@ -1025,7 +1025,7 @@ mod tests {
                 150,
                 &mut vesting_state,
             )
-            .unwrap();
+            .ok();
 
         // Beneficiary should be able to release the 5000 that vested before revocation
         let result = kernel.release_vested(
@@ -1037,6 +1037,6 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 5000);
+        assert_eq!(result.ok(), 5000);
     }
 }

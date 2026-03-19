@@ -69,14 +69,14 @@ pub fn validate_identity_name(name: &str) -> CliResult<()> {
     }
 
     // Must start with alphanumeric
-    if !name.chars().next().unwrap().is_alphanumeric() {
+    if !name.chars().next().ok().is_alphanumeric() {
         return Err(CliError::IdentityError(
             "Identity name must start with alphanumeric character".to_string(),
         ));
     }
 
     // Only allow alphanumeric, dash, underscore
-    let valid_pattern = Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$").unwrap();
+    let valid_pattern = Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$").ok();
     if !valid_pattern.is_match(name) {
         return Err(CliError::IdentityError(
             "Identity name can only contain alphanumeric characters, dashes, and underscores"
@@ -222,7 +222,7 @@ mod tests {
     fn test_build_did_valid() {
         let result = build_did("alice", "abc123");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "did:zhtp:alice:abc123");
+        assert_eq!(result.ok(), "did:zhtp:alice:abc123");
     }
 
     #[test]
@@ -253,14 +253,14 @@ mod tests {
     fn test_extract_name_from_did() {
         let result = extract_name_from_did("did:zhtp:alice:abc123");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "alice");
+        assert_eq!(result.ok(), "alice");
     }
 
     #[test]
     fn test_extract_hash_from_did() {
         let result = extract_hash_from_did("did:zhtp:alice:abc123");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "abc123");
+        assert_eq!(result.ok(), "abc123");
     }
 
     #[test]

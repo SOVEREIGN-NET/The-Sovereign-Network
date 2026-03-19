@@ -802,7 +802,7 @@ mod tests {
 
     #[test]
     fn test_parse_curve_type_linear() {
-        let (t, base, param, mid) = parse_curve_type("linear").unwrap();
+        let (t, base, param, mid) = parse_curve_type("linear").ok();
         assert_eq!(t, 0u8);
         assert_eq!(base, 10000);
         assert_eq!(param, 100);
@@ -811,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_parse_curve_type_exponential() {
-        let (t, base, param, mid) = parse_curve_type("exponential").unwrap();
+        let (t, base, param, mid) = parse_curve_type("exponential").ok();
         assert_eq!(t, 1u8);
         assert_eq!(base, 10000);
         assert_eq!(param, 100);
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn test_parse_curve_type_sigmoid() {
-        let (t, base, param, mid) = parse_curve_type("sigmoid").unwrap();
+        let (t, base, param, mid) = parse_curve_type("sigmoid").ok();
         assert_eq!(t, 2u8);
         assert_eq!(base, 10000);
         assert_eq!(param, 10);
@@ -833,12 +833,12 @@ mod tests {
 
     #[test]
     fn test_parse_threshold() {
-        let (t, v, time) = parse_threshold("standard").unwrap();
+        let (t, v, time) = parse_threshold("standard").ok();
         assert_eq!(t, 0u8);
         assert_eq!(v, 69_000_000_00u64);
         assert_eq!(time, None);
 
-        let (t2, v2, _) = parse_threshold("5000000000").unwrap();
+        let (t2, v2, _) = parse_threshold("5000000000").ok();
         assert_eq!(t2, 0u8);
         assert_eq!(v2, 5000000000u64);
     }
@@ -848,7 +848,7 @@ mod tests {
         let hex_id = "0102030405060708091011121314151617181920212223242526272829303132";
         let result = parse_token_id(hex_id);
         assert!(result.is_ok());
-        let id = result.unwrap();
+        let id = result.ok();
         assert_eq!(id[0], 0x01);
         assert_eq!(id[31], 0x32);
     }

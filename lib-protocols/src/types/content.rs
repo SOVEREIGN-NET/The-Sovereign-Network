@@ -567,12 +567,12 @@ mod tests {
 
         let content =
             ServerContent::new(data.clone(), "text/plain".to_string(), None, access_policy)
-                .unwrap();
+                .ok();
 
         assert_eq!(content.data, data);
         assert_eq!(content.metadata.content_type, "text/plain");
         assert_eq!(content.metadata.size, data.len() as u64);
-        assert!(content.verify_integrity().unwrap());
+        assert!(content.verify_integrity().ok());
     }
 
     #[test]
@@ -582,12 +582,12 @@ mod tests {
         let encryption_info = EncryptionInfo::standard();
 
         let content = ServerContent::new(data, "text/plain".to_string(), None, access_policy)
-            .unwrap()
+            .ok()
             .with_encryption(encryption_info);
 
         assert!(content.is_encrypted());
         assert_eq!(
-            content.encryption_info.as_ref().unwrap().algorithm,
+            content.encryption_info.as_ref().ok().algorithm,
             "CRYSTALS-Kyber"
         );
     }
@@ -604,11 +604,11 @@ mod tests {
         );
 
         let content = ServerContent::new(data, "text/plain".to_string(), None, access_policy)
-            .unwrap()
+            .ok()
             .with_compression(compression_info);
 
         assert!(content.is_compressed());
-        assert!(content.compression_info.as_ref().unwrap().ratio < 1.0);
+        assert!(content.compression_info.as_ref().ok().ratio < 1.0);
     }
 
     #[test]
@@ -617,13 +617,13 @@ mod tests {
         let access_policy = AccessPolicy::public();
 
         let mut content =
-            ServerContent::new(data, "text/plain".to_string(), None, access_policy).unwrap();
+            ServerContent::new(data, "text/plain".to_string(), None, access_policy).ok();
 
         content.update_popularity(PopularityUpdate::View);
         content.update_popularity(PopularityUpdate::Like);
         content.update_popularity(PopularityUpdate::Rating(4.5));
 
-        let metrics = content.metadata.popularity_metrics.as_ref().unwrap();
+        let metrics = content.metadata.popularity_metrics.as_ref().ok();
         assert_eq!(metrics.views, 1);
         assert_eq!(metrics.likes, 1);
         assert_eq!(metrics.rating_count, 1);
@@ -636,7 +636,7 @@ mod tests {
         let access_policy = AccessPolicy::public();
 
         let mut content =
-            ServerContent::new(data, "text/plain".to_string(), None, access_policy).unwrap();
+            ServerContent::new(data, "text/plain".to_string(), None, access_policy).ok();
 
         content.add_tag("web4".to_string());
         content.add_tag("zhtp".to_string());
@@ -658,15 +658,15 @@ mod tests {
 
         let mut content =
             ServerContent::new(original_data, "text/plain".to_string(), None, access_policy)
-                .unwrap();
+                .ok();
 
         let original_hash = content.hash.clone();
         let new_data = b"Updated content".to_vec();
 
-        content.update_data(new_data.clone()).unwrap();
+        content.update_data(new_data.clone()).ok();
 
         assert_eq!(content.data, new_data);
         assert_ne!(content.hash, original_hash);
-        assert!(content.verify_integrity().unwrap());
+        assert!(content.verify_integrity().ok());
     }
 }

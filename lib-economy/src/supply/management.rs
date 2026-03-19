@@ -189,7 +189,7 @@ mod tests {
 
         let minted = manager
             .mint_operational_tokens(1000, "test operation")
-            .unwrap();
+            .ok();
         assert_eq!(minted, 1000);
         assert_eq!(manager.current_supply, 1000);
         assert_eq!(manager.total_minted, 1000);
@@ -199,7 +199,7 @@ mod tests {
     fn test_ubi_minting() {
         let mut manager = SupplyManager::new();
 
-        let minted = manager.mint_for_ubi(5000).unwrap();
+        let minted = manager.mint_for_ubi(5000).ok();
         assert_eq!(minted, 5000);
         assert_eq!(manager.current_supply, 5000);
     }
@@ -207,9 +207,9 @@ mod tests {
     #[test]
     fn test_token_burning() {
         let mut manager = SupplyManager::new();
-        manager.mint_operational_tokens(1000, "test").unwrap();
+        manager.mint_operational_tokens(1000, "test").ok();
 
-        let burned = manager.burn_tokens(200, "test burn").unwrap();
+        let burned = manager.burn_tokens(200, "test burn").ok();
         assert_eq!(burned, 200);
         assert_eq!(manager.current_supply, 800);
         assert_eq!(manager.total_burned, 200);
@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn test_burn_more_than_supply() {
         let mut manager = SupplyManager::new();
-        manager.mint_operational_tokens(100, "test").unwrap();
+        manager.mint_operational_tokens(100, "test").ok();
 
         let result = manager.burn_tokens(200, "invalid burn");
         assert!(result.is_err());

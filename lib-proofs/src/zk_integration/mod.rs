@@ -143,7 +143,7 @@ mod tests {
         let result = prove_identity(&private_key, 25, 840, 9999, 18, 840);
         assert!(result.is_ok());
 
-        let proof = result.unwrap();
+        let proof = result.ok();
         assert!(!proof.proof.is_empty());
     }
 

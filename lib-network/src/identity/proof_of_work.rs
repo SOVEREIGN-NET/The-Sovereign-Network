@@ -264,7 +264,7 @@ mod tests {
         let difficulty = 16;
 
         // Generate PoW
-        let pow = ProofOfWork::generate(&node_id, timestamp, difficulty).unwrap();
+        let pow = ProofOfWork::generate(&node_id, timestamp, difficulty).ok();
 
         // Verify with correct parameters
         assert!(pow.verify(&node_id, timestamp));
@@ -281,7 +281,7 @@ mod tests {
         let difficulty = 16;
 
         // Generate PoW for timestamp1
-        let pow = ProofOfWork::generate(&node_id, timestamp1, difficulty).unwrap();
+        let pow = ProofOfWork::generate(&node_id, timestamp1, difficulty).ok();
 
         // Valid for original timestamp
         assert!(pow.verify(&node_id, timestamp1));
@@ -298,7 +298,7 @@ mod tests {
         let difficulty = 16;
 
         // Generate PoW for node_id1
-        let pow = ProofOfWork::generate(&node_id1, timestamp, difficulty).unwrap();
+        let pow = ProofOfWork::generate(&node_id1, timestamp, difficulty).ok();
 
         // Valid for original node_id
         assert!(pow.verify(&node_id1, timestamp));
@@ -371,11 +371,11 @@ mod tests {
         let difficulty = 16;
 
         // Generate PoW
-        let pow = ProofOfWork::generate(&node_id, timestamp, difficulty).unwrap();
+        let pow = ProofOfWork::generate(&node_id, timestamp, difficulty).ok();
 
         // Serialize and deserialize
-        let serialized = serde_json::to_string(&pow).unwrap();
-        let deserialized: ProofOfWork = serde_json::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string(&pow).ok();
+        let deserialized: ProofOfWork = serde_json::from_str(&serialized).ok();
 
         // Verify still valid after round-trip
         assert_eq!(pow, deserialized);
@@ -400,8 +400,8 @@ mod tests {
         let timestamp = 1234567890;
         let difficulty = 16;
 
-        let pow1 = ProofOfWork::generate(&node_id, timestamp, difficulty).unwrap();
-        let pow2 = ProofOfWork::generate(&node_id, timestamp, difficulty).unwrap();
+        let pow1 = ProofOfWork::generate(&node_id, timestamp, difficulty).ok();
+        let pow2 = ProofOfWork::generate(&node_id, timestamp, difficulty).ok();
 
         // Both valid
         assert!(pow1.verify(&node_id, timestamp));
@@ -421,7 +421,7 @@ mod tests {
         let difficulty = 16;
 
         let start = Instant::now();
-        let _pow = ProofOfWork::generate(&node_id, timestamp, difficulty).unwrap();
+        let _pow = ProofOfWork::generate(&node_id, timestamp, difficulty).ok();
         let elapsed = start.elapsed();
 
         println!("Difficulty 16: {:?}", elapsed);
@@ -444,7 +444,7 @@ mod tests {
         let difficulty = 20;
 
         let start = Instant::now();
-        let _pow = ProofOfWork::generate(&node_id, timestamp, difficulty).unwrap();
+        let _pow = ProofOfWork::generate(&node_id, timestamp, difficulty).ok();
         let elapsed = start.elapsed();
 
         println!("Difficulty 20: {:?}", elapsed);

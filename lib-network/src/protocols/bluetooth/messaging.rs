@@ -21,7 +21,7 @@ impl BluetoothMeshProtocol {
             return Err(anyhow!("Peer not connected: {}", target_address));
         }
 
-        let connection = connections.get(target_address).unwrap();
+        let connection = connections.get(target_address).ok();
         let ble_mtu = connection.mtu as usize;
 
         if message.len() <= ble_mtu {
@@ -255,8 +255,8 @@ mod tests {
     #[tokio::test]
     async fn test_send_mesh_message_requires_connection() {
         let node_id = [5u8; 32];
-        let keypair = KeyPair::generate().unwrap();
-        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+        let keypair = KeyPair::generate().ok();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).ok();
 
         let err = protocol
             .send_mesh_message("peer-missing", b"payload")

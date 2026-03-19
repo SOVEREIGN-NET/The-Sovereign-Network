@@ -403,7 +403,7 @@ mod tests {
 
         let retrieved = service.get_dispute(&dispute.id).await;
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().client_did, "did:sov:test123");
+        assert_eq!(retrieved.ok().client_did, "did:sov:test123");
     }
 
     #[tokio::test]
@@ -430,7 +430,7 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let updated = service.get_dispute(&dispute.id).await.unwrap();
+        let updated = service.get_dispute(&dispute.id).await.ok();
         assert_eq!(updated.evidence.len(), 1);
     }
 
@@ -464,7 +464,7 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let resolved = service.get_dispute(&dispute.id).await.unwrap();
+        let resolved = service.get_dispute(&dispute.id).await.ok();
         assert_eq!(resolved.status, DisputeStatus::ResolvedForClaimant);
         assert!(resolved.resolution.is_some());
     }

@@ -309,14 +309,14 @@ mod tests {
     #[test]
     fn surprisal_of_certain_event_is_zero() {
         let config = SurprisalConfig::bits();
-        let s = surprisal(1.0, &config).unwrap();
+        let s = surprisal(1.0, &config).ok();
         assert!(s.abs() < 0.001, "Surprisal of P=1 should be 0");
     }
 
     #[test]
     fn surprisal_of_unlikely_event_is_high() {
         let config = SurprisalConfig::bits();
-        let s = surprisal(0.01, &config).unwrap(); // 1% probability
+        let s = surprisal(0.01, &config).ok(); // 1% probability
         // -log2(0.01) ≈ 6.64 bits
         assert!(s > 6.0 && s < 7.0, "Surprisal of P=0.01 should be ~6.64 bits");
     }
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn surprisal_clamps_minimum_probability() {
         let config = SurprisalConfig::bits();
-        let s = surprisal(0.0, &config).unwrap(); // Should use min_probability
+        let s = surprisal(0.0, &config).ok(); // Should use min_probability
         assert!(s > 0.0, "Surprisal should be positive even for P=0");
     }
 
@@ -344,7 +344,7 @@ mod tests {
         model.observe_transition(&s1, &s3);
 
         let config = SurprisalConfig::bits();
-        let surp = transition_surprisal(&s1, &s2, &model, &config).unwrap();
+        let surp = transition_surprisal(&s1, &s2, &model, &config).ok();
 
         // High probability transition should have low surprisal
         assert!(surp < 1.0, "Common transition should have low surprisal");
@@ -426,9 +426,9 @@ mod tests {
     fn different_log_bases() {
         let p = 0.5;
 
-        let bits = surprisal(p, &SurprisalConfig::bits()).unwrap();
-        let nats = surprisal(p, &SurprisalConfig::nats()).unwrap();
-        let dits = surprisal(p, &SurprisalConfig::dits()).unwrap();
+        let bits = surprisal(p, &SurprisalConfig::bits()).ok();
+        let nats = surprisal(p, &SurprisalConfig::nats()).ok();
+        let dits = surprisal(p, &SurprisalConfig::dits()).ok();
 
         // -log2(0.5) = 1 bit
         assert!((bits - 1.0).abs() < 0.001);

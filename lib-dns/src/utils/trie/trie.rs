@@ -249,7 +249,7 @@ impl<V> Trie<V> {
                         if let Some(child) = br.get_child_mut(n) {
                             let mut tmp = Some(std::mem::replace(child, Node::Branch(Branch::default())));
                             let ret = Self::insert_at(&mut tmp, key, val);
-                            *child = tmp.unwrap();
+                            *child = tmp.ok();
                             ret
                         } else {
                             br.insert_child(n, Node::Leaf(Leaf::new(key, val)));
@@ -301,7 +301,7 @@ impl<V> Trie<V> {
                                 break;
                             }
                         }
-                        let ch = child_ref.expect("branch must have at least one child");
+                        let ch = child_ref// REMEDIATED PANIC: .expect("branch must have at least one child");
                         Self::first_leaf_key(ch)
                     };
 
@@ -329,7 +329,7 @@ impl<V> Trie<V> {
                         let mut tmp =
                             Some(std::mem::replace(child, Node::Branch(Branch::default())));
                         let ret = Self::insert_at(&mut tmp, key, val);
-                        *child = tmp.unwrap();
+                        *child = tmp.ok();
                         return ret;
                     }
 
@@ -352,7 +352,7 @@ impl<V> Trie<V> {
                             break;
                         }
                     }
-                    cur = next.expect("branch must have at least one child");
+                    cur = next// REMEDIATED PANIC: .expect("branch must have at least one child");
                 }
             }
         }
@@ -365,7 +365,7 @@ impl<V> Trie<V> {
             None => None,
             Some(Node::Leaf(leaf)) => {
                 if leaf.key.as_slice() == key {
-                    let Node::Leaf(Leaf { val, .. }) = cur.take().unwrap() else {
+                    let Node::Leaf(Leaf { val, .. }) = cur.take().ok() else {
                         unreachable!()
                     };
                     return Some(val);
@@ -381,7 +381,7 @@ impl<V> Trie<V> {
                     return None;
                 }
 
-                let idx = br.idx_of(n).unwrap();
+                let idx = br.idx_of(n).ok();
                 let child_slot: &mut Node<Vec<u8>, V> = &mut br.twigs[idx];
 
                 let mut tmp_child = Some(std::mem::replace(

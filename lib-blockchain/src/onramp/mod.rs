@@ -214,7 +214,7 @@ mod tests {
         // = 1.25e9 * 1e14 / (3.125e6 * 1e18)
         // = 1.25e23 / 3.125e24
         // = 0.4e-1 * 1e8 ... hmm let me just check it's > 0
-        let vwap = state.cbe_usd_vwap(2000).unwrap();
+        let vwap = state.cbe_usd_vwap(2000).ok();
         assert!(vwap > 0, "VWAP should be positive: {}", vwap);
         // At $0.00040/CBE in 8-dec scale = 40_000
         assert_eq!(vwap, 40_000, "VWAP should be 40_000 (=$0.00040): {}", vwap);

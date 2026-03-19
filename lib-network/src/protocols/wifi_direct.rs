@@ -1756,7 +1756,7 @@ impl WiFiDirectMeshProtocol {
                             let name_str = name.to_string();
                             // Check if this device matches our target address
                             if name_str.contains(&target_addr) {
-                                devices_clone.lock().unwrap().push(device_info.clone());
+                                devices_clone.lock().ok().push(device_info.clone());
                             }
                         }
                     }
@@ -1779,7 +1779,7 @@ impl WiFiDirectMeshProtocol {
                 .Stop()
                 .map_err(|e| anyhow::anyhow!("Failed to stop device watcher: {:?}", e))?;
 
-            let found_devices = devices.lock().unwrap().clone();
+            let found_devices = devices.lock().ok().clone();
 
             if found_devices.is_empty() {
                 warn!("  Device {} not found", peer_address);
@@ -1841,7 +1841,7 @@ impl WiFiDirectMeshProtocol {
                         if let Ok(name) = device_info.Name() {
                             let name_str = name.to_string();
                             if name_str.contains(&target_addr) {
-                                devices_clone.lock().unwrap().push(device_info.clone());
+                                devices_clone.lock().ok().push(device_info.clone());
                             }
                         }
                     }
@@ -1863,7 +1863,7 @@ impl WiFiDirectMeshProtocol {
                 .Stop()
                 .map_err(|e| anyhow::anyhow!("Failed to stop device watcher: {:?}", e))?;
 
-            let found_devices = devices.lock().unwrap().clone();
+            let found_devices = devices.lock().ok().clone();
 
             if found_devices.is_empty() {
                 warn!("  Device {} not found", peer_address);
@@ -1926,7 +1926,7 @@ impl WiFiDirectMeshProtocol {
                         if let Ok(name) = device_info.Name() {
                             let name_str = name.to_string();
                             if name_str.contains(&target_addr) {
-                                devices_clone.lock().unwrap().push(device_info.clone());
+                                devices_clone.lock().ok().push(device_info.clone());
                             }
                         }
                     }
@@ -1948,7 +1948,7 @@ impl WiFiDirectMeshProtocol {
                 .Stop()
                 .map_err(|e| anyhow::anyhow!("Failed to stop device watcher: {:?}", e))?;
 
-            let found_devices = devices.lock().unwrap().clone();
+            let found_devices = devices.lock().ok().clone();
 
             if found_devices.is_empty() {
                 warn!("  Device {} not found", peer_address);
@@ -2381,7 +2381,7 @@ impl WiFiDirectMeshProtocol {
                         if let Ok(name) = device_info.Name() {
                             let name_str = name.to_string();
                             if name_str.contains(&target_addr) {
-                                devices_clone.lock().unwrap().push(device_info.clone());
+                                devices_clone.lock().ok().push(device_info.clone());
                             }
                         }
                     }
@@ -2403,7 +2403,7 @@ impl WiFiDirectMeshProtocol {
                 .Stop()
                 .map_err(|e| anyhow::anyhow!("Failed to stop device watcher: {:?}", e))?;
 
-            let found_devices = devices.lock().unwrap().clone();
+            let found_devices = devices.lock().ok().clone();
 
             if found_devices.is_empty() {
                 warn!(
@@ -2484,7 +2484,7 @@ impl WiFiDirectMeshProtocol {
                             if name_str.contains(&target_group)
                                 || name_str.to_lowercase().contains("zhtp")
                             {
-                                devices_clone.lock().unwrap().push(device_info.clone());
+                                devices_clone.lock().ok().push(device_info.clone());
                             }
                         }
                     }
@@ -2506,7 +2506,7 @@ impl WiFiDirectMeshProtocol {
                 .Stop()
                 .map_err(|e| anyhow::anyhow!("Failed to stop device watcher: {:?}", e))?;
 
-            let found_devices = devices.lock().unwrap().clone();
+            let found_devices = devices.lock().ok().clone();
 
             if found_devices.is_empty() {
                 warn!(
@@ -2640,12 +2640,12 @@ impl WiFiDirectMeshProtocol {
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         format!(
             "ZHTP_P2P_{:x}_{:x}",
-            u32::from_ne_bytes(self.node_id[0..4].try_into().unwrap()),
+            u32::from_ne_bytes(self.node_id[0..4].try_into().ok()),
             timestamp as u32
         )
     }
@@ -2674,7 +2674,7 @@ impl WiFiDirectMeshProtocol {
 
         let service_name = format!(
             "ZHTP-Node-{:x}",
-            u32::from_ne_bytes(self.node_id[0..4].try_into().unwrap())
+            u32::from_ne_bytes(self.node_id[0..4].try_into().ok())
         );
 
         // Create service info for ZHTP over WiFi Direct
@@ -3932,7 +3932,7 @@ mod tests {
     #[tokio::test]
     async fn test_wifi_direct_mesh_creation() {
         let node_id = [1u8; 32];
-        let protocol = WiFiDirectMeshProtocol::new(node_id).unwrap();
+        let protocol = WiFiDirectMeshProtocol::new(node_id).ok();
 
         assert_eq!(protocol.node_id, node_id);
         assert!(!protocol.discovery_active);
@@ -3943,10 +3943,10 @@ mod tests {
     #[ignore] // Ignore hardware-dependent test
     async fn test_wifi_direct_discovery() {
         let node_id = [1u8; 32];
-        let mut protocol = WiFiDirectMeshProtocol::new(node_id).unwrap();
+        let mut protocol = WiFiDirectMeshProtocol::new(node_id).ok();
 
         // Enable WiFi Direct first (it's disabled by default for security)
-        protocol.enable().await.unwrap();
+        protocol.enable().await.ok();
 
         let result = protocol.start_discovery().await;
         assert!(result.is_ok());

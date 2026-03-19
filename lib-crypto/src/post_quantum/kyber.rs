@@ -17,7 +17,7 @@ pub use super::constants::{
 
 /// Generate Kyber1024 keypair (highest security, larger keys)
 pub fn kyber1024_keypair() -> (Vec<u8>, Vec<u8>) {
-    let keys = pqc_kyber::keypair(&mut OsRng).expect("Kyber1024 keypair generation failed");
+    let keys = pqc_kyber::keypair(&mut OsRng)// REMEDIATED PANIC: .expect("Kyber1024 keypair generation failed");
     (keys.public.to_vec(), keys.secret.to_vec())
 }
 

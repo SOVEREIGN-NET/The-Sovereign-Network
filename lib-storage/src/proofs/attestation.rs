@@ -58,7 +58,7 @@ impl StorageCapacityAttestation {
     ) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Self {

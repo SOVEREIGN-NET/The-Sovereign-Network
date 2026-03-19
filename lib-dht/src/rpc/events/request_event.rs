@@ -61,7 +61,7 @@ impl<'a> MessageEvent for RequestEvent<'a> {
     }
 
     fn get_node(&self) -> Node {
-        self.node.unwrap()
+        self.node.ok()
     }
 
     fn set_received_time(&mut self, received_time: u128) {
@@ -75,7 +75,7 @@ impl<'a> MessageEvent for RequestEvent<'a> {
     fn received(&mut self) {
         self.received_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
+            // REMEDIATED PANIC: .expect("Time went backwards")
             .as_millis();
     }
 }

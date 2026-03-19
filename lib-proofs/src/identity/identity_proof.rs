@@ -236,7 +236,7 @@ impl ZkIdentityProof {
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Ok(ZkIdentityProof {
@@ -347,7 +347,7 @@ impl ZkIdentityProof {
     pub fn is_expired_after(&self, duration_seconds: u64) -> bool {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         current_time > self.timestamp + duration_seconds
@@ -357,7 +357,7 @@ impl ZkIdentityProof {
     pub fn age_seconds(&self) -> u64 {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         current_time.saturating_sub(self.timestamp)
@@ -427,7 +427,7 @@ impl BatchIdentityProof {
 
         let batch_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Ok(BatchIdentityProof {
@@ -514,7 +514,7 @@ mod tests {
         let nullifier_secret = [2u8; 32];
 
         let commitment =
-            IdentityCommitment::generate(&attrs, identity_secret, nullifier_secret).unwrap();
+            IdentityCommitment::generate(&attrs, identity_secret, nullifier_secret).ok();
 
         assert_ne!(commitment.attribute_commitment, [0u8; 32]);
         assert_ne!(commitment.secret_commitment, [0u8; 32]);
@@ -534,7 +534,7 @@ mod tests {
             nullifier_secret,
             vec!["age_range".to_string()],
         )
-        .unwrap();
+        .ok();
 
         assert!(proof.proves_attribute("age_range"));
         assert!(!proof.proves_attribute("citizenship"));
@@ -549,7 +549,7 @@ mod tests {
 
         let proof =
             ZkIdentityProof::generate_age_proof(22, 18, 65, identity_secret, nullifier_secret)
-                .unwrap();
+                .ok();
 
         assert!(proof.proves_attribute("age_range"));
         assert_eq!(proof.proven_attributes.len(), 1);
@@ -565,7 +565,7 @@ mod tests {
             identity_secret,
             nullifier_secret,
         )
-        .unwrap();
+        .ok();
 
         assert!(proof.proves_attribute("citizenship"));
     }
@@ -582,7 +582,7 @@ mod tests {
 
         let proof =
             ZkIdentityProof::generate_comprehensive(&attrs, identity_secret, nullifier_secret)
-                .unwrap();
+                .ok();
 
         assert!(proof.proves_attribute("age_range"));
         assert!(proof.proves_attribute("citizenship"));
@@ -606,16 +606,16 @@ mod tests {
             nullifier_secret1,
             vec!["age_range".to_string()],
         )
-        .unwrap();
+        .ok();
         let proof2 = ZkIdentityProof::generate(
             &attrs2,
             identity_secret2,
             nullifier_secret2,
             vec!["citizenship".to_string()],
         )
-        .unwrap();
+        .ok();
 
-        let batch = BatchIdentityProof::create(vec![proof1, proof2]).unwrap();
+        let batch = BatchIdentityProof::create(vec![proof1, proof2]).ok();
 
         assert_eq!(batch.batch_size(), 2);
         assert!(batch.get_proof(0).is_some());
@@ -648,12 +648,12 @@ mod tests {
             [16u8; 32],
             vec!["kyc_level".to_string()],
         )
-        .unwrap();
+        .ok();
 
         // Set timestamp to 2 hours ago
         proof.timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
             - 7200;
 

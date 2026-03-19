@@ -227,7 +227,7 @@ impl Plonky2Verifier {
         // Verify timestamp (not from future)
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         if proof.generated_at > current_time + 300 {

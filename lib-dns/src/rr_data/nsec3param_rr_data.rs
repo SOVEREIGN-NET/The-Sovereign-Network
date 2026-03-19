@@ -219,6 +219,6 @@ impl fmt::Display for NSec3ParamRRData {
 #[test]
 fn test() {
     let buf = vec![0x1, 0x0, 0x0, 0x0, 0x0];
-    let record = NSec3ParamRRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = NSec3ParamRRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

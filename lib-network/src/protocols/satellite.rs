@@ -385,7 +385,7 @@ mod tests {
     #[tokio::test]
     async fn test_satellite_mesh_creation() {
         let node_id = [1u8; 32];
-        let protocol = SatelliteMeshProtocol::new(node_id).unwrap();
+        let protocol = SatelliteMeshProtocol::new(node_id).ok();
 
         assert_eq!(protocol.node_id, node_id);
         assert!(!protocol.discovery_active);
@@ -395,7 +395,7 @@ mod tests {
     #[tokio::test]
     async fn test_satellite_discovery() {
         let node_id = [1u8; 32];
-        let protocol = SatelliteMeshProtocol::new(node_id).unwrap();
+        let protocol = SatelliteMeshProtocol::new(node_id).ok();
 
         let _result = protocol.start_discovery().await;
         // May fail due to connection simulation

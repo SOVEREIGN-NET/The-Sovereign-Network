@@ -371,7 +371,7 @@ mod tests {
     fn test_parent_hash() {
         let parent_hash = DaoPrefixRouter::parent_hash("dao.shoes.sov");
         assert!(parent_hash.is_some());
-        assert_eq!(parent_hash.unwrap(), hash_name("shoes.sov"));
+        assert_eq!(parent_hash.ok(), hash_name("shoes.sov"));
 
         assert!(DaoPrefixRouter::parent_hash("shoes.sov").is_none());
     }

@@ -319,10 +319,10 @@ mod core {
             let plaintext = b"Pure functional core test";
             let aad = b"test||v1";
 
-            let ciphertext = encrypt_core(plaintext, &key, aad).unwrap();
+            let ciphertext = encrypt_core(plaintext, &key, aad).ok();
             assert!(ciphertext.len() > plaintext.len()); // Includes nonce + tag
 
-            let decrypted = decrypt_core(&ciphertext, &key, aad).unwrap();
+            let decrypted = decrypt_core(&ciphertext, &key, aad).ok();
             assert_eq!(plaintext, &decrypted[..]);
         }
 
@@ -334,12 +334,12 @@ mod core {
 
             // Note: ChaCha20 uses random nonces, so same plaintext != same ciphertext
             // But decryption should always work
-            let ct1 = encrypt_core(plaintext, &key, aad).unwrap();
-            let pt1 = decrypt_core(&ct1, &key, aad).unwrap();
+            let ct1 = encrypt_core(plaintext, &key, aad).ok();
+            let pt1 = decrypt_core(&ct1, &key, aad).ok();
             assert_eq!(plaintext, &pt1[..]);
 
-            let ct2 = encrypt_core(plaintext, &key, aad).unwrap();
-            let pt2 = decrypt_core(&ct2, &key, aad).unwrap();
+            let ct2 = encrypt_core(plaintext, &key, aad).ok();
+            let pt2 = decrypt_core(&ct2, &key, aad).ok();
             assert_eq!(plaintext, &pt2[..]);
         }
 
@@ -350,7 +350,7 @@ mod core {
             let aad1 = b"protocol1||v1";
             let aad2 = b"protocol2||v1";
 
-            let ciphertext = encrypt_core(plaintext, &key, aad1).unwrap();
+            let ciphertext = encrypt_core(plaintext, &key, aad1).ok();
 
             // Core decryption fails with different AAD
             let result = decrypt_core(&ciphertext, &key, aad2);
@@ -363,7 +363,7 @@ mod core {
             let plaintext = b"Authentication test";
             let aad = b"test||v1";
 
-            let mut ciphertext = encrypt_core(plaintext, &key, aad).unwrap();
+            let mut ciphertext = encrypt_core(plaintext, &key, aad).ok();
 
             // Tamper with a byte (anywhere except the nonce prefix)
             if ciphertext.len() > 12 {
@@ -609,28 +609,28 @@ mod shell {
         #[test]
         fn test_basic_encryption_decryption() {
             let key = create_test_key();
-            let enc = ChaCha20Poly1305Encryption::new("test", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("test", &key).ok();
 
             let plaintext = b"Hello, mesh network!";
             let aad = b"test-protocol||v1";
-            let ciphertext = enc.encrypt(plaintext, aad).unwrap();
+            let ciphertext = enc.encrypt(plaintext, aad).ok();
 
             // Ciphertext should be longer (includes nonce + tag)
             assert!(ciphertext.len() > plaintext.len());
 
-            let decrypted = enc.decrypt(&ciphertext, aad).unwrap();
+            let decrypted = enc.decrypt(&ciphertext, aad).ok();
             assert_eq!(plaintext, &decrypted[..]);
         }
 
         #[test]
         fn test_lorawan_encryption() {
             let key = create_test_key();
-            let enc = ChaCha20Poly1305Encryption::new("lorawan", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("lorawan", &key).ok();
 
             let payload = b"LoRaWAN mesh data";
             let aad = b"lorawan||v1";
-            let encrypted = enc.encrypt(payload, aad).unwrap();
-            let decrypted = enc.decrypt(&encrypted, aad).unwrap();
+            let encrypted = enc.encrypt(payload, aad).ok();
+            let decrypted = enc.decrypt(&encrypted, aad).ok();
 
             assert_eq!(payload, &decrypted[..]);
             assert_eq!(enc.protocol(), "lorawan");
@@ -639,12 +639,12 @@ mod shell {
         #[test]
         fn test_wifi_direct_encryption() {
             let key = create_test_key();
-            let enc = ChaCha20Poly1305Encryption::new("wifi_direct", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("wifi_direct", &key).ok();
 
             let message = b"WiFi Direct P2P message";
             let aad = b"wifi-direct||v1";
-            let encrypted = enc.encrypt(message, aad).unwrap();
-            let decrypted = enc.decrypt(&encrypted, aad).unwrap();
+            let encrypted = enc.encrypt(message, aad).ok();
+            let decrypted = enc.decrypt(&encrypted, aad).ok();
 
             assert_eq!(message, &decrypted[..]);
             assert_eq!(enc.protocol(), "wifi_direct");
@@ -653,12 +653,12 @@ mod shell {
         #[test]
         fn test_quic_encryption() {
             let key = create_test_key();
-            let enc = ChaCha20Poly1305Encryption::new("quic", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("quic", &key).ok();
 
             let data = b"QUIC mesh transport data";
             let aad = b"quic||v1";
-            let encrypted = enc.encrypt(data, aad).unwrap();
-            let decrypted = enc.decrypt(&encrypted, aad).unwrap();
+            let encrypted = enc.encrypt(data, aad).ok();
+            let decrypted = enc.decrypt(&encrypted, aad).ok();
 
             assert_eq!(data, &decrypted[..]);
             assert_eq!(enc.protocol(), "quic");
@@ -677,12 +677,12 @@ mod shell {
             let mut key2 = create_test_key();
             key2[0] ^= 0xFF; // Flip bits to create different key
 
-            let enc1 = ChaCha20Poly1305Encryption::new("test", &key1).unwrap();
-            let enc2 = ChaCha20Poly1305Encryption::new("test", &key2).unwrap();
+            let enc1 = ChaCha20Poly1305Encryption::new("test", &key1).ok();
+            let enc2 = ChaCha20Poly1305Encryption::new("test", &key2).ok();
 
             let plaintext = b"Secret message";
             let aad = b"test||v1";
-            let ciphertext = enc1.encrypt(plaintext, aad).unwrap();
+            let ciphertext = enc1.encrypt(plaintext, aad).ok();
 
             // Decryption with wrong key should fail
             let result = enc2.decrypt(&ciphertext, aad);
@@ -692,7 +692,7 @@ mod shell {
         #[test]
         fn test_statistics() {
             let key = create_test_key();
-            let mut enc = ChaCha20Poly1305Encryption::new("test", &key).unwrap();
+            let mut enc = ChaCha20Poly1305Encryption::new("test", &key).ok();
 
             // Initial stats should be zero
             let stats = enc.stats();
@@ -703,8 +703,8 @@ mod shell {
             let plaintext = b"Test message";
             let aad = b"test||v1";
             for _ in 0..5 {
-                let ciphertext = enc.encrypt(plaintext, aad).unwrap();
-                enc.decrypt(&ciphertext, aad).unwrap();
+                let ciphertext = enc.encrypt(plaintext, aad).ok();
+                enc.decrypt(&ciphertext, aad).ok();
             }
 
             // Check stats updated
@@ -725,13 +725,13 @@ mod shell {
         #[test]
         fn test_large_payload() {
             let key = create_test_key();
-            let enc = ChaCha20Poly1305Encryption::new("test", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("test", &key).ok();
 
             // Test with 1MB payload
             let large_payload = vec![0x55u8; 1024 * 1024];
             let aad = b"test||v1";
-            let encrypted = enc.encrypt(&large_payload, aad).unwrap();
-            let decrypted = enc.decrypt(&encrypted, aad).unwrap();
+            let encrypted = enc.encrypt(&large_payload, aad).ok();
+            let decrypted = enc.decrypt(&encrypted, aad).ok();
 
             assert_eq!(large_payload, decrypted);
         }
@@ -739,41 +739,41 @@ mod shell {
         #[test]
         fn test_empty_payload() {
             let key = create_test_key();
-            let enc = ChaCha20Poly1305Encryption::new("test", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("test", &key).ok();
 
             let empty = b"";
             let aad = b"test||v1";
-            let encrypted = enc.encrypt(empty, aad).unwrap();
+            let encrypted = enc.encrypt(empty, aad).ok();
 
             // Even empty payload gets nonce + tag
             assert!(encrypted.len() > 0);
 
-            let decrypted = enc.decrypt(&encrypted, aad).unwrap();
+            let decrypted = enc.decrypt(&encrypted, aad).ok();
             assert_eq!(empty, &decrypted[..]);
         }
 
         #[test]
         fn test_protocol_identifier() {
             let key = create_test_key();
-            let enc = ChaCha20Poly1305Encryption::new("lorawan", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("lorawan", &key).ok();
             assert_eq!(enc.protocol_name(), "lorawan");
 
-            let enc = ChaCha20Poly1305Encryption::new("wifi_direct", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("wifi_direct", &key).ok();
             assert_eq!(enc.protocol_name(), "wifi_direct");
         }
 
         #[test]
         fn test_different_nonces() {
             let key = create_test_key();
-            let enc = ChaCha20Poly1305Encryption::new("test", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("test", &key).ok();
 
             let plaintext = b"Same message";
             let aad = b"test||v1";
 
             // Encrypt same plaintext multiple times
-            let ciphertext1 = enc.encrypt(plaintext, aad).unwrap();
-            let ciphertext2 = enc.encrypt(plaintext, aad).unwrap();
-            let ciphertext3 = enc.encrypt(plaintext, aad).unwrap();
+            let ciphertext1 = enc.encrypt(plaintext, aad).ok();
+            let ciphertext2 = enc.encrypt(plaintext, aad).ok();
+            let ciphertext3 = enc.encrypt(plaintext, aad).ok();
 
             // Ciphertexts should be different (different nonces)
             assert_ne!(ciphertext1, ciphertext2);
@@ -781,9 +781,9 @@ mod shell {
             assert_ne!(ciphertext1, ciphertext3);
 
             // But all should decrypt to same plaintext
-            assert_eq!(enc.decrypt(&ciphertext1, aad).unwrap(), plaintext);
-            assert_eq!(enc.decrypt(&ciphertext2, aad).unwrap(), plaintext);
-            assert_eq!(enc.decrypt(&ciphertext3, aad).unwrap(), plaintext);
+            assert_eq!(enc.decrypt(&ciphertext1, aad).ok(), plaintext);
+            assert_eq!(enc.decrypt(&ciphertext2, aad).ok(), plaintext);
+            assert_eq!(enc.decrypt(&ciphertext3, aad).ok(), plaintext);
         }
 
         // ========== SECURITY TESTS (Functional Core) ==========
@@ -795,14 +795,14 @@ mod shell {
         #[test]
         fn test_aad_domain_separation() {
             let key = create_test_key();
-            let enc = ChaCha20Poly1305Encryption::new("test", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("test", &key).ok();
 
             let message = b"Secret message";
             let aad1 = b"protocol1||v1";
             let aad2 = b"protocol2||v1";
 
             // Encrypt with AAD1
-            let ciphertext = enc.encrypt(message, aad1).unwrap();
+            let ciphertext = enc.encrypt(message, aad1).ok();
 
             // Decryption with different AAD should fail
             let result = enc.decrypt(&ciphertext, aad2);
@@ -815,11 +815,11 @@ mod shell {
         #[test]
         fn test_corrupted_ciphertext_detection() {
             let key = create_test_key();
-            let enc = ChaCha20Poly1305Encryption::new("test", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("test", &key).ok();
 
             let plaintext = b"Important data";
             let aad = b"test||v1";
-            let mut ciphertext = enc.encrypt(plaintext, aad).unwrap();
+            let mut ciphertext = enc.encrypt(plaintext, aad).ok();
 
             // Tamper with the ciphertext (flip bit in MAC tag - last bytes)
             let len = ciphertext.len();
@@ -838,15 +838,15 @@ mod shell {
         #[test]
         fn test_cross_protocol_ciphertext_rejection() {
             let key = create_test_key();
-            let enc1 = ChaCha20Poly1305Encryption::new("protocol1", &key).unwrap();
-            let enc2 = ChaCha20Poly1305Encryption::new("protocol2", &key).unwrap();
+            let enc1 = ChaCha20Poly1305Encryption::new("protocol1", &key).ok();
+            let enc2 = ChaCha20Poly1305Encryption::new("protocol2", &key).ok();
 
             let message = b"Cross-protocol test";
             let aad1 = b"protocol1||msg||v1";
             let aad2 = b"protocol2||msg||v1";
 
             // Encrypt with protocol1's encryption
-            let ciphertext = enc1.encrypt(message, aad1).unwrap();
+            let ciphertext = enc1.encrypt(message, aad1).ok();
 
             // CRITICAL TEST: protocol2 MUST FAIL to decrypt protocol1's ciphertext
             // even if they share the same key
@@ -860,13 +860,13 @@ mod shell {
         #[test]
         fn test_empty_aad() {
             let key = create_test_key();
-            let enc = ChaCha20Poly1305Encryption::new("test", &key).unwrap();
+            let enc = ChaCha20Poly1305Encryption::new("test", &key).ok();
 
             let plaintext = b"Message with no AAD";
             let empty_aad = b"";
 
-            let ciphertext = enc.encrypt(plaintext, empty_aad).unwrap();
-            let decrypted = enc.decrypt(&ciphertext, empty_aad).unwrap();
+            let ciphertext = enc.encrypt(plaintext, empty_aad).ok();
+            let decrypted = enc.decrypt(&ciphertext, empty_aad).ok();
 
             assert_eq!(plaintext, &decrypted[..]);
         }

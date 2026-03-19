@@ -144,7 +144,7 @@ impl PenaltyEnforcer {
             penalty_amount: amount,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             reason,
         };
@@ -246,10 +246,10 @@ mod tests {
 
         assert!(enforcer
             .is_violation(&PenaltyType::DataLoss, &metrics)
-            .unwrap());
+            .ok());
         assert!(!enforcer
             .is_violation(&PenaltyType::Unavailability, &metrics)
-            .unwrap());
+            .ok());
     }
 
     #[test]
@@ -266,7 +266,7 @@ mod tests {
                 1000,
                 "Data integrity below threshold".to_string(),
             )
-            .unwrap();
+            .ok();
 
         assert_eq!(event.penalty_amount, 1000);
         assert_eq!(enforcer.penalty_history.len(), 1);

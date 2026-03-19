@@ -72,14 +72,14 @@ pub fn validate_wallet_name(name: &str) -> CliResult<()> {
     }
 
     // Must start with alphanumeric
-    if !name.chars().next().unwrap().is_alphanumeric() {
+    if !name.chars().next().ok().is_alphanumeric() {
         return Err(CliError::WalletError(
             "Wallet name must start with alphanumeric character".to_string(),
         ));
     }
 
     // Only allow alphanumeric, dash, underscore
-    let valid_pattern = Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$").unwrap();
+    let valid_pattern = Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$").ok();
     if !valid_pattern.is_match(name) {
         return Err(CliError::WalletError(
             "Wallet name can only contain alphanumeric characters, dashes, and underscores"

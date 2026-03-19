@@ -251,7 +251,7 @@ impl RewardManager {
     pub fn new(node_id: [u8; 32]) -> Self {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Self {
@@ -310,7 +310,7 @@ impl RewardManager {
     ) -> Result<TokenReward> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Check if calculation interval has passed
@@ -427,7 +427,7 @@ impl UptimeTracker {
         self.current_period_hours += additional_hours;
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         self.last_update = current_time;
     }
@@ -435,7 +435,7 @@ impl UptimeTracker {
     pub fn get_uptime_percentage(&self) -> f64 {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         let total_hours = (current_time - self.session_start) / 3600;
 
@@ -466,7 +466,7 @@ impl StakingSystem {
 
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         self.staked_amount = amount;
@@ -490,7 +490,7 @@ impl StakingSystem {
 
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let time_diff = current_time - self.last_reward_calc;
@@ -513,7 +513,7 @@ impl StakingSystem {
     pub fn unstake_tokens(&mut self) -> Result<(u64, u64)> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         if current_time - self.stake_start < self.min_stake_period {
@@ -864,7 +864,7 @@ impl TransactionHistory {
             .filter(|tx| {
                 let current_time = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs();
                 current_time - tx.timestamp < 86400 // Last 24 hours
             })

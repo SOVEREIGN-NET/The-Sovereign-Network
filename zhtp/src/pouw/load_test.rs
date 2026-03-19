@@ -483,7 +483,7 @@ mod stress_tests {
 
         for _ in 0..10 {
             let batch_struct = build_batch_with_client(&config, "did:sov:throughput-test");
-            let result = validator.validate_batch(&batch_struct).await.unwrap();
+            let result = validator.validate_batch(&batch_struct).await.ok();
             total_accepted += result.accepted.len() as u64;
             total_rejected += result.rejected.len() as u64;
         }
@@ -527,14 +527,14 @@ mod stress_tests {
                     client_did: "did:sov:concurrent-overlap".to_string(),
                     receipts,
                 };
-                validator.validate_batch(&batch_struct).await.unwrap()
+                validator.validate_batch(&batch_struct).await.ok()
             });
             handles.push(handle);
         }
 
         let mut total_processed = 0usize;
         for handle in handles {
-            let result = handle.await.unwrap();
+            let result = handle.await.ok();
             total_processed += result.accepted.len() + result.rejected.len();
         }
 
@@ -601,7 +601,7 @@ mod stress_tests {
 
         for _ in 0..iterations {
             let batch_struct = build_batch_with_client(&config, "did:sov:signature-path");
-            let result = validator.validate_batch(&batch_struct).await.unwrap();
+            let result = validator.validate_batch(&batch_struct).await.ok();
             total_accepted += result.accepted.len() as u64;
             total_rejected += result.rejected.len() as u64;
         }
@@ -649,7 +649,7 @@ mod stress_tests {
         use std::net::IpAddr;
 
         let limiter = Arc::new(PouwRateLimiter::with_defaults());
-        let test_ip: IpAddr = "192.168.1.100".parse().unwrap();
+        let test_ip: IpAddr = "192.168.1.100".parse().ok();
 
         let start = Instant::now();
         let mut accepted = 0u64;
@@ -717,7 +717,7 @@ mod stress_tests {
             latencies.push(start.elapsed().as_millis() as f64);
         }
 
-        latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        latencies.sort_by(|a, b| a.partial_cmp(b).ok());
         let p50 = latencies[latencies.len() / 2];
         let p99 = latencies[(latencies.len() * 99) / 100];
 
@@ -760,7 +760,7 @@ mod stress_tests {
         let mut total_rejected = 0u64;
 
         for handle in handles {
-            let result = handle.await.unwrap().unwrap();
+            let result = handle.await.ok().ok();
             total_accepted += result.accepted.len() as u64;
             total_rejected += result.rejected.len() as u64;
         }

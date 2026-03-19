@@ -185,8 +185,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_connected_peers_empty() {
         let node_id = [8u8; 32];
-        let keypair = KeyPair::generate().unwrap();
-        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+        let keypair = KeyPair::generate().ok();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).ok();
 
         let peers = protocol.get_connected_peers().await;
         assert!(peers.is_empty());

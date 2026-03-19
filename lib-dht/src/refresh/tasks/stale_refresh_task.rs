@@ -27,7 +27,7 @@ impl Task for StaleRefreshTask {
             .kademlia
             .get_routing_table()
             .lock()
-            .unwrap()
+            .ok()
             .all_unqueried_nodes();
 
         for node in nodes {
@@ -36,9 +36,9 @@ impl Task for StaleRefreshTask {
             self.kademlia
                 .get_server()
                 .lock()
-                .unwrap()
+                .ok()
                 .send_with_node_callback(&mut request, node, listener.clone())
-                .unwrap();
+                .ok();
         }
     }
 

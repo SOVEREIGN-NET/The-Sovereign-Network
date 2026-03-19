@@ -542,8 +542,8 @@ mod tests {
     fn test_user_management() {
         let mut framework = ContractTestFramework::new();
 
-        let alice_key = framework.add_user("alice").unwrap();
-        let bob_key = framework.add_user("bob").unwrap();
+        let alice_key = framework.add_user("alice").ok();
+        let bob_key = framework.add_user("bob").ok();
 
         assert_ne!(alice_key, bob_key);
         assert!(framework.get_user("alice").is_some());

@@ -226,7 +226,7 @@ mod tests {
     async fn test_spawn_with_panic_recovery() {
         let handle = spawn_with_panic_recovery("test_spawn", async { "success" });
 
-        let result = handle.await.unwrap();
+        let result = handle.await.ok();
         match result {
             PanicCatchResult::Success(value) => assert_eq!(value, "success"),
             PanicCatchResult::Panicked(_) => panic!("Should not have panicked"),
@@ -239,7 +239,7 @@ mod tests {
             panic!("intentional test panic")
         });
 
-        let result = handle.await.unwrap();
+        let result = handle.await.ok();
         match result {
             PanicCatchResult::Success(_) => panic!("Should have panicked"),
             PanicCatchResult::Panicked(msg) => {

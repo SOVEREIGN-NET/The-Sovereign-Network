@@ -246,11 +246,11 @@ mod tests {
     #[test]
     fn test_supported_shell_from_str_bash() {
         assert_eq!(
-            "bash".parse::<SupportedShell>().unwrap(),
+            "bash".parse::<SupportedShell>().ok(),
             SupportedShell::Bash
         );
         assert_eq!(
-            "BASH".parse::<SupportedShell>().unwrap(),
+            "BASH".parse::<SupportedShell>().ok(),
             SupportedShell::Bash
         );
     }
@@ -258,11 +258,11 @@ mod tests {
     #[test]
     fn test_supported_shell_from_str_zsh() {
         assert_eq!(
-            "zsh".parse::<SupportedShell>().unwrap(),
+            "zsh".parse::<SupportedShell>().ok(),
             SupportedShell::Zsh
         );
         assert_eq!(
-            "ZSH".parse::<SupportedShell>().unwrap(),
+            "ZSH".parse::<SupportedShell>().ok(),
             SupportedShell::Zsh
         );
     }
@@ -270,11 +270,11 @@ mod tests {
     #[test]
     fn test_supported_shell_from_str_fish() {
         assert_eq!(
-            "fish".parse::<SupportedShell>().unwrap(),
+            "fish".parse::<SupportedShell>().ok(),
             SupportedShell::Fish
         );
         assert_eq!(
-            "Fish".parse::<SupportedShell>().unwrap(),
+            "Fish".parse::<SupportedShell>().ok(),
             SupportedShell::Fish
         );
     }
@@ -282,15 +282,15 @@ mod tests {
     #[test]
     fn test_supported_shell_from_str_powershell() {
         assert_eq!(
-            "powershell".parse::<SupportedShell>().unwrap(),
+            "powershell".parse::<SupportedShell>().ok(),
             SupportedShell::PowerShell
         );
         assert_eq!(
-            "pwsh".parse::<SupportedShell>().unwrap(),
+            "pwsh".parse::<SupportedShell>().ok(),
             SupportedShell::PowerShell
         );
         assert_eq!(
-            "PowerShell".parse::<SupportedShell>().unwrap(),
+            "PowerShell".parse::<SupportedShell>().ok(),
             SupportedShell::PowerShell
         );
     }
@@ -298,11 +298,11 @@ mod tests {
     #[test]
     fn test_supported_shell_from_str_elvish() {
         assert_eq!(
-            "elvish".parse::<SupportedShell>().unwrap(),
+            "elvish".parse::<SupportedShell>().ok(),
             SupportedShell::Elvish
         );
         assert_eq!(
-            "ELVISH".parse::<SupportedShell>().unwrap(),
+            "ELVISH".parse::<SupportedShell>().ok(),
             SupportedShell::Elvish
         );
     }
@@ -339,7 +339,7 @@ mod tests {
     fn test_supported_shell_completion_path_bash() {
         let path = SupportedShell::Bash.completion_path();
         assert!(path.is_some());
-        let p = path.unwrap();
+        let p = path.ok();
         assert!(p.to_string_lossy().contains(".bash_completion.d"));
         assert!(p.to_string_lossy().contains("zhtp-cli"));
     }
@@ -348,7 +348,7 @@ mod tests {
     fn test_supported_shell_completion_path_zsh() {
         let path = SupportedShell::Zsh.completion_path();
         assert!(path.is_some());
-        let p = path.unwrap();
+        let p = path.ok();
         assert!(p.to_string_lossy().contains(".zsh"));
         assert!(p.to_string_lossy().contains("completions"));
     }
@@ -357,7 +357,7 @@ mod tests {
     fn test_supported_shell_completion_path_fish() {
         let path = SupportedShell::Fish.completion_path();
         assert!(path.is_some());
-        let p = path.unwrap();
+        let p = path.ok();
         assert!(p.to_string_lossy().contains(".config"));
         assert!(p.to_string_lossy().contains("fish"));
         assert!(p.to_string_lossy().contains("zhtp-cli.fish"));
@@ -373,7 +373,7 @@ mod tests {
     fn test_supported_shell_completion_path_elvish() {
         let path = SupportedShell::Elvish.completion_path();
         assert!(path.is_some());
-        let p = path.unwrap();
+        let p = path.ok();
         assert!(p.to_string_lossy().contains(".local"));
         assert!(p.to_string_lossy().contains("elves"));
     }

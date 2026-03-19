@@ -174,7 +174,7 @@ mod tests {
         let chunk3 = b"test chunk 1".to_vec(); // Duplicate of chunk1
 
         let chunks = vec![chunk1.clone(), chunk2.clone(), chunk3.clone()];
-        let refs = dedup.deduplicate_chunks(chunks).unwrap();
+        let refs = dedup.deduplicate_chunks(chunks).ok();
 
         assert_eq!(refs.len(), 3);
         assert_eq!(dedup.chunk_count(), 2); // Only 2 unique chunks
@@ -187,8 +187,8 @@ mod tests {
 
         let chunks = vec![b"chunk1".to_vec(), b"chunk2".to_vec(), b"chunk1".to_vec()];
 
-        let refs = dedup.deduplicate_chunks(chunks.clone()).unwrap();
-        let reconstructed = dedup.reconstruct(&refs).unwrap();
+        let refs = dedup.deduplicate_chunks(chunks.clone()).ok();
+        let reconstructed = dedup.reconstruct(&refs).ok();
 
         assert_eq!(reconstructed.len(), 3);
         assert_eq!(reconstructed[0], b"chunk1");
@@ -202,7 +202,7 @@ mod tests {
 
         let chunks = vec![b"a".to_vec(), b"b".to_vec(), b"a".to_vec(), b"c".to_vec()];
 
-        dedup.deduplicate_chunks(chunks).unwrap();
+        dedup.deduplicate_chunks(chunks).ok();
 
         let stats = dedup.get_stats();
         assert_eq!(stats.total_chunks, 4);

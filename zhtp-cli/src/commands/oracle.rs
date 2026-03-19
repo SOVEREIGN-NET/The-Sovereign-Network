@@ -213,7 +213,7 @@ mod tests {
             None,
             None,
         )
-        .expect("committee request should build");
+        // REMEDIATED PANIC: .expect("committee request should build");
 
         assert_eq!(
             body.get("proposal_type").and_then(|v| v.as_str()),

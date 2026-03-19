@@ -129,7 +129,7 @@ impl NonceTracker {
     pub async fn check_and_record(&self, nonce: [u8; 32]) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let mut nonces = self.seen_nonces.write().await;
@@ -287,7 +287,7 @@ impl PeerReputation {
             protocol_violations: 0,
             last_seen: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             banned: false,
             ban_expires: None,
@@ -299,7 +299,7 @@ impl PeerReputation {
         self.successful_interactions += 1;
         self.last_seen = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         // Increase score, max 100
         self.score = self.score.saturating_add(1).min(100);
@@ -310,7 +310,7 @@ impl PeerReputation {
         self.failed_interactions += 1;
         self.last_seen = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         // Decrease score, min 0
         self.score = self.score.saturating_sub(2);
@@ -321,7 +321,7 @@ impl PeerReputation {
         self.protocol_violations += 1;
         self.last_seen = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         // Major penalty for violations
         self.score = self.score.saturating_sub(10);
@@ -336,7 +336,7 @@ impl PeerReputation {
     pub fn ban(&mut self, duration_secs: u64) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         self.banned = true;
         self.ban_expires = Some(now + duration_secs);
@@ -351,7 +351,7 @@ impl PeerReputation {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         if let Some(expires) = self.ban_expires {
@@ -565,7 +565,7 @@ impl DiscoveryResult {
             protocol,
             discovered_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             mesh_port,
             did: None,
@@ -937,14 +937,14 @@ mod tests {
     fn test_discovery_result_merge() {
         let mut result1 = DiscoveryResult::new(
             Uuid::new_v4(),
-            "127.0.0.1:9333".parse().unwrap(),
+            "127.0.0.1:9333".parse().ok(),
             DiscoveryProtocol::PortScan,
             9333,
         );
 
         let mut result2 = DiscoveryResult::new(
             result1.peer_id, // Same peer
-            "192.168.1.100:9333".parse().unwrap(),
+            "192.168.1.100:9333".parse().ok(),
             DiscoveryProtocol::UdpMulticast,
             9333,
         );
@@ -974,7 +974,7 @@ mod tests {
             node_id: Uuid::new_v4(),
             mesh_port: 9333,
             quic_port: 9334,
-            local_ip: "192.168.1.50".parse().unwrap(),
+            local_ip: "192.168.1.50".parse().ok(),
             protocols: vec!["zhtp".to_string()],
             announced_at: 1234567890,
             ..Default::default()

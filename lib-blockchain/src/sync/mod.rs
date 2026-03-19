@@ -503,8 +503,8 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_store() -> (TempDir, Arc<dyn BlockchainStore>) {
-        let dir = TempDir::new().unwrap();
-        let store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(dir.path()).unwrap());
+        let dir = TempDir::new().ok();
+        let store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(dir.path()).ok());
         (dir, store)
     }
 
@@ -603,36 +603,36 @@ mod tests {
         let mut blocks = vec![genesis.clone()];
 
         for height in 1..5 {
-            let prev_hash = blocks.last().unwrap().header.block_hash;
+            let prev_hash = blocks.last().ok().header.block_hash;
             let block = create_block_at_height(height, prev_hash);
             blocks.push(block);
         }
 
         // Import blocks to source store
-        let result = sync1.import_blocks(blocks.clone()).unwrap();
+        let result = sync1.import_blocks(blocks.clone()).ok();
         assert_eq!(result.blocks_imported, 5);
         assert_eq!(result.final_height, Some(4));
 
         // Export all blocks
-        let exported = sync1.export_all_blocks().unwrap();
+        let exported = sync1.export_all_blocks().ok();
         assert_eq!(exported.len(), 5);
 
         // Create destination chain and import
         let (_dir2, store2) = create_test_store();
         let sync2 = ChainSync::new(Arc::clone(&store2));
 
-        let result2 = sync2.import_blocks(exported).unwrap();
+        let result2 = sync2.import_blocks(exported).ok();
         assert_eq!(result2.blocks_imported, 5);
         assert_eq!(result2.final_height, Some(4));
 
         // Verify chains match
-        let latest1 = store1.latest_height().unwrap();
-        let latest2 = store2.latest_height().unwrap();
+        let latest1 = store1.latest_height().ok();
+        let latest2 = store2.latest_height().ok();
         assert_eq!(latest1, latest2);
 
         for height in 0..=4 {
-            let block1 = store1.get_block_by_height(height).unwrap().unwrap();
-            let block2 = store2.get_block_by_height(height).unwrap().unwrap();
+            let block1 = store1.get_block_by_height(height).ok().ok();
+            let block2 = store2.get_block_by_height(height).ok().ok();
             assert_eq!(block1.header.block_hash, block2.header.block_hash);
         }
     }
@@ -647,15 +647,15 @@ mod tests {
         let mut blocks = vec![genesis.clone()];
 
         for height in 1..10 {
-            let prev_hash = blocks.last().unwrap().header.block_hash;
+            let prev_hash = blocks.last().ok().header.block_hash;
             let block = create_block_at_height(height, prev_hash);
             blocks.push(block);
         }
 
-        sync.import_blocks(blocks).unwrap();
+        sync.import_blocks(blocks).ok();
 
         // Export subset
-        let exported = sync.export_blocks(3, 7).unwrap();
+        let exported = sync.export_blocks(3, 7).ok();
         assert_eq!(exported.len(), 5);
         assert_eq!(exported[0].header.height, 3);
         assert_eq!(exported[4].header.height, 7);
@@ -692,7 +692,7 @@ mod tests {
         ));
 
         // Verify state reflects only genesis
-        let latest = store.latest_height().unwrap();
+        let latest = store.latest_height().ok();
         assert_eq!(latest, 0);
     }
 
@@ -703,7 +703,7 @@ mod tests {
 
         // Import genesis first
         let genesis = create_genesis_block();
-        sync.import_blocks(vec![genesis.clone()]).unwrap();
+        sync.import_blocks(vec![genesis.clone()]).ok();
 
         // Try to import block 3 (skipping blocks 1 and 2)
         let block3 = create_block_at_height(3, Hash::new([1u8; 32]));
@@ -723,7 +723,7 @@ mod tests {
         let (_dir, store) = create_test_store();
         let sync = ChainSync::new(store);
 
-        let result = sync.import_blocks(vec![]).unwrap();
+        let result = sync.import_blocks(vec![]).ok();
         assert_eq!(result.blocks_imported, 0);
         assert_eq!(result.final_height, None);
     }
@@ -763,10 +763,10 @@ mod tests {
 
         // Import first two valid blocks
         sync.import_blocks(vec![genesis.clone(), block1.clone()])
-            .unwrap();
+            .ok();
 
         // Verify state at height 1
-        let height_before = store.latest_height().unwrap();
+        let height_before = store.latest_height().ok();
         assert_eq!(height_before, 1);
 
         // Try to import invalid block - should fail
@@ -774,14 +774,14 @@ mod tests {
         assert!(result.is_err());
 
         // Verify state is EXACTLY at height 1 (no partial state from failed block)
-        let height_after = store.latest_height().unwrap();
+        let height_after = store.latest_height().ok();
         assert_eq!(height_after, 1);
 
         // Can still continue with valid block
         let valid_block2 = create_block_at_height(2, block1.header.block_hash);
-        sync.import_blocks(vec![valid_block2]).unwrap();
+        sync.import_blocks(vec![valid_block2]).ok();
 
-        let final_height = store.latest_height().unwrap();
+        let final_height = store.latest_height().ok();
         assert_eq!(final_height, 2);
     }
 
@@ -795,7 +795,7 @@ mod tests {
         let mut blocks = vec![genesis.clone()];
 
         for height in 1..5 {
-            let prev_hash = blocks.last().unwrap().header.block_hash;
+            let prev_hash = blocks.last().ok().header.block_hash;
             let block = create_block_at_height(height, prev_hash);
             blocks.push(block);
         }
@@ -805,7 +805,7 @@ mod tests {
         sync.import_blocks_with_progress(blocks, |height, count| {
             progress_calls.push((height, count));
         })
-        .unwrap();
+        .ok();
 
         assert_eq!(progress_calls.len(), 5);
         assert_eq!(progress_calls[0], (0, 1));

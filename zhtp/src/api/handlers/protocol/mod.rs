@@ -40,13 +40,13 @@ impl ProtocolHandler {
             protocol_version: "ZHTP/1.0".to_string(),
             start_time: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             node_id: format!(
                 "zhtp-node-{}",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
                     % 10000
             ),

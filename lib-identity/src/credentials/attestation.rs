@@ -35,7 +35,7 @@ impl IdentityAttestation {
     ) -> Self {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Generate attestation ID
@@ -65,7 +65,7 @@ impl IdentityAttestation {
         if let Some(expires_at) = self.expires_at {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs();
             expires_at <= now
         } else {
@@ -85,7 +85,7 @@ impl IdentityAttestation {
     pub fn age_seconds(&self) -> u64 {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         now.saturating_sub(self.created_at)
     }

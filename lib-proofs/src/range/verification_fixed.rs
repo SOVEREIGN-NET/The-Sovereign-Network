@@ -28,9 +28,9 @@ pub fn verify_range_proof(proof: &ZkRangeProof) -> Result<VerificationResult> {
     let blinding = &proof.proof[24..56];
     let challenge = &proof.proof[56..88];
 
-    let value = u64::from_le_bytes(value_bytes.try_into().unwrap());
-    let min_value = u64::from_le_bytes(min_bytes.try_into().unwrap());
-    let max_value = u64::from_le_bytes(max_bytes.try_into().unwrap());
+    let value = u64::from_le_bytes(value_bytes.try_into().ok());
+    let min_value = u64::from_le_bytes(min_bytes.try_into().ok());
+    let max_value = u64::from_le_bytes(max_bytes.try_into().ok());
 
     // Verify range bounds match proof metadata
     if min_value != proof.min_value || max_value != proof.max_value {

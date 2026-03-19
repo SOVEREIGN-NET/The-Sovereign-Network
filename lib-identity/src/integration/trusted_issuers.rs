@@ -442,7 +442,7 @@ impl TrustedIssuersRegistry {
         let total_entries = self.verification_cache.len();
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let expired_entries = self

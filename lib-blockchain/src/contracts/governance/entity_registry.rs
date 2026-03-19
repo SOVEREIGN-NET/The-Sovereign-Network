@@ -499,9 +499,9 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(registry.is_initialized());
-        assert_eq!(registry.cbe_treasury().unwrap().key_id, cbe.key_id);
+        assert_eq!(registry.cbe_treasury().ok().key_id, cbe.key_id);
         assert_eq!(
-            registry.nonprofit_treasury().unwrap().key_id,
+            registry.nonprofit_treasury().ok().key_id,
             nonprofit.key_id
         );
     }
@@ -512,7 +512,7 @@ mod tests {
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
 
-        registry.init(cbe.clone(), nonprofit.clone()).unwrap();
+        registry.init(cbe.clone(), nonprofit.clone()).ok();
         let result = registry.init(cbe, nonprofit);
 
         assert_eq!(result, Err(EntityRegistryError::AlreadyInitialized));
@@ -559,7 +559,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe.clone(), nonprofit).unwrap();
+        registry.init(cbe.clone(), nonprofit).ok();
 
         assert_eq!(registry.get_entity_type(&cbe), Some(EntityType::ForProfit));
     }
@@ -569,7 +569,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe, nonprofit.clone()).unwrap();
+        registry.init(cbe, nonprofit.clone()).ok();
 
         assert_eq!(
             registry.get_entity_type(&nonprofit),
@@ -583,7 +583,7 @@ mod tests {
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
         let unknown = create_test_public_key(3);
-        registry.init(cbe, nonprofit).unwrap();
+        registry.init(cbe, nonprofit).ok();
 
         assert_eq!(registry.get_entity_type(&unknown), None);
     }
@@ -597,7 +597,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe.clone(), nonprofit).unwrap();
+        registry.init(cbe.clone(), nonprofit).ok();
 
         assert!(registry.has_role(&cbe, Role::Operator));
     }
@@ -607,7 +607,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe.clone(), nonprofit).unwrap();
+        registry.init(cbe.clone(), nonprofit).ok();
 
         assert!(registry.has_role(&cbe, Role::ProfitDeclarer));
     }
@@ -617,7 +617,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe.clone(), nonprofit).unwrap();
+        registry.init(cbe.clone(), nonprofit).ok();
 
         assert!(registry.has_role(&cbe, Role::TreasurySpender));
     }
@@ -627,7 +627,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe.clone(), nonprofit).unwrap();
+        registry.init(cbe.clone(), nonprofit).ok();
 
         assert!(!registry.has_role(&cbe, Role::MissionCustodian));
         assert!(!registry.has_role(&cbe, Role::TreasuryHolder));
@@ -638,7 +638,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe, nonprofit.clone()).unwrap();
+        registry.init(cbe, nonprofit.clone()).ok();
 
         assert!(registry.has_role(&nonprofit, Role::MissionCustodian));
     }
@@ -648,7 +648,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe, nonprofit.clone()).unwrap();
+        registry.init(cbe, nonprofit.clone()).ok();
 
         assert!(registry.has_role(&nonprofit, Role::TreasuryHolder));
     }
@@ -658,7 +658,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe, nonprofit.clone()).unwrap();
+        registry.init(cbe, nonprofit.clone()).ok();
 
         assert!(!registry.has_role(&nonprofit, Role::Operator));
         assert!(!registry.has_role(&nonprofit, Role::ProfitDeclarer));
@@ -670,7 +670,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe.clone(), nonprofit).unwrap();
+        registry.init(cbe.clone(), nonprofit).ok();
 
         let roles = registry.get_roles(&cbe);
 
@@ -685,7 +685,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe, nonprofit.clone()).unwrap();
+        registry.init(cbe, nonprofit.clone()).ok();
 
         let roles = registry.get_roles(&nonprofit);
 
@@ -704,7 +704,7 @@ mod tests {
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
         let external = create_test_public_key(3);
-        registry.init(cbe, nonprofit.clone()).unwrap();
+        registry.init(cbe, nonprofit.clone()).ok();
 
         // Nonprofit earnings to nonprofit treasury: allowed
         let result = registry.validate_transfer(&external, &nonprofit, true);
@@ -717,7 +717,7 @@ mod tests {
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
         let external = create_test_public_key(3);
-        registry.init(cbe.clone(), nonprofit).unwrap();
+        registry.init(cbe.clone(), nonprofit).ok();
 
         // Nonprofit earnings to CBE treasury: REJECTED (Invariant I4)
         let result = registry.validate_transfer(&external, &cbe, true);
@@ -730,7 +730,7 @@ mod tests {
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
         let external = create_test_public_key(3);
-        registry.init(cbe.clone(), nonprofit).unwrap();
+        registry.init(cbe.clone(), nonprofit).ok();
 
         // Non-nonprofit-earnings to CBE: allowed
         let result = registry.validate_transfer(&external, &cbe, false);
@@ -746,7 +746,7 @@ mod tests {
         let mut registry = EntityRegistry::new();
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
-        registry.init(cbe, nonprofit).unwrap();
+        registry.init(cbe, nonprofit).ok();
 
         let result = registry.validate();
         assert!(result.is_ok());
@@ -770,7 +770,7 @@ mod tests {
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
         let other = create_test_public_key(3);
-        registry.init(cbe.clone(), nonprofit.clone()).unwrap();
+        registry.init(cbe.clone(), nonprofit.clone()).ok();
 
         assert!(registry.is_cbe_treasury(&cbe));
         assert!(!registry.is_cbe_treasury(&nonprofit));
@@ -783,7 +783,7 @@ mod tests {
         let cbe = create_test_public_key(1);
         let nonprofit = create_test_public_key(2);
         let other = create_test_public_key(3);
-        registry.init(cbe.clone(), nonprofit.clone()).unwrap();
+        registry.init(cbe.clone(), nonprofit.clone()).ok();
 
         assert!(!registry.is_nonprofit_treasury(&cbe));
         assert!(registry.is_nonprofit_treasury(&nonprofit));

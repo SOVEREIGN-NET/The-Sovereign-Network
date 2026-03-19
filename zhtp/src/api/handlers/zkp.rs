@@ -528,7 +528,7 @@ mod tests {
             }
         }"#;
 
-        let req: GenerateProofRequest = serde_json::from_str(json).unwrap();
+        let req: GenerateProofRequest = serde_json::from_str(json).ok();
         assert_eq!(req.proof_type, "age_over_18");
         assert_eq!(req.credential_data.age, Some(25));
     }
@@ -545,7 +545,7 @@ mod tests {
             }
         }"#;
 
-        let req: VerifyProofRequest = serde_json::from_str(json).unwrap();
+        let req: VerifyProofRequest = serde_json::from_str(json).ok();
         assert_eq!(req.proof.proof_type, "age_over_18");
         assert_eq!(req.proof.public_inputs.len(), 1);
         assert_eq!(req.proof.generated_at, 1234567890);

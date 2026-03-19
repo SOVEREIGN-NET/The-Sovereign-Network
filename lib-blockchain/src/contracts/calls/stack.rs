@@ -125,7 +125,7 @@ mod tests {
         let contract_id = [1u8; 32];
         let method = "transfer".to_string();
 
-        let depth = stack.push(contract_id, method.clone()).unwrap();
+        let depth = stack.push(contract_id, method.clone()).ok();
 
         assert_eq!(depth, 1);
         assert_eq!(stack.current_depth(), 1);
@@ -142,9 +142,9 @@ mod tests {
         let contract2 = [2u8; 32];
         let contract3 = [3u8; 32];
 
-        let d1 = stack.push(contract1, "vote".to_string()).unwrap();
-        let d2 = stack.push(contract2, "transfer".to_string()).unwrap();
-        let d3 = stack.push(contract3, "claim".to_string()).unwrap();
+        let d1 = stack.push(contract1, "vote".to_string()).ok();
+        let d2 = stack.push(contract2, "transfer".to_string()).ok();
+        let d3 = stack.push(contract3, "claim".to_string()).ok();
 
         assert_eq!(d1, 1);
         assert_eq!(d2, 2);
@@ -164,8 +164,8 @@ mod tests {
         let contract1 = [1u8; 32];
         let contract2 = [2u8; 32];
 
-        stack.push(contract1, "method1".to_string()).unwrap();
-        stack.push(contract2, "method2".to_string()).unwrap();
+        stack.push(contract1, "method1".to_string()).ok();
+        stack.push(contract2, "method2".to_string()).ok();
 
         assert_eq!(stack.chain().len(), 2);
 
@@ -180,9 +180,9 @@ mod tests {
         let mut stack = CallStack::new();
         let contract = [1u8; 32];
 
-        stack.push(contract, "method1".to_string()).unwrap();
-        stack.push(contract, "method2".to_string()).unwrap();
-        stack.push(contract, "method3".to_string()).unwrap();
+        stack.push(contract, "method1".to_string()).ok();
+        stack.push(contract, "method2".to_string()).ok();
+        stack.push(contract, "method3".to_string()).ok();
 
         assert_eq!(stack.chain().len(), 3);
 
@@ -246,13 +246,13 @@ mod tests {
         let method1 = "method1".to_string();
         let method2 = "method2".to_string();
 
-        stack.push(contract1, method1.clone()).unwrap();
-        assert_eq!(stack.peek().unwrap().0, contract1);
-        assert_eq!(stack.peek().unwrap().1, method1);
+        stack.push(contract1, method1.clone()).ok();
+        assert_eq!(stack.peek().ok().0, contract1);
+        assert_eq!(stack.peek().ok().1, method1);
 
-        stack.push(contract2, method2.clone()).unwrap();
-        assert_eq!(stack.peek().unwrap().0, contract2);
-        assert_eq!(stack.peek().unwrap().1, method2);
+        stack.push(contract2, method2.clone()).ok();
+        assert_eq!(stack.peek().ok().0, contract2);
+        assert_eq!(stack.peek().ok().1, method2);
     }
 
     #[test]
@@ -260,9 +260,9 @@ mod tests {
         let mut stack = CallStack::new();
         let contract = [1u8; 32];
 
-        stack.push(contract, "m1".to_string()).unwrap();
-        stack.push(contract, "m2".to_string()).unwrap();
-        stack.push(contract, "m3".to_string()).unwrap();
+        stack.push(contract, "m1".to_string()).ok();
+        stack.push(contract, "m2".to_string()).ok();
+        stack.push(contract, "m3".to_string()).ok();
 
         assert_eq!(stack.current_depth(), 3);
         assert_eq!(stack.chain().len(), 3);

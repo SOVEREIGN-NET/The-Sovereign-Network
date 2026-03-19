@@ -95,7 +95,7 @@ impl ActivityTracker {
                 activity_distribution: HashMap::new(),
                 last_updated: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             },
         }
@@ -105,7 +105,7 @@ impl ActivityTracker {
     pub fn record_activity(&mut self, identity_id: &IdentityId, activity_type: ActivityType) {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Update or create activity record
@@ -139,8 +139,8 @@ impl ActivityTracker {
             || record.activity_count
                 > self
                     .activities
-                    .get(&self.global_stats.most_active_identity.as_ref().unwrap())
-                    .unwrap()
+                    .get(&self.global_stats.most_active_identity.as_ref().ok())
+                    .ok()
                     .activity_count
         {
             self.global_stats.most_active_identity = Some(identity_id.clone());
@@ -164,7 +164,7 @@ impl ActivityTracker {
         let session_id = format!("session_{}", self.generate_session_id());
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let session = ActivitySession {
@@ -186,7 +186,7 @@ impl ActivityTracker {
     pub fn end_session(&mut self, identity_id: &IdentityId, session_id: &str) {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         if let Some(record) = self.activities.get_mut(identity_id) {
@@ -246,7 +246,7 @@ mod tests {
         tracker.record_activity(&identity_id, ActivityType::IdentityCreation);
         tracker.record_activity(&identity_id, ActivityType::WalletCreated);
 
-        let record = tracker.get_activity_record(&identity_id).unwrap();
+        let record = tracker.get_activity_record(&identity_id).ok();
         assert_eq!(record.activity_count, 2);
         assert_eq!(record.activity_types.len(), 2);
 
@@ -266,7 +266,7 @@ mod tests {
         tracker.add_activity_to_session(&identity_id, &session_id, ActivityType::WalletCreated);
         tracker.end_session(&identity_id, &session_id);
 
-        let record = tracker.get_activity_record(&identity_id).unwrap();
+        let record = tracker.get_activity_record(&identity_id).ok();
         assert_eq!(record.sessions.len(), 1);
         assert!(record.sessions[0].end_time.is_some());
     }

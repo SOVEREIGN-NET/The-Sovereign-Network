@@ -105,7 +105,7 @@ pub async fn handle_identity_mesh_request(
                     "body": identity_data.as_bytes(),
                     "timestamp": std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs()
                 });
 
@@ -256,7 +256,7 @@ async fn handle_signin_request(
                 "body": signin_data.as_bytes(),
                 "timestamp": std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             });
 
@@ -343,7 +343,7 @@ async fn handle_wallet_create_request(zhtp_request: &serde_json::Value) -> Resul
                 "body": wallet_data.as_bytes(),
                 "timestamp": std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             });
 
@@ -418,7 +418,7 @@ async fn handle_import_request(
                 "body": import_data.as_bytes(),
                 "timestamp": std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             });
 
@@ -492,7 +492,7 @@ async fn handle_set_password_request(
                 "body": password_data.as_bytes(),
                 "timestamp": std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             });
 
@@ -554,7 +554,7 @@ async fn handle_signout_request(
                 "body": signout_data.as_bytes(),
                 "timestamp": std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             });
 
@@ -769,7 +769,7 @@ async fn signin_identity_direct(
                 if let Some(identity) = manager.get_identity(&identity_id) {
                     let current_time = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs();
 
                     info!(
@@ -1038,7 +1038,7 @@ async fn create_standalone_wallet_direct(
         "seed_phrase": seed_phrase,
         "created_at": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs(),
         "identity_linked": true,
         "blockchain_recorded": true,
@@ -1335,7 +1335,7 @@ async fn record_identity_on_blockchain(identity_result: &serde_json::Value) -> R
         .unwrap_or_else(|| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs()
         });
 
@@ -1560,7 +1560,7 @@ pub async fn create_error_mesh_response(
         "data": format!("{{\"error\": \"{}\"}}", message),
         "timestamp": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
     });
 

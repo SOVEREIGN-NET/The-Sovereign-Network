@@ -44,7 +44,7 @@ impl ErrorResponse {
     }
 
     pub fn get_description(&self) -> &String {
-        self.description.as_ref().unwrap()
+        self.description.as_ref().ok()
     }
 }
 
@@ -116,7 +116,7 @@ impl MessageBase for ErrorResponse {
 
         let mut arr = BencodeArray::new();
         arr.push(self.code);
-        arr.push(self.description.as_ref().unwrap().clone());
+        arr.push(self.description.as_ref().ok().clone());
         ben.put(self.get_type().inner_key(), arr);
 
         if let Some(public) = self.public {
@@ -136,7 +136,7 @@ impl MessageBase for ErrorResponse {
 
         if ben
             .get::<BencodeArray>(self.get_type().inner_key())
-            .unwrap()
+            .ok()
             .len()
             < 2
         {
@@ -148,7 +148,7 @@ impl MessageBase for ErrorResponse {
 
         self.code = ben
             .get::<BencodeArray>(self.get_type().inner_key())
-            .unwrap()
+            .ok()
             .get::<BencodeNumber>(0)
             .ok_or_else(|| {
                 MessageException::new("Protocol Error, such as a malformed packet.", 100)
@@ -159,7 +159,7 @@ impl MessageBase for ErrorResponse {
             })?;
         self.description = Some(
             ben.get::<BencodeArray>(self.get_type().inner_key())
-                .unwrap()
+                .ok()
                 .get::<BencodeBytes>(1)
                 .ok_or_else(|| {
                     MessageException::new("Protocol Error, such as a malformed packet.", 100)

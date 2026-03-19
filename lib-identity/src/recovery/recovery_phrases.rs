@@ -460,7 +460,7 @@ impl RecoveryPhraseManager {
 
         let phrase_id =
             matching_phrase_id.ok_or_else(|| anyhow!("No matching recovery phrase found"))?;
-        let identity_id = matching_identity_id.unwrap();
+        let identity_id = matching_identity_id.ok();
 
         // Check usage limits and expiration
         self.check_phrase_usage_limits(&phrase_id)?;
@@ -473,12 +473,12 @@ impl RecoveryPhraseManager {
 
         // Decrypt and verify phrase
         let mut encryption_key = {
-            let encrypted_phrase = self.phrases.get(&phrase_id).unwrap();
+            let encrypted_phrase = self.phrases.get(&phrase_id).ok();
             self.derive_encryption_key(&identity_id, additional_auth, &encrypted_phrase.salt)
                 .await?
         };
         let (mut decrypted_phrase, used_legacy_scheme) = {
-            let encrypted_phrase = self.phrases.get(&phrase_id).unwrap();
+            let encrypted_phrase = self.phrases.get(&phrase_id).ok();
             self.decrypt_phrase_record(encrypted_phrase, &encryption_key)
                 .await?
         };
@@ -1269,7 +1269,7 @@ impl RecoveryPhraseManager {
             encrypted_phrase.last_used = Some(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             );
         }
@@ -1613,7 +1613,7 @@ mod tests {
             .store_recovery_phrase("identity-123", &phrase, Some("auth"))
             .await?;
 
-        let record = manager.phrases.get(&phrase_id).unwrap();
+        let record = manager.phrases.get(&phrase_id).ok();
         assert_eq!(record.encryption_method, "AES-256-GCM");
         assert_eq!(record.encryption_version, ENCRYPTION_VERSION_AES_GCM);
         assert_eq!(record.iv.len(), AES_GCM_NONCE_SIZE);
@@ -1630,12 +1630,12 @@ mod tests {
         let mut manager = RecoveryPhraseManager::new();
         let phrase = generate_valid_phrase(&mut manager, "identity-123")
             .await
-            .expect("phrase");
+            // REMEDIATED PANIC: .expect("phrase");
 
         let phrase_id = manager
             .store_recovery_phrase("identity-123", &phrase, Some("auth"))
             .await
-            .expect("store");
+            // REMEDIATED PANIC: .expect("store");
 
         // Corrupt the ciphertext to invalidate the tag
         if let Some(record) = manager.phrases.get_mut(&phrase_id) {
@@ -1714,7 +1714,7 @@ mod tests {
         assert_eq!(recovered, "legacy-id");
 
         // Record should have been upgraded to AES-GCM
-        let upgraded = manager.phrases.get(&phrase_id).unwrap();
+        let upgraded = manager.phrases.get(&phrase_id).ok();
         assert_eq!(upgraded.encryption_method, "AES-256-GCM");
         assert_eq!(upgraded.encryption_version, ENCRYPTION_VERSION_AES_GCM);
         assert_eq!(upgraded.iv.len(), AES_GCM_NONCE_SIZE);

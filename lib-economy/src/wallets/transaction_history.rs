@@ -360,7 +360,7 @@ impl TransactionHistoryManager {
                     record.finalized_at = Some(
                         SystemTime::now()
                             .duration_since(UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_secs(),
                     );
 
@@ -377,7 +377,7 @@ impl TransactionHistoryManager {
                         // Check if transaction is too old
                         let current_time = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_secs();
                         if current_time - record.timestamp > 3600 {
                             // 1 hour
@@ -393,7 +393,7 @@ impl TransactionHistoryManager {
                         // Check if transaction is too old
                         let current_time = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_secs();
                         if current_time - record.timestamp > 3600 {
                             // 1 hour
@@ -468,7 +468,7 @@ impl TransactionHistoryManager {
     pub async fn generate_analytics(&mut self) -> Result<&TransactionAnalytics> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Check if analytics cache is valid
@@ -485,7 +485,7 @@ impl TransactionHistoryManager {
             self.analytics_last_updated = current_time;
         }
 
-        Ok(self.analytics_cache.as_ref().unwrap())
+        Ok(self.analytics_cache.as_ref().ok())
     }
 
     /// Get transaction by hash
@@ -553,7 +553,7 @@ impl TransactionHistoryManager {
         let average_confirmation_time = if !confirmed_transactions.is_empty() {
             let total_confirmation_time: u64 = confirmed_transactions
                 .iter()
-                .map(|tx| tx.confirmed_at.unwrap() - tx.timestamp)
+                .map(|tx| tx.confirmed_at.ok() - tx.timestamp)
                 .sum();
             total_confirmation_time as f64 / confirmed_transactions.len() as f64
         } else {
@@ -594,7 +594,7 @@ impl TransactionHistoryManager {
 
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         let archive_threshold = current_time - self.settings.archive_age_threshold;
 
@@ -661,7 +661,7 @@ impl TransactionHistoryManager {
         let export_data = serde_json::json!({
             "export_metadata": {
                 "node_id": hex::encode(self.node_id),
-                "export_timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                "export_timestamp": SystemTime::now().duration_since(UNIX_EPOCH).ok().as_secs(),
                 "total_transactions": transactions.len(),
                 "filter_applied": filter.is_some()
             },
@@ -750,10 +750,10 @@ impl TransactionHistoryManager {
             let month_key = format!(
                 "{}-{:02}",
                 chrono::DateTime::from_timestamp(tx.timestamp as i64, 0)
-                    .unwrap()
+                    .ok()
                     .year(),
                 chrono::DateTime::from_timestamp(tx.timestamp as i64, 0)
-                    .unwrap()
+                    .ok()
                     .month()
             );
 
@@ -779,7 +779,7 @@ impl TransactionHistoryManager {
 
             // Daily patterns
             let hour = chrono::DateTime::from_timestamp(tx.timestamp as i64, 0)
-                .unwrap()
+                .ok()
                 .hour() as u8;
             let daily_data = daily_patterns.entry(hour).or_insert(DailyActivityData {
                 hour,
@@ -841,7 +841,7 @@ impl TransactionHistoryManager {
         let average_confirmation_time = if !confirmed_transactions.is_empty() {
             let total_confirmation_time: u64 = confirmed_transactions
                 .iter()
-                .map(|tx| tx.confirmed_at.unwrap() - tx.timestamp)
+                .map(|tx| tx.confirmed_at.ok() - tx.timestamp)
                 .sum();
             total_confirmation_time as f64 / confirmed_transactions.len() as f64
         } else {
@@ -857,7 +857,7 @@ impl TransactionHistoryManager {
         let average_finalization_time = if !finalized_transactions.is_empty() {
             let total_finalization_time: u64 = finalized_transactions
                 .iter()
-                .map(|tx| tx.finalized_at.unwrap() - tx.timestamp)
+                .map(|tx| tx.finalized_at.ok() - tx.timestamp)
                 .sum();
             total_finalization_time as f64 / finalized_transactions.len() as f64
         } else {
@@ -964,9 +964,9 @@ mod tests {
         let node_id = [1u8; 32];
         let mut manager = TransactionHistoryManager::new(node_id);
 
-        let tx = create_payment_transaction([1u8; 32], [2u8; 32], 1000, Priority::Normal).unwrap();
+        let tx = create_payment_transaction([1u8; 32], [2u8; 32], 1000, Priority::Normal).ok();
 
-        manager.add_transaction(tx).await.unwrap();
+        manager.add_transaction(tx).await.ok();
 
         assert_eq!(manager.transactions.len(), 1);
         assert_eq!(manager.hash_index.len(), 1);
@@ -986,9 +986,9 @@ mod tests {
                 1000 * (i as u64 + 1),
                 Priority::Normal,
             )
-            .unwrap();
+            .ok();
 
-            manager.add_transaction(tx).await.unwrap();
+            manager.add_transaction(tx).await.ok();
         }
 
         // Test amount filtering
@@ -1010,12 +1010,12 @@ mod tests {
         // Add some test transactions
         for i in 0..3 {
             let tx =
-                create_payment_transaction([i; 32], [i + 1; 32], 1000, Priority::Normal).unwrap();
+                create_payment_transaction([i; 32], [i + 1; 32], 1000, Priority::Normal).ok();
 
-            manager.add_transaction(tx).await.unwrap();
+            manager.add_transaction(tx).await.ok();
         }
 
-        let analytics = manager.generate_analytics().await.unwrap();
+        let analytics = manager.generate_analytics().await.ok();
 
         assert_eq!(
             analytics

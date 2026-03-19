@@ -337,16 +337,16 @@ mod tests {
 
     #[test]
     fn test_parse_primitives() {
-        assert_eq!(TypeSpec::parse("u8").unwrap(), TypeSpec::U8);
-        assert_eq!(TypeSpec::parse("u32").unwrap(), TypeSpec::U32);
-        assert_eq!(TypeSpec::parse("u64").unwrap(), TypeSpec::U64);
-        assert_eq!(TypeSpec::parse("bool").unwrap(), TypeSpec::Bool);
-        assert_eq!(TypeSpec::parse("String").unwrap(), TypeSpec::String);
+        assert_eq!(TypeSpec::parse("u8").ok(), TypeSpec::U8);
+        assert_eq!(TypeSpec::parse("u32").ok(), TypeSpec::U32);
+        assert_eq!(TypeSpec::parse("u64").ok(), TypeSpec::U64);
+        assert_eq!(TypeSpec::parse("bool").ok(), TypeSpec::Bool);
+        assert_eq!(TypeSpec::parse("String").ok(), TypeSpec::String);
     }
 
     #[test]
     fn test_parse_vec() {
-        let vec_u32 = TypeSpec::parse("Vec<u32>").unwrap();
+        let vec_u32 = TypeSpec::parse("Vec<u32>").ok();
         match vec_u32 {
             TypeSpec::Vec { element_type } => {
                 assert_eq!(*element_type, TypeSpec::U32);
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_parse_vec_nested() {
-        let vec_vec_u8 = TypeSpec::parse("Vec<Vec<u8>>").unwrap();
+        let vec_vec_u8 = TypeSpec::parse("Vec<Vec<u8>>").ok();
         match vec_vec_u8 {
             TypeSpec::Vec { element_type } => {
                 match *element_type {
@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_parse_array() {
-        let arr = TypeSpec::parse("[u8; 32]").unwrap();
+        let arr = TypeSpec::parse("[u8; 32]").ok();
         match arr {
             TypeSpec::Array { element_type, size } => {
                 assert_eq!(*element_type, TypeSpec::U8);
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_parse_option() {
-        let opt = TypeSpec::parse("Option<u64>").unwrap();
+        let opt = TypeSpec::parse("Option<u64>").ok();
         match opt {
             TypeSpec::Option { inner_type } => {
                 assert_eq!(*inner_type, TypeSpec::U64);
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_parse_result() {
-        let result = TypeSpec::parse("Result<u64, String>").unwrap();
+        let result = TypeSpec::parse("Result<u64, String>").ok();
         match result {
             TypeSpec::Result { ok_type, err_type } => {
                 assert_eq!(*ok_type, TypeSpec::U64);
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn test_parse_custom_struct() {
-        let custom = TypeSpec::parse("TokenContract").unwrap();
+        let custom = TypeSpec::parse("TokenContract").ok();
         match custom {
             TypeSpec::Struct { name, .. } => {
                 assert_eq!(name, "TokenContract");
@@ -610,8 +610,8 @@ mod tests {
 
     #[test]
     fn test_parse_whitespace_handling() {
-        assert_eq!(TypeSpec::parse("  u64  ").unwrap(), TypeSpec::U64);
-        let result = TypeSpec::parse("Vec< u32 >").unwrap();
+        assert_eq!(TypeSpec::parse("  u64  ").ok(), TypeSpec::U64);
+        let result = TypeSpec::parse("Vec< u32 >").ok();
         match result {
             TypeSpec::Vec { element_type } => {
                 assert_eq!(*element_type, TypeSpec::U32);
@@ -622,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_deeply_nested_types() {
-        let nested = TypeSpec::parse("Vec<Option<Vec<u32>>>").unwrap();
+        let nested = TypeSpec::parse("Vec<Option<Vec<u32>>>").ok();
         match nested {
             TypeSpec::Vec { .. } => {} // Success
             _ => panic!("Failed to parse deeply nested type"),
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_array_with_large_size() {
-        let arr = TypeSpec::parse("[u8; 1000000]").unwrap();
+        let arr = TypeSpec::parse("[u8; 1000000]").ok();
         match arr {
             TypeSpec::Array { size, .. } => {
                 assert_eq!(size, 1000000);

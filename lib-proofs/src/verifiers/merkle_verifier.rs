@@ -46,11 +46,11 @@ mod tests {
     fn test_merkle_verification() {
         let mut tree = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"test_leaf");
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0).ok();
 
-        assert!(verify_merkle_proof(&proof, tree.root).unwrap());
+        assert!(verify_merkle_proof(&proof, tree.root).ok());
         assert!(verify_with_tree(&tree, &proof));
     }
 
@@ -58,9 +58,9 @@ mod tests {
     fn test_detailed_verification() {
         let mut tree = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"test_leaf");
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0).ok();
 
         let result = verify_merkle_proof_detailed(&proof, tree.root);
         assert!(result.is_valid());

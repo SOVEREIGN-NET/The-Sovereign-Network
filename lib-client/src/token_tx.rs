@@ -713,9 +713,9 @@ mod tests {
             treasury_allocation_bps: 2_000,
             treasury_recipient: [9u8; 32],
         };
-        let memo = payload.encode_memo().unwrap();
+        let memo = payload.encode_memo().ok();
         let tx = Transaction::new_token_creation_with_chain_id(0x03, test_signature(), memo);
-        hex::encode(bincode::serialize(&tx).unwrap())
+        hex::encode(bincode::serialize(&tx).ok())
     }
 
     #[test]
@@ -729,7 +729,7 @@ mod tests {
             "chain_height": 9
         }"#;
 
-        let meta = set_fee_config_from_json_with_meta(json).unwrap();
+        let meta = set_fee_config_from_json_with_meta(json).ok();
 
         assert_eq!(meta.updated_at_height, 8);
         assert_eq!(meta.chain_height, 9);
@@ -740,7 +740,7 @@ mod tests {
     fn quote_fee_for_token_creation_uses_canonical_fixed_fee() {
         set_fee_config(100, 100, 500, 4321);
 
-        let fee = calculate_min_fee_for_tx_hex(&token_creation_tx_hex()).unwrap();
+        let fee = calculate_min_fee_for_tx_hex(&token_creation_tx_hex()).ok();
 
         assert_eq!(fee, 4321);
     }

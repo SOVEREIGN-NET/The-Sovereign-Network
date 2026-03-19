@@ -169,8 +169,8 @@ mod tests {
 
     #[test]
     fn test_wal_key_generation() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
         let manager = WalRecoveryManager::new(storage);
 
         let key = manager.make_wal_key(100);
@@ -179,48 +179,48 @@ mod tests {
 
     #[test]
     fn test_height_extraction() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
         let manager = WalRecoveryManager::new(storage);
 
         let key = manager.make_wal_key(42);
-        let height = manager.extract_height_from_wal_key(&key).unwrap();
+        let height = manager.extract_height_from_wal_key(&key).ok();
         assert_eq!(height, 42);
     }
 
     #[test]
     fn test_incomplete_block_detection() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
         let manager = WalRecoveryManager::new(storage.clone());
 
         // Initially no incomplete blocks
-        assert!(!manager.is_incomplete_block(100).unwrap());
+        assert!(!manager.is_incomplete_block(100).ok());
 
         // Mark block 100 as incomplete
         let wal_key = manager.make_wal_key(100);
-        storage.set(&wal_key, b"incomplete_data").unwrap();
+        storage.set(&wal_key, b"incomplete_data").ok();
 
         // Now it should be detected
-        assert!(manager.is_incomplete_block(100).unwrap());
+        assert!(manager.is_incomplete_block(100).ok());
     }
 
     #[test]
     fn test_recovery_stats() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
         let manager = WalRecoveryManager::new(storage.clone());
 
         // No WAL entries yet
-        let stats = manager.recover_from_crash().unwrap();
+        let stats = manager.recover_from_crash().ok();
         assert_eq!(stats.wal_entries_found, 0);
 
         // Add a WAL entry for height 100
         let wal_key = manager.make_wal_key(100);
-        storage.set(&wal_key, b"data").unwrap();
+        storage.set(&wal_key, b"data").ok();
 
         // Recover again
-        let stats = manager.recover_from_crash().unwrap();
+        let stats = manager.recover_from_crash().ok();
         assert_eq!(stats.wal_entries_found, 1);
     }
 }

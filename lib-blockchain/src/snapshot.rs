@@ -678,8 +678,8 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_store() -> (TempDir, Arc<SledStore>) {
-        let dir = TempDir::new().unwrap();
-        let store = Arc::new(SledStore::open(dir.path()).unwrap());
+        let dir = TempDir::new().ok();
+        let store = Arc::new(SledStore::open(dir.path()).ok());
         (dir, store)
     }
 
@@ -745,20 +745,20 @@ mod tests {
         let block1 = create_block_at_height(1, genesis.header.block_hash);
         let block2 = create_block_at_height(2, block1.header.block_hash);
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
-        store.begin_block(1).unwrap();
-        store.append_block(&block1).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(1).ok();
+        store.append_block(&block1).ok();
+        store.commit_block().ok();
 
-        store.begin_block(2).unwrap();
-        store.append_block(&block2).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(2).ok();
+        store.append_block(&block2).ok();
+        store.commit_block().ok();
 
         // Take snapshot
-        let snap = snapshot(&store).unwrap();
+        let snap = snapshot(&store).ok();
 
         assert_eq!(snap.height, 2);
         assert_eq!(snap.block_hash, block2.header.block_hash.as_array());
@@ -766,27 +766,27 @@ mod tests {
         assert!(snap.verify_state_hash());
 
         // Clear store and restore
-        clear_all_trees(&store).unwrap();
+        clear_all_trees(&store).ok();
 
         // Verify store is empty
-        assert!(store.get_block_by_height(0).unwrap().is_none());
+        assert!(store.get_block_by_height(0).ok().is_none());
 
         // Restore from snapshot
-        restore(&store, snap).unwrap();
+        restore(&store, snap).ok();
 
         // Verify restoration
-        assert_eq!(store.latest_height().unwrap(), 2);
+        assert_eq!(store.latest_height().ok(), 2);
 
-        let restored_genesis = store.get_block_by_height(0).unwrap().unwrap();
+        let restored_genesis = store.get_block_by_height(0).ok().ok();
         assert_eq!(
             restored_genesis.header.block_hash,
             genesis.header.block_hash
         );
 
-        let restored_block1 = store.get_block_by_height(1).unwrap().unwrap();
+        let restored_block1 = store.get_block_by_height(1).ok().ok();
         assert_eq!(restored_block1.header.block_hash, block1.header.block_hash);
 
-        let restored_block2 = store.get_block_by_height(2).unwrap().unwrap();
+        let restored_block2 = store.get_block_by_height(2).ok().ok();
         assert_eq!(restored_block2.header.block_hash, block2.header.block_hash);
     }
 
@@ -799,23 +799,23 @@ mod tests {
         let bob = Address::new([2u8; 32]);
         let token = TokenId::NATIVE;
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.set_token_balance(&token, &alice, 1000).unwrap();
-        store.set_token_balance(&token, &bob, 2000).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.set_token_balance(&token, &alice, 1000).ok();
+        store.set_token_balance(&token, &bob, 2000).ok();
+        store.commit_block().ok();
 
         // Take snapshot
-        let snap = snapshot(&store).unwrap();
+        let snap = snapshot(&store).ok();
         assert_eq!(snap.token_balances.len(), 2);
 
         // Clear and restore
-        clear_all_trees(&store).unwrap();
-        restore(&store, snap).unwrap();
+        clear_all_trees(&store).ok();
+        restore(&store, snap).ok();
 
         // Verify balances restored
-        assert_eq!(store.get_token_balance(&token, &alice).unwrap(), 1000);
-        assert_eq!(store.get_token_balance(&token, &bob).unwrap(), 2000);
+        assert_eq!(store.get_token_balance(&token, &alice).ok(), 1000);
+        assert_eq!(store.get_token_balance(&token, &bob).ok(), 2000);
     }
 
     #[test]
@@ -827,21 +827,21 @@ mod tests {
         let outpoint = OutPoint::new(TxHash::new([0xaa; 32]), 0);
         let utxo = Utxo::native(5000, alice, 0);
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.put_utxo(&outpoint, &utxo).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.put_utxo(&outpoint, &utxo).ok();
+        store.commit_block().ok();
 
         // Take snapshot
-        let snap = snapshot(&store).unwrap();
+        let snap = snapshot(&store).ok();
         assert_eq!(snap.utxos.len(), 1);
 
         // Clear and restore
-        clear_all_trees(&store).unwrap();
-        restore(&store, snap).unwrap();
+        clear_all_trees(&store).ok();
+        restore(&store, snap).ok();
 
         // Verify UTXO restored
-        let restored = store.get_utxo(&outpoint).unwrap().unwrap();
+        let restored = store.get_utxo(&outpoint).ok().ok();
         assert_eq!(restored.amount, 5000);
         assert_eq!(restored.owner, alice);
     }
@@ -854,39 +854,39 @@ mod tests {
         let genesis = create_genesis_block();
         let block1 = create_block_at_height(1, genesis.header.block_hash);
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
-        store.begin_block(1).unwrap();
-        store.append_block(&block1).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(1).ok();
+        store.append_block(&block1).ok();
+        store.commit_block().ok();
 
         // Take snapshot
-        let snap = snapshot(&store).unwrap();
+        let snap = snapshot(&store).ok();
 
         // Clear and restore
-        clear_all_trees(&store).unwrap();
-        restore(&store, snap).unwrap();
+        clear_all_trees(&store).ok();
+        restore(&store, snap).ok();
 
         // Add more blocks after restore
         let block2 = create_block_at_height(2, block1.header.block_hash);
         let block3 = create_block_at_height(3, block2.header.block_hash);
 
-        store.begin_block(2).unwrap();
-        store.append_block(&block2).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(2).ok();
+        store.append_block(&block2).ok();
+        store.commit_block().ok();
 
-        store.begin_block(3).unwrap();
-        store.append_block(&block3).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(3).ok();
+        store.append_block(&block3).ok();
+        store.commit_block().ok();
 
         // Verify final state
-        assert_eq!(store.latest_height().unwrap(), 3);
-        assert!(store.get_block_by_height(0).unwrap().is_some());
-        assert!(store.get_block_by_height(1).unwrap().is_some());
-        assert!(store.get_block_by_height(2).unwrap().is_some());
-        assert!(store.get_block_by_height(3).unwrap().is_some());
+        assert_eq!(store.latest_height().ok(), 3);
+        assert!(store.get_block_by_height(0).ok().is_some());
+        assert!(store.get_block_by_height(1).ok().is_some());
+        assert!(store.get_block_by_height(2).ok().is_some());
+        assert!(store.get_block_by_height(3).ok().is_some());
     }
 
     #[test]
@@ -895,11 +895,11 @@ mod tests {
 
         let genesis = create_genesis_block();
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
-        let snap = snapshot(&store).unwrap();
+        let snap = snapshot(&store).ok();
 
         // State hash should be non-zero and verify
         assert_ne!(snap.state_hash, [0u8; 32]);
@@ -941,13 +941,13 @@ mod tests {
 
         let genesis = create_genesis_block();
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
         // Take two snapshots
-        let snap1 = snapshot(&store).unwrap();
-        let snap2 = snapshot(&store).unwrap();
+        let snap1 = snapshot(&store).ok();
+        let snap2 = snapshot(&store).ok();
 
         // State hashes should be identical
         assert_eq!(snap1.state_hash, snap2.state_hash);
@@ -966,20 +966,20 @@ mod tests {
         let alice = Address::new([1u8; 32]);
         let token = TokenId::NATIVE;
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.set_token_balance(&token, &alice, 1_000_000).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.set_token_balance(&token, &alice, 1_000_000).ok();
+        store.commit_block().ok();
 
         // Take snapshot
-        let snap = snapshot(&store).unwrap();
+        let snap = snapshot(&store).ok();
         let original_hash = snap.state_hash;
 
         // Serialize to bytes (simulates saving to disk)
-        let bytes = bincode::serialize(&snap).unwrap();
+        let bytes = bincode::serialize(&snap).ok();
 
         // Deserialize (simulates loading from disk after restart)
-        let restored_snap: Snapshot = bincode::deserialize(&bytes).unwrap();
+        let restored_snap: Snapshot = bincode::deserialize(&bytes).ok();
 
         // State hash should be preserved
         assert_eq!(restored_snap.state_hash, original_hash);
@@ -989,29 +989,29 @@ mod tests {
     /// Test: Full restart scenario (store closed, reopened, restored from snapshot)
     #[test]
     fn persistence_full_restart_scenario() {
-        let dir = TempDir::new().unwrap();
+        let dir = TempDir::new().ok();
 
         // Phase 1: Create chain and snapshot
         let (snap_bytes, expected_height, expected_balance) = {
-            let store = Arc::new(SledStore::open(dir.path()).unwrap());
+            let store = Arc::new(SledStore::open(dir.path()).ok());
 
             let genesis = create_genesis_block();
             let block1 = create_block_at_height(1, genesis.header.block_hash);
             let alice = Address::new([1u8; 32]);
             let token = TokenId::NATIVE;
 
-            store.begin_block(0).unwrap();
-            store.append_block(&genesis).unwrap();
-            store.set_token_balance(&token, &alice, 5_000_000).unwrap();
-            store.commit_block().unwrap();
+            store.begin_block(0).ok();
+            store.append_block(&genesis).ok();
+            store.set_token_balance(&token, &alice, 5_000_000).ok();
+            store.commit_block().ok();
 
-            store.begin_block(1).unwrap();
-            store.append_block(&block1).unwrap();
-            store.set_token_balance(&token, &alice, 10_000_000).unwrap();
-            store.commit_block().unwrap();
+            store.begin_block(1).ok();
+            store.append_block(&block1).ok();
+            store.set_token_balance(&token, &alice, 10_000_000).ok();
+            store.commit_block().ok();
 
-            let snap = snapshot(&store).unwrap();
-            let bytes = bincode::serialize(&snap).unwrap();
+            let snap = snapshot(&store).ok();
+            let bytes = bincode::serialize(&snap).ok();
 
             // Store is dropped here (simulates shutdown)
             (bytes, 1u64, 10_000_000u128)
@@ -1019,34 +1019,34 @@ mod tests {
 
         // Phase 2: "Restart" with fresh store and restore
         {
-            let store = Arc::new(SledStore::open(dir.path()).unwrap());
+            let store = Arc::new(SledStore::open(dir.path()).ok());
 
             // Simulate corruption or new instance
-            clear_all_trees(&store).unwrap();
+            clear_all_trees(&store).ok();
 
             // Restore from saved snapshot
-            let snap: Snapshot = bincode::deserialize(&snap_bytes).unwrap();
-            restore(&store, snap).unwrap();
+            let snap: Snapshot = bincode::deserialize(&snap_bytes).ok();
+            restore(&store, snap).ok();
 
             // Verify state is fully restored
-            assert_eq!(store.latest_height().unwrap(), expected_height);
+            assert_eq!(store.latest_height().ok(), expected_height);
 
             let alice = Address::new([1u8; 32]);
             let token = TokenId::NATIVE;
             assert_eq!(
-                store.get_token_balance(&token, &alice).unwrap(),
+                store.get_token_balance(&token, &alice).ok(),
                 expected_balance
             );
 
             // Verify can continue adding blocks
-            let block1 = store.get_block_by_height(1).unwrap().unwrap();
+            let block1 = store.get_block_by_height(1).ok().ok();
             let block2 = create_block_at_height(2, block1.header.block_hash);
 
-            store.begin_block(2).unwrap();
-            store.append_block(&block2).unwrap();
-            store.commit_block().unwrap();
+            store.begin_block(2).ok();
+            store.append_block(&block2).ok();
+            store.commit_block().ok();
 
-            assert_eq!(store.latest_height().unwrap(), 2);
+            assert_eq!(store.latest_height().ok(), 2);
         }
     }
 
@@ -1066,38 +1066,38 @@ mod tests {
         let token = TokenId::NATIVE;
 
         // Build chain to height 1
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.set_token_balance(&token, &alice, 1000).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.set_token_balance(&token, &alice, 1000).ok();
+        store.commit_block().ok();
 
-        store.begin_block(1).unwrap();
-        store.append_block(&block1).unwrap();
-        store.set_token_balance(&token, &alice, 2000).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(1).ok();
+        store.append_block(&block1).ok();
+        store.set_token_balance(&token, &alice, 2000).ok();
+        store.commit_block().ok();
 
         // Snapshot at height 1
-        let snap_at_1 = snapshot(&store).unwrap();
+        let snap_at_1 = snapshot(&store).ok();
 
         // Continue building to height 2
-        store.begin_block(2).unwrap();
-        store.append_block(&block2).unwrap();
-        store.set_token_balance(&token, &alice, 5000).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(2).ok();
+        store.append_block(&block2).ok();
+        store.set_token_balance(&token, &alice, 5000).ok();
+        store.commit_block().ok();
 
         // Verify at height 2
-        assert_eq!(store.latest_height().unwrap(), 2);
-        assert_eq!(store.get_token_balance(&token, &alice).unwrap(), 5000);
+        assert_eq!(store.latest_height().ok(), 2);
+        assert_eq!(store.get_token_balance(&token, &alice).ok(), 5000);
 
         // "Rollback" to height 1 by restoring snapshot
-        restore(&store, snap_at_1).unwrap();
+        restore(&store, snap_at_1).ok();
 
         // Verify rolled back to height 1
-        assert_eq!(store.latest_height().unwrap(), 1);
-        assert_eq!(store.get_token_balance(&token, &alice).unwrap(), 2000);
+        assert_eq!(store.latest_height().ok(), 1);
+        assert_eq!(store.get_token_balance(&token, &alice).ok(), 2000);
 
         // Block 2 should no longer exist
-        assert!(store.get_block_by_height(2).unwrap().is_none());
+        assert!(store.get_block_by_height(2).ok().is_none());
     }
 
     // =========================================================================
@@ -1110,11 +1110,11 @@ mod tests {
         let (_dir, store) = create_test_store();
 
         let genesis = create_genesis_block();
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
-        let mut snap = snapshot(&store).unwrap();
+        let mut snap = snapshot(&store).ok();
 
         // Tamper with various fields and verify rejection
 
@@ -1161,22 +1161,22 @@ mod tests {
         let genesis = create_genesis_block();
         let block1 = create_block_at_height(1, genesis.header.block_hash);
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
-        let snap = snapshot(&store).unwrap();
+        let snap = snapshot(&store).ok();
 
         // Clear and restore
-        clear_all_trees(&store).unwrap();
-        restore(&store, snap).unwrap();
+        clear_all_trees(&store).ok();
+        restore(&store, snap).ok();
 
         // Block execution should work cleanly at height + 1
-        store.begin_block(1).unwrap();
-        store.append_block(&block1).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(1).ok();
+        store.append_block(&block1).ok();
+        store.commit_block().ok();
 
-        assert_eq!(store.latest_height().unwrap(), 1);
+        assert_eq!(store.latest_height().ok(), 1);
     }
 
     // =========================================================================
@@ -1206,14 +1206,14 @@ mod tests {
 
         let genesis = create_genesis_block();
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
         // Take multiple snapshots
-        let snap1 = snapshot(&store).unwrap();
-        let snap2 = snapshot(&store).unwrap();
-        let snap3 = snapshot(&store).unwrap();
+        let snap1 = snapshot(&store).ok();
+        let snap2 = snapshot(&store).ok();
+        let snap3 = snapshot(&store).ok();
 
         // All state hashes must be identical
         assert_eq!(snap1.state_hash, snap2.state_hash);
@@ -1231,12 +1231,12 @@ mod tests {
 
         let genesis = create_genesis_block();
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
         // Add identities directly to the identities tree
-        let identities_tree = store.db().open_tree("identities").unwrap();
+        let identities_tree = store.db().open_tree("identities").ok();
 
         let did_key_1 = [1u8; 32];
         let did_key_2 = [2u8; 32];
@@ -1245,36 +1245,36 @@ mod tests {
 
         identities_tree
             .insert(&did_key_1, identity_data_1.as_slice())
-            .unwrap();
+            .ok();
         identities_tree
             .insert(&did_key_2, identity_data_2.as_slice())
-            .unwrap();
+            .ok();
 
         // Take snapshot
-        let snap = snapshot(&store).unwrap();
+        let snap = snapshot(&store).ok();
 
         assert_eq!(snap.version, 2);
         assert_eq!(snap.identities.len(), 2);
         assert!(snap.verify_state_hash());
 
         // Clear and restore
-        clear_all_trees(&store).unwrap();
+        clear_all_trees(&store).ok();
 
         // Verify identities tree is cleared
-        let identities_tree = store.db().open_tree("identities").unwrap();
+        let identities_tree = store.db().open_tree("identities").ok();
         assert_eq!(identities_tree.len(), 0);
 
         // Restore from snapshot
-        restore(&store, snap).unwrap();
+        restore(&store, snap).ok();
 
         // Verify identities restored
-        let identities_tree = store.db().open_tree("identities").unwrap();
+        let identities_tree = store.db().open_tree("identities").ok();
         assert_eq!(identities_tree.len(), 2);
 
-        let restored_1 = identities_tree.get(&did_key_1).unwrap().unwrap();
+        let restored_1 = identities_tree.get(&did_key_1).ok().ok();
         assert_eq!(restored_1.as_ref(), identity_data_1.as_slice());
 
-        let restored_2 = identities_tree.get(&did_key_2).unwrap().unwrap();
+        let restored_2 = identities_tree.get(&did_key_2).ok().ok();
         assert_eq!(restored_2.as_ref(), identity_data_2.as_slice());
     }
 

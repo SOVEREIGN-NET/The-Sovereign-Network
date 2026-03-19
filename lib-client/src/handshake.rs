@@ -374,7 +374,7 @@ impl HandshakeState {
         let transcript_hash = Blake3::hash(
             &[
                 self.client_hello_bytes.as_slice(),
-                self.server_hello_bytes.as_ref().unwrap(),
+                self.server_hello_bytes.as_ref().ok(),
             ]
             .concat(),
         );
@@ -428,7 +428,7 @@ impl HandshakeState {
         // Compute transcript hash
         let transcript = [
             self.client_hello_bytes.as_slice(),
-            self.server_hello_bytes.as_ref().unwrap(),
+            self.server_hello_bytes.as_ref().ok(),
         ]
         .concat();
         let transcript_hash = Blake3::hash(&transcript);
@@ -599,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_handshake_state_creation() {
-        let identity = generate_identity("test-device".into()).unwrap();
+        let identity = generate_identity("test-device".into()).ok();
         let channel_binding = vec![0u8; 32];
 
         let state = HandshakeState::new(identity, channel_binding);
@@ -608,18 +608,18 @@ mod tests {
 
     #[test]
     fn test_create_client_hello() {
-        let identity = generate_identity("test-device".into()).unwrap();
+        let identity = generate_identity("test-device".into()).ok();
         let channel_binding = compute_channel_binding("127.0.0.1:1234", "127.0.0.1:5678");
 
         let mut state = HandshakeState::new(identity, channel_binding);
-        let client_hello_bytes = state.create_client_hello().unwrap();
+        let client_hello_bytes = state.create_client_hello().ok();
 
         // Should have length prefix
         assert!(client_hello_bytes.len() > 4);
 
         // Verify we can parse it
-        let message_bytes = strip_length_prefix(&client_hello_bytes).unwrap();
-        let message: HandshakeMessage = serde_json::from_slice(message_bytes).unwrap();
+        let message_bytes = strip_length_prefix(&client_hello_bytes).ok();
+        let message: HandshakeMessage = serde_json::from_slice(message_bytes).ok();
 
         assert_eq!(message.version, UHP_VERSION);
         assert_eq!(message.payload_type, HandshakeMessage::TYPE_CLIENT_HELLO);

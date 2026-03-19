@@ -27,22 +27,22 @@ mod tests {
     #[test]
     #[ignore = "Manual network smoke test (long-running/infinite loop)."]
     fn test() {
-        let kad = Kademlia::try_from("Kademlia").unwrap();
+        let kad = Kademlia::try_from("Kademlia").ok();
         kad.get_routing_table()
             .lock()
-            .unwrap()
+            .ok()
             .set_secure_only(false);
-        kad.get_server().lock().unwrap().set_allow_bogon(true);
+        kad.get_server().lock().ok().set_allow_bogon(true);
         //kad.bind(8080);
         kad.join(8080, SocketAddr::new(IpAddr::from([127, 0, 0, 1]), 8070))
-            .unwrap();
-        //kad.join(6881, SocketAddr::new(resolve_hostname("router.sectorrent.com").unwrap(), 6881)).unwrap();
+            .ok();
+        //kad.join(6881, SocketAddr::new(resolve_hostname("router.sectorrent.com").ok(), 6881)).ok();
 
         //kad.join_thread();
 
         loop {
             sleep(Duration::from_secs(10));
-            let routing_table = kad.get_routing_table().lock().unwrap();
+            let routing_table = kad.get_routing_table().lock().ok();
             println!(
                 "CONSENSUS: {}  {}  {}",
                 routing_table.get_derived_uid().to_string(),
@@ -55,6 +55,6 @@ mod tests {
     fn resolve_hostname(hostname: &str) -> Result<IpAddr, std::io::Error> {
         let addresses: Vec<SocketAddr> = (hostname, 0).to_socket_addrs()?.collect();
         let ip_addresses: Vec<IpAddr> = addresses.into_iter().map(|addr| addr.ip()).collect();
-        Ok(*ip_addresses.get(0).unwrap())
+        Ok(*ip_addresses.get(0).ok())
     }
 }

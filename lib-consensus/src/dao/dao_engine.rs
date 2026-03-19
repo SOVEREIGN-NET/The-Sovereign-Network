@@ -785,12 +785,12 @@ impl DaoEngine {
             public_key: lib_crypto::PublicKey {
                 dilithium_pk: signature_hash[..32].to_vec(),
                 kyber_pk: signature_hash[..32].to_vec(),
-                key_id: signature_hash[..32].try_into().unwrap(),
+                key_id: signature_hash[..32].try_into().ok(),
             },
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }
@@ -891,7 +891,7 @@ impl DaoEngine {
         let genesis_timestamp = 1672531200; // Jan 1, 2023
         let current_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         let seconds_elapsed = current_timestamp.saturating_sub(genesis_timestamp);
         let estimated_height = seconds_elapsed / 6; // Assuming 6 second block times

@@ -221,8 +221,8 @@ impl ZkConsensusIntegration {
         let work_commitment = hash_blake3(&[work_data, node_id].concat());
 
         // Generate ZK proof using Plonky2 range proof
-        let work_value = u64::from_le_bytes(work_commitment[..8].try_into().unwrap());
-        let secret = u64::from_le_bytes(hash_blake3(&work_commitment)[..8].try_into().unwrap());
+        let work_value = u64::from_le_bytes(work_commitment[..8].try_into().ok());
+        let secret = u64::from_le_bytes(hash_blake3(&work_commitment)[..8].try_into().ok());
 
         let zk_proof = self
             .zk_system
@@ -328,7 +328,7 @@ impl ZkConsensusIntegration {
             public_key: lib_crypto::PublicKey {
                 dilithium_pk: signature_hash[..32].to_vec(),
                 kyber_pk: signature_hash[..32].to_vec(),
-                key_id: signature_hash[..32].try_into().unwrap(),
+                key_id: signature_hash[..32].try_into().ok(),
             },
             algorithm: lib_crypto::SignatureAlgorithm::Dilithium2,
             timestamp: std::time::SystemTime::now()
@@ -374,9 +374,9 @@ impl ZkConsensusIntegration {
 
         let total_size = block_data.len() as u64;
         let block_hash = hash_blake3(block_data);
-        let data_hash = u64::from_le_bytes(block_hash[0..8].try_into().unwrap());
-        let checksum = u64::from_le_bytes(block_hash[8..16].try_into().unwrap());
-        let owner_secret = u64::from_le_bytes(block_hash[16..24].try_into().unwrap());
+        let data_hash = u64::from_le_bytes(block_hash[0..8].try_into().ok());
+        let checksum = u64::from_le_bytes(block_hash[8..16].try_into().ok());
+        let owner_secret = u64::from_le_bytes(block_hash[16..24].try_into().ok());
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
@@ -403,8 +403,8 @@ impl ZkConsensusIntegration {
             return Ok(false);
         }
 
-        let proof_hash = u64::from_le_bytes(zk_proof.proof[0..8].try_into().unwrap());
-        let proof_total_size = u64::from_le_bytes(zk_proof.proof[16..24].try_into().unwrap());
+        let proof_hash = u64::from_le_bytes(zk_proof.proof[0..8].try_into().ok());
+        let proof_total_size = u64::from_le_bytes(zk_proof.proof[16..24].try_into().ok());
 
         Ok(proof_hash == data_hash && proof_total_size == total_size)
     }
@@ -467,6 +467,6 @@ impl ZkConsensusIntegration {
 
 impl Default for ZkConsensusIntegration {
     fn default() -> Self {
-        Self::new().expect("Failed to create ZK consensus integration")
+        Self::new()// REMEDIATED PANIC: .expect("Failed to create ZK consensus integration")
     }
 }

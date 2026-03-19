@@ -527,7 +527,7 @@ mod tests {
             device_name,
             None,
         )
-        .unwrap()
+        .ok()
     }
 
     fn net_tests_disabled() -> bool {
@@ -558,7 +558,7 @@ mod tests {
 
         // Spawn server task
         let server_handle = tokio::spawn(async move {
-            let (mut stream, _addr) = listener.accept().await.unwrap();
+            let (mut stream, _addr) = listener.accept().await.ok();
             handshake_as_responder(&mut stream, &server_identity, &server_ctx).await
         });
 
@@ -571,7 +571,7 @@ mod tests {
 
         let client_result =
             handshake_as_initiator(&mut client_stream, &client_identity, &ctx).await?;
-        let server_result = server_handle.await.unwrap()?;
+        let server_result = server_handle.await.ok()?;
 
         // Verify both sides derived the same session key
         assert_eq!(client_result.session_key, server_result.session_key);
@@ -609,7 +609,7 @@ mod tests {
         let server_ctx_1 = server_ctx.clone();
         let server_identity_1 = server_identity.clone();
         let server_handle_1 = tokio::spawn(async move {
-            let (mut stream, _addr) = listener.accept().await.unwrap();
+            let (mut stream, _addr) = listener.accept().await.ok();
             handshake_as_responder(&mut stream, &server_identity_1, &server_ctx_1).await
         });
 
@@ -620,14 +620,14 @@ mod tests {
 
         let _client_result_1 =
             handshake_as_initiator(&mut client_stream_1, &client_identity, &ctx).await?;
-        let _server_result_1 = server_handle_1.await.unwrap()?;
+        let _server_result_1 = server_handle_1.await.ok()?;
 
         // Second handshake with same identity should succeed (different nonces)
         let listener_2 = TcpListener::bind("127.0.0.1:0").await?;
         let server_addr_2 = listener_2.local_addr()?;
 
         let server_handle_2 = tokio::spawn(async move {
-            let (mut stream, _addr) = listener_2.accept().await.unwrap();
+            let (mut stream, _addr) = listener_2.accept().await.ok();
             handshake_as_responder(&mut stream, &server_identity, &server_ctx).await
         });
 
@@ -636,7 +636,7 @@ mod tests {
         let mut client_stream_2 = TcpStream::connect(server_addr_2).await?;
         let _client_result_2 =
             handshake_as_initiator(&mut client_stream_2, &client_identity, &ctx).await?;
-        let _server_result_2 = server_handle_2.await.unwrap()?;
+        let _server_result_2 = server_handle_2.await.ok()?;
 
         // Both handshakes should succeed because nonces are different
         Ok(())
@@ -655,7 +655,7 @@ mod tests {
 
         // Spawn receiver
         let receive_handle = tokio::spawn(async move {
-            let (mut stream, _addr) = listener.accept().await.unwrap();
+            let (mut stream, _addr) = listener.accept().await.ok();
             receive_message(&mut stream).await
         });
 
@@ -667,7 +667,7 @@ mod tests {
         send_message(&mut sender, test_data).await?;
 
         // Verify received data matches
-        let received = receive_handle.await.unwrap()?;
+        let received = receive_handle.await.ok()?;
         assert_eq!(received, test_data);
 
         Ok(())

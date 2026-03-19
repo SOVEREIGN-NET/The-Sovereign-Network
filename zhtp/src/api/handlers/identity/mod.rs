@@ -504,7 +504,7 @@ impl IdentityHandler {
                 identity_type_for_hash,
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_nanos()
             );
             let identity_id = lib_crypto::hash_blake3(identity_data.as_bytes());

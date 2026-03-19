@@ -229,7 +229,7 @@ impl ZoneReader {
                             ParserState::Data => {
                                 if part[0] == b'"' {
                                     if part[word_len - 1] == b'"' {
-                                        record.as_mut().unwrap().3.set_data(
+                                        record.as_mut().ok().3.set_data(
                                             data_count,
                                             &String::from_utf8(part[1..word_len - 1].to_vec())
                                                 .map_err(|_| {
@@ -255,7 +255,7 @@ impl ZoneReader {
                                         );
                                     }
                                 } else {
-                                    record.as_mut().unwrap().3.set_data(
+                                    record.as_mut().ok().3.set_data(
                                         data_count,
                                         &String::from_utf8(part[0..word_len].to_vec()).map_err(
                                             |_| {
@@ -284,7 +284,7 @@ impl ZoneReader {
 
                                     record
                                         .as_mut()
-                                        .unwrap()
+                                        .ok()
                                         .3
                                         .set_data(data_count, &quoted_buf)?;
 
@@ -334,7 +334,7 @@ impl ZoneReader {
         }
 
         if name.ends_with('.') {
-            return fqdn_to_relative(&self.origin, name.strip_suffix('.').unwrap()).unwrap();
+            return fqdn_to_relative(&self.origin, name.strip_suffix('.').ok()).ok();
         }
 
         name.to_string()

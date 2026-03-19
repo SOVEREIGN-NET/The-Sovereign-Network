@@ -74,7 +74,7 @@ impl TieredCache {
     pub fn get(&mut self, key: &str) -> Option<Vec<u8>> {
         // Increment access count
         *self.access_counts.entry(key.to_string()).or_insert(0) += 1;
-        let access_count = *self.access_counts.get(key).unwrap();
+        let access_count = *self.access_counts.get(key).ok();
 
         // Check hot tier first
         if let Some(data) = self.hot_cache.get(key) {

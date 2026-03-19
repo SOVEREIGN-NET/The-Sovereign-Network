@@ -534,8 +534,8 @@ mod tests {
             Priority::Urgent,
         ];
         for p in priorities {
-            let serialized = serde_json::to_string(&p).unwrap();
-            let deserialized: Priority = serde_json::from_str(&serialized).unwrap();
+            let serialized = serde_json::to_string(&p).ok();
+            let deserialized: Priority = serde_json::from_str(&serialized).ok();
             assert_eq!(p, deserialized);
         }
     }
@@ -556,8 +556,8 @@ mod tests {
             TransactionType::ProposalExecution,
         ];
         for tt in types {
-            let serialized = serde_json::to_string(&tt).unwrap();
-            let deserialized: TransactionType = serde_json::from_str(&serialized).unwrap();
+            let serialized = serde_json::to_string(&tt).ok();
+            let deserialized: TransactionType = serde_json::from_str(&serialized).ok();
             assert_eq!(tt, deserialized);
         }
     }
@@ -578,8 +578,8 @@ mod tests {
             TreasuryFund::SmartContractFund,
         ];
         for fund in funds {
-            let serialized = serde_json::to_string(&fund).unwrap();
-            let deserialized: TreasuryFund = serde_json::from_str(&serialized).unwrap();
+            let serialized = serde_json::to_string(&fund).ok();
+            let deserialized: TreasuryFund = serde_json::from_str(&serialized).ok();
             assert_eq!(fund, deserialized);
         }
     }
@@ -679,8 +679,8 @@ mod tests {
             TreasuryOperationType::CrossChain,
         ];
         for ot in op_types {
-            let serialized = serde_json::to_string(&ot).unwrap();
-            let deserialized: TreasuryOperationType = serde_json::from_str(&serialized).unwrap();
+            let serialized = serde_json::to_string(&ot).ok();
+            let deserialized: TreasuryOperationType = serde_json::from_str(&serialized).ok();
             assert_eq!(ot, deserialized);
         }
     }
@@ -698,8 +698,8 @@ mod tests {
             UbiRecipientCategory::SmallBusiness,
         ];
         for cat in categories {
-            let serialized = serde_json::to_string(&cat).unwrap();
-            let deserialized: UbiRecipientCategory = serde_json::from_str(&serialized).unwrap();
+            let serialized = serde_json::to_string(&cat).ok();
+            let deserialized: UbiRecipientCategory = serde_json::from_str(&serialized).ok();
             assert_eq!(cat, deserialized);
         }
     }
@@ -714,8 +714,8 @@ mod tests {
             new_recipients: 50,
             completion_rate: 0.98,
         };
-        let serialized = serde_json::to_string(&data).unwrap();
-        let deserialized: MonthlyUbiData = serde_json::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string(&data).ok();
+        let deserialized: MonthlyUbiData = serde_json::from_str(&serialized).ok();
         assert_eq!(data.month, deserialized.month);
         assert_eq!(data.total_distributed, deserialized.total_distributed);
     }

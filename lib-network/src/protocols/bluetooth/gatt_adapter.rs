@@ -123,11 +123,11 @@ mod tests {
         let mut adapter = GattUhpAdapter::new(stream, Some(verifier));
 
         // Good frame
-        adapter.send_frame(&[0x01, 0x02]).await.unwrap();
+        adapter.send_frame(&[0x01, 0x02]).await.ok();
         assert!(adapter.recv_frame().await.is_ok());
 
         // Bad frame should fail verification
-        adapter.send_frame(&[0xFF, 0x00]).await.unwrap();
+        adapter.send_frame(&[0xFF, 0x00]).await.ok();
         let err = adapter.recv_frame().await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
     }

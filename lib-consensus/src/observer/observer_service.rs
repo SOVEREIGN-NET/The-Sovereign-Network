@@ -556,7 +556,7 @@ mod tests {
         let model = service.get_transition_model();
         assert!(model.is_some());
 
-        let model = model.unwrap();
+        let model = model.ok();
         assert!(model.total_transitions() > 0, "Expected transitions to be observed");
     }
 }

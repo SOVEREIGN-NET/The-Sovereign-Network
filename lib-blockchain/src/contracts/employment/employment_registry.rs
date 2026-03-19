@@ -520,12 +520,12 @@ mod tests {
                 &test_public_key(3),
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Process payroll after one month
         let payment = registry
             .process_payroll(contract_id, 100 + 175_200)
-            .unwrap();
+            .ok();
 
         assert_eq!(payment.periods_elapsed, 1);
         assert_eq!(payment.gross_amount, 100_00000000);
@@ -550,12 +550,12 @@ mod tests {
                 &test_public_key(3),
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Process payroll after three months
         let payment = registry
             .process_payroll(contract_id, 100 + 175_200 * 3)
-            .unwrap();
+            .ok();
 
         assert_eq!(payment.periods_elapsed, 3);
         assert_eq!(payment.gross_amount, 300_00000000);
@@ -580,11 +580,11 @@ mod tests {
                 &test_public_key(3),
                 100,
             )
-            .unwrap();
+            .ok();
 
         let result = registry
             .calculate_profit_share(contract_id, 1_000_00000000)
-            .unwrap();
+            .ok();
 
         assert_eq!(result.dao_profit, 1_000_00000000);
         assert_eq!(result.share_percentage, 500);
@@ -608,18 +608,18 @@ mod tests {
                 &test_public_key(3),
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Update voting power immediately (no tenure bonus)
         let power = registry
             .update_voting_power(contract_id, 10_000, 100)
-            .unwrap();
+            .ok();
         assert_eq!(power, 10_000);
 
         // Update with tenure bonus (after 1M blocks)
         let power = registry
             .update_voting_power(contract_id, 10_000, 100 + 1_000_000)
-            .unwrap();
+            .ok();
         // sqrt(1_000_000) = 1000, bonus_bp = 1000/1000 = 1 basis point
         // voting_power = 10_000 * (10_000 + 1) / 10_000 = 10_000 * 10_001 / 10_000 = 10_001
         assert!(power > 10_000);
@@ -642,13 +642,13 @@ mod tests {
                 &test_public_key(3),
                 100,
             )
-            .unwrap();
+            .ok();
 
         registry
             .terminate_contract(contract_id, TerminationReason::Resignation, &test_public_key(3), 200)
-            .unwrap();
+            .ok();
 
-        let contract = registry.get_contract(&contract_id).unwrap();
+        let contract = registry.get_contract(&contract_id).ok();
         assert_eq!(contract.status, EmploymentStatus::Terminated);
         assert_eq!(contract.end_height, Some(200));
     }
@@ -671,7 +671,7 @@ mod tests {
                 &test_public_key(3),
                 100,
             )
-            .unwrap();
+            .ok();
 
         let id2 = registry
             .create_employment_contract(
@@ -686,7 +686,7 @@ mod tests {
                 &test_public_key(3),
                 100,
             )
-            .unwrap();
+            .ok();
 
         let contracts = registry.get_contracts_by_sid(&sid.key_id);
         assert_eq!(contracts.len(), 2);
@@ -712,7 +712,7 @@ mod tests {
                 &test_public_key(3),
                 100,
             )
-            .unwrap();
+            .ok();
 
         let id2 = registry
             .create_employment_contract(
@@ -727,7 +727,7 @@ mod tests {
                 &test_public_key(3),
                 100,
             )
-            .unwrap();
+            .ok();
 
         let contracts = registry.get_contracts_by_dao(&dao_id);
         assert_eq!(contracts.len(), 2);

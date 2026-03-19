@@ -51,7 +51,7 @@ pub fn unpack_fqdn(buf: &[u8], off: usize) -> (String, usize) {
                 break;
             }
 
-            builder.push(std::str::from_utf8(&buf[pos..pos + length]).unwrap());
+            builder.push(std::str::from_utf8(&buf[pos..pos + length]).ok());
             pos += length;
         }
     }
@@ -87,7 +87,7 @@ pub fn decode_fqdn(buf: &[u8]) -> String {
     for i in 0..buf.len() {
         if buf[i] == 0 {
             if i > original_pos {
-                builder.push(std::str::from_utf8(&buf[original_pos..i]).unwrap());
+                builder.push(std::str::from_utf8(&buf[original_pos..i]).ok());
             }
             original_pos = i + 1;
         }

@@ -685,11 +685,11 @@ mod tests {
                         lib_storage::UnifiedStorageConfig::default(),
                     )
                     .await
-                    .unwrap(),
+                    .ok(),
                 ));
                 // Note: StubDomainRegistry cannot be used here - needs real DomainRegistry type
                 // let registry = std::sync::Arc::new(
-                //     crate::web4_stub::StubDomainRegistry::new_with_storage(storage).await.unwrap()
+                //     crate::web4_stub::StubDomainRegistry::new_with_storage(storage).await.ok()
                 // );
                 // let resolver = std::sync::Arc::new(
                 //     crate::web4_stub::ZdnsResolver::new()

@@ -39,7 +39,7 @@ impl Task for BucketRefreshTask {
                 .kademlia
                 .get_routing_table()
                 .lock()
-                .unwrap()
+                .ok()
                 .bucket_size(i)
                 < MAX_BUCKET_SIZE
             {
@@ -47,7 +47,7 @@ impl Task for BucketRefreshTask {
                     .kademlia
                     .get_routing_table()
                     .lock()
-                    .unwrap()
+                    .ok()
                     .get_derived_uid()
                     .generate_node_id_by_distance(i);
 
@@ -55,7 +55,7 @@ impl Task for BucketRefreshTask {
                     .kademlia
                     .get_routing_table()
                     .lock()
-                    .unwrap()
+                    .ok()
                     .find_closest(&k, MAX_BUCKET_SIZE);
                 if closest.is_empty() {
                     continue;
@@ -69,9 +69,9 @@ impl Task for BucketRefreshTask {
                     self.kademlia
                         .get_server()
                         .lock()
-                        .unwrap()
+                        .ok()
                         .send_with_node_callback(&mut request, node, listener.clone())
-                        .unwrap();
+                        .ok();
                 }
             }
         }
@@ -107,30 +107,30 @@ impl ResponseCallback for FindNodeResponseListener {
             .get_message()
             .as_any()
             .downcast_ref::<FindNodeResponse>()
-            .unwrap();
+            .ok();
 
         if response.has_nodes() {
             let mut nodes = response.get_all_nodes();
 
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .expect("Time went backwards")
+                // REMEDIATED PANIC: .expect("Time went backwards")
                 .as_millis();
 
             let uid = self
                 .kademlia
                 .get_routing_table()
                 .lock()
-                .unwrap()
+                .ok()
                 .get_derived_uid();
             nodes.retain(|node| {
                 if uid == node.uid
-                    || self.queries.lock().unwrap().contains(node)
+                    || self.queries.lock().ok().contains(node)
                     || self
                         .kademlia
                         .get_routing_table()
                         .lock()
-                        .unwrap()
+                        .ok()
                         .has_queried(node, now)
                 {
                     false
@@ -140,7 +140,7 @@ impl ResponseCallback for FindNodeResponseListener {
             });
 
             for node in &nodes {
-                self.queries.lock().unwrap().push(node.clone());
+                self.queries.lock().ok().push(node.clone());
             }
 
             for node in &nodes {
@@ -148,7 +148,7 @@ impl ResponseCallback for FindNodeResponseListener {
                     .kademlia
                     .get_routing_table()
                     .lock()
-                    .unwrap()
+                    .ok()
                     .is_secure_only()
                     && !node.has_secure_id()
                 {
@@ -161,13 +161,13 @@ impl ResponseCallback for FindNodeResponseListener {
                 self.kademlia
                     .get_server()
                     .lock()
-                    .unwrap()
+                    .ok()
                     .send_with_node_callback(
                         &mut req,
                         node.clone(),
                         Box::new(self.listener.clone()),
                     )
-                    .unwrap();
+                    .ok();
             }
         }
     }

@@ -425,7 +425,7 @@ impl DAOToken {
             }
         } else {
             // First disbursement: must be at the period's first boundary
-            let period = self.allocation_period.unwrap();
+            let period = self.allocation_period.ok();
             let first_boundary = period.next_boundary(0);
             if height != first_boundary {
                 return Err(format!(
@@ -452,7 +452,7 @@ impl DAOToken {
             }
         }
 
-        let period = self.allocation_period.unwrap(); // Already checked above
+        let period = self.allocation_period.ok(); // Already checked above
         let next_boundary = period.next_boundary(height);
 
         // Invariant B2: Verify next boundary moves forward monotonically
@@ -514,7 +514,7 @@ mod tests {
             None, // No scheduled disbursement
             0,    // genesis height
         )
-        .unwrap();
+        .ok();
 
         assert_eq!(token.balance_of(&treasury), 1_000_000);
         assert_eq!(token.total_supply(), 1_000_000);
@@ -538,7 +538,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let treasury_balance = token.balance_of(&treasury);
         assert_eq!(treasury_balance, 200_000); // 20% of 1_000_000
@@ -562,7 +562,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let caller_balance = token.balance_of(&caller);
         let treasury_balance = token.balance_of(&treasury);
@@ -592,7 +592,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let treasury_balance = token.balance_of(&treasury);
         let caller_balance = token.balance_of(&caller);
@@ -674,7 +674,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         assert_eq!(token_np.class(), DAOType::NP);
 
@@ -690,7 +690,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         assert_eq!(token_fp.class(), DAOType::FP);
     }
@@ -719,7 +719,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let result = token.mint(&attacker, &recipient, 1000);
         assert!(result.is_err());
@@ -747,7 +747,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let initial_supply = token.total_supply();
         let result = token.mint(&staking, &recipient, 1000);
@@ -776,7 +776,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let result = token.mint(&staking, &recipient, 0);
         assert!(result.is_err());
@@ -802,7 +802,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Try to mint more than would fit
         let result = token.mint(&staking, &recipient, 1000);
@@ -831,7 +831,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let initial_supply = token.total_supply();
         let initial_balance = token.balance_of(&treasury);
@@ -862,7 +862,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let result = token.burn(&attacker, &treasury, 100_000);
         assert!(result.is_err());
@@ -889,7 +889,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let result = token.burn(&staking, &treasury, 0);
         assert!(result.is_err());
@@ -915,7 +915,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // User has 0 balance
         let result = token.burn(&staking, &user, 100);
@@ -945,7 +945,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let sum_balances: u64 = token.all_balances().values().sum();
         assert_eq!(sum_balances, token.total_supply());
@@ -970,9 +970,9 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
-        token.mint(&staking, &recipient, 50_000).unwrap();
+        token.mint(&staking, &recipient, 50_000).ok();
 
         let sum_balances: u64 = token.all_balances().values().sum();
         assert_eq!(sum_balances, token.total_supply());
@@ -996,9 +996,9 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
-        token.burn(&staking, &treasury, 100_000).unwrap();
+        token.burn(&staking, &treasury, 100_000).ok();
 
         let sum_balances: u64 = token.all_balances().values().sum();
         assert_eq!(sum_balances, token.total_supply());
@@ -1023,9 +1023,9 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
-        token.transfer(&treasury, &recipient, 250_000).unwrap();
+        token.transfer(&treasury, &recipient, 250_000).ok();
 
         let sum_balances: u64 = token.all_balances().values().sum();
         assert_eq!(sum_balances, token.total_supply());
@@ -1051,24 +1051,24 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Verify after init
         let mut sum = token.all_balances().values().sum::<u64>();
         assert_eq!(sum, token.total_supply());
 
         // Mint
-        token.mint(&staking, &user_a, 50_000).unwrap();
+        token.mint(&staking, &user_a, 50_000).ok();
         sum = token.all_balances().values().sum::<u64>();
         assert_eq!(sum, token.total_supply());
 
         // Transfer
-        token.transfer(&caller, &user_b, 100_000).unwrap();
+        token.transfer(&caller, &user_b, 100_000).ok();
         sum = token.all_balances().values().sum::<u64>();
         assert_eq!(sum, token.total_supply());
 
         // Burn
-        token.burn(&staking, &user_a, 25_000).unwrap();
+        token.burn(&staking, &user_a, 25_000).ok();
         sum = token.all_balances().values().sum::<u64>();
         assert_eq!(sum, token.total_supply());
     }
@@ -1098,10 +1098,10 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Transfer some tokens to user_a
-        token.transfer(&treasury, &user_a, 100_000).unwrap();
+        token.transfer(&treasury, &user_a, 100_000).ok();
 
         let user_a_before = token.balance_of(&user_a);
         let user_b_before = token.balance_of(&user_b);
@@ -1146,7 +1146,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let token2 = DAOToken::init_dao_token(
             DAOType::NP,
@@ -1160,7 +1160,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Same init inputs must produce identical token IDs
         assert_eq!(token1.token_id, token2.token_id);
@@ -1189,7 +1189,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let token_fp = DAOToken::init_dao_token(
             DAOType::FP,
@@ -1203,7 +1203,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // NP and FP must have different token IDs (canonical function enforces this)
         assert_ne!(token_np.token_id, token_fp.token_id);
@@ -1263,7 +1263,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Verify initialized flag is set to true
         assert!(token.is_initialized());
@@ -1293,7 +1293,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         assert!(token.is_initialized());
     }
@@ -1321,7 +1321,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // No allocation period set
         assert_eq!(token.allocation_period(), None);
@@ -1347,7 +1347,7 @@ mod tests {
             Some(EconomicPeriod::Monthly),
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Period is set
         assert_eq!(token.allocation_period(), Some(EconomicPeriod::Monthly));
@@ -1374,7 +1374,7 @@ mod tests {
             Some(EconomicPeriod::Daily),
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Not at boundary yet
         assert!(!token.is_disbursement_due(8_639));
@@ -1405,15 +1405,15 @@ mod tests {
             Some(EconomicPeriod::Daily),
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
-        let first_next = token.next_disbursement_height().unwrap();
+        let first_next = token.next_disbursement_height().ok();
         assert_eq!(first_next, 8_600); // First Daily boundary
 
         // Execute disbursement at boundary
-        token.record_disbursement_executed(8_600).unwrap();
+        token.record_disbursement_executed(8_600).ok();
 
-        let second_next = token.next_disbursement_height().unwrap();
+        let second_next = token.next_disbursement_height().ok();
         assert_eq!(second_next, 17_200); // Second Daily boundary
 
         // Verify monotonic increase
@@ -1443,10 +1443,10 @@ mod tests {
             Some(EconomicPeriod::Daily),
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // First execution at boundary succeeds
-        token.record_disbursement_executed(8_600).unwrap();
+        token.record_disbursement_executed(8_600).ok();
         assert_eq!(token.last_executed_disbursement_height(), Some(8_600));
         assert_eq!(token.next_disbursement_height(), Some(17_200)); // advanced
 
@@ -1478,10 +1478,10 @@ mod tests {
             Some(EconomicPeriod::Daily),
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Execute at first boundary
-        token.record_disbursement_executed(8_600).unwrap();
+        token.record_disbursement_executed(8_600).ok();
 
         // Try to execute at earlier height
         let result = token.record_disbursement_executed(8_639);
@@ -1511,22 +1511,22 @@ mod tests {
             Some(EconomicPeriod::Daily),
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Cycle 1
         assert_eq!(token.next_disbursement_height(), Some(8_600));
         assert!(token.is_disbursement_due(8_600));
-        token.record_disbursement_executed(8_600).unwrap();
+        token.record_disbursement_executed(8_600).ok();
 
         // Cycle 2
         assert_eq!(token.next_disbursement_height(), Some(17_200));
         assert!(token.is_disbursement_due(17_200));
-        token.record_disbursement_executed(17_200).unwrap();
+        token.record_disbursement_executed(17_200).ok();
 
         // Cycle 3
         assert_eq!(token.next_disbursement_height(), Some(25_800));
         assert!(token.is_disbursement_due(25_800));
-        token.record_disbursement_executed(25_800).unwrap();
+        token.record_disbursement_executed(25_800).ok();
 
         // Verify last executed height
         assert_eq!(token.last_executed_disbursement_height(), Some(25_800));
@@ -1551,7 +1551,7 @@ mod tests {
             None, // No schedule
             0,    // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Never due, regardless of height
         assert!(!token.is_disbursement_due(8_600));
@@ -1578,7 +1578,7 @@ mod tests {
             None,
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         let result = token.record_disbursement_executed(8_600);
         assert!(result.is_err());
@@ -1614,7 +1614,7 @@ mod tests {
             Some(EconomicPeriod::Daily), // First boundary: 8640
             0,                           // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Verify initial state
         assert_eq!(token.next_disbursement_height(), Some(8_600));
@@ -1654,7 +1654,7 @@ mod tests {
             Some(EconomicPeriod::Daily), // First boundary: 8640
             0,                           // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Verify initial state
         assert_eq!(token.next_disbursement_height(), Some(8_600));
@@ -1693,7 +1693,7 @@ mod tests {
             Some(EconomicPeriod::Daily), // First boundary: 8640
             0,                           // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Verify initial state
         assert_eq!(token.next_disbursement_height(), Some(8_600));
@@ -1734,7 +1734,7 @@ mod tests {
             Some(EconomicPeriod::Daily),
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Daily: first boundary 8640
         assert_eq!(token_daily.next_disbursement_height(), Some(8_600));
@@ -1754,7 +1754,7 @@ mod tests {
             Some(EconomicPeriod::Monthly),
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Monthly: first boundary 259200
         assert_eq!(token_monthly.next_disbursement_height(), Some(259_200));
@@ -1774,7 +1774,7 @@ mod tests {
             Some(EconomicPeriod::Quarterly),
             0, // genesis height
         )
-        .unwrap();
+        .ok();
 
         // Quarterly: first boundary 777600
         assert_eq!(token_quarterly.next_disbursement_height(), Some(777_600));

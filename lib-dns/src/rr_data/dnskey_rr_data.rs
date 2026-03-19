@@ -246,6 +246,6 @@ fn test() {
 
     // Valid DNSKEY: flags(2) + protocol(1) + algorithm(1) + no_public_key
     let buf = vec![0u8, 0u8, 0u8, 0u8];
-    let record = DnsKeyRRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = DnsKeyRRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

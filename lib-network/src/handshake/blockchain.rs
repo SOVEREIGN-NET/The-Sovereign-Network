@@ -361,7 +361,7 @@ impl StakeEntry {
             epoch,
             updated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         }
     }
@@ -424,7 +424,7 @@ impl BlockchainHandshakeVerifier {
         stakes: std::collections::HashMap<Hash, u64>,
         epoch: u64,
     ) {
-        let mut stakes_guard = self.validator_stakes.write().unwrap();
+        let mut stakes_guard = self.validator_stakes.write().ok();
 
         // Convert to StakeEntry and only update if newer
         for (identity, amount) in stakes {
@@ -445,7 +445,7 @@ impl BlockchainHandshakeVerifier {
     /// SECURITY (P0-1 FIX): Thread-safe insert with write lock
     /// ENHANCEMENT: Uses versioned StakeEntry with epoch tracking
     pub fn add_validator_stake(&self, identity: Hash, stake: u64, epoch: u64) {
-        let mut stakes_guard = self.validator_stakes.write().unwrap();
+        let mut stakes_guard = self.validator_stakes.write().ok();
         let new_entry = StakeEntry::new(stake, epoch);
 
         // Only update if newer than existing entry
@@ -584,7 +584,7 @@ impl BlockchainHandshakeVerifier {
         let peer_tier = if let Some(stake) = peer_context.validator_stake {
             // Peer claims to be a validator - verify against on-chain stake table
             if let Some(peer_id) = peer_identity {
-                let stakes_guard = self.validator_stakes.read().unwrap();
+                let stakes_guard = self.validator_stakes.read().ok();
                 match stakes_guard.get(peer_id) {
                     Some(stake_entry) => {
                         let on_chain_stake = stake_entry.amount;
@@ -721,7 +721,7 @@ mod tests {
         let mut peer_ctx = create_test_context();
         peer_ctx.chain_id = "different_chain".to_string();
 
-        let result = verifier.verify_peer(&peer_ctx, None, None).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, None, None).ok();
         assert!(!result.verified);
         assert!(result.details.contains("Chain ID mismatch"));
     }
@@ -734,7 +734,7 @@ mod tests {
         let mut peer_ctx = create_test_context();
         peer_ctx.genesis_hash = "different_genesis".to_string();
 
-        let result = verifier.verify_peer(&peer_ctx, None, None).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, None, None).ok();
         assert!(!result.verified);
         assert!(result.details.contains("Genesis hash mismatch"));
     }
@@ -747,7 +747,7 @@ mod tests {
         let mut peer_ctx = create_test_context();
         peer_ctx.block_hash = Hash::from_bytes(&[2u8; 32]); // Different hash at same height
 
-        let result = verifier.verify_peer(&peer_ctx, None, None).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, None, None).ok();
         assert!(!result.verified);
         assert!(result.fork_detected);
         assert!(result.details.contains("Fork detected"));
@@ -761,7 +761,7 @@ mod tests {
         let mut peer_ctx = create_test_context();
         peer_ctx.epoch = 200; // More than max_epoch_diff away
 
-        let result = verifier.verify_peer(&peer_ctx, None, None).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, None, None).ok();
         assert!(!result.verified);
         assert!(result.epoch_mismatch);
         assert!(result.details.to_lowercase().contains("epoch"));
@@ -782,7 +782,7 @@ mod tests {
 
         let result = verifier
             .verify_peer(&peer_ctx, Some(&validator_id), None)
-            .unwrap();
+            .ok();
         assert!(result.verified);
         assert_eq!(result.peer_tier, PeerTier::Validator);
     }
@@ -800,7 +800,7 @@ mod tests {
 
         let result = verifier
             .verify_peer(&peer_ctx, Some(&validator_id), None)
-            .unwrap();
+            .ok();
         assert!(!result.verified);
         assert_eq!(result.details, "Validator authentication failed");
     }
@@ -817,7 +817,7 @@ mod tests {
         // Validator not in stake table
         let result = verifier
             .verify_peer(&peer_ctx, Some(&validator_id), None)
-            .unwrap();
+            .ok();
         assert!(!result.verified);
         assert_eq!(result.details, "Validator authentication failed");
     }
@@ -837,7 +837,7 @@ mod tests {
 
         let result = verifier
             .verify_peer(&peer_ctx, Some(&node_id), None)
-            .unwrap();
+            .ok();
         assert!(result.verified);
         assert_eq!(result.peer_tier, PeerTier::StakedNode);
     }
@@ -849,7 +849,7 @@ mod tests {
 
         let peer_ctx = create_test_context();
 
-        let result = verifier.verify_peer(&peer_ctx, None, None).unwrap();
+        let result = verifier.verify_peer(&peer_ctx, None, None).ok();
         assert!(result.verified);
         assert_eq!(result.peer_tier, PeerTier::Unverified);
         assert!(!result.fork_detected);

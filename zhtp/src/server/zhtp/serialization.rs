@@ -322,14 +322,14 @@ mod tests {
     fn test_cbor_request_roundtrip() {
         let request = create_test_request();
 
-        let serialized = serialize_request_with_format(&request, PayloadFormat::Cbor).unwrap();
+        let serialized = serialize_request_with_format(&request, PayloadFormat::Cbor).ok();
 
         // Check header
         assert_eq!(&serialized[0..4], ZHTP_MAGIC);
         assert_eq!(serialized[4], ZHTP_VERSION);
 
         // Deserialize
-        let (deserialized, format) = deserialize_request_with_format(&serialized).unwrap();
+        let (deserialized, format) = deserialize_request_with_format(&serialized).ok();
 
         assert_eq!(format, PayloadFormat::Cbor);
         assert_eq!(deserialized.method, request.method);
@@ -341,13 +341,13 @@ mod tests {
     fn test_json_request_roundtrip() {
         let request = create_test_request();
 
-        let serialized = serialize_request_with_format(&request, PayloadFormat::Json).unwrap();
+        let serialized = serialize_request_with_format(&request, PayloadFormat::Json).ok();
 
         // Check header
         assert_eq!(&serialized[0..4], ZHTP_MAGIC);
 
         // Deserialize
-        let (deserialized, format) = deserialize_request_with_format(&serialized).unwrap();
+        let (deserialized, format) = deserialize_request_with_format(&serialized).ok();
 
         assert_eq!(format, PayloadFormat::Json);
         assert_eq!(deserialized.method, request.method);
@@ -360,7 +360,7 @@ mod tests {
     fn test_bincode_request_roundtrip() {
         let request = create_test_request();
 
-        let serialized = serialize_request_with_format(&request, PayloadFormat::Bincode).unwrap();
+        let serialized = serialize_request_with_format(&request, PayloadFormat::Bincode).ok();
 
         // Check header
         assert_eq!(&serialized[0..4], ZHTP_MAGIC);
@@ -376,7 +376,7 @@ mod tests {
         // The auto-detect function may incorrectly identify bincode as CBOR if the first
         // byte happens to match CBOR's major type. For bincode, we must use explicit
         // deserialization. This is acceptable because bincode is marked "legacy/internal".
-        let deserialized: ZhtpRequest = bincode::deserialize(payload).unwrap();
+        let deserialized: ZhtpRequest = bincode::deserialize(payload).ok();
 
         assert_eq!(deserialized.method, request.method);
         assert_eq!(deserialized.uri, request.uri);
@@ -387,13 +387,13 @@ mod tests {
     fn test_cbor_response_roundtrip() {
         let response = ZhtpResponse::success(b"response data".to_vec(), None);
 
-        let serialized = serialize_response_with_format(&response, PayloadFormat::Cbor).unwrap();
+        let serialized = serialize_response_with_format(&response, PayloadFormat::Cbor).ok();
 
         // Check header
         assert_eq!(&serialized[0..4], ZHTP_MAGIC);
 
         // Deserialize
-        let (deserialized, format) = deserialize_response_with_format(&serialized).unwrap();
+        let (deserialized, format) = deserialize_response_with_format(&serialized).ok();
 
         assert_eq!(format, PayloadFormat::Cbor);
         assert_eq!(deserialized.status, response.status);
@@ -404,10 +404,10 @@ mod tests {
     fn test_json_response_roundtrip() {
         let response = ZhtpResponse::success(b"response data".to_vec(), None);
 
-        let serialized = serialize_response_with_format(&response, PayloadFormat::Json).unwrap();
+        let serialized = serialize_response_with_format(&response, PayloadFormat::Json).ok();
 
         // Deserialize
-        let (deserialized, format) = deserialize_response_with_format(&serialized).unwrap();
+        let (deserialized, format) = deserialize_response_with_format(&serialized).ok();
 
         assert_eq!(format, PayloadFormat::Json);
         assert_eq!(deserialized.status, response.status);

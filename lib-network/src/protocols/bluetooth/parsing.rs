@@ -250,15 +250,15 @@ mod tests {
 
     fn protocol() -> BluetoothMeshProtocol {
         let node_id = [4u8; 32];
-        let keypair = KeyPair::generate().unwrap();
-        BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap()
+        let keypair = KeyPair::generate().ok();
+        BluetoothMeshProtocol::new(node_id, keypair.public_key).ok()
     }
 
     #[test]
     fn test_extract_device_name() {
         let output = "Name: ZHTP-Node";
         assert_eq!(
-            BluetoothMeshProtocol::extract_device_name(output).unwrap(),
+            BluetoothMeshProtocol::extract_device_name(output).ok(),
             "ZHTP-Node"
         );
     }
@@ -267,7 +267,7 @@ mod tests {
     fn test_extract_device_name_windows() {
         let output = "FriendlyName ZHTP Laptop";
         assert_eq!(
-            BluetoothMeshProtocol::extract_device_name_windows(output).unwrap(),
+            BluetoothMeshProtocol::extract_device_name_windows(output).ok(),
             "ZHTP Laptop"
         );
     }
@@ -284,8 +284,8 @@ mod tests {
     fn test_parse_macos_gatt_data() {
         let proto = protocol();
         let json = r#"{"device":"AA","char":"BB","value":[1,2,3]}"#;
-        let data = proto.parse_macos_gatt_data(json, "AA", "BB").unwrap();
-        assert_eq!(data.unwrap(), vec![1, 2, 3]);
+        let data = proto.parse_macos_gatt_data(json, "AA", "BB").ok();
+        assert_eq!(data.ok(), vec![1, 2, 3]);
     }
 
     #[cfg(target_os = "macos")]
@@ -303,7 +303,7 @@ mod tests {
         let proto = protocol();
         let parsed = proto
             .parse_windows_bluetooth_address("AA:BB:CC:DD:EE:FF")
-            .unwrap();
+            .ok();
         assert_eq!(parsed, 0xAABBCCDDEEFF);
     }
 }

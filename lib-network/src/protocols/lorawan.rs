@@ -823,7 +823,7 @@ mod tests {
     #[tokio::test]
     async fn test_lorawan_mesh_creation() {
         let node_id = [1u8; 32];
-        let protocol = LoRaWANMeshProtocol::new(node_id).unwrap();
+        let protocol = LoRaWANMeshProtocol::new(node_id).ok();
 
         assert_eq!(protocol.node_id, node_id);
         assert!(!protocol.discovery_active);
@@ -833,7 +833,7 @@ mod tests {
     #[tokio::test]
     async fn test_lorawan_discovery() {
         let node_id = [1u8; 32];
-        let protocol = LoRaWANMeshProtocol::new(node_id).unwrap();
+        let protocol = LoRaWANMeshProtocol::new(node_id).ok();
 
         let _result = protocol.start_discovery().await;
         // May fail due to network join simulation

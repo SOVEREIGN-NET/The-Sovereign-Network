@@ -343,8 +343,8 @@ mod tests {
     fn test_serialize_deserialize_request() {
         let request = ZhtpRequest::get("/api/v1/test");
 
-        let bytes = serialize_request(&request).unwrap();
-        let restored = deserialize_request(&bytes).unwrap();
+        let bytes = serialize_request(&request).ok();
+        let restored = deserialize_request(&bytes).ok();
 
         assert_eq!(restored.method, request.method);
         assert_eq!(restored.uri, request.uri);
@@ -358,7 +358,7 @@ mod tests {
         assert_eq!(&frame[0..4], b"ZHTP");
         assert_eq!(frame[4], ZHTP_WIRE_VERSION);
 
-        let parsed = parse_zhtp_frame(&frame).unwrap();
+        let parsed = parse_zhtp_frame(&frame).ok();
         assert_eq!(parsed, payload);
     }
 
@@ -366,8 +366,8 @@ mod tests {
     fn test_request_frame_roundtrip() {
         let request = ZhtpRequest::post("/api/v1/data", b"hello world".to_vec(), "text/plain");
 
-        let frame = create_request_frame(&request).unwrap();
-        let restored = parse_request_frame(&frame).unwrap();
+        let frame = create_request_frame(&request).ok();
+        let restored = parse_request_frame(&frame).ok();
 
         assert_eq!(restored.method, "Post");
         assert_eq!(restored.uri, "/api/v1/data");

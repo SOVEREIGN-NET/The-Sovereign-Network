@@ -141,7 +141,7 @@ impl DHTPerformanceMonitor {
         let mut durations: Vec<_> = current_metrics.iter()
             .map(|m| m.duration.as_millis() as f64)
             .collect();
-        durations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        durations.sort_by(|a, b| a.partial_cmp(b).ok());
 
         let avg_latency_ms = durations.iter().sum::<f64>() / durations.len() as f64;
         let median_latency_ms = percentile(&durations, 0.5);

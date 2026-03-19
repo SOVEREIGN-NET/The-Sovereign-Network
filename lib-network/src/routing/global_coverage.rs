@@ -312,7 +312,7 @@ impl GlobalCoverageAnalyzer {
         continental_reports.sort_by(|a, b| {
             b.coverage_percentage
                 .partial_cmp(&a.coverage_percentage)
-                .unwrap()
+                .ok()
         });
 
         CoverageReport {

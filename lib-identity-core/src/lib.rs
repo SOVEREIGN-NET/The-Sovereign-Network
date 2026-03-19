@@ -160,8 +160,8 @@ mod tests {
     #[test]
     fn did_is_derived_from_root_pk_not_raw_entropy() {
         let entropy = RecoveryEntropy32([7u8; 32]);
-        let rs = derive_root_secret64_from_recovery_entropy(&entropy).unwrap();
-        let rsk = RootSigningKeypair::from_root_secret(&rs).unwrap();
+        let rs = derive_root_secret64_from_recovery_entropy(&entropy).ok();
+        let rsk = RootSigningKeypair::from_root_secret(&rs).ok();
 
         let did = did_from_root_signing_public_key(&rsk.public_key);
         let legacy_did = legacy_did_from_recovery_entropy(&entropy);
@@ -179,8 +179,8 @@ mod tests {
         rs_bytes[0] = 42;
         let rs = RootSecret64(rs_bytes);
 
-        let k1 = RootSigningKeypair::from_root_secret(&rs).unwrap();
-        let k2 = RootSigningKeypair::from_root_secret(&rs).unwrap();
+        let k1 = RootSigningKeypair::from_root_secret(&rs).ok();
+        let k2 = RootSigningKeypair::from_root_secret(&rs).ok();
 
         assert_eq!(k1.public_key, k2.public_key);
         assert_eq!(k1.secret_key, k2.secret_key);
@@ -189,13 +189,13 @@ mod tests {
     #[test]
     fn op_key_binding_sign_verify_roundtrip() {
         let entropy = RecoveryEntropy32([9u8; 32]);
-        let rs = derive_root_secret64_from_recovery_entropy(&entropy).unwrap();
-        let rsk = RootSigningKeypair::from_root_secret(&rs).unwrap();
+        let rs = derive_root_secret64_from_recovery_entropy(&entropy).ok();
+        let rsk = RootSigningKeypair::from_root_secret(&rs).ok();
         let did = did_from_root_signing_public_key(&rsk.public_key);
 
         let op_pk = vec![1u8; 1568];
         let msg = op_key_binding_message(&did, "transport/kem", "kyber1024", &op_pk, 123);
-        let sig = sign_op_key_binding(&msg, &rsk.secret_key).unwrap();
-        assert!(verify_op_key_binding(&msg, &sig, &rsk.public_key).unwrap());
+        let sig = sign_op_key_binding(&msg, &rsk.secret_key).ok();
+        assert!(verify_op_key_binding(&msg, &sig, &rsk.public_key).ok());
     }
 }

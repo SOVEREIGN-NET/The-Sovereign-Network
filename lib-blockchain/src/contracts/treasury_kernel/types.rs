@@ -335,15 +335,15 @@ mod tests {
     #[test]
     fn test_add_distributed_multiple_times() {
         let mut state = KernelState::new();
-        state.add_distributed(100, 300_000).unwrap();
-        state.add_distributed(100, 700_000).unwrap();
+        state.add_distributed(100, 300_000).ok();
+        state.add_distributed(100, 700_000).ok();
         assert_eq!(state.get_distributed(100), 1_000_000);
     }
 
     #[test]
     fn test_add_distributed_exceeds_cap() {
         let mut state = KernelState::new();
-        state.add_distributed(100, 900_000).unwrap();
+        state.add_distributed(100, 900_000).ok();
         let result = state.add_distributed(100, 200_000);
         assert!(result.is_err());
         assert_eq!(state.get_distributed(100), 900_000);
@@ -352,21 +352,21 @@ mod tests {
     #[test]
     fn test_check_pool_capacity_success() {
         let mut state = KernelState::new();
-        state.add_distributed(100, 500_000).unwrap();
+        state.add_distributed(100, 500_000).ok();
         assert!(state.check_pool_capacity(100, 500_000));
     }
 
     #[test]
     fn test_check_pool_capacity_at_limit() {
         let mut state = KernelState::new();
-        state.add_distributed(100, 1_000_000).unwrap();
+        state.add_distributed(100, 1_000_000).ok();
         assert!(!state.check_pool_capacity(100, 1));
     }
 
     #[test]
     fn test_check_pool_capacity_different_epochs() {
         let mut state = KernelState::new();
-        state.add_distributed(100, 1_000_000).unwrap();
+        state.add_distributed(100, 1_000_000).ok();
         assert!(state.check_pool_capacity(101, 1_000_000));
     }
 

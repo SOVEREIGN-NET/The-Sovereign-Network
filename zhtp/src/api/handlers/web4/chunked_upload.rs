@@ -226,7 +226,7 @@ impl ChunkedUploadManager {
         let upload_id = uuid::Uuid::new_v4().to_string();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let session = UploadSession {
@@ -290,7 +290,7 @@ impl ChunkedUploadManager {
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         if now > session.expires_at {
@@ -481,7 +481,7 @@ impl ChunkedUploadManager {
     pub async fn cleanup_expired(&self) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let mut sessions = self.sessions.write().await;

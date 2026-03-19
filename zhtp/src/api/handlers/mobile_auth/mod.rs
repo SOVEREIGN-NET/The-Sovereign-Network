@@ -716,7 +716,7 @@ mod tests {
             uri: uri.to_string(),
             version: "1.0".to_string(),
             headers: ZhtpHeaders::new(),
-            body: serde_json::to_vec(&body).unwrap(),
+            body: serde_json::to_vec(&body).ok(),
             timestamp: 0,
             requester: None,
             auth_proof: None,
@@ -744,11 +744,11 @@ mod tests {
             "/api/v1/auth/mobile/challenge",
             json!({ "capabilities": [{ "type": "read_balance" }] }),
         );
-        let resp = h.handle_request(req).await.unwrap();
+        let resp = h.handle_request(req).await.ok();
         assert_eq!(resp.status, ZhtpStatus::Ok);
-        let body: Value = serde_json::from_slice(&resp.body).unwrap();
+        let body: Value = serde_json::from_slice(&resp.body).ok();
         assert!(body["session_id"].is_string());
-        assert!(body["qr_payload"].as_str().unwrap().starts_with("zhtp://auth"));
+        assert!(body["qr_payload"].as_str().ok().starts_with("zhtp://auth"));
     }
 
     // Phase 1 — verify with wrong signature returns Unauthorized
@@ -757,9 +757,9 @@ mod tests {
         let h = make_handler();
         // Issue challenge
         let ch_req = post("/api/v1/auth/mobile/challenge", json!({}));
-        let ch_resp = h.handle_request(ch_req).await.unwrap();
-        let ch_body: Value = serde_json::from_slice(&ch_resp.body).unwrap();
-        let session_id = ch_body["session_id"].as_str().unwrap().to_string();
+        let ch_resp = h.handle_request(ch_req).await.ok();
+        let ch_body: Value = serde_json::from_slice(&ch_resp.body).ok();
+        let session_id = ch_body["session_id"].as_str().ok().to_string();
 
         // Attempt verify with a garbage Dilithium-sized pk and signature
         let bad_pk = "ab".repeat(1312); // Dilithium2 pk = 1312 bytes → 2624 hex chars
@@ -775,7 +775,7 @@ mod tests {
                 "identity_hex": identity_hex,
             }),
         );
-        let v_resp = h.handle_request(verify_req).await.unwrap();
+        let v_resp = h.handle_request(verify_req).await.ok();
         // Should be Unauthorized or BadRequest (either is fine — signature invalid)
         assert!(
             v_resp.status == ZhtpStatus::Unauthorized
@@ -798,7 +798,7 @@ mod tests {
                 "identity_hex": hex::encode([0u8; 32]),
             }),
         );
-        let resp = h.handle_request(req).await.unwrap();
+        let resp = h.handle_request(req).await.ok();
         assert_eq!(resp.status, ZhtpStatus::BadRequest);
     }
 
@@ -806,7 +806,7 @@ mod tests {
     #[tokio::test]
     async fn session_info_no_token_returns_401() {
         let h = make_handler();
-        let resp = h.handle_request(get("/api/v1/auth/mobile/session")).await.unwrap();
+        let resp = h.handle_request(get("/api/v1/auth/mobile/session")).await.ok();
         assert_eq!(resp.status, ZhtpStatus::Unauthorized);
     }
 
@@ -818,7 +818,7 @@ mod tests {
             "/api/v1/auth/mobile/refresh",
             json!({ "refresh_token": "nonexistent" }),
         );
-        let resp = h.handle_request(req).await.unwrap();
+        let resp = h.handle_request(req).await.ok();
         assert_eq!(resp.status, ZhtpStatus::Unauthorized);
     }
 
@@ -836,7 +836,7 @@ mod tests {
                 "signature_hex": "00",
             }),
         );
-        let resp = h.handle_request(req).await.unwrap();
+        let resp = h.handle_request(req).await.ok();
         assert_eq!(resp.status, ZhtpStatus::Unauthorized);
     }
 
@@ -847,7 +847,7 @@ mod tests {
         let resp = h
             .handle_request(get("/api/v1/auth/delegate/does-not-exist"))
             .await
-            .unwrap();
+            .ok();
         assert_eq!(resp.status, ZhtpStatus::NotFound);
     }
 }

@@ -837,7 +837,7 @@ impl HandshakeMessage {
             payload,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         }
     }
@@ -2492,15 +2492,15 @@ mod tests {
             channel_binding: vec![0u8; 32],
         };
 
-        let key1 = derive_session_key_hkdf(&client_nonce, &server_nonce, &context).unwrap();
-        let key2 = derive_session_key_hkdf(&client_nonce, &server_nonce, &context).unwrap();
+        let key1 = derive_session_key_hkdf(&client_nonce, &server_nonce, &context).ok();
+        let key2 = derive_session_key_hkdf(&client_nonce, &server_nonce, &context).ok();
 
         // Should be deterministic
         assert_eq!(key1, key2);
 
         // Should change if nonces change
         let different_client = [0x43u8; 32];
-        let key3 = derive_session_key_hkdf(&different_client, &server_nonce, &context).unwrap();
+        let key3 = derive_session_key_hkdf(&different_client, &server_nonce, &context).ok();
         assert_ne!(key1, key3);
     }
 
@@ -2619,7 +2619,7 @@ mod tests {
         // Step 3: Client sends ClientFinish (includes mutual authentication of server)
         let client_keypair = KeyPair {
             public_key: client_identity.public_key.clone(),
-            private_key: client_identity.private_key.clone().unwrap(),
+            private_key: client_identity.private_key.clone().ok(),
         };
 
         let (client_finish, client_pqc_secret) = ClientFinish::new_with_pqc(
@@ -2752,7 +2752,7 @@ mod tests {
 
                     let client_keypair = KeyPair {
                         public_key: client_identity.public_key.clone(),
-                        private_key: client_identity.private_key.clone().unwrap(),
+                        private_key: client_identity.private_key.clone().ok(),
                     };
 
                     let _client_finish = ClientFinish::new_with_pqc(
@@ -2770,7 +2770,7 @@ mod tests {
             .collect();
 
         // Wait for all handshakes to complete
-        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().ok()).collect();
 
         // All should succeed
         for result in results {

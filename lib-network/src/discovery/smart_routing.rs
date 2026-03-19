@@ -106,7 +106,7 @@ fn calculate_peer_score(metrics: &PeerMetrics) -> f64 {
     // Freshness (recently seen peers are better)
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok()
         .as_secs();
     let age_seconds = now.saturating_sub(metrics.last_seen);
     let freshness_score = if age_seconds < 300 {
@@ -238,7 +238,7 @@ pub async fn measure_peer_performance(peer: SocketAddr) -> Result<PeerMetrics> {
                 hop_count: 1,        // TODO: Implement traceroute-like functionality
                 last_seen: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
                 peer_type: PeerType::Internet, // Will be updated by categorization
             })

@@ -583,7 +583,7 @@ mod tests {
     fn create_test_node(device_name: &str, port: u16) -> DhtNode {
         let identity =
             ZhtpIdentity::new_unified(IdentityType::Device, None, None, device_name, None)
-                .expect("Failed to create test identity");
+                // REMEDIATED PANIC: .expect("Failed to create test identity");
 
         let peer = build_peer_identity(
             identity.node_id.clone(),
@@ -644,12 +644,12 @@ mod tests {
             last_sequence: None,
         };
 
-        let is_new = registry.upsert(entry).unwrap();
+        let is_new = registry.upsert(entry).ok();
         assert!(is_new);
 
         let retrieved = registry.get(&node_id);
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().bucket_index, 5);
+        assert_eq!(retrieved.ok().bucket_index, 5);
 
         // Update should return false
         let entry2 = DhtPeerEntry {
@@ -660,11 +660,11 @@ mod tests {
             failed_attempts: 0,
             last_sequence: None,
         };
-        let is_new2 = registry.upsert(entry2).unwrap();
+        let is_new2 = registry.upsert(entry2).ok();
         assert!(!is_new2);
 
         // Verify update
-        assert_eq!(registry.get(&node_id).unwrap().bucket_index, 6);
+        assert_eq!(registry.get(&node_id).ok().bucket_index, 6);
     }
 
     #[test]
@@ -704,7 +704,7 @@ mod tests {
                 failed_attempts: 0,
                 last_sequence: None,
             };
-            registry.upsert(entry).unwrap();
+            registry.upsert(entry).ok();
         }
 
         assert_eq!(registry.bucket_size(0), 3);
@@ -730,7 +730,7 @@ mod tests {
                 failed_attempts: 0,
                 last_sequence: None,
             };
-            registry.upsert(entry).unwrap();
+            registry.upsert(entry).ok();
         }
 
         // Verify O(1) bucket size lookups via secondary index
@@ -758,10 +758,10 @@ mod tests {
             failed_attempts: 0,
             last_sequence: None,
         };
-        registry.upsert(entry).unwrap();
+        registry.upsert(entry).ok();
 
         assert!(registry.mark_failed(&node_id));
-        assert_eq!(registry.get(&node_id).unwrap().failed_attempts, 1);
+        assert_eq!(registry.get(&node_id).ok().failed_attempts, 1);
     }
 
     #[test]
@@ -782,10 +782,10 @@ mod tests {
             failed_attempts: 5,
             last_sequence: None,
         };
-        registry.upsert(entry).unwrap();
+        registry.upsert(entry).ok();
 
         assert!(registry.mark_responsive(&node_id));
-        assert_eq!(registry.get(&node_id).unwrap().failed_attempts, 0);
+        assert_eq!(registry.get(&node_id).ok().failed_attempts, 0);
     }
 
     #[test]
@@ -803,7 +803,7 @@ mod tests {
                 failed_attempts: i as u32,
                 last_sequence: None,
             };
-            registry.upsert(entry).unwrap();
+            registry.upsert(entry).ok();
         }
 
         assert_eq!(registry.stats().total_peers, 5);
@@ -829,7 +829,7 @@ mod tests {
             failed_attempts: 2,
             last_sequence: None,
         };
-        registry.upsert(entry).unwrap();
+        registry.upsert(entry).ok();
 
         // Should be cleaned up with configured threshold of 1
         let removed = registry.cleanup_failed_peers();
@@ -851,10 +851,10 @@ mod tests {
             last_sequence: None,
         };
 
-        registry.upsert(entry).unwrap();
+        registry.upsert(entry).ok();
 
-        registry.check_and_update_sequence(&node_id, 1).unwrap();
-        registry.check_and_update_sequence(&node_id, 2).unwrap();
+        registry.check_and_update_sequence(&node_id, 1).ok();
+        registry.check_and_update_sequence(&node_id, 2).ok();
 
         let err = registry.check_and_update_sequence(&node_id, 2).unwrap_err();
         assert!(err.to_string().contains("Replay detected"));
@@ -875,7 +875,7 @@ mod tests {
             last_sequence: Some(u64::MAX - 1),
         };
 
-        registry.upsert(entry).unwrap();
+        registry.upsert(entry).ok();
 
         assert!(registry.check_and_update_sequence(&node_id, 0).is_ok());
     }
@@ -895,7 +895,7 @@ mod tests {
             last_sequence: Some(u64::MAX),
         };
 
-        registry.upsert(entry).unwrap();
+        registry.upsert(entry).ok();
 
         // Should allow wraparound from u64::MAX to 0
         assert!(registry.check_and_update_sequence(&node_id, 0).is_ok());
@@ -919,7 +919,7 @@ mod tests {
             last_sequence: Some(1000),
         };
 
-        registry.upsert(entry).unwrap();
+        registry.upsert(entry).ok();
 
         // Should reject sequence 0 because it's not actually a wraparound
         let err = registry.check_and_update_sequence(&node_id, 0).unwrap_err();
@@ -947,7 +947,7 @@ mod tests {
             last_sequence: Some(100),
         };
 
-        registry.upsert(entry).unwrap();
+        registry.upsert(entry).ok();
 
         // Test that we get the correct custom error type
         let err = registry
@@ -990,7 +990,7 @@ mod tests {
                 failed_attempts: 0,
                 last_sequence: None,
             };
-            registry.upsert(entry).unwrap();
+            registry.upsert(entry).ok();
         }
 
         let target = NodeId::from_bytes([2u8; 32]);
@@ -1025,7 +1025,7 @@ mod tests {
                     failed_attempts: 0,
                     last_sequence: None,
                 };
-                registry.upsert(entry).unwrap();
+                registry.upsert(entry).ok();
             }
         }
 

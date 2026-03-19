@@ -298,10 +298,10 @@ impl fmt::Display for TSigRRData {
         write!(
             f,
             "{} {} {} {} {} {} {}",
-            format!("{}.", self.algorithm.as_ref().unwrap()),
+            format!("{}.", self.algorithm.as_ref().ok()),
             self.time_signed,
             self.fudge,
-            hex::encode(&self.mac.as_ref().unwrap()),
+            hex::encode(&self.mac.as_ref().ok()),
             self.original_id,
             self.error,
             hex::encode(&self.data)
@@ -317,6 +317,6 @@ fn test() {
         0x73, 0x28, 0x5d, 0xa, 0x2d, 0xf4, 0xa3, 0x34, 0x2f, 0xcf, 0x1, 0x6f, 0x3c, 0x9f, 0x76,
         0x82, 0x2, 0x34, 0x0, 0x0, 0x0, 0x0,
     ];
-    let record = TSigRRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = TSigRRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

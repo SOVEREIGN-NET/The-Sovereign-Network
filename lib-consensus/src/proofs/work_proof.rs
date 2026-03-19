@@ -371,7 +371,7 @@ impl NetworkState {
                 computation_hash,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
                     - (i as u64 * 1800), // Results from last few hours
                 signature,

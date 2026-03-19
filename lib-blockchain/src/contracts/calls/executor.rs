@@ -338,7 +338,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let result = result.unwrap();
+        let result = result.ok();
         assert!(result.is_success());
     }
 
@@ -382,7 +382,7 @@ mod tests {
         let result = executor.execute_call(call, 2, "bool", "1.0.0");
 
         assert!(result.is_ok());
-        let result = result.unwrap();
+        let result = result.ok();
         assert!(result.is_error());
         match result {
             CrossContractCallResult::Error { error } => {
@@ -407,7 +407,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let result = result.unwrap();
+        let result = result.ok();
         assert!(result.is_error());
     }
 
@@ -426,7 +426,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let result = result.unwrap();
+        let result = result.ok();
         assert!(result.is_error());
     }
 

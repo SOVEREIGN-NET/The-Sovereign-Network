@@ -159,6 +159,6 @@ impl fmt::Display for DsRRData {
 #[test]
 fn test() {
     let buf = vec![];
-    let record = DsRRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = DsRRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

@@ -193,7 +193,7 @@ impl WalletManager {
         .await?;
 
         let wallet_id = wallet.id.clone();
-        let seed_phrase = wallet.seed_phrase.clone().unwrap();
+        let seed_phrase = wallet.seed_phrase.clone().ok();
 
         // Store wallet
         self.wallets.insert(wallet_id.clone(), wallet);
@@ -372,7 +372,7 @@ impl WalletManager {
             purpose.as_bytes(),
             &std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs()
                 .to_le_bytes(),
         ]
@@ -382,19 +382,19 @@ impl WalletManager {
         // Perform the transfer
         self.wallets
             .get_mut(from_wallet)
-            .unwrap()
+            .ok()
             .remove_funds(amount)
             .map_err(|e| anyhow!(e))?;
-        self.wallets.get_mut(to_wallet).unwrap().add_funds(amount);
+        self.wallets.get_mut(to_wallet).ok().add_funds(amount);
 
         // Add transaction to both wallets' history
         self.wallets
             .get_mut(from_wallet)
-            .unwrap()
+            .ok()
             .add_transaction(tx_hash.clone());
         self.wallets
             .get_mut(to_wallet)
-            .unwrap()
+            .ok()
             .add_transaction(tx_hash.clone());
 
         if let Some(ref owner_id) = self.owner_id {
@@ -638,7 +638,7 @@ impl WalletManager {
             wallet
                 .dao_properties
                 .as_ref()
-                .unwrap()
+                .ok()
                 .authorized_controllers[0]
                 .clone()
         });
@@ -738,7 +738,7 @@ impl WalletManager {
             wallet
                 .dao_properties
                 .as_ref()
-                .unwrap()
+                .ok()
                 .authorized_controllers[0]
                 .clone()
         });
@@ -842,7 +842,7 @@ impl WalletManager {
         if !self
             .wallets
             .get(parent_dao_id)
-            .unwrap()
+            .ok()
             .is_authorized_controller(&authorized_by)
         {
             return Err(anyhow!("Not authorized to modify parent DAO"));
@@ -852,15 +852,15 @@ impl WalletManager {
         if !self
             .wallets
             .get(child_dao_id)
-            .unwrap()
+            .ok()
             .is_authorized_controller(&authorized_by)
         {
             return Err(anyhow!("Not authorized to modify child DAO"));
         }
 
         // Business rule: Non-profit DAOs cannot own for-profit DAOs
-        let parent_wallet_type = self.wallets.get(parent_dao_id).unwrap().wallet_type.clone();
-        let child_wallet_type = self.wallets.get(child_dao_id).unwrap().wallet_type.clone();
+        let parent_wallet_type = self.wallets.get(parent_dao_id).ok().wallet_type.clone();
+        let child_wallet_type = self.wallets.get(child_dao_id).ok().wallet_type.clone();
 
         if parent_wallet_type == WalletType::NonProfitDAO
             && child_wallet_type == WalletType::ForProfitDAO
@@ -872,10 +872,10 @@ impl WalletManager {
         }
 
         // Set up parent-child relationship
-        let parent_wallet = self.wallets.get_mut(parent_dao_id).unwrap();
+        let parent_wallet = self.wallets.get_mut(parent_dao_id).ok();
         parent_wallet.add_child_dao(child_dao_id.clone(), Some(&authorized_by), None)?;
 
-        let child_wallet = self.wallets.get_mut(child_dao_id).unwrap();
+        let child_wallet = self.wallets.get_mut(child_dao_id).ok();
         child_wallet.set_parent_dao(parent_dao_id.clone(), Some(&authorized_by), None)?;
 
         tracing::info!(
@@ -923,7 +923,7 @@ impl WalletManager {
         if !self
             .wallets
             .get(target_dao_id)
-            .unwrap()
+            .ok()
             .is_authorized_controller(&authorized_by)
         {
             return Err(anyhow!("Not authorized to modify target DAO"));
@@ -933,10 +933,10 @@ impl WalletManager {
         let controller_wallet_type = self
             .wallets
             .get(controller_dao_id)
-            .unwrap()
+            .ok()
             .wallet_type
             .clone();
-        let target_wallet_type = self.wallets.get(target_dao_id).unwrap().wallet_type.clone();
+        let target_wallet_type = self.wallets.get(target_dao_id).ok().wallet_type.clone();
 
         if controller_wallet_type == WalletType::NonProfitDAO
             && target_wallet_type == WalletType::ForProfitDAO
@@ -948,7 +948,7 @@ impl WalletManager {
         }
 
         // Add DAO controller authorization
-        let target_wallet = self.wallets.get_mut(target_dao_id).unwrap();
+        let target_wallet = self.wallets.get_mut(target_dao_id).ok();
         target_wallet.add_authorized_dao_controller(
             controller_dao_id.clone(),
             Some(&authorized_by),

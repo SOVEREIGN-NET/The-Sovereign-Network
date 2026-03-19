@@ -38,7 +38,7 @@ impl ZkCredential {
     ) -> Self {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Generate credential ID from contents
@@ -69,7 +69,7 @@ impl ZkCredential {
         if let Some(expires_at) = self.expires_at {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs();
             expires_at <= now
         } else {
@@ -88,7 +88,7 @@ impl ZkCredential {
     pub fn age_seconds(&self) -> u64 {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         now.saturating_sub(self.issued_at)
     }
@@ -98,7 +98,7 @@ impl ZkCredential {
         if let Some(expires_at) = self.expires_at {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs();
             if expires_at > now {
                 Some(expires_at - now)

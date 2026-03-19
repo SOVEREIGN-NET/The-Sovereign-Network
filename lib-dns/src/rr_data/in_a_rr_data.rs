@@ -148,6 +148,6 @@ impl fmt::Display for InARRData {
 #[test]
 fn test() {
     let buf = vec![0x7f, 0x0, 0x0, 0x1];
-    let record = InARRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = InARRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

@@ -143,7 +143,7 @@ impl MarketplaceHandler {
                 request.from_wallet,
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             );
             Hash::from_bytes(&hash_blake3(gift_data.as_bytes()))
@@ -716,7 +716,7 @@ mod tests {
             "buyer_identity_id": "identity789"
         }"#;
 
-        let request: TransferRequest = serde_json::from_str(json).unwrap();
+        let request: TransferRequest = serde_json::from_str(json).ok();
         assert_eq!(request.from_wallet, "abc123");
         assert_eq!(request.to_wallet, "def456");
         assert_eq!(request.price, 1000);
@@ -731,7 +731,7 @@ mod tests {
             "buyer_identity_id": "identity456"
         }"#;
 
-        let request: PurchaseRequest = serde_json::from_str(json).unwrap();
+        let request: PurchaseRequest = serde_json::from_str(json).ok();
         assert_eq!(request.buyer_wallet, "buyer123");
         assert_eq!(request.offered_price, 500);
         assert_eq!(request.buyer_identity_id, "identity456");

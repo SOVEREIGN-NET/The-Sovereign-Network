@@ -76,7 +76,7 @@ impl RewardCalculator {
             validator_rewards: validator_rewards.clone(),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 

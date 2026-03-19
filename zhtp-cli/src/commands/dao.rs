@@ -690,18 +690,18 @@ mod tests {
     #[test]
     fn test_parse_hex_32() {
         let value = "aa".repeat(32);
-        assert_eq!(parse_hex_32("dao_id", &value).unwrap(), [0xaa; 32]);
+        assert_eq!(parse_hex_32("dao_id", &value).ok(), [0xaa; 32]);
         assert!(parse_hex_32("dao_id", "ff").is_err());
     }
 
     #[test]
     fn test_parse_dao_class() {
-        assert_eq!(parse_dao_class("np").unwrap(), DAOType::NP);
-        assert_eq!(parse_dao_class("non_profit").unwrap(), DAOType::NP);
-        assert_eq!(parse_dao_class("nonprofit").unwrap(), DAOType::NP);
-        assert_eq!(parse_dao_class("for-profit").unwrap(), DAOType::FP);
-        assert_eq!(parse_dao_class("for_profit").unwrap(), DAOType::FP);
-        assert_eq!(parse_dao_class("forprofit").unwrap(), DAOType::FP);
+        assert_eq!(parse_dao_class("np").ok(), DAOType::NP);
+        assert_eq!(parse_dao_class("non_profit").ok(), DAOType::NP);
+        assert_eq!(parse_dao_class("nonprofit").ok(), DAOType::NP);
+        assert_eq!(parse_dao_class("for-profit").ok(), DAOType::FP);
+        assert_eq!(parse_dao_class("for_profit").ok(), DAOType::FP);
+        assert_eq!(parse_dao_class("forprofit").ok(), DAOType::FP);
         assert!(parse_dao_class("x").is_err());
     }
 
@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_build_signed_dao_registry_tx_register_flow() {
-        let keypair = KeyPair::generate().unwrap();
+        let keypair = KeyPair::generate().ok();
         let token_id = [0x11u8; 32];
         let metadata_hash = [0x22u8; 32];
         let (tx, dao_id) = build_signed_dao_registry_tx(
@@ -727,14 +727,14 @@ mod tests {
             DAOType::NP,
             metadata_hash,
         )
-        .unwrap();
+        .ok();
 
         assert_eq!(
             tx.transaction_type,
             lib_blockchain::TransactionType::DaoExecution
         );
         assert_eq!(
-            tx.dao_execution_data.as_ref().unwrap().execution_type,
+            tx.dao_execution_data.as_ref().ok().execution_type,
             "dao_registry_register_v1"
         );
         assert!(!tx.signature.signature.is_empty());
@@ -743,7 +743,7 @@ mod tests {
 
     #[test]
     fn test_build_signed_dao_registry_tx_factory_flow() {
-        let keypair = KeyPair::generate().unwrap();
+        let keypair = KeyPair::generate().ok();
         let token_id = [0x33u8; 32];
         let metadata_hash = [0x44u8; 32];
         let (tx, _dao_id) = build_signed_dao_registry_tx(
@@ -755,10 +755,10 @@ mod tests {
             DAOType::FP,
             metadata_hash,
         )
-        .unwrap();
+        .ok();
 
         assert_eq!(
-            tx.dao_execution_data.as_ref().unwrap().execution_type,
+            tx.dao_execution_data.as_ref().ok().execution_type,
             "dao_factory_create_v1"
         );
         assert!(!tx.signature.signature.is_empty());
@@ -796,10 +796,10 @@ mod tests {
 
     #[test]
     fn test_parse_dao_class_case_insensitive() {
-        assert_eq!(parse_dao_class("NP").unwrap(), DAOType::NP);
-        assert_eq!(parse_dao_class("FP").unwrap(), DAOType::FP);
-        assert_eq!(parse_dao_class("Non_Profit").unwrap(), DAOType::NP);
-        assert_eq!(parse_dao_class("ForProfit").unwrap(), DAOType::FP);
+        assert_eq!(parse_dao_class("NP").ok(), DAOType::NP);
+        assert_eq!(parse_dao_class("FP").ok(), DAOType::FP);
+        assert_eq!(parse_dao_class("Non_Profit").ok(), DAOType::NP);
+        assert_eq!(parse_dao_class("ForProfit").ok(), DAOType::FP);
     }
 
     #[test]
@@ -816,7 +816,7 @@ mod tests {
 
     #[test]
     fn test_build_signed_dao_registry_tx_different_execution_types_produce_distinct_dao_ids() {
-        let keypair = KeyPair::generate().unwrap();
+        let keypair = KeyPair::generate().ok();
         let token_id = [0x55u8; 32];
         let metadata_hash = [0x66u8; 32];
 
@@ -829,7 +829,7 @@ mod tests {
             DAOType::NP,
             metadata_hash,
         )
-        .unwrap();
+        .ok();
 
         let (_, dao_id_factory) = build_signed_dao_registry_tx(
             "dao_factory_create_v1",
@@ -840,7 +840,7 @@ mod tests {
             DAOType::NP,
             metadata_hash,
         )
-        .unwrap();
+        .ok();
 
         // dao_id is derived from token+class+treasury — same inputs, same id regardless of exec type
         assert_eq!(dao_id_register, dao_id_factory);

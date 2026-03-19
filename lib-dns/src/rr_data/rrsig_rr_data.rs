@@ -299,7 +299,7 @@ impl ZoneRRData for RRSigRRData {
             7 => self.signer_name = Some(value.strip_suffix('.')
                 .ok_or_else(|| ZoneReaderError::new(ErrorKind::Format, "signer_name param is not fully qualified (missing trailing dot) for record type RRSIG"))?.to_string()),
             8 => self.signature = base64::decode(value).map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse signature param for record type RRSIG"))?,
-            _ => self.signature.extend_from_slice(&base64::decode(value).unwrap())
+            _ => self.signature.extend_from_slice(&base64::decode(value).ok())
         })
     }
 
@@ -340,6 +340,6 @@ fn test() {
         0xe7, 0xdf, 0xf6, 0xa, 0xa3, 0x1a, 0x75, 0xc2, 0x27, 0x53, 0xfb, 0x59, 0x52, 0x99, 0xb1,
         0x44, 0xff,
     ];
-    let record = RRSigRRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = RRSigRRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

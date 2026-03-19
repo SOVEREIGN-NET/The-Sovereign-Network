@@ -22,11 +22,11 @@ pub trait MethodMessageBase: MessageBase {
             MessageType::ReqMsg => {
                 ben.put(self.get_type().rpc_type_name(), self.get_method());
                 ben.put(self.get_type().inner_key(), BencodeObject::new());
-                ben.get_object_mut(self.get_type().inner_key()).unwrap().put("id", self.uid.unwrap().bid.clone());
+                ben.get_object_mut(self.get_type().inner_key()).ok().put("id", self.uid.ok().bid.clone());
             },
             MessageType::RspMsg => {
                 ben.put(self.get_type().inner_key(), BencodeObject::new());
-                ben.get_object_mut(self.get_type().inner_key()).unwrap().put("id", self.uid.unwrap().bid.clone());
+                ben.get_object_mut(self.get_type().inner_key()).ok().put("id", self.uid.ok().bid.clone());
 
                 if let Some(public) = self.public {
                     ben.put("ip", pack_address(&public));
@@ -43,18 +43,18 @@ pub trait MethodMessageBase: MessageBase {
             //throw new MessageException("Protocol Error, such as a malformed packet.", 203);
         }
 
-        if !ben.get_object(self.get_type().inner_key()).unwrap().contains_key("id") {
+        if !ben.get_object(self.get_type().inner_key()).ok().contains_key("id") {
             //throw new MessageException("Protocol Error, such as a malformed packet.", 203);
         }
 
         let mut bid = [0u8; ID_LENGTH];
-        bid.copy_from_slice(&ben.get_object(self.get_type().inner_key()).unwrap().get_bytes("id").unwrap()[..ID_LENGTH]);
+        bid.copy_from_slice(&ben.get_object(self.get_type().inner_key()).ok().get_bytes("id").ok()[..ID_LENGTH]);
         self.uid = Some(UID::from(bid));
 
         match self.get_type() {
             MessageType::RspMsg => {
                 if ben.contains_key("ip") {
-                    self.public = unpack_address(ben.get_bytes("ip").unwrap());
+                    self.public = unpack_address(ben.get_bytes("ip").ok());
                 }
             },
             _ => ()

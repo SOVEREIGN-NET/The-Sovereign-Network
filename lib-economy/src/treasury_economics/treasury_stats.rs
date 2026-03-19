@@ -93,7 +93,7 @@ impl TreasuryStatsManager {
         let mut fund_data = HashMap::new();
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         for fund in [
@@ -238,7 +238,7 @@ impl TreasuryStatsManager {
         // Update timestamp
         self.last_updated = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Ok(())
@@ -487,7 +487,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_treasury_manager_creation() {
-        let manager = TreasuryStatsManager::new().await.unwrap();
+        let manager = TreasuryStatsManager::new().await.ok();
 
         // Treasury starts at 0, will be updated by integration layer
         assert_eq!(manager.total_treasury_balance, 0);
@@ -519,7 +519,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_treasury_statistics() {
-        let stats = get_treasury_statistics().await.unwrap();
+        let stats = get_treasury_statistics().await.ok();
 
         // Verify expected structure
         assert!(stats.get("treasury_overview").is_some());
@@ -530,7 +530,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_treasury_health_score() {
-        let health_score = get_treasury_health_score().await.unwrap();
+        let health_score = get_treasury_health_score().await.ok();
 
         assert!(health_score >= 0.0);
         assert!(health_score <= 100.0);

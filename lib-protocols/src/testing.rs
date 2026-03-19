@@ -188,7 +188,7 @@ impl TestRequestBuilder {
             timestamp: self.timestamp.unwrap_or_else(|| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs()
             }),
             requester: None,
@@ -252,7 +252,7 @@ impl TestResponseBuilder {
             body: self.body,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             server: None,
             validity_proof: None,
@@ -280,7 +280,7 @@ pub mod fixtures {
 
         TestRequestBuilder::new(ZhtpMethod::Post, "/api/data")
             .json_body(&data)
-            .unwrap()
+            .ok()
             .build()
     }
 
@@ -292,7 +292,7 @@ pub mod fixtures {
                 "success": true,
                 "message": "Test successful"
             }))
-            .unwrap()
+            .ok()
             .build()
     }
 
@@ -304,7 +304,7 @@ pub mod fixtures {
                 "error": "Test error",
                 "code": 400
             }))
-            .unwrap()
+            .ok()
             .build()
     }
 
@@ -325,7 +325,7 @@ pub mod fixtures {
 
         TestRequestBuilder::new(ZhtpMethod::Post, "/api/wallet/operation")
             .json_body(&wallet_op)
-            .unwrap()
+            .ok()
             .build()
     }
 
@@ -345,7 +345,7 @@ pub mod fixtures {
 
         TestRequestBuilder::new(ZhtpMethod::Post, "/api/dao/operation")
             .json_body(&dao_op)
-            .unwrap()
+            .ok()
             .build()
     }
 }
@@ -442,7 +442,7 @@ pub mod utils {
     pub fn test_timestamp() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs()
     }
 
@@ -551,7 +551,7 @@ mod tests {
         let mut server = MockZhtpServer::new(config);
 
         let request = fixtures::test_get_request();
-        let response = server.process_request(request).await.unwrap();
+        let response = server.process_request(request).await.ok();
 
         assert_eq!(response.status, ZhtpStatus::Ok);
         assert_eq!(server.get_recorded_requests().len(), 1);

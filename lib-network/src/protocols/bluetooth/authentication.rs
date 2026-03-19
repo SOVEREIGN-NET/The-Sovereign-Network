@@ -414,11 +414,11 @@ mod tests {
     #[test]
     fn test_auth_characteristic_uuid_mapping() {
         assert_eq!(
-            auth_characteristic_uuid("zhtp-auth-challenge").unwrap(),
+            auth_characteristic_uuid("zhtp-auth-challenge").ok(),
             BLE_MESH_SERVICE_UUID
         );
         assert_eq!(
-            auth_characteristic_uuid("zhtp-auth-response").unwrap(),
+            auth_characteristic_uuid("zhtp-auth-response").ok(),
             BLE_ZK_AUTH_CHAR_UUID
         );
     }
@@ -495,8 +495,8 @@ mod tests {
     #[tokio::test]
     async fn test_authenticated_peer_storage() {
         let node_id = [1u8; 32];
-        let keypair = KeyPair::generate().unwrap();
-        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key.clone()).unwrap();
+        let keypair = KeyPair::generate().ok();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key.clone()).ok();
 
         let verification = ZhtpAuthVerification {
             authenticated: true,
@@ -512,7 +512,7 @@ mod tests {
             .insert("peer-1".to_string(), verification.clone());
 
         assert!(protocol.is_peer_authenticated("peer-1").await);
-        let stored = protocol.get_peer_auth_info("peer-1").await.unwrap();
+        let stored = protocol.get_peer_auth_info("peer-1").await.ok();
         assert!((stored.trust_score - verification.trust_score).abs() < f64::EPSILON);
     }
 }

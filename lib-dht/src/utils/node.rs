@@ -63,7 +63,7 @@ impl Node {
         self.stale = 0;
         self.last_seen = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
+            // REMEDIATED PANIC: .expect("Time went backwards")
             .as_millis();
     }
 

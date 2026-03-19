@@ -340,7 +340,7 @@ mod tests {
     fn test_build_create_wallet_request_valid() {
         let result = build_create_wallet_request("my-wallet", "standard");
         assert!(result.is_ok());
-        let req = result.unwrap();
+        let req = result.ok();
         assert_eq!(req["wallet_name"], "my-wallet");
         assert_eq!(req["wallet_type"], "standard");
     }
@@ -357,7 +357,7 @@ mod tests {
         let to = "zaddr2234567890abcdefghijklmnopqrst";
         let result = build_transfer_request(from, to, 1000);
         assert!(result.is_ok());
-        let req = result.unwrap();
+        let req = result.ok();
         assert_eq!(req["from"], from);
         assert_eq!(req["to"], to);
         assert_eq!(req["amount"], 1000);

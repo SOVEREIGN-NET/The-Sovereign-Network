@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_parse_hex_accepts_prefixed_values() {
-        let parsed = parse_hex("payload", "0x0a0b").unwrap();
+        let parsed = parse_hex("payload", "0x0a0b").ok();
         assert_eq!(parsed, vec![0x0a, 0x0b]);
     }
 
@@ -474,13 +474,13 @@ mod tests {
 
     #[test]
     fn test_parse_contract_type_token() {
-        let ty = parse_contract_type("token").unwrap();
+        let ty = parse_contract_type("token").ok();
         assert_eq!(ty, ContractType::Token);
     }
 
     #[test]
     fn test_build_signed_contract_deploy_tx_uses_canonical_schema() {
-        let keypair = KeyPair::generate().unwrap();
+        let keypair = KeyPair::generate().ok();
         let payload = ContractDeploymentPayloadV1 {
             contract_type: "wasm".to_string(),
             code: vec![1, 2, 3, 4],
@@ -490,7 +490,7 @@ mod tests {
             memory_limit_bytes: 65_536,
         };
 
-        let tx = build_signed_contract_deploy_tx(&keypair, payload.clone()).unwrap();
+        let tx = build_signed_contract_deploy_tx(&keypair, payload.clone()).ok();
         assert_eq!(tx.transaction_type, TransactionType::ContractDeployment);
         assert!(tx.memo.starts_with(CONTRACT_DEPLOYMENT_MEMO_PREFIX));
         assert!(!tx.memo[CONTRACT_DEPLOYMENT_MEMO_PREFIX.len()..].is_empty());
@@ -498,10 +498,10 @@ mod tests {
 
     #[test]
     fn test_build_signed_contract_call_tx_uses_contract_execution_format() {
-        let keypair = KeyPair::generate().unwrap();
+        let keypair = KeyPair::generate().ok();
         let tx =
             build_signed_contract_call_tx(&keypair, ContractType::Token, "mint", vec![1, 2, 3])
-                .unwrap();
+                .ok();
 
         assert_eq!(tx.transaction_type, TransactionType::ContractExecution);
         assert!(tx.memo.starts_with(b"ZHTP"));

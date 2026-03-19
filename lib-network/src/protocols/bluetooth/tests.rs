@@ -4,8 +4,8 @@ use lib_crypto::KeyPair;
 #[tokio::test]
 async fn test_bluetooth_mesh_creation() {
     let node_id = [1u8; 32];
-    let keypair = KeyPair::generate().unwrap();
-    let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key.clone()).unwrap();
+    let keypair = KeyPair::generate().ok();
+    let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key.clone()).ok();
 
     assert_eq!(protocol.node_id, node_id);
     assert!(!protocol.discovery_active);
@@ -17,8 +17,8 @@ async fn test_bluetooth_disabled_guard() {
     // This ensures that even if config filtering fails, Bluetooth still refuses to start
 
     let node_id = [1u8; 32];
-    let keypair = KeyPair::generate().unwrap();
-    let mut protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key.clone()).unwrap();
+    let keypair = KeyPair::generate().ok();
+    let mut protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key.clone()).ok();
 
     // SETUP: Simulate config disabling Bluetooth (as would be done by mesh server)
     protocol.set_enabled(false);
@@ -63,8 +63,8 @@ async fn test_bluetooth_disabled_guard() {
 #[ignore = "macOS Core Bluetooth cleanup causes SIGABRT - see tech debt comment above"]
 async fn test_bluetooth_discovery() {
     let node_id = [1u8; 32];
-    let keypair = KeyPair::generate().unwrap();
-    let mut protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+    let keypair = KeyPair::generate().ok();
+    let mut protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).ok();
 
     let result = protocol.start_discovery().await;
     assert!(result.is_ok());

@@ -158,8 +158,8 @@ impl MessageBase for FindNodeResponse {
         ben.put(self.get_type().rpc_type_name(), self.get_method());
         ben.put(self.get_type().inner_key(), BencodeObject::new());
         ben.get_mut::<BencodeObject>(self.get_type().inner_key())
-            .unwrap()
-            .put("id", self.uid.unwrap().bytes().clone());
+            .ok()
+            .put("id", self.uid.ok().bytes().clone());
 
         if let Some(public) = self.public {
             ben.put("ip", pack_address(&public));
@@ -172,14 +172,14 @@ impl MessageBase for FindNodeResponse {
         let nodes = self.get_all_ipv4_nodes();
         if !nodes.is_empty() {
             ben.get_mut::<BencodeObject>(self.get_type().inner_key())
-                .unwrap()
+                .ok()
                 .put("nodes", pack_nodes(nodes, AddressTypes::Ipv4));
         }
 
         let nodes = self.get_all_ipv6_nodes();
         if !nodes.is_empty() {
             ben.get_mut::<BencodeObject>(self.get_type().inner_key())
-                .unwrap()
+                .ok()
                 .put("nodes6", pack_nodes(nodes, AddressTypes::Ipv6));
         }
 
@@ -196,7 +196,7 @@ impl MessageBase for FindNodeResponse {
 
         match ben
             .get::<BencodeObject>(self.get_type().inner_key())
-            .unwrap()
+            .ok()
             .get::<BencodeBytes>("id")
         {
             Some(id) => {
@@ -224,7 +224,7 @@ impl MessageBase for FindNodeResponse {
 
         match ben
             .get::<BencodeObject>(self.get_type().inner_key())
-            .unwrap()
+            .ok()
             .get::<BencodeBytes>("nodes")
         {
             Some(nodes) => self
@@ -235,7 +235,7 @@ impl MessageBase for FindNodeResponse {
 
         match ben
             .get::<BencodeObject>(self.get_type().inner_key())
-            .unwrap()
+            .ok()
             .get::<BencodeBytes>("nodes6")
         {
             Some(nodes) => self

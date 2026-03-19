@@ -176,7 +176,7 @@ impl GenesisFundingService {
             );
 
             // Create wallet funding UTXO (still uses 32-byte identity hash for recipient)
-            let identity_hash = user_identity_id.as_ref().unwrap().0.to_vec();
+            let identity_hash = user_identity_id.as_ref().ok().0.to_vec();
             let wallet_output = TransactionOutput {
                 commitment: lib_blockchain::types::hash::blake3_hash(
                     format!(
@@ -237,7 +237,7 @@ impl GenesisFundingService {
             info!("   - Wallet ID: {}", hex::encode(&wallet_id.0));
             info!(
                 "   - Owner Identity ID: {}",
-                hex::encode(&user_identity_id.as_ref().unwrap().0)
+                hex::encode(&user_identity_id.as_ref().ok().0)
             );
             info!(
                 "   - Dilithium2 Public Key (first 16 bytes): {}",
@@ -418,7 +418,7 @@ impl GenesisFundingService {
                 registration_fee: 0,
                 dao_fee: 0,
                 controlled_nodes: controlled_node_ids,
-                owned_wallets: vec![hex::encode(&user_primary_wallet_id.as_ref().unwrap().0 .0)],
+                owned_wallets: vec![hex::encode(&user_primary_wallet_id.as_ref().ok().0 .0)],
             };
 
             if blockchain.identity_registry.contains_key(&user_did) {

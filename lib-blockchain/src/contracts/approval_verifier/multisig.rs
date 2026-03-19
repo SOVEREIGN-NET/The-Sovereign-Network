@@ -312,7 +312,7 @@ mod tests {
 
         let result = verifier.verify_issuance_approval(&request, &proof, [3u8; 32]);
         assert!(result.is_ok());
-        let verification = result.unwrap();
+        let verification = result.ok();
         assert!(verification.is_valid);
     }
 

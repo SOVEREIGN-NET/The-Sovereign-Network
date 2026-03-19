@@ -126,7 +126,7 @@ mod tests {
         let receiver_blinding = [2u8; 32];
         let nullifier = [3u8; 32];
 
-        let prover = ZkTransactionProver::new().unwrap();
+        let prover = ZkTransactionProver::new().ok();
         let proof = prover
             .prove_transaction(
                 sender_balance,
@@ -137,9 +137,9 @@ mod tests {
                 receiver_blinding,
                 nullifier,
             )
-            .unwrap();
+            .ok();
 
-        let is_valid = verify_transaction(&proof).unwrap();
+        let is_valid = verify_transaction(&proof).ok();
         assert!(is_valid);
     }
 
@@ -157,9 +157,9 @@ mod tests {
         let proof = ZkTransactionProof::default();
 
         // Components should fail for empty proof
-        assert!(!verify_amount_proof(&proof).unwrap());
-        assert!(!verify_balance_proof(&proof).unwrap());
-        assert!(!verify_nullifier_proof(&proof).unwrap());
+        assert!(!verify_amount_proof(&proof).ok());
+        assert!(!verify_balance_proof(&proof).ok());
+        assert!(!verify_nullifier_proof(&proof).ok());
     }
 
     #[test]
@@ -201,12 +201,12 @@ mod tests {
 
     #[test]
     fn test_batch_verification() {
-        let prover = ZkTransactionProver::new().unwrap();
-        let proof1 = prover.prove_simple_transaction(100, [1u8; 32]).unwrap();
-        let proof2 = prover.prove_simple_transaction(200, [2u8; 32]).unwrap();
+        let prover = ZkTransactionProver::new().ok();
+        let proof1 = prover.prove_simple_transaction(100, [1u8; 32]).ok();
+        let proof2 = prover.prove_simple_transaction(200, [2u8; 32]).ok();
 
         let proofs = vec![proof1, proof2];
-        let results = batch_verify_transactions(&proofs).unwrap();
+        let results = batch_verify_transactions(&proofs).ok();
 
         assert_eq!(results.len(), 2);
         // Both should be valid

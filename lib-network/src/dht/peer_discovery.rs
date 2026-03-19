@@ -426,7 +426,7 @@ mod tests {
     use lib_identity::IdentityType;
     
     async fn create_test_registry() -> ZhtpPeerRegistry {
-        let keypair = KeyPair::generate().unwrap();
+        let keypair = KeyPair::generate().ok();
         let identity = ZhtpIdentity::new(
             IdentityType::Human,
             keypair.public_key.clone(),
@@ -437,12 +437,12 @@ mod tests {
             true,
             lib_proofs::ZeroKnowledgeProof::default(),
         )
-        .unwrap();
+        .ok();
         ZhtpPeerRegistry::new(identity)
     }
     
     fn create_test_peer_info() -> ZhtpPeerInfo {
-        let keypair = KeyPair::generate().unwrap();
+        let keypair = KeyPair::generate().ok();
         let dilithium_pubkey = keypair.public_key.dilithium_pk.clone();
         let dilithium_privkey = keypair.private_key.dilithium_sk.clone();
         
@@ -471,20 +471,20 @@ mod tests {
             reputation: 0.8,
             last_seen: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             registered_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             ttl: DEFAULT_PEER_TTL,
             signature: vec![],
         };
         
         // Sign the peer info
-        let serialized = bincode::serialize(&peer_info).unwrap();
+        let serialized = bincode::serialize(&peer_info).ok();
         let data_hash = hash_blake3(&serialized);
-        let signature = dilithium_sign(&data_hash, &dilithium_privkey).unwrap();
+        let signature = dilithium_sign(&data_hash, &dilithium_privkey).ok();
         
         peer_info.signature = signature;
         peer_info
@@ -496,13 +496,13 @@ mod tests {
         let peer_info = create_test_peer_info();
         
         // Register peer
-        registry.register_peer(peer_info.clone()).await.unwrap();
+        registry.register_peer(peer_info.clone()).await.ok();
         
         // Verify peer count
         assert_eq!(registry.peer_count().await, 1);
         
         // Find peers with DHT capability
-        let peers = find_zhtp_peers(&registry, "dht", 0.5).await.unwrap();
+        let peers = find_zhtp_peers(&registry, "dht", 0.5).await.ok();
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].reputation, 0.8);
     }
@@ -513,14 +513,14 @@ mod tests {
         
         // Register multiple peers with different capabilities
         let peer1 = create_test_peer_info();
-        registry.register_peer(peer1).await.unwrap();
+        registry.register_peer(peer1).await.ok();
         
         // Find peers with high reputation
-        let peers = find_zhtp_peers(&registry, "relay", 0.9).await.unwrap();
+        let peers = find_zhtp_peers(&registry, "relay", 0.9).await.ok();
         assert_eq!(peers.len(), 0); // No peers meet 0.9 threshold
         
         // Find peers with lower reputation threshold
-        let peers = find_zhtp_peers(&registry, "relay", 0.5).await.unwrap();
+        let peers = find_zhtp_peers(&registry, "relay", 0.5).await.ok();
         assert_eq!(peers.len(), 1);
     }
 }

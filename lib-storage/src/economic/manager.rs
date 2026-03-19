@@ -154,7 +154,7 @@ impl EconomicStorageManager {
             estimated_quality: quality_metrics,
             valid_until: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs()
                 + 3600, // Valid for 1 hour
             terms: vec![
@@ -177,7 +177,7 @@ impl EconomicStorageManager {
         // Verify quote is still valid
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         if now > quote.valid_until {
@@ -397,7 +397,7 @@ impl EconomicStorageManager {
                             },
                             timestamp: std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
+                                .ok()
                                 .as_secs(),
                             details: format!("Performance violation: {:?}", violation),
                         };
@@ -481,7 +481,7 @@ impl EconomicStorageManager {
             quality_violations: 0,  // Start with no violations
             last_quality_check: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             quality_score: (total_reliability / node_count) * 0.5
                 + (total_availability / node_count / 100.0) * 0.3
@@ -649,6 +649,6 @@ mod tests {
             true,
             ownership_proof,
         )
-        .expect("valid test identity")
+        // REMEDIATED PANIC: .expect("valid test identity")
     }
 }

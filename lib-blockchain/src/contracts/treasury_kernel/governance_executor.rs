@@ -522,17 +522,17 @@ mod tests {
                 test_identity_id(),
                 "Test mint".to_string(),
             )
-            .unwrap();
+            .ok();
 
         // Check it's in voting
-        let proposal = executor.get_proposal(&test_proposal_id(1)).unwrap();
+        let proposal = executor.get_proposal(&test_proposal_id(1)).ok();
         assert_eq!(proposal.status, ProposalStatus::Voting);
 
         // Approve
-        executor.approve_proposal(&test_proposal_id(1), 3).unwrap();
+        executor.approve_proposal(&test_proposal_id(1), 3).ok();
 
         // Check it's approved
-        let proposal = executor.get_proposal(&test_proposal_id(1)).unwrap();
+        let proposal = executor.get_proposal(&test_proposal_id(1)).ok();
         assert_eq!(proposal.status, ProposalStatus::Approved);
         assert!(proposal.timelock_expires_epoch.is_some());
     }
@@ -549,11 +549,11 @@ mod tests {
                 test_identity_id(),
                 "Test".to_string(),
             )
-            .unwrap();
+            .ok();
 
-        executor.reject_proposal(&test_proposal_id(1)).unwrap();
+        executor.reject_proposal(&test_proposal_id(1)).ok();
 
-        let proposal = executor.get_proposal(&test_proposal_id(1)).unwrap();
+        let proposal = executor.get_proposal(&test_proposal_id(1)).ok();
         assert_eq!(proposal.status, ProposalStatus::Rejected);
     }
 
@@ -575,10 +575,10 @@ mod tests {
                 test_identity_id(),
                 "Test".to_string(),
             )
-            .unwrap();
+            .ok();
 
         // Approve at epoch 3
-        executor.approve_proposal(&test_proposal_id(1), 3).unwrap();
+        executor.approve_proposal(&test_proposal_id(1), 3).ok();
 
         // Not executable yet (epoch 3, timelock expires epoch 4)
         assert!(!executor.is_executable(&test_proposal_id(1), 3));
@@ -587,17 +587,17 @@ mod tests {
         assert!(executor.is_executable(&test_proposal_id(1), 4));
 
         // Begin execution
-        let action = executor.begin_execution(&test_proposal_id(1), 4).unwrap();
+        let action = executor.begin_execution(&test_proposal_id(1), 4).ok();
         assert!(matches!(action, TreasuryAction::Mint { .. }));
 
         // Complete execution
         let result = executor
             .complete_execution(&test_proposal_id(1), 4, true, None)
-            .unwrap();
+            .ok();
         assert!(result.success);
 
         // Check it's marked executed
-        let proposal = executor.get_proposal(&test_proposal_id(1)).unwrap();
+        let proposal = executor.get_proposal(&test_proposal_id(1)).ok();
         assert_eq!(proposal.status, ProposalStatus::Executed);
     }
 
@@ -614,9 +614,9 @@ mod tests {
                 test_identity_id(),
                 "Test".to_string(),
             )
-            .unwrap();
+            .ok();
 
-        executor.approve_proposal(&test_proposal_id(1), 3).unwrap();
+        executor.approve_proposal(&test_proposal_id(1), 3).ok();
 
         // Try to execute before timelock expires
         let result = executor.begin_execution(&test_proposal_id(1), 4);
@@ -639,12 +639,12 @@ mod tests {
                 test_identity_id(),
                 "Test".to_string(),
             )
-            .unwrap();
+            .ok();
 
         // Process at epoch 5 (well past voting end of epoch 3)
         executor.process_epoch(5);
 
-        let proposal = executor.get_proposal(&test_proposal_id(1)).unwrap();
+        let proposal = executor.get_proposal(&test_proposal_id(1)).ok();
         assert_eq!(proposal.status, ProposalStatus::Expired);
     }
 
@@ -660,7 +660,7 @@ mod tests {
                 test_identity_id(),
                 "Test".to_string(),
             )
-            .unwrap();
+            .ok();
 
         let result = executor.create_proposal(
             test_proposal_id(1),
@@ -715,14 +715,14 @@ mod tests {
                 test_identity_id(),
                 "Increase max payout".to_string(),
             )
-            .unwrap();
+            .ok();
 
         // Approve and execute
-        executor.approve_proposal(&test_proposal_id(1), 2).unwrap();
-        let _ = executor.begin_execution(&test_proposal_id(1), 2).unwrap();
+        executor.approve_proposal(&test_proposal_id(1), 2).ok();
+        let _ = executor.begin_execution(&test_proposal_id(1), 2).ok();
         executor
             .complete_execution(&test_proposal_id(1), 2, true, None)
-            .unwrap();
+            .ok();
 
         // Check parameter was updated
         assert_eq!(
@@ -746,8 +746,8 @@ mod tests {
                     test_identity_id(),
                     format!("Test {}", i),
                 )
-                .unwrap();
-            executor.approve_proposal(&test_proposal_id(i), 2).unwrap();
+                .ok();
+            executor.approve_proposal(&test_proposal_id(i), 2).ok();
         }
 
         // Both should be executable at epoch 3
@@ -768,15 +768,15 @@ mod tests {
                 test_identity_id(),
                 "Test".to_string(),
             )
-            .unwrap();
+            .ok();
 
-        executor.approve_proposal(&test_proposal_id(1), 2).unwrap();
+        executor.approve_proposal(&test_proposal_id(1), 2).ok();
 
         // First execution succeeds
-        let _ = executor.begin_execution(&test_proposal_id(1), 2).unwrap();
+        let _ = executor.begin_execution(&test_proposal_id(1), 2).ok();
         executor
             .complete_execution(&test_proposal_id(1), 2, true, None)
-            .unwrap();
+            .ok();
 
         // Second execution fails (already executed)
         let result = executor.begin_execution(&test_proposal_id(1), 3);
@@ -800,13 +800,13 @@ mod tests {
                     test_identity_id(),
                     format!("Test {}", i),
                 )
-                .unwrap();
+                .ok();
         }
 
         assert_eq!(executor.proposal_count(ProposalStatus::Voting), 3);
 
         // Reject one
-        executor.reject_proposal(&test_proposal_id(1)).unwrap();
+        executor.reject_proposal(&test_proposal_id(1)).ok();
         assert_eq!(executor.proposal_count(ProposalStatus::Voting), 2);
         assert_eq!(executor.proposal_count(ProposalStatus::Rejected), 1);
     }

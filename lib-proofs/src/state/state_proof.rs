@@ -71,7 +71,7 @@ impl AggregatedStateProof {
             plonky2_proof,
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         }
     }
@@ -92,7 +92,7 @@ impl AggregatedStateProof {
             plonky2_proof,
             generated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         }
     }

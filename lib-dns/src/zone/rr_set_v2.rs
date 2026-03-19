@@ -42,7 +42,7 @@ impl RRSet {
             self.ttl = self.ttl.min(ttl);
         }
 
-        self.data.extend_from_slice(&data.to_bytes().unwrap());
+        self.data.extend_from_slice(&data.to_bytes().ok());
     }
 
     pub fn remove_data(&mut self, data: &Box<dyn RRData>, min_records: usize) -> bool {
@@ -86,7 +86,7 @@ impl<'a> Iterator for RRSetIter<'a> {
             return None;
         }
 
-        let data = <dyn RRData>::from_wire(self.set._type, &self.set.class, &self.set.data[self.off..], 0).unwrap();
+        let data = <dyn RRData>::from_wire(self.set._type, &self.set.class, &self.set.data[self.off..], 0).ok();
         self.off += 2+u16::from_be_bytes([self.set.data[self.off], self.set.data[self.off+1]]) as usize;
 
         Some(data)

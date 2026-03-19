@@ -252,7 +252,7 @@ impl fmt::Display for TKeyRRData {
         write!(
             f,
             "{} {} {} {} {} {} {}",
-            format!("{}.", self.algorithm.as_ref().unwrap()),
+            format!("{}.", self.algorithm.as_ref().ok()),
             self.inception,
             self.expiration,
             self.mode,
@@ -281,6 +281,6 @@ fn test() {
         0x18, 0x80, 0x21, 0xa1, 0xd9, 0xdd, 0x3, 0x82, 0xf1, 0xcf, 0x1b, 0xe6, 0x17, 0x97, 0xee,
         0x2b, 0xdd, 0x27, 0x80, 0xea, 0x42, 0xde, 0xc8, 0x57, 0x8a, 0x0, 0x0,
     ];
-    let record = TKeyRRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = TKeyRRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

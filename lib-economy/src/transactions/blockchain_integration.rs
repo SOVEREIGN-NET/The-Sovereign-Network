@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_ubi_blockchain_data_creation() {
-        let keypair = lib_crypto::generate_keypair().unwrap();
+        let keypair = lib_crypto::generate_keypair().ok();
         let citizen_id = crate::wasm::IdentityId([1u8; 32]);
 
         let result = create_ubi_blockchain_data(
@@ -174,7 +174,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let data = result.unwrap();
+        let data = result.ok();
         assert_eq!(data.chain_id, 1);
         assert_eq!(data.fee, 0); // System transactions are fee-free
         assert!(data.inputs.is_empty()); // System transactions have no inputs
@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_reward_blockchain_data_creation() {
-        let keypair = lib_crypto::generate_keypair().unwrap();
+        let keypair = lib_crypto::generate_keypair().ok();
         let node_id = [2u8; 32];
 
         let result = create_reward_blockchain_data(
@@ -193,7 +193,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let data = result.unwrap();
+        let data = result.ok();
         assert_eq!(data.chain_id, 1);
         assert_eq!(data.fee, 0);
         assert!(data.inputs.is_empty());
@@ -202,10 +202,10 @@ mod tests {
 
     #[test]
     fn test_blockchain_data_signatures() {
-        let keypair = lib_crypto::generate_keypair().unwrap();
+        let keypair = lib_crypto::generate_keypair().ok();
         let node_id = [3u8; 32];
 
-        let data = create_reward_blockchain_data(node_id, 250, 1, &keypair).unwrap();
+        let data = create_reward_blockchain_data(node_id, 250, 1, &keypair).ok();
 
         // Signature should be present and non-empty
         assert!(!data.signature_data.is_empty());

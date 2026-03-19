@@ -95,8 +95,8 @@ impl MessageBase for PingRequest {
         ben.put(self.get_type().rpc_type_name(), self.get_method());
         ben.put(self.get_type().inner_key(), BencodeObject::new());
         ben.get_mut::<BencodeObject>(self.get_type().inner_key())
-            .unwrap()
-            .put("id", self.uid.unwrap().bytes().clone());
+            .ok()
+            .put("id", self.uid.ok().bytes().clone());
 
         ben
     }
@@ -111,7 +111,7 @@ impl MessageBase for PingRequest {
 
         match ben
             .get::<BencodeObject>(self.get_type().inner_key())
-            .unwrap()
+            .ok()
             .get::<BencodeBytes>("id")
         {
             Some(id) => {

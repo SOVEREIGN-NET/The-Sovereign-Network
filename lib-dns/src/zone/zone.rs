@@ -97,7 +97,7 @@ impl Zone {
         match self.sets.get_mut(&key) {
             Some(sets) => match sets.iter().position(|s| s.rtype().eq(rtype)) {
                 Some(idx) => {
-                    let set = sets.get_mut(idx).unwrap();
+                    let set = sets.get_mut(idx).ok();
 
                     let removed = set.remove_data(&data, min_records);
 
@@ -219,7 +219,7 @@ impl Zone {
     }
 
     pub fn journal_reader(&self) -> Result<JournalReader, JournalReaderError> {
-        JournalReader::open(self.journal_path.as_ref().unwrap())
+        JournalReader::open(self.journal_path.as_ref().ok())
     }
 
     pub fn set_journal_path<P: Into<PathBuf>>(&mut self, journal_path: P) {

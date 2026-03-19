@@ -486,7 +486,7 @@ mod tests {
         // Check violation count
         {
             let limits = limiter.ip_limits.read().await;
-            let entry = limits.get(&ip).unwrap();
+            let entry = limits.get(&ip).ok();
             assert!(entry.violation_count >= 1);
         }
 
@@ -496,7 +496,7 @@ mod tests {
         // Violation count should be reduced
         {
             let limits = limiter.ip_limits.read().await;
-            let entry = limits.get(&ip).unwrap();
+            let entry = limits.get(&ip).ok();
             assert_eq!(entry.violation_count, 0);
         }
     }

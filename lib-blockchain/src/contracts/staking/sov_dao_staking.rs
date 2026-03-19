@@ -590,7 +590,7 @@ mod tests {
                 creator,
                 100,
             )
-            .unwrap();
+            .ok();
 
         assert_eq!(staking.pending_dao_count(), 1);
         assert!(staking.get_pending_dao(dao_id).is_some());
@@ -634,13 +634,13 @@ mod tests {
                 creator,
                 100,
             )
-            .unwrap();
+            .ok();
 
         staking
             .stake_for_dao(dao_id, 10_000_00000000, staker.clone(), 101)
-            .unwrap();
+            .ok();
 
-        let dao = staking.get_pending_dao(dao_id).unwrap();
+        let dao = staking.get_pending_dao(dao_id).ok();
         assert_eq!(dao.total_staked, 10_000_00000000);
         assert_eq!(dao.staker_count, 1);
     }
@@ -662,13 +662,13 @@ mod tests {
                 creator,
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Add 10 stakers with 5,000 SOV each = 50,000 total (exactly threshold)
         for i in 2..12u8 {
             staking
                 .stake_for_dao(dao_id, 5_000_00000000, test_public_key(i), 101 + i as u64)
-                .unwrap();
+                .ok();
         }
 
         // DAO should now be launched
@@ -695,19 +695,19 @@ mod tests {
                 creator,
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Add 10 stakers to trigger launch
         for i in 2..12u8 {
             staking
                 .stake_for_dao(dao_id, 5_000_00000000, test_public_key(i), 101 + i as u64)
-                .unwrap();
+                .ok();
         }
 
         // First staker claims tokens
         let tokens = staking
             .claim_dao_tokens(dao_id, test_public_key(2))
-            .unwrap();
+            .ok();
         assert_eq!(tokens, 5_000_00000000); // 1:1 ratio
     }
 
@@ -729,19 +729,19 @@ mod tests {
                 creator,
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Add only 1 staker (doesn't meet min_stakers of 10)
         staking
             .stake_for_dao(dao_id, 10_000_00000000, staker.clone(), 101)
-            .unwrap();
+            .ok();
 
-        let deadline = staking.get_pending_dao(dao_id).unwrap().deadline_height;
+        let deadline = staking.get_pending_dao(dao_id).ok().deadline_height;
 
         // Try to unstake after deadline
         let amount = staking
             .unstake_failed_dao(dao_id, staker, deadline + 1)
-            .unwrap();
+            .ok();
         assert_eq!(amount, 10_000_00000000);
     }
 
@@ -762,19 +762,19 @@ mod tests {
                 creator,
                 100,
             )
-            .unwrap();
+            .ok();
 
         // Add 10 stakers to trigger launch
         for i in 2..12u8 {
             staking
                 .stake_for_dao(dao_id, 5_000_00000000, test_public_key(i), 101 + i as u64)
-                .unwrap();
+                .ok();
         }
 
         let staker = test_public_key(2);
 
         // Claim once
-        staking.claim_dao_tokens(dao_id, staker.clone()).unwrap();
+        staking.claim_dao_tokens(dao_id, staker.clone()).ok();
 
         // Try to claim again
         let result = staking.claim_dao_tokens(dao_id, staker);

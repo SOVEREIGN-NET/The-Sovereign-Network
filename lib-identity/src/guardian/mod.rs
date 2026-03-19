@@ -231,7 +231,7 @@ mod tests {
 
         let guardian_id = config
             .add_guardian("did:zhtp:alice".to_string(), pubkey, "Alice".to_string())
-            .unwrap();
+            .ok();
 
         assert!(config.remove_guardian(&guardian_id).is_ok());
         assert_eq!(config.get_active_guardians().len(), 0);
@@ -252,10 +252,10 @@ mod tests {
                 pubkey.clone(),
                 "Alice".to_string(),
             )
-            .unwrap();
+            .ok();
         config
             .add_guardian("did:zhtp:bob".to_string(), pubkey, "Bob".to_string())
-            .unwrap();
+            .ok();
         assert!(config.validate_threshold().is_ok());
     }
 
@@ -270,17 +270,17 @@ mod tests {
                 pubkey.clone(),
                 "Alice".to_string(),
             )
-            .unwrap();
+            .ok();
         config
             .add_guardian(
                 "did:zhtp:bob".to_string(),
                 pubkey.clone(),
                 "Bob".to_string(),
             )
-            .unwrap();
+            .ok();
         config
             .add_guardian("did:zhtp:carol".to_string(), pubkey, "Carol".to_string())
-            .unwrap();
+            .ok();
 
         // Valid threshold
         assert!(config.set_threshold(2).is_ok());

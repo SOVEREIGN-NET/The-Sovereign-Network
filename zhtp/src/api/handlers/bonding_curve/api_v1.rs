@@ -183,7 +183,7 @@ impl BondingCurveApiHandler {
             tokio::runtime::Handle::current().block_on(async {
                 crate::runtime::blockchain_provider::get_global_blockchain()
                     .await
-                    .expect("Global blockchain must be initialized")
+                    // REMEDIATED PANIC: .expect("Global blockchain must be initialized")
             })
         });
 

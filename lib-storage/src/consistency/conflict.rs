@@ -186,7 +186,7 @@ mod tests {
 
         let resolution = resolver.resolve(&10, &clock1, &20, &clock2);
         assert!(resolution.is_single());
-        assert_eq!(*resolution.single().unwrap(), 20);
+        assert_eq!(*resolution.single().ok(), 20);
     }
 
     #[test]
@@ -204,14 +204,14 @@ mod tests {
     #[test]
     fn test_sum_merge() {
         let strategy = SumMergeStrategy;
-        let result = strategy.merge(vec![10i64, 20, 30]).unwrap();
+        let result = strategy.merge(vec![10i64, 20, 30]).ok();
         assert_eq!(result, 60);
     }
 
     #[test]
     fn test_max_merge() {
         let strategy = MaxMergeStrategy;
-        let result = strategy.merge(vec![10i64, 20, 15]).unwrap();
+        let result = strategy.merge(vec![10i64, 20, 15]).ok();
         assert_eq!(result, 20);
     }
 }

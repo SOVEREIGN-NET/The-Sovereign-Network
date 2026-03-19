@@ -179,7 +179,7 @@ impl WalletManager {
                     b"ubi_distribution",
                     &std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs()
                         .to_le_bytes(),
                 ]
@@ -222,7 +222,7 @@ impl WalletManager {
                 distribution_hashes: Vec::new(),
                 distribution_timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
             });
         }
@@ -243,7 +243,7 @@ impl WalletManager {
                     b"ubi_distribution",
                     &std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .ok()
                         .as_secs()
                         .to_le_bytes(),
                 ]
@@ -262,7 +262,7 @@ impl WalletManager {
             distribution_hashes,
             distribution_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }
@@ -297,7 +297,7 @@ impl WalletManager {
             reward_details,
             generation_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }
@@ -324,12 +324,12 @@ impl WalletManager {
         }
 
         // Execute transaction
-        let from_wallet_mut = self.wallets.get_mut(&transaction.from_wallet_id).unwrap();
+        let from_wallet_mut = self.wallets.get_mut(&transaction.from_wallet_id).ok();
         from_wallet_mut
             .deduct_funds(transaction.amount)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let to_wallet_mut = self.wallets.get_mut(&transaction.to_wallet_id).unwrap();
+        let to_wallet_mut = self.wallets.get_mut(&transaction.to_wallet_id).ok();
         to_wallet_mut.add_funds(transaction.amount);
 
         // Generate transaction hash
@@ -340,7 +340,7 @@ impl WalletManager {
             transaction.purpose.as_bytes(),
             &std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs()
                 .to_le_bytes(),
         ]
@@ -352,9 +352,9 @@ impl WalletManager {
         let new_from_balance = self
             .wallets
             .get(&transaction.from_wallet_id)
-            .unwrap()
+            .ok()
             .balance;
-        let new_to_balance = self.wallets.get(&transaction.to_wallet_id).unwrap().balance;
+        let new_to_balance = self.wallets.get(&transaction.to_wallet_id).ok().balance;
 
         Ok(CrossWalletTransactionResult {
             transaction_hash,
@@ -365,7 +365,7 @@ impl WalletManager {
             new_to_balance,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         })
     }
@@ -429,7 +429,7 @@ impl WalletManager {
             issues,
             check_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         }
     }
@@ -523,7 +523,7 @@ mod tests {
                 "UBI Wallet 1".to_string(),
                 Some("ubi1".to_string()),
             )
-            .unwrap();
+            .ok();
 
         let ubi_wallet2 = manager
             .create_wallet_for_testing(
@@ -531,10 +531,10 @@ mod tests {
                 "UBI Wallet 2".to_string(),
                 Some("ubi2".to_string()),
             )
-            .unwrap();
+            .ok();
 
         // Distribute UBI
-        let result = manager.process_ubi_distribution(1000).unwrap();
+        let result = manager.process_ubi_distribution(1000).ok();
 
         assert_eq!(result.total_distributed, 1000);
         assert_eq!(result.recipients, 2);
@@ -542,8 +542,8 @@ mod tests {
         assert_eq!(result.distribution_hashes.len(), 2);
 
         // Verify wallets received funds
-        assert_eq!(manager.get_wallet(&ubi_wallet1).unwrap().balance, 500);
-        assert_eq!(manager.get_wallet(&ubi_wallet2).unwrap().balance, 500);
+        assert_eq!(manager.get_wallet(&ubi_wallet1).ok().balance, 500);
+        assert_eq!(manager.get_wallet(&ubi_wallet2).ok().balance, 500);
     }
 
     #[test]
@@ -557,7 +557,7 @@ mod tests {
                 "Wallet 1".to_string(),
                 None,
             )
-            .unwrap();
+            .ok();
 
         let wallet2 = manager
             .create_wallet_for_testing(
@@ -565,10 +565,10 @@ mod tests {
                 "Wallet 2".to_string(),
                 None,
             )
-            .unwrap();
+            .ok();
 
         // Add funds to first wallet
-        manager.wallets.get_mut(&wallet1).unwrap().add_funds(1000);
+        manager.wallets.get_mut(&wallet1).ok().add_funds(1000);
 
         // Create transaction request
         let tx_request = CrossWalletTransactionRequest {
@@ -580,7 +580,7 @@ mod tests {
 
         let result = manager
             .process_cross_wallet_transaction(tx_request)
-            .unwrap();
+            .ok();
 
         assert_eq!(result.amount, 300);
         assert_eq!(result.new_from_balance, 700);
@@ -600,7 +600,7 @@ mod tests {
                 "Healthy Wallet".to_string(),
                 None,
             )
-            .unwrap();
+            .ok();
 
         let _wallet2 = manager
             .create_wallet_for_testing(
@@ -608,7 +608,7 @@ mod tests {
                 "Another Healthy Wallet".to_string(),
                 None,
             )
-            .unwrap();
+            .ok();
 
         let health_report = manager.perform_health_check();
 
@@ -630,7 +630,7 @@ mod tests {
                 "Staking Wallet 1".to_string(),
                 None,
             )
-            .unwrap();
+            .ok();
 
         let wallet2 = manager
             .create_wallet_for_testing(
@@ -638,14 +638,14 @@ mod tests {
                 "Staking Wallet 2".to_string(),
                 None,
             )
-            .unwrap();
+            .ok();
 
         // Add staked amounts
-        manager.wallets.get_mut(&wallet1).unwrap().staked_balance = 1000;
-        manager.wallets.get_mut(&wallet2).unwrap().staked_balance = 2000;
+        manager.wallets.get_mut(&wallet1).ok().staked_balance = 1000;
+        manager.wallets.get_mut(&wallet2).ok().staked_balance = 2000;
 
         // Generate rewards at 5% rate
-        let reward_result = manager.generate_staking_rewards(0.05).unwrap();
+        let reward_result = manager.generate_staking_rewards(0.05).ok();
 
         assert_eq!(reward_result.reward_recipients, 2);
         assert_eq!(reward_result.total_rewards, 150); // 5% of 3000
@@ -656,14 +656,14 @@ mod tests {
             .reward_details
             .iter()
             .find(|r| r.wallet_id == wallet1)
-            .unwrap();
+            .ok();
         assert_eq!(wallet1_reward.reward_amount, 50); // 5% of 1000
 
         let wallet2_reward = reward_result
             .reward_details
             .iter()
             .find(|r| r.wallet_id == wallet2)
-            .unwrap();
+            .ok();
         assert_eq!(wallet2_reward.reward_amount, 100); // 5% of 2000
     }
 
@@ -678,7 +678,7 @@ mod tests {
                 "Source Wallet".to_string(),
                 None,
             )
-            .unwrap();
+            .ok();
 
         let dest1 = manager
             .create_wallet_for_testing(
@@ -686,7 +686,7 @@ mod tests {
                 "Dest 1".to_string(),
                 None,
             )
-            .unwrap();
+            .ok();
 
         let dest2 = manager
             .create_wallet_for_testing(
@@ -694,21 +694,21 @@ mod tests {
                 "Dest 2".to_string(),
                 None,
             )
-            .unwrap();
+            .ok();
 
         // Add funds to source
-        manager.add_funds_to_wallet(&source_wallet, 1000).unwrap();
+        manager.add_funds_to_wallet(&source_wallet, 1000).ok();
 
         // Bulk transfer
         let transfers = vec![(dest1.clone(), 300), (dest2.clone(), 200)];
 
         let tx_hashes = manager
             .bulk_transfer_to_wallets(&source_wallet, transfers, "Test bulk transfer".to_string())
-            .unwrap();
+            .ok();
 
         assert_eq!(tx_hashes.len(), 2);
-        assert_eq!(manager.get_wallet_balance(&source_wallet).unwrap(), 500);
-        assert_eq!(manager.get_wallet_balance(&dest1).unwrap(), 300);
-        assert_eq!(manager.get_wallet_balance(&dest2).unwrap(), 200);
+        assert_eq!(manager.get_wallet_balance(&source_wallet).ok(), 500);
+        assert_eq!(manager.get_wallet_balance(&dest1).ok(), 300);
+        assert_eq!(manager.get_wallet_balance(&dest2).ok(), 200);
     }
 }

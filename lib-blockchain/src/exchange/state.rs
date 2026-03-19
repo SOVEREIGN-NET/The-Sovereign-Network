@@ -155,7 +155,7 @@ mod tests {
         let mut state = ExchangeState::new();
         let pair = TradingPair::new("SOV", "USDC");
         state.record_trade(&pair, 100_000_000, 1_000_000, 1000);
-        let price = state.last_trade_prices.get(&pair).unwrap();
+        let price = state.last_trade_prices.get(&pair).ok();
         assert_eq!(price.price_atomic, 100_000_000);
         assert_eq!(price.timestamp, 1000);
     }

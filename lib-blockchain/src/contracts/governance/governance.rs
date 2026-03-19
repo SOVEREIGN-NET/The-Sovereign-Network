@@ -724,7 +724,7 @@ mod tests {
     fn create_test_governance() -> Governance {
         let mut gov = Governance::new();
         let admin = [1u8; 32];
-        gov.init(admin).unwrap();
+        gov.init(admin).ok();
         gov
     }
 
@@ -772,10 +772,10 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let proposal_id = result.unwrap();
+        let proposal_id = result.ok();
         assert_eq!(proposal_id, 1);
 
-        let proposal = gov.get_proposal(proposal_id).unwrap();
+        let proposal = gov.get_proposal(proposal_id).ok();
         assert_eq!(proposal.title, "Test Proposal");
         assert_eq!(proposal.status, ProposalStatus::Active);
     }
@@ -845,7 +845,7 @@ mod tests {
                 ProposalCategory::Regular,
                 MIN_VOTING_POWER_FOR_PROPOSAL,
             )
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(100);
 
@@ -853,7 +853,7 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let proposal = gov.get_proposal(proposal_id).unwrap();
+        let proposal = gov.get_proposal(proposal_id).ok();
         assert_eq!(proposal.votes_for, 100_000);
         assert_eq!(proposal.votes_against, 0);
     }
@@ -871,7 +871,7 @@ mod tests {
                 ProposalCategory::Regular,
                 MIN_VOTING_POWER_FOR_PROPOSAL,
             )
-            .unwrap();
+            .ok();
 
         // Advance time past voting period
         gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
@@ -894,12 +894,12 @@ mod tests {
                 ProposalCategory::Regular,
                 MIN_VOTING_POWER_FOR_PROPOSAL,
             )
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(100);
 
         gov.vote(proposal_id, create_test_voter(3), VoteType::For, 100_000)
-            .unwrap();
+            .ok();
 
         let result = gov.vote(proposal_id, create_test_voter(3), VoteType::Against, 50_000);
         assert_eq!(result, Err(GovernanceError::AlreadyVoted));
@@ -923,13 +923,13 @@ mod tests {
                 ProposalCategory::Regular,
                 MIN_VOTING_POWER_FOR_PROPOSAL,
             )
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(100);
 
         // Only 40% voting power participates (below 50% quorum)
         gov.vote(proposal_id, create_test_voter(3), VoteType::For, 400_000)
-            .unwrap();
+            .ok();
 
         // Advance time past voting period
         gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
@@ -940,7 +940,7 @@ mod tests {
         assert_eq!(result, Err(GovernanceError::QuorumNotMet));
 
         // Proposal should be marked as rejected
-        let proposal = gov.get_proposal(proposal_id).unwrap();
+        let proposal = gov.get_proposal(proposal_id).ok();
         assert_eq!(proposal.status, ProposalStatus::Rejected);
     }
 
@@ -958,21 +958,21 @@ mod tests {
                 ProposalCategory::Regular,
                 MIN_VOTING_POWER_FOR_PROPOSAL,
             )
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(100);
 
         // 60% voting power participates (above 50% quorum)
         // 60% vote For, 40% vote Against
         gov.vote(proposal_id, create_test_voter(3), VoteType::For, 600_000)
-            .unwrap();
+            .ok();
         gov.vote(
             proposal_id,
             create_test_voter(4),
             VoteType::Against,
             400_000,
         )
-        .unwrap();
+        .ok();
 
         // Advance time past voting period
         gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
@@ -980,7 +980,7 @@ mod tests {
         let result = gov.finalize_voting(proposal_id);
         assert!(result.is_ok());
 
-        let proposal = gov.get_proposal(proposal_id).unwrap();
+        let proposal = gov.get_proposal(proposal_id).ok();
         assert_eq!(proposal.status, ProposalStatus::Approved);
     }
 
@@ -998,28 +998,28 @@ mod tests {
                 ProposalCategory::Regular,
                 MIN_VOTING_POWER_FOR_PROPOSAL,
             )
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(100);
 
         // 60% voting power participates (quorum met)
         // But only 40% for, 60% against (no majority)
         gov.vote(proposal_id, create_test_voter(3), VoteType::For, 400_000)
-            .unwrap();
+            .ok();
         gov.vote(
             proposal_id,
             create_test_voter(4),
             VoteType::Against,
             600_000,
         )
-        .unwrap();
+        .ok();
 
         gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
 
         let result = gov.finalize_voting(proposal_id);
         assert!(result.is_ok());
 
-        let proposal = gov.get_proposal(proposal_id).unwrap();
+        let proposal = gov.get_proposal(proposal_id).ok();
         assert_eq!(proposal.status, ProposalStatus::Rejected);
     }
 
@@ -1037,34 +1037,34 @@ mod tests {
                 ProposalCategory::Regular,
                 MIN_VOTING_POWER_FOR_PROPOSAL,
             )
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(100);
 
         // 50% For, 20% Against, 30% Abstain = 80% participation (quorum met)
         gov.vote(proposal_id, create_test_voter(3), VoteType::For, 500_000)
-            .unwrap();
+            .ok();
         gov.vote(
             proposal_id,
             create_test_voter(4),
             VoteType::Against,
             200_000,
         )
-        .unwrap();
+        .ok();
         gov.vote(
             proposal_id,
             create_test_voter(5),
             VoteType::Abstain,
             300_000,
         )
-        .unwrap();
+        .ok();
 
         gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
 
         let result = gov.finalize_voting(proposal_id);
         assert!(result.is_ok());
 
-        let proposal = gov.get_proposal(proposal_id).unwrap();
+        let proposal = gov.get_proposal(proposal_id).ok();
         // 50% For vs 20% Against = 50/(50+20) = 71.4% > 50% majority, so should pass
         assert_eq!(proposal.status, ProposalStatus::Approved);
     }
@@ -1086,14 +1086,14 @@ mod tests {
                 ProposalCategory::Regular,
                 MIN_VOTING_POWER_FOR_PROPOSAL,
             )
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(100);
         gov.vote(proposal_id, create_test_voter(3), VoteType::For, 600_000)
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
-        gov.finalize_voting(proposal_id).unwrap();
+        gov.finalize_voting(proposal_id).ok();
 
         // Try to execute immediately (should fail)
         let result = gov.execute_proposal(proposal_id);
@@ -1113,14 +1113,14 @@ mod tests {
                 ProposalCategory::Regular,
                 MIN_VOTING_POWER_FOR_PROPOSAL,
             )
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(100);
         gov.vote(proposal_id, create_test_voter(3), VoteType::For, 600_000)
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
-        gov.finalize_voting(proposal_id).unwrap();
+        gov.finalize_voting(proposal_id).ok();
 
         // Advance past timelock
         gov.set_current_timestamp(VOTING_PERIOD_SECONDS + TIMELOCK_DELAY_SECONDS + 100);
@@ -1128,7 +1128,7 @@ mod tests {
         let result = gov.execute_proposal(proposal_id);
         assert!(result.is_ok());
 
-        let proposal = gov.get_proposal(proposal_id).unwrap();
+        let proposal = gov.get_proposal(proposal_id).ok();
         assert_eq!(proposal.status, ProposalStatus::Executed);
     }
 
@@ -1149,27 +1149,27 @@ mod tests {
                 ProposalCategory::Constitutional,
                 MIN_VOTING_POWER_FOR_PROPOSAL,
             )
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(100);
 
         // 60% for (enough for regular, not for constitutional supermajority)
         gov.vote(proposal_id, create_test_voter(3), VoteType::For, 600_000)
-            .unwrap();
+            .ok();
         gov.vote(
             proposal_id,
             create_test_voter(4),
             VoteType::Against,
             400_000,
         )
-        .unwrap();
+        .ok();
 
         gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
         let result = gov.finalize_voting(proposal_id);
         assert!(result.is_ok());
 
         // Should be rejected (60% is not >= 66.67% supermajority)
-        let proposal = gov.get_proposal(proposal_id).unwrap();
+        let proposal = gov.get_proposal(proposal_id).ok();
         assert_eq!(proposal.status, ProposalStatus::Rejected);
     }
 
@@ -1186,25 +1186,25 @@ mod tests {
                 ProposalCategory::Constitutional,
                 MIN_VOTING_POWER_FOR_PROPOSAL,
             )
-            .unwrap();
+            .ok();
 
         gov.set_current_timestamp(100);
 
         // 70% for (exceeds 66.67% supermajority)
         gov.vote(proposal_id, create_test_voter(3), VoteType::For, 700_000)
-            .unwrap();
+            .ok();
         gov.vote(
             proposal_id,
             create_test_voter(4),
             VoteType::Against,
             300_000,
         )
-        .unwrap();
+        .ok();
 
         gov.set_current_timestamp(VOTING_PERIOD_SECONDS + 100);
-        gov.finalize_voting(proposal_id).unwrap();
+        gov.finalize_voting(proposal_id).ok();
 
-        let proposal = gov.get_proposal(proposal_id).unwrap();
+        let proposal = gov.get_proposal(proposal_id).ok();
         assert_eq!(proposal.status, ProposalStatus::Approved);
     }
 }

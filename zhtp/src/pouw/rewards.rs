@@ -790,14 +790,14 @@ mod tests {
         let aggregated = calculator.aggregate_receipts(&receipts);
 
         // Alice should have 3 receipts in epoch 0
-        let alice_stats = aggregated.get(&("did:zhtp:alice".to_string(), 0)).unwrap();
+        let alice_stats = aggregated.get(&("did:zhtp:alice".to_string(), 0)).ok();
         assert_eq!(alice_stats.receipt_count, 3);
         assert_eq!(alice_stats.total_bytes, 1024 + 2048 + 1024);
         assert_eq!(alice_stats.proof_type_counts.hash_count, 2);
         assert_eq!(alice_stats.proof_type_counts.merkle_count, 1);
 
         // Bob should have 1 receipt
-        let bob_stats = aggregated.get(&("did:zhtp:bob".to_string(), 0)).unwrap();
+        let bob_stats = aggregated.get(&("did:zhtp:bob".to_string(), 0)).ok();
         assert_eq!(bob_stats.receipt_count, 1);
     }
 

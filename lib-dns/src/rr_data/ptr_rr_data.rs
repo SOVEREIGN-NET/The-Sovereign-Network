@@ -28,7 +28,7 @@ impl RRData for PtrRRData {
     fn to_bytes(&self) -> Result<Vec<u8>, RRDataError> {
         let mut buf = Vec::with_capacity(32);
 
-        buf.extend_from_slice(&pack_fqdn(self.fqdn.as_ref().unwrap()));
+        buf.extend_from_slice(&pack_fqdn(self.fqdn.as_ref().ok()));
 
         Ok(buf)
     }
@@ -108,7 +108,7 @@ impl ZoneRRData for PtrRRData {
 
 impl fmt::Display for PtrRRData {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", format!("{}.", self.fqdn.as_ref().unwrap()))
+        write!(f, "{}", format!("{}.", self.fqdn.as_ref().ok()))
     }
 }
 
@@ -116,6 +116,6 @@ impl fmt::Display for PtrRRData {
 fn test() {
     // Root domain encoding
     let buf = vec![0u8];
-    let record = PtrRRData::from_bytes(&buf).unwrap();
-    assert_eq!(buf, record.to_bytes().unwrap());
+    let record = PtrRRData::from_bytes(&buf).ok();
+    assert_eq!(buf, record.to_bytes().ok());
 }

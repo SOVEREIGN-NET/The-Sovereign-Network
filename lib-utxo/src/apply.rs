@@ -227,7 +227,7 @@ mod tests {
         let outputs = vec![create_output(900, Address::new([1u8; 32]))];
         let tx_hash = TxHash::new([1u8; 32]);
 
-        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).unwrap();
+        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).ok();
 
         assert_eq!(result.inputs_spent, 1);
         assert_eq!(result.outputs_created, 1);
@@ -237,7 +237,7 @@ mod tests {
 
         // Verify new UTXO was created
         let new_outpoint = OutPoint::new(tx_hash, 0);
-        let new_utxo = store.get_utxo(&new_outpoint).unwrap().unwrap();
+        let new_utxo = store.get_utxo(&new_outpoint).ok().ok();
         assert_eq!(new_utxo.amount, 900);
     }
 
@@ -264,7 +264,7 @@ mod tests {
         ];
         let tx_hash = TxHash::new([1u8; 32]);
 
-        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 200).unwrap();
+        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 200).ok();
 
         assert_eq!(result.inputs_spent, 2);
         assert_eq!(result.outputs_created, 2);
@@ -319,7 +319,7 @@ mod tests {
         let inputs = vec![create_input(prev_tx, 0)];
         let outputs = vec![create_output(900, Address::new([1u8; 32]))];
         let tx_hash = TxHash::new([1u8; 32]);
-        apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).unwrap();
+        apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).ok();
 
         // Try to spend again
         let tx_hash2 = TxHash::new([2u8; 32]);
@@ -481,7 +481,7 @@ mod tests {
 
         // First spend (block 10)
         let tx_hash1 = TxHash::new([1u8; 32]);
-        apply_native_transfer(&store, &inputs, &outputs, tx_hash1, 10, 100).unwrap();
+        apply_native_transfer(&store, &inputs, &outputs, tx_hash1, 10, 100).ok();
 
         // Second spend attempt (block 20)
         let tx_hash2 = TxHash::new([2u8; 32]);
@@ -536,24 +536,24 @@ mod tests {
         ];
         let tx_hash = TxHash::new([1u8; 32]);
 
-        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).unwrap();
+        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).ok();
 
         // Verify outputs are at indices 0, 1, 2
         assert!(store
             .get_utxo(&OutPoint::new(tx_hash, 0))
-            .unwrap()
+            .ok()
             .is_some());
         assert!(store
             .get_utxo(&OutPoint::new(tx_hash, 1))
-            .unwrap()
+            .ok()
             .is_some());
         assert!(store
             .get_utxo(&OutPoint::new(tx_hash, 2))
-            .unwrap()
+            .ok()
             .is_some());
         assert!(store
             .get_utxo(&OutPoint::new(tx_hash, 3))
-            .unwrap()
+            .ok()
             .is_none());
     }
 
@@ -598,7 +598,7 @@ mod tests {
         let tx_hash = TxHash::new([1u8; 32]);
         let fee = 1000;
 
-        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 100, fee).unwrap();
+        let result = apply_native_transfer(&store, &inputs, &outputs, tx_hash, 100, fee).ok();
 
         // GOLDEN VECTOR: These exact values MUST NOT change
         assert_eq!(result.total_input, 10_000);
@@ -634,7 +634,7 @@ mod tests {
         for _ in 0..10 {
             let store = create_scenario();
             let result =
-                apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).unwrap();
+                apply_native_transfer(&store, &inputs, &outputs, tx_hash, 10, 100).ok();
             results.push((result.total_input, result.total_output, result.fee));
         }
 

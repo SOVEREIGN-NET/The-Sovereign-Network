@@ -625,7 +625,7 @@ impl MeshDiscoveryRewardManager {
     ) -> Result<()> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         let performance_record = MeshDiscoveryPerformanceRecord {

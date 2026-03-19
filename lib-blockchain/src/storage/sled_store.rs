@@ -368,7 +368,7 @@ impl SledStore {
                         "Invalid latest_height length".to_string(),
                     ));
                 }
-                let height = u64::from_be_bytes(bytes.as_ref().try_into().unwrap());
+                let height = u64::from_be_bytes(bytes.as_ref().try_into().ok());
                 Ok(Some(height))
             }
             Ok(None) => Ok(None),
@@ -403,7 +403,7 @@ impl BlockchainStore for SledStore {
         let block_bytes = Self::serialize(block)?;
 
         // Store in batch
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.block_data = Some((height, block_hash, block_bytes));
         }
@@ -473,7 +473,7 @@ impl BlockchainStore for SledStore {
         let key = keys::utxo_key(op);
         let value = Self::serialize(u)?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.utxos.insert(key.as_ref(), value);
         }
@@ -486,7 +486,7 @@ impl BlockchainStore for SledStore {
 
         let key = keys::utxo_key(op);
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.utxos.remove(key.as_ref());
         }
@@ -541,7 +541,7 @@ impl BlockchainStore for SledStore {
         let key = keys::token_contract_key(&token_id);
         let value = Self::serialize(c)?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.token_contracts.insert(key.as_ref(), value);
         }
@@ -569,7 +569,7 @@ impl BlockchainStore for SledStore {
         let key = keys::token_supply_key(token);
         let value = supply.to_le_bytes();
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.token_supply.insert(key.as_ref(), value.as_ref());
         }
@@ -592,7 +592,7 @@ impl BlockchainStore for SledStore {
     fn put_contract_code(&self, contract_id: &[u8; 32], code: &[u8]) -> StorageResult<()> {
         self.require_transaction()?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.contract_code.insert(contract_id, code);
         }
@@ -628,7 +628,7 @@ impl BlockchainStore for SledStore {
         composite_key.extend_from_slice(contract_id);
         composite_key.extend_from_slice(key);
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch
                 .contract_storage
@@ -645,7 +645,7 @@ impl BlockchainStore for SledStore {
         composite_key.extend_from_slice(contract_id);
         composite_key.extend_from_slice(key);
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.contract_storage.remove(IVec::from(composite_key));
         }
@@ -668,7 +668,7 @@ impl BlockchainStore for SledStore {
         self.require_transaction()?;
 
         let value = Self::serialize(snapshot)?;
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.meta.insert(keys::meta::TOKEN_STATE_SNAPSHOT, value);
         }
@@ -719,7 +719,7 @@ impl BlockchainStore for SledStore {
         let key = keys::account_key(addr);
         let value = Self::serialize(acct)?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.accounts.insert(key.as_ref(), value);
         }
@@ -740,7 +740,7 @@ impl BlockchainStore for SledStore {
                         "Invalid balance length".to_string(),
                     ));
                 }
-                let balance = u128::from_be_bytes(bytes.as_ref().try_into().unwrap());
+                let balance = u128::from_be_bytes(bytes.as_ref().try_into().ok());
                 Ok(balance)
             }
             Ok(None) => Ok(0), // No balance = 0
@@ -753,7 +753,7 @@ impl BlockchainStore for SledStore {
 
         let key = keys::token_balance_key(t, a);
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             if v == 0 {
                 // Optionally delete zero balances to save space
@@ -829,7 +829,7 @@ impl BlockchainStore for SledStore {
                         "Invalid nonce length".to_string(),
                     ));
                 }
-                let nonce = u64::from_be_bytes(bytes.as_ref().try_into().unwrap());
+                let nonce = u64::from_be_bytes(bytes.as_ref().try_into().ok());
                 Ok(nonce)
             }
             Ok(None) => Ok(0), // No nonce = first transfer
@@ -847,7 +847,7 @@ impl BlockchainStore for SledStore {
 
         let key = keys::token_nonce_key(token_id, sender);
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             if nonce == 0 {
                 // Delete zero nonces to save space
@@ -882,7 +882,7 @@ impl BlockchainStore for SledStore {
 
         let value = Self::serialize(identity)?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.identities.insert(did_hash.as_ref(), value);
         }
@@ -893,7 +893,7 @@ impl BlockchainStore for SledStore {
     fn delete_identity(&self, did_hash: &[u8; 32]) -> StorageResult<()> {
         self.require_transaction()?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.identities.remove(did_hash.as_ref());
         }
@@ -924,7 +924,7 @@ impl BlockchainStore for SledStore {
 
         let key = keys::identity_by_owner_key(addr);
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch
                 .identity_by_owner
@@ -939,7 +939,7 @@ impl BlockchainStore for SledStore {
 
         let key = keys::identity_by_owner_key(addr);
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.identity_by_owner.remove(key.as_ref());
         }
@@ -974,7 +974,7 @@ impl BlockchainStore for SledStore {
 
         let value = Self::serialize(metadata)?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.identity_metadata.insert(did_hash.as_ref(), value);
         }
@@ -985,7 +985,7 @@ impl BlockchainStore for SledStore {
     fn delete_identity_metadata(&self, did_hash: &[u8; 32]) -> StorageResult<()> {
         self.require_transaction()?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.identity_metadata.remove(did_hash.as_ref());
         }
@@ -1041,7 +1041,7 @@ impl BlockchainStore for SledStore {
 
         // Initialize batch
         self.tx_height.store(height, Ordering::SeqCst);
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         *batch_guard = Some(PendingBatch::new());
 
         Ok(())
@@ -1054,7 +1054,7 @@ impl BlockchainStore for SledStore {
 
         // Take the batch
         let batch = {
-            let mut batch_guard = self.tx_batch.lock().unwrap();
+            let mut batch_guard = self.tx_batch.lock().ok();
             batch_guard
                 .take()
                 .ok_or(StorageError::NoActiveTransaction)?
@@ -1148,7 +1148,7 @@ impl BlockchainStore for SledStore {
         self.require_transaction()?;
 
         // Simply drop the batch
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         *batch_guard = None;
 
         // Clear transaction state
@@ -1186,7 +1186,7 @@ impl BlockchainStore for SledStore {
         let key = token_id.as_ref();
         let value = Self::serialize(token)?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.bonding_curves.insert(key, value);
         }
@@ -1197,7 +1197,7 @@ impl BlockchainStore for SledStore {
     fn delete_bonding_curve_token(&self, token_id: &TokenId) -> StorageResult<()> {
         self.require_transaction()?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.bonding_curves.remove(token_id.as_ref());
         }
@@ -1265,7 +1265,7 @@ impl BlockchainStore for SledStore {
     ) -> StorageResult<()> {
         self.require_transaction()?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch
                 .bonding_curve_symbols
@@ -1278,7 +1278,7 @@ impl BlockchainStore for SledStore {
     fn delete_bonding_curve_symbol_index(&self, symbol: &str) -> StorageResult<()> {
         self.require_transaction()?;
 
-        let mut batch_guard = self.tx_batch.lock().unwrap();
+        let mut batch_guard = self.tx_batch.lock().ok();
         if let Some(ref mut batch) = *batch_guard {
             batch.bonding_curve_symbols.remove(symbol.as_bytes());
         }
@@ -1324,25 +1324,25 @@ mod tests {
 
     #[test]
     fn test_store_open_temporary() {
-        let store = SledStore::open_temporary().unwrap();
-        assert!(store.get_latest_height_internal().unwrap().is_none());
+        let store = SledStore::open_temporary().ok();
+        assert!(store.get_latest_height_internal().ok().is_none());
     }
 
     #[test]
     fn test_begin_block_genesis() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
 
         // Begin genesis block
-        store.begin_block(0).unwrap();
-        store.rollback_block().unwrap();
+        store.begin_block(0).ok();
+        store.rollback_block().ok();
 
         // Should be able to begin again after rollback
-        store.begin_block(0).unwrap();
+        store.begin_block(0).ok();
     }
 
     #[test]
     fn test_begin_block_wrong_height() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
 
         // Trying to begin at height 1 without genesis should fail
         let result = store.begin_block(1);
@@ -1354,118 +1354,118 @@ mod tests {
 
     #[test]
     fn test_append_and_get_block() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block = create_test_block(0, Hash::default());
         let block_hash = BlockHash::new(block.header.block_hash.as_array());
 
-        store.begin_block(0).unwrap();
-        store.append_block(&block).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block).ok();
+        store.commit_block().ok();
 
         // Get by height
-        let retrieved = store.get_block_by_height(0).unwrap().unwrap();
+        let retrieved = store.get_block_by_height(0).ok().ok();
         assert_eq!(retrieved.header.height, 0);
 
         // Get by hash
-        let retrieved = store.get_block_by_hash(&block_hash).unwrap().unwrap();
+        let retrieved = store.get_block_by_hash(&block_hash).ok().ok();
         assert_eq!(retrieved.header.height, 0);
 
         // Get latest height
-        assert_eq!(store.latest_height().unwrap(), 0);
+        assert_eq!(store.latest_height().ok(), 0);
     }
 
     #[test]
     fn test_utxo_operations() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block = create_test_block(0, Hash::default());
 
         let outpoint = OutPoint::new(TxHash([0xab; 32]), 0);
         let utxo = Utxo::native(1000, Address([0xcd; 32]), 0);
 
-        store.begin_block(0).unwrap();
-        store.append_block(&block).unwrap();
-        store.put_utxo(&outpoint, &utxo).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block).ok();
+        store.put_utxo(&outpoint, &utxo).ok();
+        store.commit_block().ok();
 
         // Get UTXO
-        let retrieved = store.get_utxo(&outpoint).unwrap().unwrap();
+        let retrieved = store.get_utxo(&outpoint).ok().ok();
         assert_eq!(retrieved.amount, 1000);
 
         // Delete UTXO
         let block1 = create_test_block(1, block.header.block_hash);
-        store.begin_block(1).unwrap();
-        store.append_block(&block1).unwrap();
-        store.delete_utxo(&outpoint).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(1).ok();
+        store.append_block(&block1).ok();
+        store.delete_utxo(&outpoint).ok();
+        store.commit_block().ok();
 
         // Should be gone
-        assert!(store.get_utxo(&outpoint).unwrap().is_none());
+        assert!(store.get_utxo(&outpoint).ok().is_none());
     }
 
     #[test]
     fn test_account_operations() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block = create_test_block(0, Hash::default());
 
         let addr = Address([0xef; 32]);
         let account = AccountState::new(addr).with_wallet(WalletState::new(5));
 
-        store.begin_block(0).unwrap();
-        store.append_block(&block).unwrap();
-        store.put_account(&addr, &account).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block).ok();
+        store.put_account(&addr, &account).ok();
+        store.commit_block().ok();
 
         // Get account
-        let retrieved = store.get_account(&addr).unwrap().unwrap();
-        assert_eq!(retrieved.wallet.unwrap().nonce, 5);
+        let retrieved = store.get_account(&addr).ok().ok();
+        assert_eq!(retrieved.wallet.ok().nonce, 5);
     }
 
     #[test]
     fn test_token_balance_operations() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block = create_test_block(0, Hash::default());
 
         let token = TokenId([0x11; 32]);
         let addr = Address([0x22; 32]);
 
-        store.begin_block(0).unwrap();
-        store.append_block(&block).unwrap();
-        store.set_token_balance(&token, &addr, 999_999).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block).ok();
+        store.set_token_balance(&token, &addr, 999_999).ok();
+        store.commit_block().ok();
 
         // Get balance
-        assert_eq!(store.get_token_balance(&token, &addr).unwrap(), 999_999);
+        assert_eq!(store.get_token_balance(&token, &addr).ok(), 999_999);
 
         // Non-existent balance should be 0
         let other_addr = Address([0x33; 32]);
-        assert_eq!(store.get_token_balance(&token, &other_addr).unwrap(), 0);
+        assert_eq!(store.get_token_balance(&token, &other_addr).ok(), 0);
     }
 
     #[test]
     fn test_rollback_discards_changes() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block = create_test_block(0, Hash::default());
 
         let outpoint = OutPoint::new(TxHash([0x44; 32]), 0);
         let utxo = Utxo::native(500, Address([0x55; 32]), 0);
 
-        store.begin_block(0).unwrap();
-        store.append_block(&block).unwrap();
-        store.put_utxo(&outpoint, &utxo).unwrap();
-        store.rollback_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block).ok();
+        store.put_utxo(&outpoint, &utxo).ok();
+        store.rollback_block().ok();
 
         // UTXO should not exist
-        assert!(store.get_utxo(&outpoint).unwrap().is_none());
+        assert!(store.get_utxo(&outpoint).ok().is_none());
 
         // Chain should still be empty
-        assert!(store.get_latest_height_internal().unwrap().is_none());
+        assert!(store.get_latest_height_internal().ok().is_none());
     }
 
     #[test]
     fn test_transaction_already_active() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
 
-        store.begin_block(0).unwrap();
+        store.begin_block(0).ok();
         let result = store.begin_block(0);
 
         assert!(matches!(
@@ -1476,7 +1476,7 @@ mod tests {
 
     #[test]
     fn test_no_active_transaction() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
 
         let outpoint = OutPoint::new(TxHash([0; 32]), 0);
         let utxo = Utxo::native(100, Address::zero(), 0);
@@ -1502,28 +1502,28 @@ mod tests {
 
     #[test]
     fn test_multiple_blocks() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
 
         let block0 = create_test_block(0, Hash::default());
-        store.begin_block(0).unwrap();
-        store.append_block(&block0).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block0).ok();
+        store.commit_block().ok();
 
         let block1 = create_test_block(1, block0.header.block_hash);
-        store.begin_block(1).unwrap();
-        store.append_block(&block1).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(1).ok();
+        store.append_block(&block1).ok();
+        store.commit_block().ok();
 
         let block2 = create_test_block(2, block1.header.block_hash);
-        store.begin_block(2).unwrap();
-        store.append_block(&block2).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(2).ok();
+        store.append_block(&block2).ok();
+        store.commit_block().ok();
 
-        assert_eq!(store.latest_height().unwrap(), 2);
-        assert!(store.get_block_by_height(0).unwrap().is_some());
-        assert!(store.get_block_by_height(1).unwrap().is_some());
-        assert!(store.get_block_by_height(2).unwrap().is_some());
-        assert!(store.get_block_by_height(3).unwrap().is_none());
+        assert_eq!(store.latest_height().ok(), 2);
+        assert!(store.get_block_by_height(0).ok().is_some());
+        assert!(store.get_block_by_height(1).ok().is_some());
+        assert!(store.get_block_by_height(2).ok().is_some());
+        assert!(store.get_block_by_height(3).ok().is_none());
     }
 
     // =========================================================================
@@ -1539,7 +1539,7 @@ mod tests {
     fn test_identity_consensus_operations() {
         use super::super::{IdentityConsensus, IdentityStatus, IdentityType};
 
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block = create_test_block(0, Hash::default());
 
         let did = "did:zhtp:test123abc";
@@ -1564,27 +1564,27 @@ mod tests {
             attribute_count: 0,
         };
 
-        store.begin_block(0).unwrap();
-        store.append_block(&block).unwrap();
-        store.put_identity(&did_hash, &identity).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block).ok();
+        store.put_identity(&did_hash, &identity).ok();
+        store.commit_block().ok();
 
         // Get identity by DID hash
-        let retrieved = store.get_identity(&did_hash).unwrap().unwrap();
+        let retrieved = store.get_identity(&did_hash).ok().ok();
         assert_eq!(retrieved.did_hash, did_hash);
         assert_eq!(retrieved.owner, owner);
         assert_eq!(retrieved.identity_type, IdentityType::Human);
 
         // Non-existent identity should return None
         let nonexistent_hash = hash_did("did:zhtp:nonexistent");
-        assert!(store.get_identity(&nonexistent_hash).unwrap().is_none());
+        assert!(store.get_identity(&nonexistent_hash).ok().is_none());
     }
 
     #[test]
     fn test_identity_metadata_operations() {
         use super::super::{IdentityConsensus, IdentityMetadata, IdentityStatus, IdentityType};
 
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block = create_test_block(0, Hash::default());
 
         let did = "did:zhtp:metadata_test";
@@ -1619,21 +1619,21 @@ mod tests {
             attributes: vec![],
         };
 
-        store.begin_block(0).unwrap();
-        store.append_block(&block).unwrap();
-        store.put_identity(&did_hash, &consensus).unwrap();
-        store.put_identity_metadata(&did_hash, &metadata).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block).ok();
+        store.put_identity(&did_hash, &consensus).ok();
+        store.put_identity_metadata(&did_hash, &metadata).ok();
+        store.commit_block().ok();
 
         // Get consensus state (participates in state hash)
-        let retrieved_consensus = store.get_identity(&did_hash).unwrap().unwrap();
+        let retrieved_consensus = store.get_identity(&did_hash).ok().ok();
         assert_eq!(
             retrieved_consensus.identity_type,
             IdentityType::Organization
         );
 
         // Get metadata (for DID resolution, non-consensus)
-        let retrieved_metadata = store.get_identity_metadata(&did_hash).unwrap().unwrap();
+        let retrieved_metadata = store.get_identity_metadata(&did_hash).ok().ok();
         assert_eq!(retrieved_metadata.did, did);
         assert_eq!(retrieved_metadata.display_name, "Test Organization");
         assert_eq!(retrieved_metadata.owned_wallets, vec!["wallet-1"]);
@@ -1643,7 +1643,7 @@ mod tests {
     fn test_identity_owner_index() {
         use super::super::{IdentityConsensus, IdentityStatus, IdentityType};
 
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block = create_test_block(0, Hash::default());
 
         let did = "did:zhtp:owner_index_test";
@@ -1668,26 +1668,26 @@ mod tests {
             attribute_count: 0,
         };
 
-        store.begin_block(0).unwrap();
-        store.append_block(&block).unwrap();
-        store.put_identity(&did_hash, &identity).unwrap();
-        store.put_identity_owner_index(&owner, &did_hash).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block).ok();
+        store.put_identity(&did_hash, &identity).ok();
+        store.put_identity_owner_index(&owner, &did_hash).ok();
+        store.commit_block().ok();
 
         // Lookup by owner
-        let found_did_hash = store.get_identity_by_owner(&owner).unwrap().unwrap();
+        let found_did_hash = store.get_identity_by_owner(&owner).ok().ok();
         assert_eq!(found_did_hash, did_hash);
 
         // Non-existent owner should return None
         let other_owner = Address([0xdd; 32]);
-        assert!(store.get_identity_by_owner(&other_owner).unwrap().is_none());
+        assert!(store.get_identity_by_owner(&other_owner).ok().is_none());
     }
 
     #[test]
     fn test_identity_with_seed_commitment() {
         use super::super::{IdentityConsensus, IdentityStatus, IdentityType};
 
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block = create_test_block(0, Hash::default());
 
         let did = "did:zhtp:recovery_test";
@@ -1712,13 +1712,13 @@ mod tests {
             attribute_count: 0,
         };
 
-        store.begin_block(0).unwrap();
-        store.append_block(&block).unwrap();
-        store.put_identity(&did_hash, &identity).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block).ok();
+        store.put_identity(&did_hash, &identity).ok();
+        store.commit_block().ok();
 
         // Verify seed commitment persisted
-        let retrieved = store.get_identity(&did_hash).unwrap().unwrap();
+        let retrieved = store.get_identity(&did_hash).ok().ok();
         assert_eq!(retrieved.seed_commitment, Some(seed_commitment));
         assert!(retrieved.verify_seed_commitment(&seed_commitment));
         assert!(!retrieved.verify_seed_commitment(&[0xcd; 32]));
@@ -1728,7 +1728,7 @@ mod tests {
     fn test_identity_delete() {
         use super::super::{IdentityConsensus, IdentityMetadata, IdentityStatus, IdentityType};
 
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block0 = create_test_block(0, Hash::default());
         let block1 = create_test_block(1, block0.header.block_hash);
 
@@ -1765,35 +1765,35 @@ mod tests {
         };
 
         // Create identity
-        store.begin_block(0).unwrap();
-        store.append_block(&block0).unwrap();
-        store.put_identity(&did_hash, &consensus).unwrap();
-        store.put_identity_metadata(&did_hash, &metadata).unwrap();
-        store.put_identity_owner_index(&owner, &did_hash).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block0).ok();
+        store.put_identity(&did_hash, &consensus).ok();
+        store.put_identity_metadata(&did_hash, &metadata).ok();
+        store.put_identity_owner_index(&owner, &did_hash).ok();
+        store.commit_block().ok();
 
-        assert!(store.get_identity(&did_hash).unwrap().is_some());
-        assert!(store.get_identity_metadata(&did_hash).unwrap().is_some());
-        assert!(store.get_identity_by_owner(&owner).unwrap().is_some());
+        assert!(store.get_identity(&did_hash).ok().is_some());
+        assert!(store.get_identity_metadata(&did_hash).ok().is_some());
+        assert!(store.get_identity_by_owner(&owner).ok().is_some());
 
         // Delete identity (all trees)
-        store.begin_block(1).unwrap();
-        store.append_block(&block1).unwrap();
-        store.delete_identity(&did_hash).unwrap();
-        store.delete_identity_metadata(&did_hash).unwrap();
-        store.delete_identity_owner_index(&owner).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(1).ok();
+        store.append_block(&block1).ok();
+        store.delete_identity(&did_hash).ok();
+        store.delete_identity_metadata(&did_hash).ok();
+        store.delete_identity_owner_index(&owner).ok();
+        store.commit_block().ok();
 
-        assert!(store.get_identity(&did_hash).unwrap().is_none());
-        assert!(store.get_identity_metadata(&did_hash).unwrap().is_none());
-        assert!(store.get_identity_by_owner(&owner).unwrap().is_none());
+        assert!(store.get_identity(&did_hash).ok().is_none());
+        assert!(store.get_identity_metadata(&did_hash).ok().is_none());
+        assert!(store.get_identity_by_owner(&owner).ok().is_none());
     }
 
     #[test]
     fn test_identity_rollback() {
         use super::super::{IdentityConsensus, IdentityStatus, IdentityType};
 
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block = create_test_block(0, Hash::default());
 
         let did = "did:zhtp:rollback_test";
@@ -1817,20 +1817,20 @@ mod tests {
             attribute_count: 0,
         };
 
-        store.begin_block(0).unwrap();
-        store.append_block(&block).unwrap();
-        store.put_identity(&did_hash, &identity).unwrap();
-        store.rollback_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block).ok();
+        store.put_identity(&did_hash, &identity).ok();
+        store.rollback_block().ok();
 
         // Identity should not exist after rollback
-        assert!(store.get_identity(&did_hash).unwrap().is_none());
+        assert!(store.get_identity(&did_hash).ok().is_none());
     }
 
     #[test]
     fn test_get_identities_at_height() {
         use super::super::{IdentityConsensus, IdentityStatus, IdentityType};
 
-        let store = SledStore::open_temporary().unwrap();
+        let store = SledStore::open_temporary().ok();
         let block0 = create_test_block(0, Hash::default());
         let block1 = create_test_block(1, block0.header.block_hash);
 
@@ -1875,11 +1875,11 @@ mod tests {
             attribute_count: 0,
         };
 
-        store.begin_block(0).unwrap();
-        store.append_block(&block0).unwrap();
-        store.put_identity(&did_hash1, &id1).unwrap();
-        store.put_identity(&did_hash2, &id2).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&block0).ok();
+        store.put_identity(&did_hash1, &id1).ok();
+        store.put_identity(&did_hash2, &id2).ok();
+        store.commit_block().ok();
 
         // Create one identity at height 1
         let did3 = "did:zhtp:height1";
@@ -1902,22 +1902,22 @@ mod tests {
             attribute_count: 0,
         };
 
-        store.begin_block(1).unwrap();
-        store.append_block(&block1).unwrap();
-        store.put_identity(&did_hash3, &id3).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(1).ok();
+        store.append_block(&block1).ok();
+        store.put_identity(&did_hash3, &id3).ok();
+        store.commit_block().ok();
 
         // Query by height - returns did_hashes, not full identity
-        let height0_hashes = store.get_identities_at_height(0).unwrap();
+        let height0_hashes = store.get_identities_at_height(0).ok();
         assert_eq!(height0_hashes.len(), 2);
         assert!(height0_hashes.contains(&did_hash1));
         assert!(height0_hashes.contains(&did_hash2));
 
-        let height1_hashes = store.get_identities_at_height(1).unwrap();
+        let height1_hashes = store.get_identities_at_height(1).ok();
         assert_eq!(height1_hashes.len(), 1);
         assert_eq!(height1_hashes[0], did_hash3);
 
-        let height2_hashes = store.get_identities_at_height(2).unwrap();
+        let height2_hashes = store.get_identities_at_height(2).ok();
         assert!(height2_hashes.is_empty());
     }
 }

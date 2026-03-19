@@ -127,7 +127,7 @@ impl PrivacyCredentials {
     pub fn new(identity_id: IdentityId, credentials: Vec<ZkCredential>) -> Self {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         Self {

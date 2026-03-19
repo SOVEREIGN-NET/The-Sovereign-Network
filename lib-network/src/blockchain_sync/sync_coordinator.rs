@@ -60,7 +60,7 @@ mod bootstrap_policy_tests {
             CommittedHeightSyncTarget::new(200, vec![2]),
             CommittedHeightSyncTarget::new(150, vec![3]),
         ];
-        assert_eq!(select_bootstrap_target(&peers).unwrap().committed_height, 200);
+        assert_eq!(select_bootstrap_target(&peers).ok().committed_height, 200);
     }
 
     #[test]

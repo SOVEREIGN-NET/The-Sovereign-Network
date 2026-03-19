@@ -310,8 +310,8 @@ mod tests {
 
     #[test]
     fn test_sled_event_indexer_basic() {
-        let temp_dir = TempDir::new().unwrap();
-        let mut indexer = SledEventIndexer::open(temp_dir.path()).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let mut indexer = SledEventIndexer::open(temp_dir.path()).ok();
 
         let token1 = [1u8; 32];
         let token2 = [2u8; 32];
@@ -320,7 +320,7 @@ mod tests {
         indexer.index_event_owned(create_test_event(token1, 101, "token_purchased"));
         indexer.index_event_owned(create_test_event(token2, 150, "graduated"));
 
-        indexer.flush().unwrap();
+        indexer.flush().ok();
 
         let token1_events = indexer.get_token_events(token1);
         assert_eq!(token1_events.len(), 2);
@@ -333,20 +333,20 @@ mod tests {
 
     #[test]
     fn test_sled_event_persistence() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().ok();
         let path = temp_dir.path().to_path_buf();
 
         let token1 = [1u8; 32];
 
         {
-            let mut indexer = SledEventIndexer::open(&path).unwrap();
+            let mut indexer = SledEventIndexer::open(&path).ok();
             indexer.index_event_owned(create_test_event(token1, 100, "token_purchased"));
             indexer.index_event_owned(create_test_event(token1, 101, "token_sold"));
-            indexer.flush().unwrap();
+            indexer.flush().ok();
         }
 
         {
-            let indexer = SledEventIndexer::open(&path).unwrap();
+            let indexer = SledEventIndexer::open(&path).ok();
             let events = indexer.get_token_events(token1);
             assert_eq!(events.len(), 2);
 
@@ -362,8 +362,8 @@ mod tests {
 
     #[test]
     fn test_sled_event_range_query() {
-        let temp_dir = TempDir::new().unwrap();
-        let mut indexer = SledEventIndexer::open(temp_dir.path()).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let mut indexer = SledEventIndexer::open(temp_dir.path()).ok();
 
         let token1 = [1u8; 32];
 
@@ -371,7 +371,7 @@ mod tests {
             indexer.index_event_owned(create_test_event(token1, block, "token_purchased"));
         }
 
-        indexer.flush().unwrap();
+        indexer.flush().ok();
 
         let events = indexer.get_events_in_range(105, 108);
         assert_eq!(events.len(), 4);

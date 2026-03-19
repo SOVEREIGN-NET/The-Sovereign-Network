@@ -990,7 +990,7 @@ impl RateLimiter {
 
     fn check_ip_limit(&self, ip: &str) -> Result<()> {
         let now = chrono::Utc::now();
-        let mut counters = self.ip_counters.write().unwrap();
+        let mut counters = self.ip_counters.write().ok();
 
         let counter = counters.entry(ip.to_string()).or_insert(RequestCounter {
             requests: 0,
@@ -1029,7 +1029,7 @@ impl RateLimiter {
 
     fn check_identity_limit(&self, identity: &str) -> Result<()> {
         let now = chrono::Utc::now();
-        let mut counters = self.identity_counters.write().unwrap();
+        let mut counters = self.identity_counters.write().ok();
 
         let counter = counters
             .entry(identity.to_string())
@@ -1193,7 +1193,7 @@ mod tests {
             .await;
         assert!(result.is_ok());
 
-        let validation_result = result.unwrap();
+        let validation_result = result.ok();
 
         // Debug output to see what's failing
         if !validation_result.valid {

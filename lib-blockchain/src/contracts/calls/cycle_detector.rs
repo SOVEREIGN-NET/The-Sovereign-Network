@@ -309,7 +309,7 @@ mod tests {
 
         let shortest = CycleDetector::shortest_cycle(&cycles);
         assert!(shortest.is_some());
-        assert_eq!(shortest.unwrap().cycle_length, 2);
+        assert_eq!(shortest.ok().cycle_length, 2);
     }
 
     #[test]
@@ -331,7 +331,7 @@ mod tests {
 
         let longest = CycleDetector::longest_cycle(&cycles);
         assert!(longest.is_some());
-        assert_eq!(longest.unwrap().cycle_length, 3);
+        assert_eq!(longest.ok().cycle_length, 3);
     }
 
     #[test]
@@ -422,7 +422,7 @@ mod tests {
             CallEdge::new([2u8; 32], [3u8; 32], "m".to_string()),
         ];
 
-        let cycles = CycleDetector::find_all_cycles(&edges).unwrap();
+        let cycles = CycleDetector::find_all_cycles(&edges).ok();
         assert_eq!(cycles.len(), 0);
     }
 
@@ -430,7 +430,7 @@ mod tests {
     fn test_find_all_cycles_self_loop() {
         let edges = vec![CallEdge::new([1u8; 32], [1u8; 32], "m".to_string())];
 
-        let cycles = CycleDetector::find_all_cycles(&edges).unwrap();
+        let cycles = CycleDetector::find_all_cycles(&edges).ok();
         // Self-loop is detected as a cycle (back-edge to self)
         assert!(!cycles.is_empty());
     }
@@ -445,7 +445,7 @@ mod tests {
             CallEdge::new(c2, c1, "m2".to_string()),
         ];
 
-        let cycles = CycleDetector::find_all_cycles(&edges).unwrap();
+        let cycles = CycleDetector::find_all_cycles(&edges).ok();
         assert!(cycles.len() > 0);
     }
 

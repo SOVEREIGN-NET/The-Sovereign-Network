@@ -235,10 +235,10 @@ mod tests {
         let leaf1 = hash_blake3(b"leaf1");
         let leaf2 = hash_blake3(b"leaf2");
 
-        tree.add_leaf(leaf1).unwrap();
-        tree.add_leaf(leaf2).unwrap();
+        tree.add_leaf(leaf1).ok();
+        tree.add_leaf(leaf2).ok();
 
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0).ok();
         assert!(tree.verify_proof(&proof));
     }
 
@@ -246,9 +246,9 @@ mod tests {
     fn test_verify_invalid_proof() {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"leaf");
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let mut proof = tree.generate_proof(0).unwrap();
+        let mut proof = tree.generate_proof(0).ok();
         // Corrupt the proof
         proof.leaf = hash_blake3(b"different_leaf");
 
@@ -259,9 +259,9 @@ mod tests {
     fn test_verify_proof_detailed() {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"leaf");
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0).ok();
         let result = tree.verify_proof_detailed(&proof);
 
         assert!(result.is_valid());
@@ -271,10 +271,10 @@ mod tests {
     fn test_verify_against_root() {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"leaf");
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let proof = tree.generate_proof(0).unwrap();
-        let is_valid = verify_proof_against_root(&proof, tree.root).unwrap();
+        let proof = tree.generate_proof(0).ok();
+        let is_valid = verify_proof_against_root(&proof, tree.root).ok();
 
         assert!(is_valid);
     }
@@ -283,11 +283,11 @@ mod tests {
     fn test_verify_against_wrong_root() {
         let mut tree = ZkMerkleTree::new(4);
         let leaf = hash_blake3(b"leaf");
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0).ok();
         let wrong_root = [0u8; 32];
-        let is_valid = verify_proof_against_root(&proof, wrong_root).unwrap();
+        let is_valid = verify_proof_against_root(&proof, wrong_root).ok();
 
         assert!(!is_valid);
     }
@@ -298,10 +298,10 @@ mod tests {
 
         for i in 0..3 {
             let leaf = hash_blake3(&[i]);
-            tree.add_leaf(leaf).unwrap();
+            tree.add_leaf(leaf).ok();
         }
 
-        let proofs = tree.generate_all_proofs().unwrap();
+        let proofs = tree.generate_all_proofs().ok();
         let results = tree.batch_verify_proofs(&proofs);
 
         assert_eq!(results.len(), 3);
@@ -312,9 +312,9 @@ mod tests {
     fn test_verify_proof_optimized() {
         let mut tree = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"test");
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0).ok();
         let is_valid = verify_proof_optimized(proof.leaf, &proof.path, &proof.indices, tree.root);
 
         assert!(is_valid);
@@ -326,14 +326,14 @@ mod tests {
         let mut tree2 = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"test");
 
-        tree1.add_leaf(leaf).unwrap();
-        tree2.add_leaf(leaf).unwrap();
-        tree2.add_leaf(hash_blake3(b"extra")).unwrap();
+        tree1.add_leaf(leaf).ok();
+        tree2.add_leaf(leaf).ok();
+        tree2.add_leaf(hash_blake3(b"extra")).ok();
 
-        let proof = tree1.generate_proof(0).unwrap();
+        let proof = tree1.generate_proof(0).ok();
         let valid_roots = vec![tree1.root, tree2.root];
 
-        let is_valid = verify_proof_in_root_set(&proof, &valid_roots).unwrap();
+        let is_valid = verify_proof_in_root_set(&proof, &valid_roots).ok();
         assert!(is_valid);
     }
 
@@ -341,9 +341,9 @@ mod tests {
     fn test_verify_with_validator() {
         let mut tree = ZkMerkleTree::new(3);
         let leaf = hash_blake3(b"valid_prefix_data");
-        tree.add_leaf(leaf).unwrap();
+        tree.add_leaf(leaf).ok();
 
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0).ok();
 
         // Validator that checks if leaf starts with specific bytes
         let validator = |leaf_hash: [u8; 32]| {
@@ -351,7 +351,7 @@ mod tests {
             leaf_hash != [0u8; 32]
         };
 
-        let is_valid = verify_proof_with_validator(&proof, tree.root, validator).unwrap();
+        let is_valid = verify_proof_with_validator(&proof, tree.root, validator).ok();
         assert!(is_valid);
     }
 

@@ -101,7 +101,7 @@ mod tests {
             seed_commitment: None,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             last_transaction: None,
             recent_transactions: Vec::new(),
@@ -125,7 +125,7 @@ mod tests {
                 transparency_level: TransparencyLevel::Full,
                 founded_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
                 total_funds_received: 0,
                 total_funds_spent: 0,
@@ -153,7 +153,7 @@ mod tests {
             seed_commitment: None,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             last_transaction: None,
             recent_transactions: Vec::new(),
@@ -177,7 +177,7 @@ mod tests {
                 transparency_level: TransparencyLevel::Full,
                 founded_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
                 total_funds_received: 0,
                 total_funds_spent: 0,
@@ -272,7 +272,7 @@ mod tests {
             seed_commitment: None,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             last_transaction: None,
             recent_transactions: Vec::new(),
@@ -296,7 +296,7 @@ mod tests {
                 transparency_level: TransparencyLevel::Full,
                 founded_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
                 total_funds_received: 0,
                 total_funds_spent: 0,
@@ -324,7 +324,7 @@ mod tests {
             seed_commitment: None,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             last_transaction: None,
             recent_transactions: Vec::new(),
@@ -348,7 +348,7 @@ mod tests {
                 transparency_level: TransparencyLevel::Full,
                 founded_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
                 total_funds_received: 0,
                 total_funds_spent: 0,

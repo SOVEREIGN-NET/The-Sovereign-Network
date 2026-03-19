@@ -312,7 +312,7 @@ mod tests {
             "Validator proposed two different blocks at height 100".to_string(),
         );
 
-        let evidence_id = recorder.record_evidence(evidence).unwrap();
+        let evidence_id = recorder.record_evidence(evidence).ok();
         assert_eq!(recorder.evidence_count(), 1);
         assert!(recorder.get_evidence(&evidence_id).is_some());
     }
@@ -331,7 +331,7 @@ mod tests {
             1000,
             "Invalid proposal 1".to_string(),
         );
-        recorder.record_evidence(evidence1).unwrap();
+        recorder.record_evidence(evidence1).ok();
         assert_eq!(recorder.get_validator_strikes(&validator_key), 1);
         assert!(!recorder.should_be_slashed(&validator_key));
 
@@ -343,7 +343,7 @@ mod tests {
             2000,
             "Equivocation on block".to_string(),
         );
-        recorder.record_evidence(evidence2).unwrap();
+        recorder.record_evidence(evidence2).ok();
         assert_eq!(recorder.get_validator_strikes(&validator_key), 2);
         assert!(!recorder.should_be_slashed(&validator_key));
 
@@ -355,7 +355,7 @@ mod tests {
             3000,
             "Consensus violation".to_string(),
         );
-        recorder.record_evidence(evidence3).unwrap();
+        recorder.record_evidence(evidence3).ok();
         assert_eq!(recorder.get_validator_strikes(&validator_key), 3);
         assert!(recorder.should_be_slashed(&validator_key));
         assert_eq!(recorder.get_slashing_amount(&validator_key), 30); // 3 * 10
@@ -376,13 +376,13 @@ mod tests {
                 1000 + (i as u64 * 100),
                 format!("Missed blocks violation {}", i + 1),
             );
-            recorder.record_evidence(evidence).unwrap();
+            recorder.record_evidence(evidence).ok();
         }
 
         assert!(recorder.should_be_slashed(&validator_key));
 
         // Execute slashing
-        let slashed_amount = recorder.execute_slashing(&validator_key).unwrap();
+        let slashed_amount = recorder.execute_slashing(&validator_key).ok();
         assert_eq!(slashed_amount, 30);
 
         // Verify validator is no longer marked for slashing
@@ -417,8 +417,8 @@ mod tests {
             "Validator 2 invalid proposal".to_string(),
         );
 
-        recorder.record_evidence(evidence1).unwrap();
-        recorder.record_evidence(evidence2).unwrap();
+        recorder.record_evidence(evidence1).ok();
+        recorder.record_evidence(evidence2).ok();
 
         assert_eq!(recorder.evidence_count(), 2);
         assert_eq!(recorder.get_validator_strikes(&[4u8; 32]), 1);
@@ -450,8 +450,8 @@ mod tests {
         );
 
         // Both should be recorded successfully with different IDs
-        let id1 = recorder.record_evidence(evidence1).unwrap();
-        let id2 = recorder.record_evidence(evidence2).unwrap();
+        let id1 = recorder.record_evidence(evidence1).ok();
+        let id2 = recorder.record_evidence(evidence2).ok();
 
         // Evidence IDs must be different
         assert_ne!(

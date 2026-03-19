@@ -287,7 +287,7 @@ mod tests {
             device_name,
             None,
         )
-        .unwrap()
+        .ok()
     }
 
     /// Test bootstrap address validation
@@ -353,9 +353,9 @@ mod tests {
 
         // Mock a peer info (this would normally come from a real connection)
         // Generate a keypair and use its public key
-        let keypair = lib_crypto::KeyPair::generate().unwrap();
+        let keypair = lib_crypto::KeyPair::generate().ok();
         let peer_public_key = keypair.public_key;
-        let peer_node_id = NodeId::from_did_device("did:zhtp:test123", "test-device").unwrap();
+        let peer_node_id = NodeId::from_did_device("did:zhtp:test123", "test-device").ok();
 
         let peer_info = PeerInfo {
             id: peer_public_key,
@@ -381,7 +381,7 @@ mod tests {
         // Add peer to registry
         add_peer_to_registry(&peer_info, registry.clone())
             .await
-            .unwrap();
+            .ok();
 
         // Verify conservative trust settings
         // Note: from_public_key_legacy creates a derived DID, not the original peer_info.did,
@@ -390,7 +390,7 @@ mod tests {
         let peer_entry = registry_read.find_by_public_key(&peer_info.id);
 
         assert!(peer_entry.is_some());
-        let entry = peer_entry.unwrap();
+        let entry = peer_entry.ok();
 
         // Verify conservative trust score (should be 0.5, not the peer_info.reputation of 1.0)
         assert_eq!(entry.trust_score, 0.5);
@@ -479,7 +479,7 @@ async fn build_bootstrap_peer_info(
         addresses,
         last_seen: SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs(),
         reputation: 0.5,
         bandwidth_capacity: 1_000_000,

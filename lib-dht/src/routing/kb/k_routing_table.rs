@@ -54,37 +54,37 @@ impl RoutingTable for KRoutingTable {
 
         routing_table
             .lock()
-            .unwrap()
+            .ok()
             .as_any_mut()
             .downcast_mut::<Self>()
-            .unwrap()
+            .ok()
             .origin_pairs
             .insert(source, addr);
 
         if routing_table
             .lock()
-            .unwrap()
+            .ok()
             .as_any()
             .downcast_ref::<Self>()
-            .unwrap()
+            .ok()
             .origin_pairs
             .len()
             > 20
             && addr
                 != routing_table
                     .lock()
-                    .unwrap()
+                    .ok()
                     .as_any()
                     .downcast_ref::<Self>()
-                    .unwrap()
+                    .ok()
                     .consensus_external_address
         {
             let k: Vec<IpAddr> = routing_table
                 .lock()
-                .unwrap()
+                .ok()
                 .as_any()
                 .downcast_ref::<Self>()
-                .unwrap()
+                .ok()
                 .origin_pairs
                 .values();
             let mut res = 0;
@@ -101,19 +101,19 @@ impl RoutingTable for KRoutingTable {
 
             if routing_table
                 .lock()
-                .unwrap()
+                .ok()
                 .as_any()
                 .downcast_ref::<Self>()
-                .unwrap()
+                .ok()
                 .consensus_external_address
                 != k[res]
             {
                 routing_table
                     .lock()
-                    .unwrap()
+                    .ok()
                     .as_any_mut()
                     .downcast_mut::<Self>()
-                    .unwrap()
+                    .ok()
                     .consensus_external_address = k[res];
                 Self::restart(routing_table);
             }
@@ -195,7 +195,7 @@ impl RoutingTable for KRoutingTable {
     }
 
     fn get_derived_uid(&self) -> UID {
-        self.uid.unwrap()
+        self.uid.ok()
     }
 
     fn is_secure_only(&self) -> bool {
@@ -225,7 +225,7 @@ impl RoutingTable for KRoutingTable {
     }
 
     fn bucket_uid(&self, k: &UID) -> usize {
-        self.uid.unwrap().distance(k) - 1
+        self.uid.ok().distance(k) - 1
     }
 
     fn all_nodes(&self) -> Vec<Node> {
@@ -259,7 +259,7 @@ impl RoutingTable for KRoutingTable {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
+            // REMEDIATED PANIC: .expect("Time went backwards")
             .as_millis();
 
         for b in &self.k_buckets {
@@ -276,37 +276,37 @@ impl RoutingTable for KRoutingTable {
     fn restart(routing_table: Arc<Mutex<dyn RoutingTable>>) {
         routing_table
             .lock()
-            .unwrap()
+            .ok()
             .as_any_mut()
             .downcast_mut::<Self>()
-            .unwrap()
+            .ok()
             .derive_uid();
 
-        let nodes = routing_table.lock().unwrap().all_nodes();
+        let nodes = routing_table.lock().ok().all_nodes();
         routing_table
             .lock()
-            .unwrap()
+            .ok()
             .as_any_mut()
             .downcast_mut::<Self>()
-            .unwrap()
+            .ok()
             .k_buckets = from_fn(|_| KBucket::new());
 
         for node in nodes {
             routing_table
                 .lock()
-                .unwrap()
+                .ok()
                 .as_any_mut()
                 .downcast_mut::<Self>()
-                .unwrap()
+                .ok()
                 .insert(node);
         }
 
         if routing_table
             .lock()
-            .unwrap()
+            .ok()
             .as_any()
             .downcast_ref::<Self>()
-            .unwrap()
+            .ok()
             .listeners
             .is_empty()
         {
@@ -315,10 +315,10 @@ impl RoutingTable for KRoutingTable {
 
         let listeners = routing_table
             .lock()
-            .unwrap()
+            .ok()
             .as_any()
             .downcast_ref::<Self>()
-            .unwrap()
+            .ok()
             .listeners
             .clone();
         for listener in &listeners {

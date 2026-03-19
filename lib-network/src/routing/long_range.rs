@@ -594,7 +594,7 @@ impl LongRangeRoutingManager {
         }
 
         // Sort paths by quality score (highest first)
-        paths.sort_by(|a, b| b.quality_score.partial_cmp(&a.quality_score).unwrap());
+        paths.sort_by(|a, b| b.quality_score.partial_cmp(&a.quality_score).ok());
 
         Ok(paths)
     }

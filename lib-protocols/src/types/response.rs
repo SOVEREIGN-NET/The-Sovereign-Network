@@ -470,13 +470,13 @@ mod tests {
             "status": "success"
         });
 
-        let response = ZhtpResponse::json(&data, None).unwrap();
+        let response = ZhtpResponse::json(&data, None).ok();
         assert_eq!(
             response.content_type(),
             Some(&"application/json".to_string())
         );
 
-        let parsed: serde_json::Value = response.body_as_json().unwrap();
+        let parsed: serde_json::Value = response.body_as_json().ok();
         assert_eq!(parsed["message"], "Hello, World!");
     }
 
@@ -487,7 +487,7 @@ mod tests {
             text_response.content_type(),
             Some(&"text/plain; charset=utf-8".to_string())
         );
-        assert_eq!(text_response.body_as_string().unwrap(), "Hello");
+        assert_eq!(text_response.body_as_string().ok(), "Hello");
 
         let html_response = ZhtpResponse::html("<h1>Title</h1>".to_string(), None);
         assert_eq!(
@@ -503,11 +503,11 @@ mod tests {
     #[test]
     fn test_response_validation() {
         let mut response = ZhtpResponse::success(b"test".to_vec(), None);
-        assert!(response.validate_integrity().unwrap());
+        assert!(response.validate_integrity().ok());
 
         // Test content length mismatch
         response.headers.content_length = Some(100);
-        assert!(!response.validate_integrity().unwrap());
+        assert!(!response.validate_integrity().ok());
     }
 
     #[test]
@@ -519,7 +519,7 @@ mod tests {
             response.size(),
             response.body.len()
                 + response.status_message.len()
-                + serde_json::to_string(&response.headers).unwrap().len()
+                + serde_json::to_string(&response.headers).ok().len()
         );
     }
 

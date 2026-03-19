@@ -36,7 +36,7 @@ pub fn generate_identity_proof(
     // ZK proof generation logic from original
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok()
         .as_secs();
 
     // Generate proof based on requirements

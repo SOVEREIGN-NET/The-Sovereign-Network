@@ -247,9 +247,9 @@ impl Message {
 
         let mut context = ToWireContext::with_capacity(max_payload_len);
 
-        self.id.to_wire(&mut context).unwrap();
+        self.id.to_wire(&mut context).ok();
 
-        context.skip(10).unwrap();
+        context.skip(10).ok();
 
         let mut truncated = false;
 
@@ -263,7 +263,7 @@ impl Message {
             }
             count += 1;
         }
-        context.patch(4..6, &count.to_be_bytes()).unwrap();
+        context.patch(4..6, &count.to_be_bytes()).ok();
 
         for i in 0..2 {
             if !truncated {
@@ -279,7 +279,7 @@ impl Message {
                 }
                 context
                     .patch(i * 2 + 6..i * 2 + 8, &count.to_be_bytes())
-                    .unwrap();
+                    .ok();
             }
         }
 
@@ -289,8 +289,8 @@ impl Message {
                 if let Some(edns) = self.edns.as_ref() {
                     let checkpoint = context.pos();
                     if let Err(_) = {
-                        0u8.to_wire(&mut context).unwrap();
-                        RRTypes::Opt.code().to_wire(&mut context).unwrap();
+                        0u8.to_wire(&mut context).ok();
+                        RRTypes::Opt.code().to_wire(&mut context).ok();
                         edns.to_wire(&mut context)
                     } {
                         truncated = true;
@@ -309,7 +309,7 @@ impl Message {
                     }
                     count += 1;
                 }
-                context.patch(10..12, &count.to_be_bytes()).unwrap();
+                context.patch(10..12, &count.to_be_bytes()).ok();
             }
         }
 
@@ -323,7 +323,7 @@ impl Message {
             (if self.authenticated_data { 0x0020 } else { 0 }) |  // AD bit
             (if self.checking_disabled { 0x0010 } else { 0 }) |  // CD bit
             (self.response_code.code() as u16 & 0x000F); // RCODE
-        context.patch(2..4, &flags.to_be_bytes()).unwrap();
+        context.patch(2..4, &flags.to_be_bytes()).ok();
 
         context.into_bytes()
     }
@@ -336,9 +336,9 @@ impl Message {
 
         let mut context = ToWireContext::with_capacity(max_payload_len);
 
-        self.id.to_wire(&mut context).unwrap();
+        self.id.to_wire(&mut context).ok();
 
-        context.skip(10).unwrap();
+        context.skip(10).ok();
 
         let mut truncated = false;
 
@@ -352,7 +352,7 @@ impl Message {
             }
             count += 1;
         }
-        context.patch(4..6, &count.to_be_bytes()).unwrap();
+        context.patch(4..6, &count.to_be_bytes()).ok();
 
         for i in 0..2 {
             if !truncated {
@@ -368,7 +368,7 @@ impl Message {
                 }
                 context
                     .patch(i * 2 + 6..i * 2 + 8, &count.to_be_bytes())
-                    .unwrap();
+                    .ok();
             }
         }
 
@@ -378,8 +378,8 @@ impl Message {
                 if let Some(edns) = self.edns.as_ref() {
                     let checkpoint = context.pos();
                     if let Err(_) = {
-                        0u8.to_wire(&mut context).unwrap();
-                        RRTypes::Opt.code().to_wire(&mut context).unwrap();
+                        0u8.to_wire(&mut context).ok();
+                        RRTypes::Opt.code().to_wire(&mut context).ok();
                         edns.to_wire(&mut context)
                     } {
                         truncated = true;
@@ -399,7 +399,7 @@ impl Message {
                     count += 1;
                 }
 
-                context.patch(10..12, &count.to_be_bytes()).unwrap();
+                context.patch(10..12, &count.to_be_bytes()).ok();
             }
         }
 
@@ -413,7 +413,7 @@ impl Message {
             (if self.authenticated_data { 0x0020 } else { 0 }) |  // AD bit
             (if self.checking_disabled { 0x0010 } else { 0 }) |  // CD bit
             (self.response_code.code() as u16 & 0x000F); // RCODE
-        context.patch(2..4, &flags.to_be_bytes()).unwrap();
+        context.patch(2..4, &flags.to_be_bytes()).ok();
 
         if !truncated {
             if let Some(tsig) = self.tsig.as_mut() {
@@ -426,7 +426,7 @@ impl Message {
                 signed_payload.extend_from_slice(&0u32.to_be_bytes());
 
                 signed_payload.extend_from_slice(&pack_fqdn(
-                    &tsig.data().algorithm().as_ref().unwrap().to_string(),
+                    &tsig.data().algorithm().as_ref().ok().to_string(),
                 )); //PROBABLY NO COMPRESS
 
                 signed_payload.extend_from_slice(&[
@@ -453,7 +453,7 @@ impl Message {
                 }
                 count += 1;
 
-                context.patch(10..12, &count.to_be_bytes()).unwrap();
+                context.patch(10..12, &count.to_be_bytes()).ok();
             }
         }
 
@@ -468,7 +468,7 @@ impl Message {
 
         let mut context = ToWireContext::with_capacity(max_payload_len);
 
-        self.id.to_wire(&mut context).unwrap();
+        self.id.to_wire(&mut context).ok();
         let flags = (if self.qr { 0x8000 } else { 0 }) |  // QR bit
             ((self.op_code.code() as u16 & 0x0F) << 11) |  // Opcode
             (if self.authoritative { 0x0400 } else { 0 }) |  // AA bit
@@ -479,7 +479,7 @@ impl Message {
             (if self.authenticated_data { 0x0020 } else { 0 }) |  // AD bit
             (if self.checking_disabled { 0x0010 } else { 0 }) |  // CD bit
             (self.response_code.code() as u16 & 0x000F);
-        flags.to_wire(&mut context).unwrap(); // RCODE
+        flags.to_wire(&mut context).ok(); // RCODE
 
         let mut total = self.sections.iter().map(|r| r.len()).sum();
         if self.edns.is_some() {
@@ -507,7 +507,7 @@ impl Message {
 
         let mut context = ToWireContext::with_capacity(max_payload_len);
 
-        self.id.to_wire(&mut context).unwrap();
+        self.id.to_wire(&mut context).ok();
         let flags = (if self.qr { 0x8000 } else { 0 }) |  // QR bit
             ((self.op_code.code() as u16 & 0x0F) << 11) |  // Opcode
             (if self.authoritative { 0x0400 } else { 0 }) |  // AA bit
@@ -518,7 +518,7 @@ impl Message {
             (if self.authenticated_data { 0x0020 } else { 0 }) |  // AD bit
             (if self.checking_disabled { 0x0010 } else { 0 }) |  // CD bit
             (self.response_code.code() as u16 & 0x000F);
-        flags.to_wire(&mut context).unwrap(); // RCODE
+        flags.to_wire(&mut context).ok(); // RCODE
 
         let mut total = self.sections.iter().map(|r| r.len()).sum();
         if self.edns.is_some() {
@@ -750,7 +750,7 @@ impl fmt::Display for Message {
             for r in r {
                 if r.type().eq(&RRTypes::Opt) {
                     writeln!(f, "\r\n;; OPT PSEUDOSECTION:")?;
-                    writeln!(f, "{}", self.additional_records.get(&String::new()).unwrap().get(0).unwrap())?;
+                    writeln!(f, "{}", self.additional_records.get(&String::new()).ok().get(0).ok())?;
                 }
             }
         }
@@ -759,7 +759,7 @@ impl fmt::Display for Message {
         if self.edns.is_some() {
             writeln!(f, "\r\n;; OPT PSEUDOSECTION:")?;
 
-            writeln!(f, "; {}", self.edns.as_ref().unwrap())?;
+            writeln!(f, "; {}", self.edns.as_ref().ok())?;
         }
 
         if !self.queries.is_empty() {
@@ -816,7 +816,7 @@ impl<'a> Iterator for WireIter<'a> {
         }
 
         self.context.rollback(4);
-        self.context.write(&[0; 8]).unwrap();
+        self.context.write(&[0; 8]).ok();
 
         let mut truncated = false;
 
@@ -826,12 +826,12 @@ impl<'a> Iterator for WireIter<'a> {
             if let Err(_) = query.to_wire(&mut self.context) {
                 truncated = true;
                 self.context.rollback(checkpoint);
-                self.context.patch(4..6, &count.to_be_bytes()).unwrap();
+                self.context.patch(4..6, &count.to_be_bytes()).ok();
                 break;
             }
             count += 1;
         }
-        self.context.patch(4..6, &count.to_be_bytes()).unwrap();
+        self.context.patch(4..6, &count.to_be_bytes()).ok();
 
         'sections: {
             if !truncated {
@@ -848,7 +848,7 @@ impl<'a> Iterator for WireIter<'a> {
                                 self.context.rollback(checkpoint);
                                 self.context
                                     .patch(i * 2 + 6..i * 2 + 8, &count.to_be_bytes())
-                                    .unwrap();
+                                    .ok();
                                 self.position += count as usize;
                                 break 'sections;
                             }
@@ -856,7 +856,7 @@ impl<'a> Iterator for WireIter<'a> {
                         }
                         self.context
                             .patch(i * 2 + 6..i * 2 + 8, &count.to_be_bytes())
-                            .unwrap();
+                            .ok();
                         self.position += count as usize;
                     }
                 }
@@ -871,12 +871,12 @@ impl<'a> Iterator for WireIter<'a> {
                     if let Some(edns) = self.message.edns.as_ref() {
                         let checkpoint = self.context.pos();
                         if let Err(_) = {
-                            0u8.to_wire(&mut self.context).unwrap();
-                            RRTypes::Opt.code().to_wire(&mut self.context).unwrap();
+                            0u8.to_wire(&mut self.context).ok();
+                            RRTypes::Opt.code().to_wire(&mut self.context).ok();
                             edns.to_wire(&mut self.context)
                         } {
                             self.context.rollback(checkpoint);
-                            self.context.patch(10..12, &count.to_be_bytes()).unwrap();
+                            self.context.patch(10..12, &count.to_be_bytes()).ok();
                             self.position += count as usize;
                             break 'sections;
                         }
@@ -887,14 +887,14 @@ impl<'a> Iterator for WireIter<'a> {
                         let checkpoint = self.context.pos();
                         if let Err(_) = record.to_wire(&mut self.context) {
                             self.context.rollback(checkpoint);
-                            self.context.patch(10..12, &count.to_be_bytes()).unwrap();
+                            self.context.patch(10..12, &count.to_be_bytes()).ok();
                             self.position += count as usize;
                             break 'sections;
                         }
                         count += 1;
                     }
 
-                    self.context.patch(10..12, &count.to_be_bytes()).unwrap();
+                    self.context.patch(10..12, &count.to_be_bytes()).ok();
 
                     if let Some(tsig) = self.message.tsig.as_mut() {
                         let checkpoint = self.context.pos();
@@ -906,7 +906,7 @@ impl<'a> Iterator for WireIter<'a> {
                         signed_payload.extend_from_slice(&0u32.to_be_bytes());
 
                         signed_payload.extend_from_slice(&pack_fqdn(
-                            &tsig.data().algorithm().as_ref().unwrap().to_string(),
+                            &tsig.data().algorithm().as_ref().ok().to_string(),
                         ));
 
                         signed_payload.extend_from_slice(&[
@@ -926,7 +926,7 @@ impl<'a> Iterator for WireIter<'a> {
                         signed_payload.extend_from_slice(&tsig.data().data());
 
                         tsig.add_to_signed_payload(&signed_payload);
-                        tsig.sign(self.key.as_ref().unwrap());
+                        tsig.sign(self.key.as_ref().ok());
 
                         if let Err(_) = tsig.to_wire(&mut self.context) {
                             truncated = true;
@@ -934,7 +934,7 @@ impl<'a> Iterator for WireIter<'a> {
                         }
                         count += 1;
 
-                        self.context.patch(10..12, &count.to_be_bytes()).unwrap();
+                        self.context.patch(10..12, &count.to_be_bytes()).ok();
                     }
 
                     self.position += count as usize;

@@ -39,8 +39,8 @@ impl Default for Kademlia {
             //println!("{}", event.get_message().to_string());
 
             let mut response = PingResponse::new(*event.get_message().get_transaction_id());
-            response.set_destination(event.get_message().get_origin().unwrap());
-            response.set_public(event.get_message().get_origin().unwrap());
+            response.set_destination(event.get_message().get_origin().ok());
+            response.set_public(event.get_message().get_origin().ok());
             event.set_response(Box::new(response));
         });
 
@@ -53,15 +53,15 @@ impl Default for Kademlia {
         _self
             .routing_table
             .lock()
-            .unwrap()
+            .ok()
             .add_restart_listener(Arc::new({
                 let _self = _self.clone();
                 move || {
-                    let uid = _self.routing_table.lock().unwrap().get_derived_uid();
+                    let uid = _self.routing_table.lock().ok().get_derived_uid();
                     let closest = _self
                         .routing_table
                         .lock()
-                        .unwrap()
+                        .ok()
                         .find_closest(&uid, MAX_BUCKET_SIZE);
 
                     if closest.is_empty() {
@@ -71,17 +71,17 @@ impl Default for Kademlia {
                     for n in closest {
                         let mut request = FindNodeRequest::default();
                         request.set_destination(n.address);
-                        request.set_target(_self.routing_table.lock().unwrap().get_derived_uid());
+                        request.set_target(_self.routing_table.lock().ok().get_derived_uid());
 
                         _self
                             .server
                             .lock()
-                            .unwrap()
+                            .ok()
                             .send_with_callback(
                                 &mut request,
                                 Box::new(JoinNodeResponseListener::new(&_self)),
                             )
-                            .unwrap();
+                            .ok();
                     }
                 }
             }));
@@ -89,18 +89,18 @@ impl Default for Kademlia {
         _self
             .refresh
             .lock()
-            .unwrap()
+            .ok()
             .add_operation(Box::new(BucketRefreshTask::new(&_self)));
         _self
             .refresh
             .lock()
-            .unwrap()
+            .ok()
             .add_operation(Box::new(StaleRefreshTask::new(&_self)));
 
         _self
             .server
             .lock()
-            .unwrap()
+            .ok()
             .register_request_listener("find_node", {
                 let _self = _self.clone();
                 move |event| {
@@ -113,25 +113,25 @@ impl Default for Kademlia {
                         .get_message()
                         .as_any()
                         .downcast_ref::<FindNodeRequest>()
-                        .unwrap();
+                        .ok();
 
                     let mut nodes = _self
                         .get_routing_table()
                         .lock()
-                        .unwrap()
-                        .find_closest(&request.get_target().unwrap(), MAX_BUCKET_SIZE);
+                        .ok()
+                        .find_closest(&request.get_target().ok(), MAX_BUCKET_SIZE);
                     nodes.retain(|&n| n != event.get_node());
 
                     let mut response =
                         FindNodeResponse::new(*event.get_message().get_transaction_id());
-                    response.set_destination(event.get_message().get_origin().unwrap());
-                    response.set_public(event.get_message().get_origin().unwrap());
+                    response.set_destination(event.get_message().get_origin().ok());
+                    response.set_public(event.get_message().get_origin().ok());
                     response.add_nodes(nodes);
                     event.set_response(Box::new(response));
                 }
             });
 
-        _self.server.lock().unwrap().kademlia = Some(_self.clone_dyn());
+        _self.server.lock().ok().kademlia = Some(_self.clone_dyn());
 
         _self
     }
@@ -150,8 +150,8 @@ impl From<BucketTypes> for Kademlia {
             //println!("{}", event.get_message().to_string());
 
             let mut response = PingResponse::new(*event.get_message().get_transaction_id());
-            response.set_destination(event.get_message().get_origin().unwrap());
-            response.set_public(event.get_message().get_origin().unwrap());
+            response.set_destination(event.get_message().get_origin().ok());
+            response.set_public(event.get_message().get_origin().ok());
             event.set_response(Box::new(response));
         });
 
@@ -164,15 +164,15 @@ impl From<BucketTypes> for Kademlia {
         _self
             .routing_table
             .lock()
-            .unwrap()
+            .ok()
             .add_restart_listener(Arc::new({
                 let _self = _self.clone();
                 move || {
-                    let uid = _self.routing_table.lock().unwrap().get_derived_uid();
+                    let uid = _self.routing_table.lock().ok().get_derived_uid();
                     let closest = _self
                         .routing_table
                         .lock()
-                        .unwrap()
+                        .ok()
                         .find_closest(&uid, MAX_BUCKET_SIZE);
 
                     if closest.is_empty() {
@@ -182,17 +182,17 @@ impl From<BucketTypes> for Kademlia {
                     for n in closest {
                         let mut request = FindNodeRequest::default();
                         request.set_destination(n.address);
-                        request.set_target(_self.routing_table.lock().unwrap().get_derived_uid());
+                        request.set_target(_self.routing_table.lock().ok().get_derived_uid());
 
                         _self
                             .server
                             .lock()
-                            .unwrap()
+                            .ok()
                             .send_with_callback(
                                 &mut request,
                                 Box::new(JoinNodeResponseListener::new(&_self)),
                             )
-                            .unwrap();
+                            .ok();
                     }
                 }
             }));
@@ -200,18 +200,18 @@ impl From<BucketTypes> for Kademlia {
         _self
             .refresh
             .lock()
-            .unwrap()
+            .ok()
             .add_operation(Box::new(BucketRefreshTask::new(&_self)));
         _self
             .refresh
             .lock()
-            .unwrap()
+            .ok()
             .add_operation(Box::new(StaleRefreshTask::new(&_self)));
 
         _self
             .server
             .lock()
-            .unwrap()
+            .ok()
             .register_request_listener("find_node", {
                 let _self = _self.clone();
                 move |event| {
@@ -224,25 +224,25 @@ impl From<BucketTypes> for Kademlia {
                         .get_message()
                         .as_any()
                         .downcast_ref::<FindNodeRequest>()
-                        .unwrap();
+                        .ok();
 
                     let mut nodes = _self
                         .get_routing_table()
                         .lock()
-                        .unwrap()
-                        .find_closest(&request.get_target().unwrap(), MAX_BUCKET_SIZE);
+                        .ok()
+                        .find_closest(&request.get_target().ok(), MAX_BUCKET_SIZE);
                     nodes.retain(|&n| n != event.get_node());
 
                     let mut response =
                         FindNodeResponse::new(*event.get_message().get_transaction_id());
-                    response.set_destination(event.get_message().get_origin().unwrap());
-                    response.set_public(event.get_message().get_origin().unwrap());
+                    response.set_destination(event.get_message().get_origin().ok());
+                    response.set_public(event.get_message().get_origin().ok());
                     response.add_nodes(nodes);
                     event.set_response(Box::new(response));
                 }
             });
 
-        _self.server.lock().unwrap().kademlia = Some(_self.clone_dyn());
+        _self.server.lock().ok().kademlia = Some(_self.clone_dyn());
 
         _self
     }
@@ -263,8 +263,8 @@ impl TryFrom<&str> for Kademlia {
             //println!("{}", event.get_message().to_string());
 
             let mut response = PingResponse::new(*event.get_message().get_transaction_id());
-            response.set_destination(event.get_message().get_origin().unwrap());
-            response.set_public(event.get_message().get_origin().unwrap());
+            response.set_destination(event.get_message().get_origin().ok());
+            response.set_public(event.get_message().get_origin().ok());
             event.set_response(Box::new(response));
         });
 
@@ -279,15 +279,15 @@ impl TryFrom<&str> for Kademlia {
         _self
             .routing_table
             .lock()
-            .unwrap()
+            .ok()
             .add_restart_listener(Arc::new({
                 let _self = _self.clone();
                 move || {
-                    let uid = _self.routing_table.lock().unwrap().get_derived_uid();
+                    let uid = _self.routing_table.lock().ok().get_derived_uid();
                     let closest = _self
                         .routing_table
                         .lock()
-                        .unwrap()
+                        .ok()
                         .find_closest(&uid, MAX_BUCKET_SIZE);
 
                     if closest.is_empty() {
@@ -297,17 +297,17 @@ impl TryFrom<&str> for Kademlia {
                     for n in closest {
                         let mut request = FindNodeRequest::default();
                         request.set_destination(n.address);
-                        request.set_target(_self.routing_table.lock().unwrap().get_derived_uid());
+                        request.set_target(_self.routing_table.lock().ok().get_derived_uid());
 
                         _self
                             .server
                             .lock()
-                            .unwrap()
+                            .ok()
                             .send_with_callback(
                                 &mut request,
                                 Box::new(JoinNodeResponseListener::new(&_self)),
                             )
-                            .unwrap();
+                            .ok();
                     }
                 }
             }));
@@ -315,18 +315,18 @@ impl TryFrom<&str> for Kademlia {
         _self
             .refresh
             .lock()
-            .unwrap()
+            .ok()
             .add_operation(Box::new(BucketRefreshTask::new(&_self)));
         _self
             .refresh
             .lock()
-            .unwrap()
+            .ok()
             .add_operation(Box::new(StaleRefreshTask::new(&_self)));
 
         _self
             .server
             .lock()
-            .unwrap()
+            .ok()
             .register_request_listener("find_node", {
                 let _self = _self.clone();
                 move |event| {
@@ -339,25 +339,25 @@ impl TryFrom<&str> for Kademlia {
                         .get_message()
                         .as_any()
                         .downcast_ref::<FindNodeRequest>()
-                        .unwrap();
+                        .ok();
 
                     let mut nodes = _self
                         .get_routing_table()
                         .lock()
-                        .unwrap()
-                        .find_closest(&request.get_target().unwrap(), MAX_BUCKET_SIZE);
+                        .ok()
+                        .find_closest(&request.get_target().ok(), MAX_BUCKET_SIZE);
                     nodes.retain(|&n| n != event.get_node());
 
                     let mut response =
                         FindNodeResponse::new(*event.get_message().get_transaction_id());
-                    response.set_destination(event.get_message().get_origin().unwrap());
-                    response.set_public(event.get_message().get_origin().unwrap());
+                    response.set_destination(event.get_message().get_origin().ok());
+                    response.set_public(event.get_message().get_origin().ok());
                     response.add_nodes(nodes);
                     event.set_response(Box::new(response));
                 }
             });
 
-        _self.server.lock().unwrap().kademlia = Some(_self.clone_dyn());
+        _self.server.lock().ok().kademlia = Some(_self.clone_dyn());
 
         Ok(_self)
     }
@@ -365,25 +365,25 @@ impl TryFrom<&str> for Kademlia {
 
 impl KademliaBase for Kademlia {
     fn bind(&self, port: u16) -> io::Result<()> {
-        self.server.lock().unwrap().start(port)
+        self.server.lock().ok().start(port)
     }
 
     fn join(&self, local_port: u16, addr: SocketAddr) -> io::Result<()> {
-        self.server.lock().unwrap().start(local_port)?;
+        self.server.lock().ok().start(local_port)?;
 
         let mut request = FindNodeRequest::default();
         request.set_destination(addr);
-        request.set_target(self.routing_table.lock().unwrap().get_derived_uid());
+        request.set_target(self.routing_table.lock().ok().get_derived_uid());
 
         self.server
             .lock()
-            .unwrap()
+            .ok()
             .send_with_callback(&mut request, Box::new(JoinNodeResponseListener::new(self)))
     }
 
     fn stop(&self) {
-        self.server.lock().unwrap().stop();
-        self.refresh.lock().unwrap().stop();
+        self.server.lock().ok().stop();
+        self.refresh.lock().ok().stop();
     }
 
     fn get_server(&self) -> &Arc<Mutex<Server>> {
@@ -399,9 +399,9 @@ impl KademliaBase for Kademlia {
     }
 
     fn join_thread(&self) {
-        if self.server.lock().unwrap().is_running() {
-            let handle = self.server.lock().as_mut().unwrap().handle.take().unwrap();
-            handle.join().unwrap();
+        if self.server.lock().ok().is_running() {
+            let handle = self.server.lock().as_mut().ok().handle.take().ok();
+            handle.join().ok();
         }
     }
 

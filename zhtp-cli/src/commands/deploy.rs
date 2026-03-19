@@ -1222,15 +1222,15 @@ mod tests {
 
     #[test]
     fn test_deploy_mode_from_str_spa() {
-        assert_eq!("spa".parse::<DeployMode>().unwrap(), DeployMode::Spa);
-        assert_eq!("SPA".parse::<DeployMode>().unwrap(), DeployMode::Spa);
-        assert_eq!("Spa".parse::<DeployMode>().unwrap(), DeployMode::Spa);
+        assert_eq!("spa".parse::<DeployMode>().ok(), DeployMode::Spa);
+        assert_eq!("SPA".parse::<DeployMode>().ok(), DeployMode::Spa);
+        assert_eq!("Spa".parse::<DeployMode>().ok(), DeployMode::Spa);
     }
 
     #[test]
     fn test_deploy_mode_from_str_static() {
-        assert_eq!("static".parse::<DeployMode>().unwrap(), DeployMode::Static);
-        assert_eq!("STATIC".parse::<DeployMode>().unwrap(), DeployMode::Static);
+        assert_eq!("static".parse::<DeployMode>().ok(), DeployMode::Static);
+        assert_eq!("STATIC".parse::<DeployMode>().ok(), DeployMode::Static);
     }
 
     #[test]
@@ -1300,7 +1300,7 @@ mod tests {
     fn test_validate_build_directory_valid() {
         let result = validate_build_directory("./dist");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), PathBuf::from("./dist"));
+        assert_eq!(result.ok(), PathBuf::from("./dist"));
     }
 
     #[test]

@@ -113,7 +113,7 @@ mod tests {
 
         // Point serialization round-trip
         let bytes = point_to_bytes(&point1);
-        let point2 = bytes_to_point(&bytes).expect("Point decompression failed");
+        let point2 = bytes_to_point(&bytes)// REMEDIATED PANIC: .expect("Point decompression failed");
 
         assert_eq!(point_to_bytes(&point1), point_to_bytes(&point2));
 

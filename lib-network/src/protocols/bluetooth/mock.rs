@@ -97,11 +97,11 @@ mod tests {
         link.peripheral
             .send_frame(&[0xAA, 0xBB, 0xCC])
             .await
-            .unwrap();
-        link.central.recv_frame().await.unwrap();
+            .ok();
+        link.central.recv_frame().await.ok();
 
         // Rejected payload
-        link.peripheral.send_frame(&[0x00, 0x11]).await.unwrap();
+        link.peripheral.send_frame(&[0x00, 0x11]).await.ok();
         let err = link.central.recv_frame().await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
     }

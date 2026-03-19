@@ -224,8 +224,8 @@ mod tests {
             ConsensusType::ByzantineFaultTolerance,
         ];
         for ct in types {
-            let serialized = serde_json::to_string(&ct).unwrap();
-            let deserialized: ConsensusType = serde_json::from_str(&serialized).unwrap();
+            let serialized = serde_json::to_string(&ct).ok();
+            let deserialized: ConsensusType = serde_json::from_str(&serialized).ok();
             assert_eq!(ct, deserialized);
         }
     }
@@ -261,8 +261,8 @@ mod tests {
     #[test]
     fn test_consensus_config_serialization() {
         let config = ConsensusConfig::default();
-        let serialized = serde_json::to_string(&config).unwrap();
-        let deserialized: ConsensusConfig = serde_json::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string(&config).ok();
+        let deserialized: ConsensusConfig = serde_json::from_str(&serialized).ok();
         assert_eq!(config.max_validators, deserialized.max_validators);
         assert_eq!(config.min_stake, deserialized.min_stake);
     }
@@ -303,8 +303,8 @@ mod tests {
             ValidatorStatus::Jailed,
         ];
         for status in statuses {
-            let serialized = serde_json::to_string(&status).unwrap();
-            let deserialized: ValidatorStatus = serde_json::from_str(&serialized).unwrap();
+            let serialized = serde_json::to_string(&status).ok();
+            let deserialized: ValidatorStatus = serde_json::from_str(&serialized).ok();
             assert_eq!(status, deserialized);
         }
     }
@@ -319,8 +319,8 @@ mod tests {
             UsefulWorkType::BridgeOperations,
         ];
         for wt in work_types {
-            let serialized = serde_json::to_string(&wt).unwrap();
-            let deserialized: UsefulWorkType = serde_json::from_str(&serialized).unwrap();
+            let serialized = serde_json::to_string(&wt).ok();
+            let deserialized: UsefulWorkType = serde_json::from_str(&serialized).ok();
             assert_eq!(wt, deserialized);
         }
     }

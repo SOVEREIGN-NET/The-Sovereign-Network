@@ -116,8 +116,8 @@ mod tests {
     #[test]
     fn test_contract_type_serialization() {
         let contract_type = ContractType::Token;
-        let serialized = bincode::serialize(&contract_type).unwrap();
-        let deserialized: ContractType = bincode::deserialize(&serialized).unwrap();
+        let serialized = bincode::serialize(&contract_type).ok();
+        let deserialized: ContractType = bincode::deserialize(&serialized).ok();
         assert_eq!(contract_type, deserialized);
     }
 }

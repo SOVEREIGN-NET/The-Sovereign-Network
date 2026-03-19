@@ -147,15 +147,15 @@ mod tests {
     #[test]
     fn test_config_profile_from_str() {
         assert_eq!(
-            ConfigProfile::from_str("dev").unwrap(),
+            ConfigProfile::from_str("dev").ok(),
             ConfigProfile::Development
         );
         assert_eq!(
-            ConfigProfile::from_str("staging").unwrap(),
+            ConfigProfile::from_str("staging").ok(),
             ConfigProfile::Staging
         );
         assert_eq!(
-            ConfigProfile::from_str("prod").unwrap(),
+            ConfigProfile::from_str("prod").ok(),
             ConfigProfile::Production
         );
     }
@@ -235,7 +235,7 @@ mod tests {
     fn test_build_server_config() {
         let config = build_server_config("localhost", 8080, false);
         assert!(config.is_ok());
-        let cfg = config.unwrap();
+        let cfg = config.ok();
         assert_eq!(cfg.address, "localhost");
         assert_eq!(cfg.port, 8080);
     }

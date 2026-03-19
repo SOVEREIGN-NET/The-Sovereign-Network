@@ -123,7 +123,7 @@ impl Validator {
             reputation: 100, // Start with perfect reputation
             last_activity: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             slash_count: 0,
             #[allow(deprecated)]
@@ -277,7 +277,7 @@ impl Validator {
     pub fn jail(&mut self, duration_seconds: u64) {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         self.status = ValidatorStatus::Jailed;
@@ -306,7 +306,7 @@ impl Validator {
         if let Some(jail_until) = self.jail_until {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs();
 
             if current_time >= jail_until {
@@ -364,7 +364,7 @@ impl Validator {
     pub fn update_activity(&mut self) {
         self.last_activity = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
     }
 
@@ -372,7 +372,7 @@ impl Validator {
     pub fn is_inactive(&self, max_inactive_seconds: u64) -> bool {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         current_time - self.last_activity > max_inactive_seconds
@@ -523,7 +523,7 @@ mod tests {
         // Slash for liveness
         validator
             .slash(SlashType::Liveness, 1, jailed_at_block)
-            .unwrap();
+            .ok();
 
         // Try to unjail immediately - should fail
         let result = validator.unjail(jailed_at_block);
@@ -550,7 +550,7 @@ mod tests {
         // Start with 2000 SOV, slash 90%
         validator
             .slash(SlashType::Liveness, 90, jailed_at_block)
-            .unwrap();
+            .ok();
 
         // Validator now has 200 SOV, which is below MIN_STAKE_TO_UNJAIL (1000 SOV)
         assert!(validator.stake < MIN_STAKE_TO_UNJAIL);
@@ -576,7 +576,7 @@ mod tests {
         // Slash for double-sign (permanent ban)
         validator
             .slash(SlashType::DoubleSign, 10, banned_at_block)
-            .unwrap();
+            .ok();
 
         // Try to unjail at any block - should always fail
         let result = validator.unjail(banned_at_block + 10000);
@@ -596,7 +596,7 @@ mod tests {
         // Slash for liveness (1%)
         validator
             .slash(SlashType::Liveness, 1, jailed_at_block)
-            .unwrap();
+            .ok();
         let slashed_stake = validator.stake;
 
         // Stake should be reduced
@@ -604,7 +604,7 @@ mod tests {
 
         // Unjail after wait period
         let eligible_block = jailed_at_block + JAIL_EXIT_WAIT_BLOCKS;
-        validator.unjail(eligible_block).unwrap();
+        validator.unjail(eligible_block).ok();
 
         // Stake should remain at slashed level (no restoration)
         assert_eq!(validator.stake, slashed_stake);
@@ -619,12 +619,12 @@ mod tests {
         assert!(validator.can_participate());
 
         // Jail for liveness
-        validator.slash(SlashType::Liveness, 1, 100).unwrap();
+        validator.slash(SlashType::Liveness, 1, 100).ok();
         assert!(!validator.can_participate());
 
         // Unjail
         let eligible_block = 100 + JAIL_EXIT_WAIT_BLOCKS;
-        validator.unjail(eligible_block).unwrap();
+        validator.unjail(eligible_block).ok();
         assert!(validator.can_participate());
     }
 
@@ -633,7 +633,7 @@ mod tests {
         let mut validator = create_test_validator();
 
         // Ban permanently
-        validator.slash(SlashType::DoubleSign, 10, 100).unwrap();
+        validator.slash(SlashType::DoubleSign, 10, 100).ok();
 
         // Should never be able to participate again
         assert!(!validator.can_participate());

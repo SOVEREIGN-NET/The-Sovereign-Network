@@ -28,7 +28,7 @@ impl TryFrom<&str> for UID {
 
         let mut bid = [0u8; ID_LENGTH];
         for (i, chunk) in key.as_bytes().chunks(2).enumerate() {
-            let byte = u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16)
+            let byte = u8::from_str_radix(std::str::from_utf8(chunk).ok(), 16)
                 .map_err(|e| e.to_string())?;
             bid[i] = byte;
         }

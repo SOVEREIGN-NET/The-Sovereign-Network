@@ -79,7 +79,7 @@ pub fn setup_privacy_credentials(
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .ok()
         .as_secs();
 
     // Setup age verification credential
@@ -95,7 +95,7 @@ pub fn setup_privacy_credentials(
         });
 
         // Update identity age
-        identity.age = Some(age.try_into().unwrap());
+        identity.age = Some(age.try_into().ok());
     }
 
     // Setup biometric credential

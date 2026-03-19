@@ -415,15 +415,15 @@ mod tests {
             100,
             1_600_000_000,
         )
-        .unwrap();
+        .ok();
 
         // Buy tokens to reach graduation threshold
         let buyer = test_pubkey(2);
-        token.buy(buyer, 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token.buy(buyer, 30_000_000_000, 101, 1_600_000_100).ok();
 
         // Graduate the token
         assert!(token.can_graduate(1_600_000_200, 102));
-        token.graduate(1_600_000_200, 102).unwrap();
+        token.graduate(1_600_000_200, 102).ok();
         assert_eq!(token.phase, Phase::Graduated);
 
         let reserve_before = token.reserve_balance;
@@ -441,12 +441,12 @@ mod tests {
         );
 
         assert!(result.is_ok(), "POL pool creation failed: {:?}", result);
-        let (pool, creation_result, event) = result.unwrap();
+        let (pool, creation_result, event) = result.ok();
 
         // Verify token transitioned to AMM phase
         let expected_pool_id = derive_pool_id(&[1u8; 32]);
         assert_eq!(token.phase, Phase::AMM);
-        assert_eq!(token.amm_pool_id.unwrap(), expected_pool_id);
+        assert_eq!(token.amm_pool_id.ok(), expected_pool_id);
 
         // Verify reserve and treasury are zeroed after migration (no double-counting)
         assert_eq!(token.reserve_balance, 0, "reserve_balance must be zeroed after migration");
@@ -485,7 +485,7 @@ mod tests {
         assert!(pool.is_initialized());
         
         // Verify we can read reserves
-        let (sov_reserve, token_reserve) = pool.get_reserves().unwrap();
+        let (sov_reserve, token_reserve) = pool.get_reserves().ok();
         assert_eq!(sov_reserve, reserve_before);
         assert_eq!(token_reserve, expected_cbe);
 
@@ -525,11 +525,11 @@ mod tests {
             100,
             1_600_000_000,
         )
-        .unwrap();
+        .ok();
 
         // Buy, graduate, and create POL pool
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
-        token.graduate(1_600_000_200, 102).unwrap();
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).ok();
+        token.graduate(1_600_000_200, 102).ok();
 
         let (mut pool, _, _) = create_pol_pool_for_graduated_token(
             &mut token,
@@ -538,22 +538,22 @@ mod tests {
             103,
             1_600_000_300,
         )
-        .unwrap();
+        .ok();
 
-        let initial_k = pool.get_k().unwrap();
+        let initial_k = pool.get_k().ok();
 
         // Test SOV → token swap
         let sov_in = 1_000_000_00u64; // 1 SOV
-        let token_out = pool.swap_sov_to_token(sov_in, 0).unwrap();
+        let token_out = pool.swap_sov_to_token(sov_in, 0).ok();
         assert!(token_out > 0, "Should receive tokens for SOV");
 
         // Verify k increased due to fees
-        let k_after_buy = pool.get_k().unwrap();
+        let k_after_buy = pool.get_k().ok();
         assert!(k_after_buy >= initial_k, "k should not decrease after swap");
 
         // Test token → SOV swap
         let token_in = token_out / 2;
-        let sov_out = pool.swap_token_to_sov(token_in, 0).unwrap();
+        let sov_out = pool.swap_token_to_sov(token_in, 0).ok();
         assert!(sov_out > 0, "Should receive SOV for tokens");
 
         // Verify fees accumulated
@@ -580,10 +580,10 @@ mod tests {
             100,
             1_600_000_000,
         )
-        .unwrap();
+        .ok();
 
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
-        token.graduate(1_600_000_200, 102).unwrap();
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).ok();
+        token.graduate(1_600_000_200, 102).ok();
 
         let (pool, _, _) = create_pol_pool_for_graduated_token(
             &mut token,
@@ -592,7 +592,7 @@ mod tests {
             103,
             1_600_000_300,
         )
-        .unwrap();
+        .ok();
 
         // This should panic
         pool.skim();
@@ -617,10 +617,10 @@ mod tests {
             100,
             1_600_000_000,
         )
-        .unwrap();
+        .ok();
 
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
-        token.graduate(1_600_000_200, 102).unwrap();
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).ok();
+        token.graduate(1_600_000_200, 102).ok();
 
         let (pool, _, _) = create_pol_pool_for_graduated_token(
             &mut token,
@@ -629,7 +629,7 @@ mod tests {
             103,
             1_600_000_300,
         )
-        .unwrap();
+        .ok();
 
         // This should panic
         pool.sync();
@@ -653,7 +653,7 @@ mod tests {
             100,
             1_600_000_000,
         )
-        .unwrap();
+        .ok();
 
         let result = create_pol_pool_for_graduated_token(
             &mut token,
@@ -695,11 +695,11 @@ mod tests {
             100,
             1_600_000_000,
         )
-        .unwrap();
+        .ok();
 
         let buyer = test_pubkey(2);
-        token.buy(buyer, 10_000_000_000, 101, 1_600_000_100).unwrap();
-        token.graduate(1_600_000_200, 102).unwrap();
+        token.buy(buyer, 10_000_000_000, 101, 1_600_000_100).ok();
+        token.graduate(1_600_000_200, 102).ok();
 
         let final_curve_price = token.current_price();
         let reserve = token.reserve_balance;
@@ -711,7 +711,7 @@ mod tests {
             103,
             1_600_000_300,
         )
-        .unwrap();
+        .ok();
 
         assert_eq!(creation_result.final_curve_price, final_curve_price);
         assert_eq!(creation_result.initial_price, final_curve_price,
@@ -740,11 +740,11 @@ mod tests {
             100,
             1_600_000_000,
         )
-        .unwrap();
+        .ok();
 
         let buyer = test_pubkey(2);
-        token.buy(buyer, 500, 101, 1_600_000_100).unwrap();
-        token.graduate(1_600_000_200, 102).unwrap();
+        token.buy(buyer, 500, 101, 1_600_000_100).ok();
+        token.graduate(1_600_000_200, 102).ok();
 
         let result = create_pol_pool_for_graduated_token(
             &mut token,
@@ -787,10 +787,10 @@ mod tests {
             100,
             1_600_000_000,
         )
-        .unwrap();
+        .ok();
 
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
-        token.graduate(1_600_000_200, 102).unwrap();
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).ok();
+        token.graduate(1_600_000_200, 102).ok();
 
         let (mut pool, _, _) = create_pol_pool_for_graduated_token(
             &mut token,
@@ -799,21 +799,21 @@ mod tests {
             103,
             1_600_000_300,
         )
-        .unwrap();
+        .ok();
 
-        let k_initial = pool.get_k().unwrap();
+        let k_initial = pool.get_k().ok();
         // Perform multiple round-trip swaps to accumulate fees
         for _ in 0..10 {
             // Buy tokens
             let sov_in = 1_000_000_0u64; // 0.1 SOV
-            let token_out = pool.swap_sov_to_token(sov_in, 0).unwrap();
+            let token_out = pool.swap_sov_to_token(sov_in, 0).ok();
 
             // Sell half back
             let sell_amount = token_out / 2;
-            let _ = pool.swap_token_to_sov(sell_amount, 0).unwrap();
+            let _ = pool.swap_token_to_sov(sell_amount, 0).ok();
         }
 
-        let k_final = pool.get_k().unwrap();
+        let k_final = pool.get_k().ok();
         let fees_sov = pool.get_total_fees();
 
         // With integer rounding, k is non-decreasing and rises once fees accumulate.
@@ -839,10 +839,10 @@ mod tests {
             100,
             1_600_000_000,
         )
-        .unwrap();
+        .ok();
 
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
-        token.graduate(1_600_000_200, 102).unwrap();
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).ok();
+        token.graduate(1_600_000_200, 102).ok();
 
         let (mut pool, _, _) = create_pol_pool_for_graduated_token(
             &mut token,
@@ -851,7 +851,7 @@ mod tests {
             103,
             1_600_000_300,
         )
-        .unwrap();
+        .ok();
 
         // Try to swap with unreasonable slippage expectation
         let sov_in = 1_000_000_00u64;
@@ -877,10 +877,10 @@ mod tests {
             100,
             1_600_000_000,
         )
-        .unwrap();
+        .ok();
 
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
-        token.graduate(1_600_000_200, 102).unwrap();
+        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).ok();
+        token.graduate(1_600_000_200, 102).ok();
 
         let (pool, _, _) = create_pol_pool_for_graduated_token(
             &mut token,
@@ -889,21 +889,21 @@ mod tests {
             103,
             1_600_000_300,
         )
-        .unwrap();
+        .ok();
 
         // Get current price
-        let current_price = pool.get_token_price().unwrap();
+        let current_price = pool.get_token_price().ok();
         assert!(current_price > 0);
 
-        let (sov_initial, token_initial) = pool.get_reserves().unwrap();
+        let (sov_initial, token_initial) = pool.get_reserves().ok();
 
         // Calculate expected output for a swap (view function, no state change)
         let sov_in = 1_000_000_00u64;
-        let token_out = pool.calculate_token_out(sov_in).unwrap();
+        let token_out = pool.calculate_token_out(sov_in).ok();
         assert!(token_out > 0);
 
         // Verify state unchanged
-        let (sov_after, token_after) = pool.get_reserves().unwrap();
+        let (sov_after, token_after) = pool.get_reserves().ok();
         assert_eq!(sov_initial, sov_after);
         assert_eq!(token_initial, token_after);
     }

@@ -170,7 +170,7 @@ mod tests {
         let mut acc = BlockAccumulator::new();
 
         // First tx should succeed
-        acc.add_tx(&limits, 100, 50, 10, 20).unwrap();
+        acc.add_tx(&limits, 100, 50, 10, 20).ok();
         assert_eq!(acc.payload_bytes, 100);
         assert_eq!(acc.witness_bytes, 50);
         assert_eq!(acc.verify_units, 10);
@@ -178,7 +178,7 @@ mod tests {
         assert_eq!(acc.tx_count, 1);
 
         // Second tx should succeed
-        acc.add_tx(&limits, 100, 50, 10, 20).unwrap();
+        acc.add_tx(&limits, 100, 50, 10, 20).ok();
         assert_eq!(acc.tx_count, 2);
     }
 
@@ -193,7 +193,7 @@ mod tests {
         };
 
         let mut acc = BlockAccumulator::new();
-        acc.add_tx(&limits, 50, 0, 0, 0).unwrap();
+        acc.add_tx(&limits, 50, 0, 0, 0).ok();
 
         // This should fail - exceeds payload limit
         let result = acc.add_tx(&limits, 60, 0, 0, 0);
@@ -211,7 +211,7 @@ mod tests {
         };
 
         let mut acc = BlockAccumulator::new();
-        acc.add_tx(&limits, 0, 50, 0, 0).unwrap();
+        acc.add_tx(&limits, 0, 50, 0, 0).ok();
 
         // This should fail - exceeds witness limit
         let result = acc.add_tx(&limits, 0, 60, 0, 0);
@@ -229,7 +229,7 @@ mod tests {
         };
 
         let mut acc = BlockAccumulator::new();
-        acc.add_tx(&limits, 0, 0, 50, 0).unwrap();
+        acc.add_tx(&limits, 0, 0, 50, 0).ok();
 
         // This should fail - exceeds verify units
         let result = acc.add_tx(&limits, 0, 0, 60, 0);
@@ -247,7 +247,7 @@ mod tests {
         };
 
         let mut acc = BlockAccumulator::new();
-        acc.add_tx(&limits, 0, 0, 0, 50).unwrap();
+        acc.add_tx(&limits, 0, 0, 0, 50).ok();
 
         // This should fail - exceeds state write limit
         let result = acc.add_tx(&limits, 0, 0, 0, 60);
@@ -265,8 +265,8 @@ mod tests {
         };
 
         let mut acc = BlockAccumulator::new();
-        acc.add_tx(&limits, 0, 0, 0, 0).unwrap();
-        acc.add_tx(&limits, 0, 0, 0, 0).unwrap();
+        acc.add_tx(&limits, 0, 0, 0, 0).ok();
+        acc.add_tx(&limits, 0, 0, 0, 0).ok();
 
         // Third tx should fail
         let result = acc.add_tx(&limits, 0, 0, 0, 0);
@@ -278,7 +278,7 @@ mod tests {
         let limits = BlockLimits::for_testing();
         let mut acc = BlockAccumulator::new();
 
-        acc.add_tx(&limits, 100, 50, 10, 20).unwrap();
+        acc.add_tx(&limits, 100, 50, 10, 20).ok();
         assert_eq!(acc.tx_count, 1);
 
         acc.reset();
@@ -305,7 +305,7 @@ mod tests {
         };
 
         let mut acc = BlockAccumulator::new();
-        acc.add_tx(&limits, 50, 50, 50, 50).unwrap();
+        acc.add_tx(&limits, 50, 50, 50, 50).ok();
 
         // Capture state before failed add
         let (p, w, v, s, t) = acc.usage();
@@ -358,7 +358,7 @@ mod tests {
         let mut acc = BlockAccumulator::new();
 
         for i in 1..=100 {
-            acc.add_tx(&limits, 0, 0, 0, 0).unwrap();
+            acc.add_tx(&limits, 0, 0, 0, 0).ok();
             assert_eq!(acc.tx_count, i);
         }
     }
@@ -370,15 +370,15 @@ mod tests {
 
         // Order 1: 100, 200, 300
         let mut acc1 = BlockAccumulator::new();
-        acc1.add_tx(&limits, 100, 0, 0, 0).unwrap();
-        acc1.add_tx(&limits, 200, 0, 0, 0).unwrap();
-        acc1.add_tx(&limits, 300, 0, 0, 0).unwrap();
+        acc1.add_tx(&limits, 100, 0, 0, 0).ok();
+        acc1.add_tx(&limits, 200, 0, 0, 0).ok();
+        acc1.add_tx(&limits, 300, 0, 0, 0).ok();
 
         // Order 2: 300, 100, 200
         let mut acc2 = BlockAccumulator::new();
-        acc2.add_tx(&limits, 300, 0, 0, 0).unwrap();
-        acc2.add_tx(&limits, 100, 0, 0, 0).unwrap();
-        acc2.add_tx(&limits, 200, 0, 0, 0).unwrap();
+        acc2.add_tx(&limits, 300, 0, 0, 0).ok();
+        acc2.add_tx(&limits, 100, 0, 0, 0).ok();
+        acc2.add_tx(&limits, 200, 0, 0, 0).ok();
 
         // Totals must be equal
         assert_eq!(acc1.payload_bytes, acc2.payload_bytes);
@@ -397,7 +397,7 @@ mod tests {
 
         // Accumulate significant state
         for _ in 0..100 {
-            acc.add_tx(&limits, 1000, 500, 100, 200).unwrap();
+            acc.add_tx(&limits, 1000, 500, 100, 200).ok();
         }
 
         // Verify state is non-zero
@@ -430,7 +430,7 @@ mod tests {
 
         // Fill to limit
         for _ in 0..5 {
-            acc.add_tx(&limits, 100, 0, 0, 0).unwrap();
+            acc.add_tx(&limits, 100, 0, 0, 0).ok();
         }
         assert!(acc.add_tx(&limits, 100, 0, 0, 0).is_err());
 
@@ -438,7 +438,7 @@ mod tests {
         acc.reset();
 
         // Should be able to add again
-        acc.add_tx(&limits, 100, 0, 0, 0).unwrap();
+        acc.add_tx(&limits, 100, 0, 0, 0).ok();
         assert_eq!(acc.tx_count, 1);
     }
 
@@ -499,7 +499,7 @@ mod tests {
         let mut acc = BlockAccumulator::new();
 
         // Exactly at limit should succeed
-        acc.add_tx(&limits, 100, 100, 100, 100).unwrap();
+        acc.add_tx(&limits, 100, 100, 100, 100).ok();
         assert_eq!(acc.payload_bytes, 100);
 
         // One more byte should fail

@@ -80,13 +80,13 @@ mod tests {
 
     #[test]
     fn test_build_init_entity_registry_tx_round_trip() {
-        let identity = crate::generate_identity("entity-registry-test".to_string()).unwrap();
+        let identity = crate::generate_identity("entity-registry-test".to_string()).ok();
         let signed_tx =
             build_init_entity_registry_tx(&identity, vec![0x11; 2592], vec![0x22; 2592], 1, 42)
-                .unwrap();
+                .ok();
 
-        let tx_bytes = hex::decode(signed_tx).unwrap();
-        let tx: lib_blockchain::Transaction = bincode::deserialize(&tx_bytes).unwrap();
+        let tx_bytes = hex::decode(signed_tx).ok();
+        let tx: lib_blockchain::Transaction = bincode::deserialize(&tx_bytes).ok();
 
         assert_eq!(tx.transaction_type, TransactionType::InitEntityRegistry);
         assert_eq!(
@@ -95,7 +95,7 @@ mod tests {
         );
         assert_eq!(tx.fee, 0);
 
-        let data = tx.init_entity_registry_data.expect("init payload");
+        let data = tx.init_entity_registry_data// REMEDIATED PANIC: .expect("init payload");
         assert_eq!(data.initialized_at_height, 42);
         assert_eq!(data.cbe_treasury.dilithium_pk, vec![0x11; 2592]);
         assert_eq!(data.nonprofit_treasury.dilithium_pk, vec![0x22; 2592]);

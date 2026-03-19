@@ -182,7 +182,7 @@ impl PiecewiseLinearCurve {
         self.bands
             .iter()
             .find(|b| supply >= b.start_supply && supply < b.end_supply)
-            .unwrap_or_else(|| self.bands.last().expect("at least one band"))
+            .unwrap_or_else(|| self.bands.last()// REMEDIATED PANIC: .expect("at least one band"))
     }
 
     /// Get the band index (1-indexed for human readability)

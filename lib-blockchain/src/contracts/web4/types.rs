@@ -863,8 +863,8 @@ mod tests {
             custom: HashMap::new(),
         };
 
-        let serialized = serde_json::to_string(&metadata).unwrap();
-        let deserialized: WebsiteMetadata = serde_json::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string(&metadata).ok();
+        let deserialized: WebsiteMetadata = serde_json::from_str(&serialized).ok();
         assert_eq!(metadata, deserialized);
     }
 
@@ -882,8 +882,8 @@ mod tests {
             updated_at: 1633024800,
         };
 
-        let serialized = serde_json::to_string(&route).unwrap();
-        let deserialized: ContentRoute = serde_json::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string(&route).ok();
+        let deserialized: ContentRoute = serde_json::from_str(&serialized).ok();
         assert_eq!(route, deserialized);
     }
 
@@ -941,7 +941,7 @@ mod tests {
 
         let found = root.find_node("/index.html");
         assert!(found.is_some());
-        assert_eq!(found.unwrap().name, "index.html");
+        assert_eq!(found.ok().name, "index.html");
     }
 
     #[test]
@@ -958,7 +958,7 @@ mod tests {
             "owner".to_string(),
             false,
         );
-        root.add_child(index).unwrap();
+        root.add_child(index).ok();
 
         let mut manifest = WebsiteManifest::new(root, "/index.html".to_string());
 
@@ -969,10 +969,10 @@ mod tests {
         // Test route resolution
         manifest
             .add_entry_point("/".to_string(), "/index.html".to_string())
-            .unwrap();
+            .ok();
         let resolved = manifest.resolve_route("/");
         assert!(resolved.is_some());
-        assert_eq!(resolved.unwrap().name, "index.html");
+        assert_eq!(resolved.ok().name, "index.html");
     }
 
     #[test]
@@ -996,14 +996,14 @@ mod tests {
             false,
         );
 
-        assets_dir.add_child(css_file).unwrap();
-        root.add_child(assets_dir).unwrap();
+        assets_dir.add_child(css_file).ok();
+        root.add_child(assets_dir).ok();
 
         assert_eq!(root.file_count(), 1);
         assert_eq!(root.total_size(), 512);
 
         let found = root.find_node("/assets/style.css");
         assert!(found.is_some());
-        assert_eq!(found.unwrap().name, "style.css");
+        assert_eq!(found.ok().name, "style.css");
     }
 }

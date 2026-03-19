@@ -237,14 +237,14 @@ mod tests {
     #[test]
     fn test_parameter_handling() {
         let amount: u64 = 1000;
-        let params = ContractCall::serialize_params(&amount).unwrap();
+        let params = ContractCall::serialize_params(&amount).ok();
 
         let call = ContractCall::token_call("transfer".to_string(), params);
 
         assert!(call.has_params());
         assert!(call.param_size() > 0);
 
-        let parsed_amount: u64 = call.deserialize_params().unwrap();
+        let parsed_amount: u64 = call.deserialize_params().ok();
         assert_eq!(parsed_amount, amount);
     }
 

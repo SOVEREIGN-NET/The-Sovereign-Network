@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn test_sandbox_execution() {
         let config = SandboxConfig::standard();
-        let mut sandbox = ContractSandbox::new(config).unwrap();
+        let mut sandbox = ContractSandbox::new(config).ok();
 
         let exec_id = "test_execution".to_string();
 
@@ -442,7 +442,7 @@ mod tests {
         assert!(sandbox.track_function_call(&exec_id, 5).is_ok());
 
         // End execution
-        let report = sandbox.end_execution(&exec_id).unwrap();
+        let report = sandbox.end_execution(&exec_id).ok();
         assert_eq!(report.storage_ops, 1);
         assert_eq!(report.events_emitted, 1);
         assert_eq!(report.function_calls, 1);

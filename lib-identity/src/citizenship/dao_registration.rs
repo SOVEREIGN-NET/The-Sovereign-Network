@@ -114,7 +114,7 @@ impl DaoRegistration {
     pub fn registration_age_seconds(&self) -> u64 {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
         now.saturating_sub(self.registered_at)
     }

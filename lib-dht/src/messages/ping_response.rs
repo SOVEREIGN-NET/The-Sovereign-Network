@@ -95,8 +95,8 @@ impl MessageBase for PingResponse {
 
         ben.put(self.get_type().inner_key(), BencodeObject::new());
         ben.get_mut::<BencodeObject>(self.get_type().inner_key())
-            .unwrap()
-            .put("id", self.uid.unwrap().bytes().clone());
+            .ok()
+            .put("id", self.uid.ok().bytes().clone());
 
         if let Some(public) = self.public {
             ben.put("ip", pack_address(&public));
@@ -115,7 +115,7 @@ impl MessageBase for PingResponse {
 
         match ben
             .get::<BencodeObject>(self.get_type().inner_key())
-            .unwrap()
+            .ok()
             .get::<BencodeBytes>("id")
         {
             Some(id) => {

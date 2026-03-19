@@ -342,13 +342,13 @@ mod tests {
     async fn test_crypto_initialization() {
         let crypto = ZhtpCrypto::new();
         assert!(crypto.is_ok());
-        let crypto = crypto.unwrap();
+        let crypto = crypto.ok();
         assert!(crypto.server_keypair.is_some());
     }
 
     #[tokio::test]
     async fn test_content_hashing() {
-        let crypto = ZhtpCrypto::new().unwrap();
+        let crypto = ZhtpCrypto::new().ok();
         let data = b"test data";
         let hash1 = crypto.hash_content(data);
         let hash2 = crypto.hash_content(data);
@@ -376,7 +376,7 @@ mod tests {
 
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Current timestamp should be valid

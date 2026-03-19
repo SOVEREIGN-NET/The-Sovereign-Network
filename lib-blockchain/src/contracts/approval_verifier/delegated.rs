@@ -111,7 +111,7 @@ impl DelegatedVerifier {
         // Verify the attestation contains the request hash
         let request_hash = self.hash_request(request);
         if attestation.len() >= 32 {
-            let attested_hash: [u8; 32] = attestation[..32].try_into().unwrap();
+            let attested_hash: [u8; 32] = attestation[..32].try_into().ok();
             if attested_hash != request_hash {
                 return Err(VerificationError::InvalidAttestation {
                     reason: "Attestation doesn't match request".to_string(),
@@ -301,7 +301,7 @@ mod tests {
 
         let result = verifier.verify_issuance_approval(&request, &proof, [3u8; 32]);
         assert!(result.is_ok());
-        let verification = result.unwrap();
+        let verification = result.ok();
         assert!(verification.is_valid);
     }
 

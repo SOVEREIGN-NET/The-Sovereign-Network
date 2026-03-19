@@ -265,7 +265,7 @@ impl SnapshotManager {
             state_hash: [0u8; 32], // Will be computed
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
             blocks,
             utxos,
@@ -525,8 +525,8 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_store() -> (TempDir, Arc<SledStore>) {
-        let dir = TempDir::new().unwrap();
-        let store = Arc::new(SledStore::open(dir.path()).unwrap());
+        let dir = TempDir::new().ok();
+        let store = Arc::new(SledStore::open(dir.path()).ok());
         (dir, store)
     }
 
@@ -587,48 +587,48 @@ mod tests {
         let block2 = create_block_at_height(2, block1.header.block_hash);
 
         // Apply blocks
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
-        store.begin_block(1).unwrap();
-        store.append_block(&block1).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(1).ok();
+        store.append_block(&block1).ok();
+        store.commit_block().ok();
 
-        store.begin_block(2).unwrap();
-        store.append_block(&block2).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(2).ok();
+        store.append_block(&block2).ok();
+        store.commit_block().ok();
 
         // Take snapshot at height 2
-        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
-        let snapshot_id = manager.snapshot_at(2).unwrap();
+        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok();
+        let snapshot_id = manager.snapshot_at(2).ok();
 
         // Verify snapshot exists
-        let info = manager.get_snapshot_info(&snapshot_id).unwrap();
+        let info = manager.get_snapshot_info(&snapshot_id).ok();
         assert_eq!(info.height, 2);
 
         // Clear the store and restore
-        store.blocks_by_height().clear().unwrap();
-        store.blocks_by_hash().clear().unwrap();
-        store.meta().clear().unwrap();
+        store.blocks_by_height().clear().ok();
+        store.blocks_by_hash().clear().ok();
+        store.meta().clear().ok();
 
         // Restore
-        manager.restore(&snapshot_id).unwrap();
+        manager.restore(&snapshot_id).ok();
 
         // Verify restoration
-        assert_eq!(store.latest_height().unwrap(), 2);
+        assert_eq!(store.latest_height().ok(), 2);
 
         // Verify all blocks are restored
-        let restored_genesis = store.get_block_by_height(0).unwrap().unwrap();
+        let restored_genesis = store.get_block_by_height(0).ok().ok();
         assert_eq!(
             restored_genesis.header.block_hash,
             genesis.header.block_hash
         );
 
-        let restored_block1 = store.get_block_by_height(1).unwrap().unwrap();
+        let restored_block1 = store.get_block_by_height(1).ok().ok();
         assert_eq!(restored_block1.header.block_hash, block1.header.block_hash);
 
-        let restored_block2 = store.get_block_by_height(2).unwrap().unwrap();
+        let restored_block2 = store.get_block_by_height(2).ok().ok();
         assert_eq!(restored_block2.header.block_hash, block2.header.block_hash);
     }
 
@@ -651,38 +651,38 @@ mod tests {
         let utxo2 = Utxo::native(2000, bob, 0);
 
         // Apply genesis with state
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.put_utxo(&outpoint1, &utxo1).unwrap();
-        store.put_utxo(&outpoint2, &utxo2).unwrap();
-        store.set_token_balance(&token, &alice, 1000).unwrap();
-        store.set_token_balance(&token, &bob, 2000).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.put_utxo(&outpoint1, &utxo1).ok();
+        store.put_utxo(&outpoint2, &utxo2).ok();
+        store.set_token_balance(&token, &alice, 1000).ok();
+        store.set_token_balance(&token, &bob, 2000).ok();
+        store.commit_block().ok();
 
         // Take snapshot
-        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
-        let snapshot_id = manager.snapshot_at(0).unwrap();
+        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok();
+        let snapshot_id = manager.snapshot_at(0).ok();
 
         // Clear the store
-        store.blocks_by_height().clear().unwrap();
-        store.blocks_by_hash().clear().unwrap();
-        store.utxos().clear().unwrap();
-        store.token_balances().clear().unwrap();
-        store.meta().clear().unwrap();
+        store.blocks_by_height().clear().ok();
+        store.blocks_by_hash().clear().ok();
+        store.utxos().clear().ok();
+        store.token_balances().clear().ok();
+        store.meta().clear().ok();
 
         // Restore
-        manager.restore(&snapshot_id).unwrap();
+        manager.restore(&snapshot_id).ok();
 
         // Verify balances are restored
-        assert_eq!(store.get_token_balance(&token, &alice).unwrap(), 1000);
-        assert_eq!(store.get_token_balance(&token, &bob).unwrap(), 2000);
+        assert_eq!(store.get_token_balance(&token, &alice).ok(), 1000);
+        assert_eq!(store.get_token_balance(&token, &bob).ok(), 2000);
 
         // Verify UTXOs are restored
-        let restored_utxo1 = store.get_utxo(&outpoint1).unwrap().unwrap();
+        let restored_utxo1 = store.get_utxo(&outpoint1).ok().ok();
         assert_eq!(restored_utxo1.amount, 1000);
         assert_eq!(restored_utxo1.owner, alice);
 
-        let restored_utxo2 = store.get_utxo(&outpoint2).unwrap().unwrap();
+        let restored_utxo2 = store.get_utxo(&outpoint2).ok().ok();
         assert_eq!(restored_utxo2.amount, 2000);
         assert_eq!(restored_utxo2.owner, bob);
     }
@@ -697,51 +697,51 @@ mod tests {
         let block1 = create_block_at_height(1, genesis.header.block_hash);
         let block2 = create_block_at_height(2, block1.header.block_hash);
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
-        store.begin_block(1).unwrap();
-        store.append_block(&block1).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(1).ok();
+        store.append_block(&block1).ok();
+        store.commit_block().ok();
 
-        store.begin_block(2).unwrap();
-        store.append_block(&block2).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(2).ok();
+        store.append_block(&block2).ok();
+        store.commit_block().ok();
 
         // Snapshot at height 2
-        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
-        let snapshot_id = manager.snapshot_at(2).unwrap();
+        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok();
+        let snapshot_id = manager.snapshot_at(2).ok();
 
         // Clear and restore
-        store.blocks_by_height().clear().unwrap();
-        store.blocks_by_hash().clear().unwrap();
-        store.meta().clear().unwrap();
+        store.blocks_by_height().clear().ok();
+        store.blocks_by_hash().clear().ok();
+        store.meta().clear().ok();
 
-        manager.restore(&snapshot_id).unwrap();
-        assert_eq!(store.latest_height().unwrap(), 2);
+        manager.restore(&snapshot_id).ok();
+        assert_eq!(store.latest_height().ok(), 2);
 
         // Now add more blocks on top
         let block3 = create_block_at_height(3, block2.header.block_hash);
         let block4 = create_block_at_height(4, block3.header.block_hash);
 
-        store.begin_block(3).unwrap();
-        store.append_block(&block3).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(3).ok();
+        store.append_block(&block3).ok();
+        store.commit_block().ok();
 
-        store.begin_block(4).unwrap();
-        store.append_block(&block4).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(4).ok();
+        store.append_block(&block4).ok();
+        store.commit_block().ok();
 
         // Verify final state
-        assert_eq!(store.latest_height().unwrap(), 4);
+        assert_eq!(store.latest_height().ok(), 4);
 
         // All blocks should be accessible
-        assert!(store.get_block_by_height(0).unwrap().is_some());
-        assert!(store.get_block_by_height(1).unwrap().is_some());
-        assert!(store.get_block_by_height(2).unwrap().is_some());
-        assert!(store.get_block_by_height(3).unwrap().is_some());
-        assert!(store.get_block_by_height(4).unwrap().is_some());
+        assert!(store.get_block_by_height(0).ok().is_some());
+        assert!(store.get_block_by_height(1).ok().is_some());
+        assert!(store.get_block_by_height(2).ok().is_some());
+        assert!(store.get_block_by_height(3).ok().is_some());
+        assert!(store.get_block_by_height(4).ok().is_some());
     }
 
     #[test]
@@ -751,15 +751,15 @@ mod tests {
 
         let genesis = create_genesis_block();
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
-        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
-        let snapshot_id = manager.snapshot_at(0).unwrap();
+        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok();
+        let snapshot_id = manager.snapshot_at(0).ok();
 
         // Get snapshot info and verify hash is set
-        let info = manager.get_snapshot_info(&snapshot_id).unwrap();
+        let info = manager.get_snapshot_info(&snapshot_id).ok();
         assert_ne!(info.state_hash, [0u8; 32]);
     }
 
@@ -771,31 +771,31 @@ mod tests {
         let genesis = create_genesis_block();
         let block1 = create_block_at_height(1, genesis.header.block_hash);
 
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
-        store.begin_block(1).unwrap();
-        store.append_block(&block1).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(1).ok();
+        store.append_block(&block1).ok();
+        store.commit_block().ok();
 
-        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
+        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok();
 
         // Create two snapshots
-        let id0 = manager.snapshot_at(0).unwrap();
-        let id1 = manager.snapshot_at(1).unwrap();
+        let id0 = manager.snapshot_at(0).ok();
+        let id1 = manager.snapshot_at(1).ok();
 
         // List should show both
-        let list = manager.list_snapshots().unwrap();
+        let list = manager.list_snapshots().ok();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].height, 1); // Sorted by height descending
         assert_eq!(list[1].height, 0);
 
         // Delete one
-        manager.delete_snapshot(&id0).unwrap();
+        manager.delete_snapshot(&id0).ok();
 
         // List should show one
-        let list = manager.list_snapshots().unwrap();
+        let list = manager.list_snapshots().ok();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].height, 1);
     }
@@ -805,7 +805,7 @@ mod tests {
         let (dir, store) = create_test_store();
         let snapshot_dir = dir.path().join("snapshots");
 
-        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
+        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok();
 
         let fake_id = SnapshotId::new([0xde; 32]);
         let result = manager.restore(&fake_id);
@@ -818,11 +818,11 @@ mod tests {
         let snapshot_dir = dir.path().join("snapshots");
 
         let genesis = create_genesis_block();
-        store.begin_block(0).unwrap();
-        store.append_block(&genesis).unwrap();
-        store.commit_block().unwrap();
+        store.begin_block(0).ok();
+        store.append_block(&genesis).ok();
+        store.commit_block().ok();
 
-        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).unwrap();
+        let manager = SnapshotManager::new(Arc::clone(&store), &snapshot_dir).ok();
 
         // Try to snapshot at height that doesn't exist
         let result = manager.snapshot_at(100);

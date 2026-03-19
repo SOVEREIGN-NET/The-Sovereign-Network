@@ -418,14 +418,14 @@ mod tests {
     #[test]
     fn test_basic_validation() {
         // Valid commercial domain
-        let parsed = parse_and_validate("shoes.sov").unwrap();
+        let parsed = parse_and_validate("shoes.sov").ok();
         assert_eq!(parsed.full_name, "shoes.sov");
         assert_eq!(parsed.classification, NameClassification::Commercial);
         assert_eq!(parsed.depth, 0);
         assert!(parsed.parent.is_none());
 
         // Valid subdomain
-        let parsed = parse_and_validate("store.shoes.sov").unwrap();
+        let parsed = parse_and_validate("store.shoes.sov").ok();
         assert_eq!(parsed.classification, NameClassification::Commercial);
         assert_eq!(parsed.depth, 1);
         assert_eq!(parsed.parent, Some("shoes.sov".to_string()));
@@ -476,42 +476,42 @@ mod tests {
     #[test]
     fn test_reserved_welfare() {
         // {sector}.dao.sov are reserved welfare
-        let parsed = parse_and_validate("food.dao.sov").unwrap();
+        let parsed = parse_and_validate("food.dao.sov").ok();
         assert_eq!(parsed.classification, NameClassification::ReservedWelfare);
 
-        let parsed = parse_and_validate("health.dao.sov").unwrap();
+        let parsed = parse_and_validate("health.dao.sov").ok();
         assert_eq!(parsed.classification, NameClassification::ReservedWelfare);
 
-        let parsed = parse_and_validate("edu.dao.sov").unwrap();
+        let parsed = parse_and_validate("edu.dao.sov").ok();
         assert_eq!(parsed.classification, NameClassification::ReservedWelfare);
 
-        let parsed = parse_and_validate("housing.dao.sov").unwrap();
+        let parsed = parse_and_validate("housing.dao.sov").ok();
         assert_eq!(parsed.classification, NameClassification::ReservedWelfare);
 
-        let parsed = parse_and_validate("energy.dao.sov").unwrap();
+        let parsed = parse_and_validate("energy.dao.sov").ok();
         assert_eq!(parsed.classification, NameClassification::ReservedWelfare);
     }
 
     #[test]
     fn test_welfare_delegated() {
         // *.{sector}.sov are welfare delegated
-        let parsed = parse_and_validate("communitykitchen.food.sov").unwrap();
+        let parsed = parse_and_validate("communitykitchen.food.sov").ok();
         assert_eq!(parsed.classification, NameClassification::WelfareDelegated);
         assert_eq!(parsed.welfare_sector(), Some(WelfareSector::Food));
 
-        let parsed = parse_and_validate("clinic.health.sov").unwrap();
+        let parsed = parse_and_validate("clinic.health.sov").ok();
         assert_eq!(parsed.classification, NameClassification::WelfareDelegated);
     }
 
     #[test]
     fn test_dao_prefix_rule() {
         // dao.X requires control of X.sov
-        let parsed = parse_and_validate("dao.shoes.sov").unwrap();
+        let parsed = parse_and_validate("dao.shoes.sov").ok();
         assert_eq!(parsed.classification, NameClassification::ReservedByRule);
         assert!(parsed.is_dao_prefix());
 
         // Non-welfare dao.X
-        let parsed = parse_and_validate("dao.mycompany.sov").unwrap();
+        let parsed = parse_and_validate("dao.mycompany.sov").ok();
         assert_eq!(parsed.classification, NameClassification::ReservedByRule);
     }
 
@@ -521,7 +521,7 @@ mod tests {
         let cases = vec!["shoes.sov", "mystore.sov", "company123.sov", "my-brand.sov"];
 
         for name in cases {
-            let parsed = parse_and_validate(name).unwrap();
+            let parsed = parse_and_validate(name).ok();
             assert_eq!(
                 parsed.classification,
                 NameClassification::Commercial,
@@ -595,9 +595,9 @@ mod tests {
 
     #[test]
     fn test_case_insensitivity() {
-        let lower = parse_and_validate("shoes.sov").unwrap();
-        let upper = parse_and_validate("SHOES.SOV").unwrap();
-        let mixed = parse_and_validate("ShOeS.SoV").unwrap();
+        let lower = parse_and_validate("shoes.sov").ok();
+        let upper = parse_and_validate("SHOES.SOV").ok();
+        let mixed = parse_and_validate("ShOeS.SoV").ok();
 
         assert_eq!(lower.full_name, upper.full_name);
         assert_eq!(lower.full_name, mixed.full_name);
@@ -605,10 +605,10 @@ mod tests {
 
     #[test]
     fn test_depth_calculation() {
-        assert_eq!(parse_and_validate("a.sov").unwrap().depth, 0);
-        assert_eq!(parse_and_validate("b.a.sov").unwrap().depth, 1);
-        assert_eq!(parse_and_validate("c.b.a.sov").unwrap().depth, 2);
-        assert_eq!(parse_and_validate("d.c.b.a.sov").unwrap().depth, 3);
+        assert_eq!(parse_and_validate("a.sov").ok().depth, 0);
+        assert_eq!(parse_and_validate("b.a.sov").ok().depth, 1);
+        assert_eq!(parse_and_validate("c.b.a.sov").ok().depth, 2);
+        assert_eq!(parse_and_validate("d.c.b.a.sov").ok().depth, 3);
     }
 
     #[test]
@@ -629,16 +629,16 @@ mod tests {
     #[test]
     fn test_mydao_is_commercial() {
         // "mydao.sov" - "dao" in name but not prefix, should be Commercial
-        let parsed = parse_and_validate("mydao.sov").unwrap();
+        let parsed = parse_and_validate("mydao.sov").ok();
         assert_eq!(parsed.classification, NameClassification::Commercial);
     }
 
     #[test]
     fn test_parent_extraction() {
-        let parsed = parse_and_validate("sub.domain.sov").unwrap();
+        let parsed = parse_and_validate("sub.domain.sov").ok();
         assert_eq!(parsed.parent, Some("domain.sov".to_string()));
 
-        let parsed = parse_and_validate("deep.sub.domain.sov").unwrap();
+        let parsed = parse_and_validate("deep.sub.domain.sov").ok();
         assert_eq!(parsed.parent, Some("sub.domain.sov".to_string()));
     }
 }

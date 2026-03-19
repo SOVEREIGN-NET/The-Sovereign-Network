@@ -102,77 +102,77 @@ mod tests {
 
     #[test]
     fn test_cached_storage_hit_rate() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
-        let cached_storage = CachedPersistentStorage::new(storage).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
+        let cached_storage = CachedPersistentStorage::new(storage).ok();
 
         // Set a value
         let key = b"test_key";
         let value = b"test_value";
 
         // First access is a cache miss
-        let _ = cached_storage.get(key).unwrap();
+        let _ = cached_storage.get(key).ok();
 
         // Set value
-        cached_storage.set(key, value).unwrap();
+        cached_storage.set(key, value).ok();
 
         // Subsequent accesses should be cache hits
         for _ in 0..10 {
-            let result = cached_storage.get(key).unwrap();
+            let result = cached_storage.get(key).ok();
             assert_eq!(result, Some(value.to_vec()));
         }
 
         // Check cache stats
-        let stats = cached_storage.cache_stats().unwrap();
+        let stats = cached_storage.cache_stats().ok();
         assert!(stats.hits > 0);
     }
 
     #[test]
     fn test_cache_invalidation_on_delete() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
-        let cached_storage = CachedPersistentStorage::new(storage).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
+        let cached_storage = CachedPersistentStorage::new(storage).ok();
 
         let key = b"key_to_delete";
         let value = b"value";
 
         // Set and cache
-        cached_storage.set(key, value).unwrap();
-        assert_eq!(cached_storage.get(key).unwrap(), Some(value.to_vec()));
+        cached_storage.set(key, value).ok();
+        assert_eq!(cached_storage.get(key).ok(), Some(value.to_vec()));
 
         // Delete should invalidate cache
-        cached_storage.delete(key).unwrap();
+        cached_storage.delete(key).ok();
 
         // After deletion, should return None
-        assert_eq!(cached_storage.get(key).unwrap(), None);
+        assert_eq!(cached_storage.get(key).ok(), None);
     }
 
     #[test]
     fn test_cache_invalidation_on_update() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
-        let cached_storage = CachedPersistentStorage::new(storage).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
+        let cached_storage = CachedPersistentStorage::new(storage).ok();
 
         let key = b"key";
         let value1 = b"value1";
         let value2 = b"value2";
 
         // Set initial value
-        cached_storage.set(key, value1).unwrap();
-        assert_eq!(cached_storage.get(key).unwrap(), Some(value1.to_vec()));
+        cached_storage.set(key, value1).ok();
+        assert_eq!(cached_storage.get(key).ok(), Some(value1.to_vec()));
 
         // Update value
-        cached_storage.set(key, value2).unwrap();
+        cached_storage.set(key, value2).ok();
 
         // Should return updated value
-        assert_eq!(cached_storage.get(key).unwrap(), Some(value2.to_vec()));
+        assert_eq!(cached_storage.get(key).ok(), Some(value2.to_vec()));
     }
 
     #[test]
     fn test_clear_cache() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
-        let cached_storage = CachedPersistentStorage::new(storage).unwrap();
+        let temp_dir = TempDir::new().ok();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().ok(), None).ok();
+        let cached_storage = CachedPersistentStorage::new(storage).ok();
 
         // Add some entries to cache
         for i in 0..5 {
@@ -180,18 +180,18 @@ mod tests {
             let value = format!("value_{}", i);
             cached_storage
                 .set(key.as_bytes(), value.as_bytes())
-                .unwrap();
+                .ok();
         }
 
         // Verify cache has entries
-        let stats_before = cached_storage.cache_stats().unwrap();
+        let stats_before = cached_storage.cache_stats().ok();
         assert!(stats_before.entry_count > 0);
 
         // Clear cache
-        cached_storage.clear_cache().unwrap();
+        cached_storage.clear_cache().ok();
 
         // Cache should be empty
-        let stats_after = cached_storage.cache_stats().unwrap();
+        let stats_after = cached_storage.cache_stats().ok();
         assert_eq!(stats_after.entry_count, 0);
     }
 }

@@ -153,7 +153,7 @@ mod tests {
         stats.update_utilization(0.95); // High utilization
 
         let (new_routing, new_storage, new_compute) =
-            adjust_rates_for_utilization(100, 1000, 500, &stats).unwrap(); // Use larger base values
+            adjust_rates_for_utilization(100, 1000, 500, &stats).ok(); // Use larger base values
 
         // Should increase rates for high utilization
         assert!(new_routing > 100);
@@ -177,7 +177,7 @@ mod tests {
         stats.update_utilization(0.7); // Normal utilization
         stats.update_avg_quality(0.9); // Good quality
 
-        let (routing, storage, compute) = calculate_optimal_rates(1, 10, 5, &stats).unwrap();
+        let (routing, storage, compute) = calculate_optimal_rates(1, 10, 5, &stats).ok();
 
         assert!(routing >= 1);
         assert!(storage >= 5);

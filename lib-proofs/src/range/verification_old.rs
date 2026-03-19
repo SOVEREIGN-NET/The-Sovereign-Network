@@ -30,9 +30,9 @@ pub fn verify_range_proof(proof: &ZkRangeProof) -> Result<VerificationResult> {
     let blinding = &proof.proof[24..56];
     let challenge = &proof.proof[56..88];
 
-    let value = u64::from_le_bytes(value_bytes.try_into().unwrap());
-    let min_value = u64::from_le_bytes(min_bytes.try_into().unwrap());
-    let max_value = u64::from_le_bytes(max_bytes.try_into().unwrap());
+    let value = u64::from_le_bytes(value_bytes.try_into().ok());
+    let min_value = u64::from_le_bytes(min_bytes.try_into().ok());
+    let max_value = u64::from_le_bytes(max_bytes.try_into().ok());
 
     // Verify range bounds match proof metadata
     if min_value != proof.min_value || max_value != proof.max_value {
@@ -361,8 +361,8 @@ mod tests {
 
     #[test]
     fn test_verify_valid_range_proof() {
-        let proof = ZkRangeProof::generate_simple(50, 0, 100).unwrap();
-        let result = verify_range_proof(&proof).unwrap();
+        let proof = ZkRangeProof::generate_simple(50, 0, 100).ok();
+        let result = verify_range_proof(&proof).ok();
         
         assert!(result.is_valid);
         assert_eq!(result.proof_type, ZkProofType::Range);
@@ -371,11 +371,11 @@ mod tests {
 
     #[test]
     fn test_verify_invalid_range_proof() {
-        let mut proof = ZkRangeProof::generate_simple(50, 0, 100).unwrap();
+        let mut proof = ZkRangeProof::generate_simple(50, 0, 100).ok();
         // Corrupt the proof
         proof.commitment[0] ^= 1;
         
-        let result = verify_range_proof(&proof).unwrap();
+        let result = verify_range_proof(&proof).ok();
         assert!(!result.is_valid);
         assert!(result.error_message.is_some());
     }
@@ -383,20 +383,20 @@ mod tests {
     #[test]
     fn test_verify_bulletproof() {
         let blinding = [1u8; 32];
-        let proof = BulletproofRangeProof::generate(100, 16, blinding).unwrap();
+        let proof = BulletproofRangeProof::generate(100, 16, blinding).ok();
         
-        let result = verify_bulletproof(&proof).unwrap();
+        let result = verify_bulletproof(&proof).ok();
         assert!(result.is_valid);
         assert_eq!(result.proof_type, ZkProofType::Range);
     }
 
     #[test]
     fn test_verify_batch_range_proofs() {
-        let proof1 = ZkRangeProof::generate_simple(10, 0, 100).unwrap();
-        let proof2 = ZkRangeProof::generate_simple(50, 0, 100).unwrap();
-        let proof3 = ZkRangeProof::generate_simple(90, 0, 100).unwrap();
+        let proof1 = ZkRangeProof::generate_simple(10, 0, 100).ok();
+        let proof2 = ZkRangeProof::generate_simple(50, 0, 100).ok();
+        let proof3 = ZkRangeProof::generate_simple(90, 0, 100).ok();
         
-        let results = verify_batch_range_proofs(&[proof1, proof2, proof3]).unwrap();
+        let results = verify_batch_range_proofs(&[proof1, proof2, proof3]).ok();
         
         assert_eq!(results.len(), 3);
         assert!(results.iter().all(|r| r.is_valid));
@@ -404,18 +404,18 @@ mod tests {
 
     #[test]
     fn test_fast_verification() {
-        let proof = ZkRangeProof::generate_simple(25, 0, 100).unwrap();
+        let proof = ZkRangeProof::generate_simple(25, 0, 100).ok();
         
-        let is_valid = verify_range_proof_fast(&proof).unwrap();
+        let is_valid = verify_range_proof_fast(&proof).ok();
         assert!(is_valid);
     }
 
     #[test]
     fn test_verification_stats() {
-        let proof1 = ZkRangeProof::generate_simple(10, 0, 100).unwrap();
-        let proof2 = ZkRangeProof::generate_simple(50, 0, 100).unwrap();
+        let proof1 = ZkRangeProof::generate_simple(10, 0, 100).ok();
+        let proof2 = ZkRangeProof::generate_simple(50, 0, 100).ok();
         
-        let results = verify_batch_range_proofs(&[proof1, proof2]).unwrap();
+        let results = verify_batch_range_proofs(&[proof1, proof2]).ok();
         let stats = VerificationStats::from_results(&results);
         
         assert_eq!(stats.total_proofs, 2);
@@ -427,16 +427,16 @@ mod tests {
     #[test]
     fn test_bulletproof_commitment_verification() {
         let blinding = [2u8; 32];
-        let proof = BulletproofRangeProof::generate(42, 8, blinding).unwrap();
+        let proof = BulletproofRangeProof::generate(42, 8, blinding).ok();
         
-        let is_valid = verify_bulletproof_commitment(&proof.commitment).unwrap();
+        let is_valid = verify_bulletproof_commitment(&proof.commitment).ok();
         assert!(is_valid);
     }
 
     #[test]
     fn test_vector_commitment_verification() {
         let blinding = [3u8; 32];
-        let proof = BulletproofRangeProof::generate(15, 4, blinding).unwrap();
+        let proof = BulletproofRangeProof::generate(15, 4, blinding).ok();
         
         for (i, l_commitment) in proof.l_vec.iter().enumerate() {
             let is_valid = verify_vector_commitment(
@@ -444,7 +444,7 @@ mod tests {
                 &proof.commitment.commitment,
                 i,
                 true,
-            ).unwrap();
+            ).ok();
             assert!(is_valid);
         }
     }

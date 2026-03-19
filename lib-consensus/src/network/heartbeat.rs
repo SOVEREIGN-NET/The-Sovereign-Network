@@ -42,7 +42,7 @@
 //! // Record when a heartbeat is received (in unix seconds)
 //! let now_secs = std::time::SystemTime::now()
 //!     .duration_since(std::time::UNIX_EPOCH)
-//!     .unwrap()
+//!     .ok()
 //!     .as_secs();
 //! tracker.record_heartbeat(&validator_id, now_secs);
 //!
@@ -656,7 +656,7 @@ mod tests {
         let now = current_time_secs();
         tracker.record_heartbeat(&validator, now);
 
-        let age = tracker.last_heartbeat_age(&validator).unwrap();
+        let age = tracker.last_heartbeat_age(&validator).ok();
         assert!(age.as_secs() <= 1); // Should be nearly 0 seconds old
     }
 

@@ -143,7 +143,7 @@ impl ByzantineFaultDetector {
                     fault_type: ByzantineFaultType::DoubleSign,
                     evidence: format!("Double signed {} times", events.len()),
                     severity: FaultSeverity::Critical,
-                    detected_at: events.last().unwrap().detected_at,
+                    detected_at: events.last().ok().detected_at,
                 });
             }
         }
@@ -162,7 +162,7 @@ impl ByzantineFaultDetector {
                     } else {
                         FaultSeverity::Minor
                     },
-                    detected_at: violations.last().unwrap().detected_at,
+                    detected_at: violations.last().ok().detected_at,
                 });
             }
         }
@@ -175,7 +175,7 @@ impl ByzantineFaultDetector {
                     fault_type: ByzantineFaultType::InvalidProposal,
                     evidence: format!("Made {} invalid proposals", events.len()),
                     severity: FaultSeverity::Major,
-                    detected_at: events.last().unwrap().detected_at,
+                    detected_at: events.last().ok().detected_at,
                 });
             }
         }
@@ -200,7 +200,7 @@ impl ByzantineFaultDetector {
             second_signature,
             detected_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -225,7 +225,7 @@ impl ByzantineFaultDetector {
             missed_rounds,
             detected_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -250,7 +250,7 @@ impl ByzantineFaultDetector {
             violation_type,
             detected_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 

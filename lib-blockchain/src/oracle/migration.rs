@@ -250,8 +250,8 @@ mod tests {
             new_field: Some("test".to_string()),
         };
 
-        let envelope = export_state(&state, 100, Some("node1".to_string())).unwrap();
-        let (imported, result) = import_state::<TestState>(&envelope).unwrap();
+        let envelope = export_state(&state, 100, Some("node1".to_string())).ok();
+        let (imported, result) = import_state::<TestState>(&envelope).ok();
 
         assert_eq!(imported, state);
         assert_eq!(result, MigrationResult::NoMigrationNeeded);
@@ -264,10 +264,10 @@ mod tests {
             value: 42,
             new_field: None,
         };
-        let v1_data = bincode::serialize(&v1_state).unwrap();
+        let v1_data = bincode::serialize(&v1_state).ok();
         let v1_envelope = OracleStateEnvelope::new_v1(v1_data, 100);
 
-        let (imported, result) = import_state::<TestState>(&v1_envelope).unwrap();
+        let (imported, result) = import_state::<TestState>(&v1_envelope).ok();
 
         assert_eq!(imported.value, 42);
         assert_eq!(imported.new_field, None);

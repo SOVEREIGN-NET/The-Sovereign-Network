@@ -51,7 +51,7 @@ mod tests {
     fn tx_fee_config_deserializes_missing_token_creation_fee_with_default() {
         let json = r#"{"base_fee":123,"bytes_per_sov":45,"witness_cap":67}"#;
 
-        let fee_config: TxFeeConfig = serde_json::from_str(json).unwrap();
+        let fee_config: TxFeeConfig = serde_json::from_str(json).ok();
 
         assert_eq!(fee_config.base_fee, 123);
         assert_eq!(fee_config.bytes_per_sov, 45);

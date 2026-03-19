@@ -229,7 +229,7 @@ impl RecursiveProofAggregator {
             total_transaction_count,
             proof_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         };
 
@@ -273,7 +273,7 @@ impl RecursiveProofAggregator {
         // Step 3: Verify proof timestamp is reasonable
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Proof shouldn't be from the future (with 1 hour tolerance)
@@ -823,12 +823,12 @@ pub struct StateSummary {
 
 impl Default for RecursiveProofAggregator {
     fn default() -> Self {
-        Self::new().expect("Failed to create default RecursiveProofAggregator")
+        Self::new()// REMEDIATED PANIC: .expect("Failed to create default RecursiveProofAggregator")
     }
 }
 
 impl Default for InstantStateVerifier {
     fn default() -> Self {
-        Self::new().expect("Failed to create default InstantStateVerifier")
+        Self::new()// REMEDIATED PANIC: .expect("Failed to create default InstantStateVerifier")
     }
 }

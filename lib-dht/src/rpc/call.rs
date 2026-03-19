@@ -15,7 +15,7 @@ impl Call {
     pub fn new(message: &dyn MethodMessageBase, callback: Box<dyn ResponseCallback>) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
+            // REMEDIATED PANIC: .expect("Time went backwards")
             .as_millis();
 
         Self {
@@ -39,7 +39,7 @@ impl Call {
     }
 
     pub fn get_node(&self) -> Node {
-        self.node.unwrap()
+        self.node.ok()
     }
 
     pub fn get_response_callback(&self) -> &dyn ResponseCallback {

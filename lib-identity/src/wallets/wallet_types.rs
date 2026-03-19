@@ -306,7 +306,7 @@ impl QuantumWallet {
     ) -> Self {
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .ok()
             .as_secs();
 
         // Generate wallet ID from owner ID (or random) and timestamp
@@ -721,7 +721,7 @@ impl QuantumWallet {
         self.last_transaction = Some(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .ok()
                 .as_secs(),
         );
     }
@@ -855,14 +855,14 @@ impl QuantumWallet {
                         is_incoming,
                         std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .ok()
                             .as_secs()
                     )
                     .as_bytes(),
                 )),
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .ok()
                     .as_secs(),
                 amount,
                 is_incoming,
@@ -1141,10 +1141,10 @@ mod tests {
         let wallet_id_hex = hex::encode(&wallet_id_bytes);
 
         // Encrypt with hex-encoded wallet ID (matches what decrypt expects)
-        let encrypted = QuantumWallet::encrypt_seed_phrase(seed_phrase, &wallet_id_hex).unwrap();
+        let encrypted = QuantumWallet::encrypt_seed_phrase(seed_phrase, &wallet_id_hex).ok();
 
         // Verify version byte
-        let encrypted_bytes = hex::decode(&encrypted).unwrap();
+        let encrypted_bytes = hex::decode(&encrypted).ok();
         assert_eq!(
             encrypted_bytes[0], ENCRYPTION_VERSION_AES_GCM,
             "Should use AES-GCM version"
@@ -1152,7 +1152,7 @@ mod tests {
 
         // Create wallet and decrypt
         let wallet = create_test_wallet(wallet_id_bytes, Some(encrypted));
-        let decrypted = wallet.decrypt_seed_phrase().unwrap().unwrap();
+        let decrypted = wallet.decrypt_seed_phrase().ok().ok();
         assert_eq!(decrypted, seed_phrase, "Decrypted should match original");
     }
 
@@ -1172,8 +1172,8 @@ mod tests {
 
         // Decrypt using legacy method
         let decrypted = QuantumWallet::decrypt_legacy_xor(&encrypted, wallet_id)
-            .unwrap()
-            .unwrap();
+            .ok()
+            .ok();
         assert_eq!(decrypted, seed_phrase, "Legacy XOR decryption should work");
     }
 
@@ -1184,8 +1184,8 @@ mod tests {
         let seed_phrase = "same seed phrase repeated";
         let wallet_id = "deterministic_wallet_id";
 
-        let encrypted1 = QuantumWallet::encrypt_seed_phrase(seed_phrase, wallet_id).unwrap();
-        let encrypted2 = QuantumWallet::encrypt_seed_phrase(seed_phrase, wallet_id).unwrap();
+        let encrypted1 = QuantumWallet::encrypt_seed_phrase(seed_phrase, wallet_id).ok();
+        let encrypted2 = QuantumWallet::encrypt_seed_phrase(seed_phrase, wallet_id).ok();
 
         assert_ne!(
             encrypted1, encrypted2,
@@ -1215,29 +1215,29 @@ mod tests {
         let mut wallet = create_test_wallet(wallet_id_bytes, Some(encrypted_hex));
 
         // Verify we can decrypt with legacy method
-        let decrypted_before = wallet.decrypt_seed_phrase().unwrap().unwrap();
+        let decrypted_before = wallet.decrypt_seed_phrase().ok().ok();
         assert_eq!(decrypted_before, seed_phrase);
 
         // Migrate to AES-GCM
-        let migrated = wallet.migrate_seed_encryption().unwrap();
+        let migrated = wallet.migrate_seed_encryption().ok();
         assert!(migrated, "Should report successful migration");
 
         // Verify new encryption uses AES-GCM version
-        let new_encrypted_bytes = hex::decode(wallet.encrypted_seed.as_ref().unwrap()).unwrap();
+        let new_encrypted_bytes = hex::decode(wallet.encrypted_seed.as_ref().ok()).ok();
         assert_eq!(
             new_encrypted_bytes[0], ENCRYPTION_VERSION_AES_GCM,
             "Should now use AES-GCM"
         );
 
         // Verify we can still decrypt
-        let decrypted_after = wallet.decrypt_seed_phrase().unwrap().unwrap();
+        let decrypted_after = wallet.decrypt_seed_phrase().ok().ok();
         assert_eq!(
             decrypted_after, seed_phrase,
             "Decryption should work after migration"
         );
 
         // Verify migration is idempotent
-        let migrated_again = wallet.migrate_seed_encryption().unwrap();
+        let migrated_again = wallet.migrate_seed_encryption().ok();
         assert!(
             !migrated_again,
             "Should not migrate again if already AES-GCM"
@@ -1266,7 +1266,7 @@ mod tests {
 
         // Create wallet and decrypt
         let wallet = create_test_wallet(wallet_id_bytes, Some(encrypted_hex));
-        let decrypted = wallet.decrypt_seed_phrase().unwrap().unwrap();
+        let decrypted = wallet.decrypt_seed_phrase().ok().ok();
         assert_eq!(
             decrypted, seed_phrase,
             "Version 1 (legacy XOR) decryption should work"

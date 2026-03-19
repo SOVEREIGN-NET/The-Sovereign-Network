@@ -241,8 +241,8 @@ mod tests {
     #[test]
     fn test_mempool_config_serialization_roundtrip() {
         let config = MempoolConfig::default();
-        let serialized = serde_json::to_string(&config).unwrap();
-        let deserialized: MempoolConfig = serde_json::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string(&config).ok();
+        let deserialized: MempoolConfig = serde_json::from_str(&serialized).ok();
         assert_eq!(config.max_mempool_bytes, deserialized.max_mempool_bytes);
         assert_eq!(config.max_tx_count, deserialized.max_tx_count);
         assert_eq!(
@@ -275,8 +275,8 @@ mod tests {
             },
         );
 
-        let serialized = bincode::serialize(&state).unwrap();
-        let deserialized: MempoolState = bincode::deserialize(&serialized).unwrap();
+        let serialized = bincode::serialize(&state).ok();
+        let deserialized: MempoolState = bincode::deserialize(&serialized).ok();
         assert_eq!(state.total_bytes, deserialized.total_bytes);
         assert_eq!(state.tx_count, deserialized.tx_count);
         assert_eq!(state.per_sender.len(), deserialized.per_sender.len());
@@ -350,8 +350,8 @@ mod tests {
         ];
 
         for kind in kinds {
-            let serialized = serde_json::to_string(&kind).unwrap();
-            let deserialized: AdmitErrorKind = serde_json::from_str(&serialized).unwrap();
+            let serialized = serde_json::to_string(&kind).ok();
+            let deserialized: AdmitErrorKind = serde_json::from_str(&serialized).ok();
             assert_eq!(kind, deserialized);
         }
     }
@@ -397,8 +397,8 @@ mod tests {
             state_write_bytes: 100,
         };
 
-        let serialized = serde_json::to_string(&tx).unwrap();
-        let deserialized: AdmitTx = serde_json::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string(&tx).ok();
+        let deserialized: AdmitTx = serde_json::from_str(&serialized).ok();
         assert_eq!(tx.fee, deserialized.fee);
         assert_eq!(tx.tx_bytes, deserialized.tx_bytes);
         assert_eq!(tx.tx_kind, deserialized.tx_kind);

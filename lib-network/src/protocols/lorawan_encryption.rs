@@ -257,15 +257,15 @@ mod tests {
         let device_eui = [0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x02, 0x00, 0x00];
         let app_key = [0x22u8; 32];
 
-        let enc = LoRaWANEncryption::new(&app_key, device_eui).unwrap();
+        let enc = LoRaWANEncryption::new(&app_key, device_eui).ok();
 
         let payload = b"LoRaWAN test payload";
         let frame_counter = 42u16;
 
-        let ciphertext = enc.encrypt_payload(payload, frame_counter).unwrap();
+        let ciphertext = enc.encrypt_payload(payload, frame_counter).ok();
         assert_ne!(&ciphertext[..], payload);
 
-        let plaintext = enc.decrypt_payload(&ciphertext, frame_counter).unwrap();
+        let plaintext = enc.decrypt_payload(&ciphertext, frame_counter).ok();
         assert_eq!(&plaintext[..], payload);
     }
 
@@ -274,10 +274,10 @@ mod tests {
         let device_eui = [0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x02, 0x00, 0x00];
         let app_key = [0x33u8; 32];
 
-        let enc = LoRaWANEncryption::new(&app_key, device_eui).unwrap();
+        let enc = LoRaWANEncryption::new(&app_key, device_eui).ok();
 
         let payload = b"LoRaWAN test";
-        let ciphertext = enc.encrypt_payload(payload, 42).unwrap();
+        let ciphertext = enc.encrypt_payload(payload, 42).ok();
 
         // Try to decrypt with different frame counter
         let result = enc.decrypt_payload(&ciphertext, 43);
@@ -292,10 +292,10 @@ mod tests {
         let device_eui = [0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x02, 0x00, 0x00];
         let app_key = [0x44u8; 32];
 
-        let enc = LoRaWANEncryption::new(&app_key, device_eui).unwrap();
+        let enc = LoRaWANEncryption::new(&app_key, device_eui).ok();
 
         let payload = b"Important LoRaWAN data";
-        let mut ciphertext = enc.encrypt_payload(payload, 42).unwrap();
+        let mut ciphertext = enc.encrypt_payload(payload, 42).ok();
 
         // Tamper with ciphertext (flip a bit in the middle)
         if ciphertext.len() > 5 {
@@ -313,14 +313,14 @@ mod tests {
         let device_eui1 = [0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x02, 0x00, 0x00];
         let device_eui2 = [0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x02, 0x00, 0x01];
 
-        let enc1 = LoRaWANEncryption::new(&app_key, device_eui1).unwrap();
-        let enc2 = LoRaWANEncryption::new(&app_key, device_eui2).unwrap();
+        let enc1 = LoRaWANEncryption::new(&app_key, device_eui1).ok();
+        let enc2 = LoRaWANEncryption::new(&app_key, device_eui2).ok();
 
         let payload = b"Device message";
         let frame_counter = 42u16;
 
         // Device 1 encrypts with its EUI
-        let ct1 = enc1.encrypt_payload(payload, frame_counter).unwrap();
+        let ct1 = enc1.encrypt_payload(payload, frame_counter).ok();
 
         // Device 2 cannot decrypt device 1's message (different AAD due to different device_eui)
         let result = enc2.decrypt_payload(&ct1, frame_counter);

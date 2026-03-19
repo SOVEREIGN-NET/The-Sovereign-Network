@@ -538,10 +538,10 @@ mod tests {
     #[tokio::test]
     async fn test_create_mesh_advertisement_data() {
         let node_id = [7u8; 32];
-        let keypair = KeyPair::generate().unwrap();
-        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+        let keypair = KeyPair::generate().ok();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).ok();
 
-        let data = protocol.create_mesh_advertisement_data().await.unwrap();
+        let data = protocol.create_mesh_advertisement_data().await.ok();
         assert!(data.len() >= 24);
         assert_eq!(data[0], 0x02);
         assert_eq!(data[1], 0x01);
@@ -564,8 +564,8 @@ mod tests {
     #[test]
     fn test_generate_and_verify_ephemeral_address() {
         let node_id = [3u8; 32];
-        let keypair = KeyPair::generate().unwrap();
-        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).unwrap();
+        let keypair = KeyPair::generate().ok();
+        let protocol = BluetoothMeshProtocol::new(node_id, keypair.public_key).ok();
 
         let secure_node_id = protocol.generate_secure_node_id(&[1, 2, 3, 4, 5, 6]);
         let ephemeral = protocol.generate_ephemeral_address(&secure_node_id);

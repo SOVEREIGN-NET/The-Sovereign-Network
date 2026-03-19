@@ -119,7 +119,7 @@ impl SecureWalletTransferHandler {
             });
         }
 
-        let identity = identity.unwrap();
+        let identity = identity.ok();
         let registered_public_key = &identity.public_key;
 
         let signature_bytes = match base64::Engine::decode(

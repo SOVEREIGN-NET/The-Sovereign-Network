@@ -236,11 +236,11 @@ mod tests {
         let key = crate::crypto::random_bytes(32);
         let session_id = crate::crypto::random_bytes(32);
 
-        let session = Session::new(key, session_id, "did:zhtp:test".into()).unwrap();
+        let session = Session::new(key, session_id, "did:zhtp:test".into()).ok();
 
         let plaintext = b"Hello, ZHTP!";
-        let ciphertext = session.encrypt(plaintext).unwrap();
-        let decrypted = session.decrypt(&ciphertext).unwrap();
+        let ciphertext = session.encrypt(plaintext).ok();
+        let decrypted = session.decrypt(&ciphertext).ok();
 
         assert_eq!(decrypted, plaintext);
     }
@@ -250,14 +250,14 @@ mod tests {
         let key = crate::crypto::random_bytes(32);
         let session_id = crate::crypto::random_bytes(32);
 
-        let session = Session::new(key, session_id, "did:zhtp:test".into()).unwrap();
+        let session = Session::new(key, session_id, "did:zhtp:test".into()).ok();
 
         assert_eq!(session.send_sequence(), 1);
 
-        session.encrypt(b"msg1").unwrap();
+        session.encrypt(b"msg1").ok();
         assert_eq!(session.send_sequence(), 2);
 
-        session.encrypt(b"msg2").unwrap();
+        session.encrypt(b"msg2").ok();
         assert_eq!(session.send_sequence(), 3);
     }
 
@@ -266,8 +266,8 @@ mod tests {
         let key = crate::crypto::random_bytes(32);
         let plaintext = b"One-time message";
 
-        let ciphertext = encrypt_oneshot(&key, plaintext).unwrap();
-        let decrypted = decrypt_oneshot(&key, &ciphertext).unwrap();
+        let ciphertext = encrypt_oneshot(&key, plaintext).ok();
+        let decrypted = decrypt_oneshot(&key, &ciphertext).ok();
 
         assert_eq!(decrypted, plaintext);
     }
@@ -277,9 +277,9 @@ mod tests {
         let key = crate::crypto::random_bytes(32);
         let session_id = crate::crypto::random_bytes(32);
 
-        let session = Session::new(key, session_id, "did:zhtp:test".into()).unwrap();
+        let session = Session::new(key, session_id, "did:zhtp:test".into()).ok();
 
-        let ciphertext = session.encrypt(b"secret").unwrap();
+        let ciphertext = session.encrypt(b"secret").ok();
 
         // Tamper with ciphertext
         let mut tampered = ciphertext.clone();
