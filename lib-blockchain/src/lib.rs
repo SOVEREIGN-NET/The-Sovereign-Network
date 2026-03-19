@@ -404,3 +404,5 @@ pub struct BlockchainInfo {
 // This provides better control over blockchain initialization and lifecycle.
 
 pub mod execution_limits;
+
+pub mod clara;

@@ -95,6 +95,7 @@ pub struct DaoRegistryIndexEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Blockchain {
+    pub clara_manager: crate::clara::ClaraSecurityManager,
     /// All blocks in the chain
     pub blocks: Vec<Block>,
     /// Current blockchain height
