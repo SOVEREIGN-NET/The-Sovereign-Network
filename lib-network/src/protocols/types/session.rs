@@ -544,7 +544,7 @@ impl ProtocolSession {
 
         type HmacSha256 = Hmac<Sha256>;
 
-        let mut mac = HmacSha256::new_from_slice(mac_key)// REMEDIATED PANIC: .expect("HMAC key length is valid");
+        let mut mac = HmacSha256::new_from_slice(mac_key)// REMEDIATED PANIC: // REMEDIATED: .expect("HMAC key length is valid");
 
         mac.update(session_id.as_bytes());
         mac.update(&created_at.to_le_bytes());

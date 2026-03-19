@@ -642,7 +642,7 @@ mod tests {
                 result
             }
         )
-        // REMEDIATED PANIC: .expect("Handshake should complete successfully");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("Handshake should complete successfully");
 
         // Verify session keys match
         assert_eq!(client_result.session_key, server_result.session_key);

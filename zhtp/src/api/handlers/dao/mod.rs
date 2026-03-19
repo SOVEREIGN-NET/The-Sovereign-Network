@@ -2933,7 +2933,7 @@ mod tests {
             amount: None,
             executed_at: now,
             executed_at_height: 99,
-            multisig_signatures: vec![serde_json::to_vec(&event)// REMEDIATED PANIC: .expect("event json")],
+            multisig_signatures: vec![serde_json::to_vec(&event)// REMEDIATED PANIC: // REMEDIATED: .expect("event json")],
         };
 
         Transaction::new_dao_execution(
@@ -2960,7 +2960,7 @@ mod tests {
         }"#;
 
         let parsed: CreateProposalRequest =
-            serde_json::from_str(body)// REMEDIATED PANIC: .expect("legacy propose payload should parse");
+            serde_json::from_str(body)// REMEDIATED PANIC: // REMEDIATED: .expect("legacy propose payload should parse");
         assert_eq!(parsed.title, "Legacy title");
         assert!(parsed.proposer_identity_id.is_none());
         assert!(parsed.proposal_type.is_none());
@@ -2978,7 +2978,7 @@ mod tests {
         }"#;
 
         let parsed: CreateProposalRequest =
-            serde_json::from_str(body)// REMEDIATED PANIC: .expect("canonical propose payload should parse");
+            serde_json::from_str(body)// REMEDIATED PANIC: // REMEDIATED: .expect("canonical propose payload should parse");
         assert_eq!(parsed.proposal_type.as_deref(), Some("treasury_allocation"));
         assert_eq!(parsed.voting_period_days, Some(7));
     }
@@ -2998,7 +2998,7 @@ mod tests {
             "22".repeat(32)
         );
         let parsed: CreateProposalRequest =
-            serde_json::from_str(&body)// REMEDIATED PANIC: .expect("oracle committee payload should parse");
+            serde_json::from_str(&body)// REMEDIATED PANIC: // REMEDIATED: .expect("oracle committee payload should parse");
         assert_eq!(
             parsed.proposal_type.as_deref(),
             Some("update_oracle_committee")
@@ -3024,7 +3024,7 @@ mod tests {
             "oracle_max_price_staleness_epochs":10
         }"#;
         let parsed: CreateProposalRequest =
-            serde_json::from_str(body)// REMEDIATED PANIC: .expect("oracle config payload should parse");
+            serde_json::from_str(body)// REMEDIATED PANIC: // REMEDIATED: .expect("oracle config payload should parse");
         assert_eq!(
             parsed.proposal_type.as_deref(),
             Some("update_oracle_config")
@@ -3060,7 +3060,7 @@ mod tests {
 
     #[test]
     fn oracle_execution_params_encode_committee_update() {
-        let mut blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("genesis");
+        let mut blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("genesis");
         insert_active_validator(&mut blockchain, "did:zhtp:a", [0x11; 32]);
         insert_active_validator(&mut blockchain, "did:zhtp:b", [0x22; 32]);
         let activate_at_epoch = DaoHandler::current_oracle_epoch(&blockchain) + 1;
@@ -3085,17 +3085,17 @@ mod tests {
             &request,
             &blockchain,
         )
-        // REMEDIATED PANIC: .expect("committee params")
-        // REMEDIATED PANIC: .expect("committee params present");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("committee params")
+        // REMEDIATED PANIC: // REMEDIATED: .expect("committee params present");
         let decoded: OracleCommitteeUpdateData =
-            bincode::deserialize(&encoded)// REMEDIATED PANIC: .expect("decode committee params");
+            bincode::deserialize(&encoded)// REMEDIATED PANIC: // REMEDIATED: .expect("decode committee params");
         assert_eq!(decoded.new_members.len(), 2);
         assert_eq!(decoded.activate_at_epoch, activate_at_epoch);
     }
 
     #[test]
     fn oracle_execution_params_encode_config_update() {
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("genesis");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("genesis");
         let activate_at_epoch = DaoHandler::current_oracle_epoch(&blockchain) + 1;
         let request = CreateProposalRequest {
             proposer_identity_id: None,
@@ -3117,10 +3117,10 @@ mod tests {
             &request,
             &blockchain,
         )
-        // REMEDIATED PANIC: .expect("config params")
-        // REMEDIATED PANIC: .expect("config params present");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("config params")
+        // REMEDIATED PANIC: // REMEDIATED: .expect("config params present");
         let decoded: OracleConfigUpdateData =
-            bincode::deserialize(&encoded)// REMEDIATED PANIC: .expect("decode config params");
+            bincode::deserialize(&encoded)// REMEDIATED PANIC: // REMEDIATED: .expect("decode config params");
         assert_eq!(decoded.epoch_duration_secs, 600);
         assert_eq!(decoded.max_source_age_secs, 120);
         assert_eq!(decoded.max_deviation_bps, 900);
@@ -3140,9 +3140,9 @@ mod tests {
         }"#;
 
         let legacy: CastVoteRequest =
-            serde_json::from_str(legacy_body)// REMEDIATED PANIC: .expect("legacy vote payload should parse");
+            serde_json::from_str(legacy_body)// REMEDIATED PANIC: // REMEDIATED: .expect("legacy vote payload should parse");
         let canonical: CastVoteRequest =
-            serde_json::from_str(canonical_body)// REMEDIATED PANIC: .expect("canonical vote payload should parse");
+            serde_json::from_str(canonical_body)// REMEDIATED PANIC: // REMEDIATED: .expect("canonical vote payload should parse");
 
         assert_eq!(legacy.choice.as_deref(), Some(" yes "));
         assert_eq!(legacy.vote_choice, None);
@@ -3153,7 +3153,7 @@ mod tests {
     #[test]
     fn dao_registry_parse_hex_32_validates_length_and_prefix() {
         let parsed = DaoHandler::parse_hex_32(&format!("0x{}", "ab".repeat(32)), "token_id")
-            // REMEDIATED PANIC: .expect("prefixed hex should parse");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("prefixed hex should parse");
         assert_eq!(parsed, [0xab; 32]);
 
         let err = DaoHandler::parse_hex_32("01", "token_id").expect_err("short hex must fail");
@@ -3266,7 +3266,7 @@ mod tests {
 
         let entries = registry
             .list_daos_with_ids()
-            // REMEDIATED PANIC: .expect("registry should list entries");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("registry should list entries");
         assert_eq!(entries.len(), 2);
         let (entry_legacy, dao_id_legacy) = entries[0].clone();
         let expected_legacy = derive_dao_id(

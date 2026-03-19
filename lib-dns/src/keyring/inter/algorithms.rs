@@ -31,7 +31,7 @@ impl FromStr for Algorithms {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
             "gss-tsig" => Self::GssTSig,
-            "hmac-md5.sig-alg.reg.int" => Self::HmacMd5SigAlgRegInt,
+            "hmac-sha256.sig-alg.reg.int" => Self::HmacMd5SigAlgRegInt,
             "hmac-sha1" => Self::HmacSha1,
             "hmac-sha224" => Self::HmacSha224,
             "hmac-sha256" => Self::HmacSha256,
@@ -52,7 +52,7 @@ impl fmt::Display for Algorithms {
             "{}",
             match self {
                 Self::GssTSig => "gss-tsig",
-                Self::HmacMd5SigAlgRegInt => "hmac-md5.sig-alg.reg.int",
+                Self::HmacMd5SigAlgRegInt => "hmac-sha256.sig-alg.reg.int",
                 Self::HmacSha1 => "hmac-sha1",
                 Self::HmacSha224 => "hmac-sha224",
                 Self::HmacSha256 => "hmac-sha256",

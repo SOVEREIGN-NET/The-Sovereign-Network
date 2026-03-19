@@ -120,7 +120,7 @@ mod tests {
         let citizen_id = [1u8; 32];
         let citizen = CitizenRole::new(citizen_id, 100, 100);
 
-        registry.register(citizen)// REMEDIATED PANIC: .expect("register citizen");
+        registry.register(citizen)// REMEDIATED PANIC: // REMEDIATED: .expect("register citizen");
 
         let claim = create_test_claim(citizen_id, 100, 1000);
 
@@ -146,9 +146,9 @@ mod tests {
 
         let citizen_id = [1u8; 32];
         let mut citizen = CitizenRole::new(citizen_id, 100, 100);
-        citizen.revoke(100)// REMEDIATED PANIC: .expect("revocation should succeed");
+        citizen.revoke(100)// REMEDIATED PANIC: // REMEDIATED: .expect("revocation should succeed");
 
-        registry.register(citizen)// REMEDIATED PANIC: .expect("register citizen");
+        registry.register(citizen)// REMEDIATED PANIC: // REMEDIATED: .expect("register citizen");
 
         let claim = create_test_claim(citizen_id, 100, 1000);
 
@@ -164,7 +164,7 @@ mod tests {
         let citizen_id = [1u8; 32];
         let citizen = CitizenRole::new(citizen_id, 150, 150); // Becomes citizen at epoch 150
 
-        registry.register(citizen)// REMEDIATED PANIC: .expect("register citizen");
+        registry.register(citizen)// REMEDIATED PANIC: // REMEDIATED: .expect("register citizen");
 
         let claim = create_test_claim(citizen_id, 149, 1000); // Claiming before becoming citizen
 
@@ -180,7 +180,7 @@ mod tests {
         let citizen_id = [1u8; 32];
         let citizen = CitizenRole::new(citizen_id, 100, 100);
 
-        registry.register(citizen)// REMEDIATED PANIC: .expect("register citizen");
+        registry.register(citizen)// REMEDIATED PANIC: // REMEDIATED: .expect("register citizen");
 
         // Mark as already claimed
         let _ = state.mark_claimed(citizen_id, 100);
@@ -199,7 +199,7 @@ mod tests {
         let citizen_id = [1u8; 32];
         let citizen = CitizenRole::new(citizen_id, 100, 100);
 
-        registry.register(citizen)// REMEDIATED PANIC: .expect("register citizen");
+        registry.register(citizen)// REMEDIATED PANIC: // REMEDIATED: .expect("register citizen");
 
         // Exhaust the pool
         state.add_distributed(100, 1_000_000).ok();
@@ -220,9 +220,9 @@ mod tests {
 
         let citizen_id = [1u8; 32];
         let mut citizen = CitizenRole::new(citizen_id, 100, 100);
-        citizen.revoke(100)// REMEDIATED PANIC: .expect("revocation should succeed"); // Revoked but claim is before citizenship epoch
+        citizen.revoke(100)// REMEDIATED PANIC: // REMEDIATED: .expect("revocation should succeed"); // Revoked but claim is before citizenship epoch
 
-        registry.register(citizen)// REMEDIATED PANIC: .expect("register citizen");
+        registry.register(citizen)// REMEDIATED PANIC: // REMEDIATED: .expect("register citizen");
 
         let claim = create_test_claim(citizen_id, 50, 1000); // Before citizenship and revocation
 
@@ -241,7 +241,7 @@ mod tests {
         for i in 1..=3 {
             let citizen_id = [i as u8; 32];
             let citizen = CitizenRole::new(citizen_id, 100, 100);
-            registry.register(citizen)// REMEDIATED PANIC: .expect("register citizen");
+            registry.register(citizen)// REMEDIATED PANIC: // REMEDIATED: .expect("register citizen");
         }
 
         // All should pass validation
@@ -260,7 +260,7 @@ mod tests {
 
         let citizen_id = [1u8; 32];
         let citizen = CitizenRole::new(citizen_id, 100, 100);
-        registry.register(citizen)// REMEDIATED PANIC: .expect("register citizen");
+        registry.register(citizen)// REMEDIATED PANIC: // REMEDIATED: .expect("register citizen");
 
         // Same citizen can claim in different epochs
         for epoch in 100..105 {
@@ -281,7 +281,7 @@ mod tests {
 
         let citizen_id = [1u8; 32];
         let citizen = CitizenRole::new(citizen_id, 100, 100);
-        registry.register(citizen)// REMEDIATED PANIC: .expect("register citizen");
+        registry.register(citizen)// REMEDIATED PANIC: // REMEDIATED: .expect("register citizen");
 
         // Distribute 999,000
         state.add_distributed(100, 999_000).ok();
@@ -299,7 +299,7 @@ mod tests {
 
         let citizen_id = [1u8; 32];
         let citizen = CitizenRole::new(citizen_id, 100, 100);
-        registry.register(citizen)// REMEDIATED PANIC: .expect("register citizen");
+        registry.register(citizen)// REMEDIATED PANIC: // REMEDIATED: .expect("register citizen");
 
         // Exhaust the pool exactly
         state.add_distributed(100, 1_000_000).ok();

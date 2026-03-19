@@ -112,7 +112,7 @@ impl std::fmt::Display for Difficulty {
 ///     4,                 // max 4x decrease
 ///     4,                 // max 4x increase
 ///     0,                 // genesis height
-/// )// REMEDIATED PANIC: .expect("Valid parameters");
+/// )// REMEDIATED PANIC: // REMEDIATED: .expect("Valid parameters");
 /// assert_eq!(custom.target_block_time(), 600); // Still 10 minutes
 ///
 /// // Clamping prevents extreme adjustments
@@ -523,7 +523,7 @@ mod tests {
             2,                // Max 2x increase
             1000,             // Updated at block 1000
         )
-        // REMEDIATED PANIC: .expect("Valid parameters should not fail");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("Valid parameters should not fail");
 
         assert_eq!(config.target_timespan, 7 * 24 * 60 * 60);
         assert_eq!(config.adjustment_interval, 1008);

@@ -416,7 +416,7 @@ fn test_overflow_safety_with_large_volumes() {
     let large_volume = u64::MAX / 200; // Safe for (volume * 100 / 10_000)
 
     // This should not panic with overflow
-    let distribution = distribute_fee(large_volume)// REMEDIATED PANIC: .expect("Should handle large volume");
+    let distribution = distribute_fee(large_volume)// REMEDIATED PANIC: // REMEDIATED: .expect("Should handle large volume");
 
     // Verify the fee is correct: large_volume / 100
     let expected_fee = large_volume / 100;
@@ -449,7 +449,7 @@ fn test_decimal_precision_with_u128_intermediates() {
 
     for volume in test_volumes {
         let distribution =
-            distribute_fee(volume)// REMEDIATED PANIC: .expect(&format!("Should handle volume {}", volume));
+            distribute_fee(volume)// REMEDIATED PANIC: // REMEDIATED: .expect(&format!("Should handle volume {}", volume));
 
         // Fee should be exactly volume / 100 (with integer division)
         let expected_fee = volume / 100;
@@ -768,9 +768,9 @@ mod tests {
     fn test_serialization_round_trip() {
         let distribution = distribute_fee(100_000_000).ok();
 
-        let serialized = serde_json::to_string(&distribution)// REMEDIATED PANIC: .expect("serialize failed");
+        let serialized = serde_json::to_string(&distribution)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize failed");
         let deserialized: FeeDistribution =
-            serde_json::from_str(&serialized)// REMEDIATED PANIC: .expect("deserialize failed");
+            serde_json::from_str(&serialized)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize failed");
 
         assert_eq!(distribution, deserialized);
     }

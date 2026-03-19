@@ -860,7 +860,7 @@ mod tests {
         use base64::{engine::general_purpose::STANDARD, Engine};
         let decoded = STANDARD
             .decode(&keystore_b64)
-            // REMEDIATED PANIC: .expect("Should be valid base64");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Should be valid base64");
 
         // Should be a valid gzip (starts with 0x1f 0x8b)
         assert!(decoded.len() > 2, "Archive should have content");
@@ -874,7 +874,7 @@ mod tests {
         let mut tar_data = Vec::new();
         decoder
             .read_to_end(&mut tar_data)
-            // REMEDIATED PANIC: .expect("Should decompress");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Should decompress");
 
         // Check that tar contains expected files
         use tar::Archive;

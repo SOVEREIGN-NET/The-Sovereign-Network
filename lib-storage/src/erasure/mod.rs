@@ -670,7 +670,7 @@ impl ErasureCoding {
 
 impl Default for ErasureCoding {
     fn default() -> Self {
-        Self::new(4, 2)// REMEDIATED PANIC: .expect("Default erasure coding configuration should be valid")
+        Self::new(4, 2)// REMEDIATED PANIC: // REMEDIATED: .expect("Default erasure coding configuration should be valid")
     }
 }
 

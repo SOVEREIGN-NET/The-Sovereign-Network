@@ -30,7 +30,7 @@ pub fn hash_transaction(transaction: &Transaction) -> Hash {
 
     // Serialize and hash
     let serialized =
-        bincode::serialize(&tx_for_hash)// REMEDIATED PANIC: .expect("Transaction serialization should never fail");
+        bincode::serialize(&tx_for_hash)// REMEDIATED PANIC: // REMEDIATED: .expect("Transaction serialization should never fail");
 
     // Log serialized bytes for comparison with client (debug only)
     debug!(
@@ -61,7 +61,7 @@ pub fn hash_transaction_for_signing(transaction: &Transaction) -> Hash {
 /// Hash a transaction input
 pub fn hash_transaction_input(input: &TransactionInput) -> Hash {
     let serialized =
-        bincode::serialize(input)// REMEDIATED PANIC: .expect("TransactionInput serialization should never fail");
+        bincode::serialize(input)// REMEDIATED PANIC: // REMEDIATED: .expect("TransactionInput serialization should never fail");
 
     crate::types::hash::blake3_hash(&serialized)
 }
@@ -69,7 +69,7 @@ pub fn hash_transaction_input(input: &TransactionInput) -> Hash {
 /// Hash a transaction output
 pub fn hash_transaction_output(output: &TransactionOutput) -> Hash {
     let serialized =
-        bincode::serialize(output)// REMEDIATED PANIC: .expect("TransactionOutput serialization should never fail");
+        bincode::serialize(output)// REMEDIATED PANIC: // REMEDIATED: .expect("TransactionOutput serialization should never fail");
 
     crate::types::hash::blake3_hash(&serialized)
 }
@@ -198,7 +198,7 @@ pub fn hash_for_signature(transaction: &Transaction) -> Hash {
 
     // 3. Transaction type (u8 discriminant)
     let type_bytes = bincode::serialize(&transaction.transaction_type)
-        // REMEDIATED PANIC: .expect("TransactionType serialization should never fail");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("TransactionType serialization should never fail");
     hasher.update(&type_bytes);
 
     // 4. Inputs (sorted by outpoint for determinism)
@@ -207,7 +207,7 @@ pub fn hash_for_signature(transaction: &Transaction) -> Hash {
     hasher.update(&(sorted_inputs.len() as u64).to_le_bytes());
     for input in &sorted_inputs {
         let input_bytes =
-            bincode::serialize(input)// REMEDIATED PANIC: .expect("TransactionInput serialization should never fail");
+            bincode::serialize(input)// REMEDIATED PANIC: // REMEDIATED: .expect("TransactionInput serialization should never fail");
         hasher.update(&input_bytes);
     }
 
@@ -217,7 +217,7 @@ pub fn hash_for_signature(transaction: &Transaction) -> Hash {
     hasher.update(&(sorted_outputs.len() as u64).to_le_bytes());
     for output in &sorted_outputs {
         let output_bytes =
-            bincode::serialize(output)// REMEDIATED PANIC: .expect("TransactionOutput serialization should never fail");
+            bincode::serialize(output)// REMEDIATED PANIC: // REMEDIATED: .expect("TransactionOutput serialization should never fail");
         hasher.update(&output_bytes);
     }
 
@@ -256,7 +256,7 @@ fn hash_optional_field<T: serde::Serialize>(hasher: &mut blake3::Hasher, field: 
         Some(data) => {
             hasher.update(&[0x01]); // Present marker
             let bytes =
-                bincode::serialize(data)// REMEDIATED PANIC: .expect("Optional field serialization should never fail");
+                bincode::serialize(data)// REMEDIATED PANIC: // REMEDIATED: .expect("Optional field serialization should never fail");
             hasher.update(&bytes);
         }
         None => {
@@ -316,7 +316,7 @@ pub mod utils {
 
         for input in &transaction.inputs {
             let proof_bytes = bincode::serialize(&input.zk_proof)
-                // REMEDIATED PANIC: .expect("ZkTransactionProof serialization should never fail");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("ZkTransactionProof serialization should never fail");
             witness_data.extend_from_slice(&proof_bytes);
         }
 

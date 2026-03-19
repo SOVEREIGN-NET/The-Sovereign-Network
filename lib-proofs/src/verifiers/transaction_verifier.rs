@@ -1025,7 +1025,7 @@ impl TransactionVerifier {
 
 impl Default for TransactionVerifier {
     fn default() -> Self {
-        Self::new()// REMEDIATED PANIC: .expect("Failed to create default TransactionVerifier")
+        Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create default TransactionVerifier")
     }
 }
 

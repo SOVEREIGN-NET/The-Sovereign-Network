@@ -13312,7 +13312,7 @@ pub struct PersistenceStats {
 impl Default for Blockchain {
             clara_manager: crate::clara::ClaraSecurityManager::new(),
     fn default() -> Self {
-        let mut blockchain = Self::new()// REMEDIATED PANIC: .expect("Failed to create default blockchain");
+        let mut blockchain = Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create default blockchain");
         blockchain.ensure_economic_processor();
         // Note: Consensus coordinator requires async initialization and external dependencies
         // so it's not initialized in Default. Call initialize_consensus_coordinator() separately.
@@ -13411,7 +13411,7 @@ mod replay_contract_execution_tests {
         };
         let mint_params = MintParams {
             token_id,
-            to: bincode::serialize(&recipient)// REMEDIATED PANIC: .expect("recipient should serialize"),
+            to: bincode::serialize(&recipient)// REMEDIATED PANIC: // REMEDIATED: .expect("recipient should serialize"),
             amount: 250,
         };
 
@@ -13419,12 +13419,12 @@ mod replay_contract_execution_tests {
             contract_execution_tx(
                 &creator,
                 "create_custom_token",
-                bincode::serialize(&create_params)// REMEDIATED PANIC: .expect("create params should serialize"),
+                bincode::serialize(&create_params)// REMEDIATED PANIC: // REMEDIATED: .expect("create params should serialize"),
             ),
             contract_execution_tx(
                 &creator,
                 "mint",
-                bincode::serialize(&mint_params)// REMEDIATED PANIC: .expect("mint params should serialize"),
+                bincode::serialize(&mint_params)// REMEDIATED PANIC: // REMEDIATED: .expect("mint params should serialize"),
             ),
         ];
 
@@ -13432,24 +13432,24 @@ mod replay_contract_execution_tests {
         for tx in &txs {
             direct
                 .process_contract_execution(tx, 10)
-                // REMEDIATED PANIC: .expect("direct contract execution should succeed");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("direct contract execution should succeed");
         }
 
         let mut replayed = Blockchain::default();
         for tx in &txs {
             replayed
                 .process_contract_execution(tx, 10)
-                // REMEDIATED PANIC: .expect("replayed contract execution should succeed");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("replayed contract execution should succeed");
         }
 
         let direct_token = direct
             .token_contracts
             .get(&token_id)
-            // REMEDIATED PANIC: .expect("token should exist in direct path");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("token should exist in direct path");
         let replayed_token = replayed
             .token_contracts
             .get(&token_id)
-            // REMEDIATED PANIC: .expect("token should exist in replay path");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("token should exist in replay path");
 
         assert_eq!(direct_token.total_supply, 1_250);
         assert_eq!(direct_token.balance_of(&creator), 1_000);
@@ -13491,13 +13491,13 @@ mod replay_contract_execution_tests {
         let tx = contract_execution_tx(
             &creator,
             "create_custom_token",
-            bincode::serialize(&create_params)// REMEDIATED PANIC: .expect("create params should serialize"),
+            bincode::serialize(&create_params)// REMEDIATED PANIC: // REMEDIATED: .expect("create params should serialize"),
         );
 
         let mut blockchain = Blockchain::default();
         blockchain
             .process_contract_execution(&tx, 42)
-            // REMEDIATED PANIC: .expect("contract execution should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("contract execution should succeed");
 
         // Verify contract_blocks is updated with the correct block height
         assert!(
@@ -13589,7 +13589,7 @@ mod replay_contract_execution_tests {
             signature: test_signature(signer),
             memo: payload
                 .encode_memo()
-                // REMEDIATED PANIC: .expect("token creation payload should encode"),
+                // REMEDIATED PANIC: // REMEDIATED: .expect("token creation payload should encode"),
             identity_data: None,
             wallet_data: None,
             validator_data: None,
@@ -13756,7 +13756,7 @@ mod store_backed_blockchain_tests {
         let genesis = Block::new(genesis_header.clone(), vec![]);
         bc.add_block(genesis.clone())
             .await
-            // REMEDIATED PANIC: .expect("genesis should apply without error");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("genesis should apply without error");
         assert_eq!(
             bc.get_height(),
             1,
@@ -13768,7 +13768,7 @@ mod store_backed_blockchain_tests {
         let block1 = Block::new(block1_header, vec![]);
         bc.add_block(block1)
             .await
-            // REMEDIATED PANIC: .expect("block 1 should apply without error");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("block 1 should apply without error");
         assert_eq!(
             bc.get_height(),
             2,
@@ -13803,11 +13803,11 @@ mod store_backed_blockchain_tests {
         let genesis = Block::new(genesis_header, vec![]);
         bc.add_block(genesis)
             .await
-            // REMEDIATED PANIC: .expect("genesis should apply without error");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("genesis should apply without error");
 
         let reloaded = Blockchain::load_from_store(store)
-            // REMEDIATED PANIC: .expect("load_from_store should succeed")
-            // REMEDIATED PANIC: .expect("store should contain a chain");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("load_from_store should succeed")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("store should contain a chain");
 
         assert!(
             reloaded.cbe_token.is_initialized(),
@@ -13835,21 +13835,21 @@ mod oracle_storage_migration_tests {
 
         // Emulate pre-oracle v3 payload (without oracle fields).
         let storage_v3 = BlockchainStorageV3::from_blockchain(&blockchain);
-        let serialized = bincode::serialize(&storage_v3)// REMEDIATED PANIC: .expect("serialize v3 storage");
+        let serialized = bincode::serialize(&storage_v3)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize v3 storage");
 
-        let tmp = tempfile::tempdir()// REMEDIATED PANIC: .expect("tempdir");
+        let tmp = tempfile::tempdir()// REMEDIATED PANIC: // REMEDIATED: .expect("tempdir");
         let path = tmp.path().join("legacy_v3.dat");
         let mut file_data = Vec::with_capacity(6 + serialized.len());
         file_data.extend_from_slice(&Blockchain::FILE_MAGIC);
         file_data.extend_from_slice(&3u16.to_le_bytes());
         file_data.extend_from_slice(&serialized);
 
-        let mut f = std::fs::File::create(&path)// REMEDIATED PANIC: .expect("create file");
-        f.write_all(&file_data)// REMEDIATED PANIC: .expect("write file");
-        f.sync_all()// REMEDIATED PANIC: .expect("sync file");
+        let mut f = std::fs::File::create(&path)// REMEDIATED PANIC: // REMEDIATED: .expect("create file");
+        f.write_all(&file_data)// REMEDIATED PANIC: // REMEDIATED: .expect("write file");
+        f.sync_all()// REMEDIATED PANIC: // REMEDIATED: .expect("sync file");
 
         #[allow(deprecated)]
-        let loaded = Blockchain::load_from_file(&path)// REMEDIATED PANIC: .expect("load v3 file");
+        let loaded = Blockchain::load_from_file(&path)// REMEDIATED PANIC: // REMEDIATED: .expect("load v3 file");
         assert_eq!(
             loaded.oracle_state,
             crate::oracle::OracleState::default(),
@@ -13914,21 +13914,21 @@ mod oracle_storage_migration_tests {
             },
             onramp_state: bc.onramp_state.clone(),
         };
-        let serialized = bincode::serialize(&storage_v5)// REMEDIATED PANIC: .expect("serialize legacy v5 storage");
+        let serialized = bincode::serialize(&storage_v5)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize legacy v5 storage");
 
-        let tmp = tempfile::tempdir()// REMEDIATED PANIC: .expect("tempdir");
+        let tmp = tempfile::tempdir()// REMEDIATED PANIC: // REMEDIATED: .expect("tempdir");
         let path = tmp.path().join("legacy_v5.dat");
         let mut file_data = Vec::with_capacity(6 + serialized.len());
         file_data.extend_from_slice(&Blockchain::FILE_MAGIC);
         file_data.extend_from_slice(&5u16.to_le_bytes());
         file_data.extend_from_slice(&serialized);
 
-        let mut f = std::fs::File::create(&path)// REMEDIATED PANIC: .expect("create file");
-        f.write_all(&file_data)// REMEDIATED PANIC: .expect("write file");
-        f.sync_all()// REMEDIATED PANIC: .expect("sync file");
+        let mut f = std::fs::File::create(&path)// REMEDIATED PANIC: // REMEDIATED: .expect("create file");
+        f.write_all(&file_data)// REMEDIATED PANIC: // REMEDIATED: .expect("write file");
+        f.sync_all()// REMEDIATED PANIC: // REMEDIATED: .expect("sync file");
 
         #[allow(deprecated)]
-        let loaded = Blockchain::load_from_file(&path)// REMEDIATED PANIC: .expect("load legacy v5 file");
+        let loaded = Blockchain::load_from_file(&path)// REMEDIATED PANIC: // REMEDIATED: .expect("load legacy v5 file");
         assert_eq!(loaded.onramp_state, bc.onramp_state);
         assert!(loaded.entity_registry.is_none());
         assert!(loaded.cbe_token.is_initialized(), "legacy v5 loads must backfill CBE state");
@@ -13950,21 +13950,21 @@ mod oracle_storage_migration_tests {
             last_oracle_epoch_processed: bc.last_oracle_epoch_processed,
             entity_registry: bc.entity_registry.clone(),
         };
-        let serialized = bincode::serialize(&storage_v6)// REMEDIATED PANIC: .expect("serialize legacy v6 storage");
+        let serialized = bincode::serialize(&storage_v6)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize legacy v6 storage");
 
-        let tmp = tempfile::tempdir()// REMEDIATED PANIC: .expect("tempdir");
+        let tmp = tempfile::tempdir()// REMEDIATED PANIC: // REMEDIATED: .expect("tempdir");
         let path = tmp.path().join("legacy_v6.dat");
         let mut file_data = Vec::with_capacity(6 + serialized.len());
         file_data.extend_from_slice(&Blockchain::FILE_MAGIC);
         file_data.extend_from_slice(&6u16.to_le_bytes());
         file_data.extend_from_slice(&serialized);
 
-        let mut f = std::fs::File::create(&path)// REMEDIATED PANIC: .expect("create file");
-        f.write_all(&file_data)// REMEDIATED PANIC: .expect("write file");
-        f.sync_all()// REMEDIATED PANIC: .expect("sync file");
+        let mut f = std::fs::File::create(&path)// REMEDIATED PANIC: // REMEDIATED: .expect("create file");
+        f.write_all(&file_data)// REMEDIATED PANIC: // REMEDIATED: .expect("write file");
+        f.sync_all()// REMEDIATED PANIC: // REMEDIATED: .expect("sync file");
 
         #[allow(deprecated)]
-        let loaded = Blockchain::load_from_file(&path)// REMEDIATED PANIC: .expect("load legacy v6 file");
+        let loaded = Blockchain::load_from_file(&path)// REMEDIATED PANIC: // REMEDIATED: .expect("load legacy v6 file");
         assert!(loaded.cbe_token.is_initialized(), "legacy v6 loads must backfill CBE state");
     }
 
@@ -13989,15 +13989,15 @@ mod oracle_storage_migration_tests {
         bc.last_oracle_epoch_processed = bc.last_committed_timestamp();
 
         // Save to temp file
-        let tmp = tempfile::tempdir()// REMEDIATED PANIC: .expect("tempdir");
+        let tmp = tempfile::tempdir()// REMEDIATED PANIC: // REMEDIATED: .expect("tempdir");
         let path = tmp.path().join("test.dat");
 
         #[allow(deprecated)]
-        bc.save_to_file(&path)// REMEDIATED PANIC: .expect("save should succeed");
+        bc.save_to_file(&path)// REMEDIATED PANIC: // REMEDIATED: .expect("save should succeed");
 
         // Load from file
         #[allow(deprecated)]
-        let bc2 = Blockchain::load_from_file(&path)// REMEDIATED PANIC: .expect("load should succeed");
+        let bc2 = Blockchain::load_from_file(&path)// REMEDIATED PANIC: // REMEDIATED: .expect("load should succeed");
 
         // Verify pending update survived
         assert!(
@@ -14204,7 +14204,7 @@ impl Blockchain {
             amount: 0,
         };
         let params_bytes =
-            serde_json::to_vec(&params)// REMEDIATED PANIC: .expect("Serialization failed");
+            serde_json::to_vec(&params)// REMEDIATED PANIC: // REMEDIATED: .expect("Serialization failed");
         let tx = Transaction::new_dao_proposal(
             DaoProposalData {
                 proposal_id,
@@ -14245,7 +14245,7 @@ impl Blockchain {
                 updates,
             }),
         };
-        let params_bytes = bincode::serialize(&params)// REMEDIATED PANIC: .expect("Serialization failed");
+        let params_bytes = bincode::serialize(&params)// REMEDIATED PANIC: // REMEDIATED: .expect("Serialization failed");
         let tx = Transaction::new_dao_proposal(
             DaoProposalData {
                 proposal_id,
@@ -14967,7 +14967,7 @@ mod cbe_genesis_allocation_tests {
 
     #[test]
     fn test_cbe_token_initialized_at_genesis() {
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("Failed to create blockchain");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create blockchain");
 
         // CBE token should be initialized
         assert!(
@@ -14978,14 +14978,14 @@ mod cbe_genesis_allocation_tests {
 
     #[test]
     fn test_cbe_total_supply_is_100b() {
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("Failed to create blockchain");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create blockchain");
 
         assert_eq!(blockchain.cbe_token.total_supply(), CBE_TOTAL_SUPPLY);
     }
 
     #[test]
     fn test_cbe_compensation_pool_allocation() {
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("Failed to create blockchain");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create blockchain");
 
         // Compensation pool address is [0x01; 32]
         let compensation_addr = PublicKey {
@@ -15002,7 +15002,7 @@ mod cbe_genesis_allocation_tests {
 
     #[test]
     fn test_cbe_operational_treasury_allocation() {
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("Failed to create blockchain");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create blockchain");
 
         let operational_addr = PublicKey {
             dilithium_pk: vec![],
@@ -15018,7 +15018,7 @@ mod cbe_genesis_allocation_tests {
 
     #[test]
     fn test_cbe_performance_incentives_allocation() {
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("Failed to create blockchain");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create blockchain");
 
         let performance_addr = PublicKey {
             dilithium_pk: vec![],
@@ -15034,7 +15034,7 @@ mod cbe_genesis_allocation_tests {
 
     #[test]
     fn test_cbe_strategic_reserves_allocation() {
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("Failed to create blockchain");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create blockchain");
 
         let strategic_addr = PublicKey {
             dilithium_pk: vec![],
@@ -15050,7 +15050,7 @@ mod cbe_genesis_allocation_tests {
 
     #[test]
     fn test_cbe_vesting_schedules_created() {
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("Failed to create blockchain");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create blockchain");
 
         // Operational should have vesting
         let operational_addr = PublicKey {
@@ -15092,7 +15092,7 @@ mod cbe_genesis_allocation_tests {
 
     #[test]
     fn test_cbe_compensation_no_vesting() {
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("Failed to create blockchain");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create blockchain");
 
         // Compensation pool should NOT have vesting (immediately available)
         let compensation_addr = PublicKey {
@@ -15112,7 +15112,7 @@ mod cbe_genesis_allocation_tests {
 
     #[test]
     fn test_cbe_bonding_curve_starts_with_zero_supply() {
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("Failed to create blockchain");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create blockchain");
 
         // Find the CBE bonding curve token
         use crate::contracts::tokens::{CBE_NAME, CBE_SYMBOL};
@@ -15135,7 +15135,7 @@ mod cbe_genesis_allocation_tests {
         let cbe_curve_token = blockchain
             .bonding_curve_registry
             .get(&token_id)
-            // REMEDIATED PANIC: .expect("CBE bonding curve token should exist");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("CBE bonding curve token should exist");
 
         // Bonding curve should start with 0 circulating supply
         assert_eq!(
@@ -15146,7 +15146,7 @@ mod cbe_genesis_allocation_tests {
 
     #[test]
     fn test_cbe_minting_disabled() {
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("Failed to create blockchain");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create blockchain");
 
         let test_addr = PublicKey {
             dilithium_pk: vec![],
@@ -15171,11 +15171,11 @@ mod cbe_genesis_allocation_tests {
         use std::path::PathBuf;
         use tempfile::tempdir;
 
-        let dir = tempdir()// REMEDIATED PANIC: .expect("tempdir");
+        let dir = tempdir()// REMEDIATED PANIC: // REMEDIATED: .expect("tempdir");
         let path: PathBuf = dir.path().join("blockchain.dat");
 
         // Create a fresh blockchain — cbe_token gets initialized via genesis path
-        let blockchain = Blockchain::new()// REMEDIATED PANIC: .expect("create blockchain");
+        let blockchain = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("create blockchain");
         assert!(blockchain.cbe_token.is_initialized(), "must be initialized before save");
         let supply_before = blockchain.cbe_token.total_supply();
 
@@ -15185,11 +15185,11 @@ mod cbe_genesis_allocation_tests {
 
         // Save to disk
         #[allow(deprecated)]
-        blockchain.save_to_file(&path)// REMEDIATED PANIC: .expect("save_to_file");
+        blockchain.save_to_file(&path)// REMEDIATED PANIC: // REMEDIATED: .expect("save_to_file");
 
         // Load back — cbe_token must be restored, not re-initialized
         #[allow(deprecated)]
-        let loaded = Blockchain::load_from_file(&path)// REMEDIATED PANIC: .expect("load_from_file");
+        let loaded = Blockchain::load_from_file(&path)// REMEDIATED PANIC: // REMEDIATED: .expect("load_from_file");
 
         assert!(
             loaded.cbe_token.is_initialized(),

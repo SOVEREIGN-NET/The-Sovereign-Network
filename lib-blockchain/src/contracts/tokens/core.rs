@@ -933,8 +933,8 @@ mod tests {
         let token = TokenContract::new_sov_with_kernel_authority(kernel_addr.clone());
 
         // Test serialization and deserialization
-        let serialized = bincode::serialize(&token)// REMEDIATED PANIC: .expect("serialize");
-        let deserialized: TokenContract = bincode::deserialize(&serialized)// REMEDIATED PANIC: .expect("deserialize");
+        let serialized = bincode::serialize(&token)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize");
+        let deserialized: TokenContract = bincode::deserialize(&serialized)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize");
 
         assert_eq!(deserialized.kernel_mint_authority, Some(kernel_addr));
         assert_eq!(deserialized.name, "SOV Token");

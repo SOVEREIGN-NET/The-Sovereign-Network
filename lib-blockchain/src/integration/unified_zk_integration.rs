@@ -434,6 +434,6 @@ impl BlockchainZkExtension for Blockchain {
 
 impl Default for UnifiedZkBlockchainManager {
     fn default() -> Self {
-        Self::new()// REMEDIATED PANIC: .expect("Failed to create unified ZK blockchain manager")
+        Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create unified ZK blockchain manager")
     }
 }

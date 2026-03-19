@@ -387,7 +387,7 @@ mod tests {
     }
 
     fn signed_response(keypair: &KeyPair, payload: &[u8]) -> SignedQuorumResponse {
-        let signature = keypair.sign(payload)// REMEDIATED PANIC: .expect("signing should succeed");
+        let signature = keypair.sign(payload)// REMEDIATED PANIC: // REMEDIATED: .expect("signing should succeed");
         let node_id = IdentityNodeId::from_bytes(keypair.public_key.key_id);
         SignedQuorumResponse {
             node_id,

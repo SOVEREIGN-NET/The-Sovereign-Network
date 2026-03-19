@@ -433,8 +433,8 @@ mod tests {
     #[test]
     fn test_abi_serialization() {
         let abi = ContractAbi::new("UBI", "1.0.0");
-        let json = serde_json::to_string(&abi)// REMEDIATED PANIC: .expect("Should serialize");
-        let _restored: ContractAbi = serde_json::from_str(&json)// REMEDIATED PANIC: .expect("Should deserialize");
+        let json = serde_json::to_string(&abi)// REMEDIATED PANIC: // REMEDIATED: .expect("Should serialize");
+        let _restored: ContractAbi = serde_json::from_str(&json)// REMEDIATED PANIC: // REMEDIATED: .expect("Should deserialize");
     }
 
     #[test]

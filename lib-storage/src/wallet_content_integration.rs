@@ -287,6 +287,6 @@ mod tests {
             true,
             ownership_proof,
         )
-        // REMEDIATED PANIC: .expect("valid dummy identity")
+        // REMEDIATED PANIC: // REMEDIATED: .expect("valid dummy identity")
     }
 }

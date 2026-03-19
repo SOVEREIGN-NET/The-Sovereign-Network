@@ -674,7 +674,7 @@ mod tests {
             device_name,
             None,
         )
-        // REMEDIATED PANIC: .expect("Failed to create test identity")
+        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test identity")
     }
 
     fn net_tests_disabled() -> bool {

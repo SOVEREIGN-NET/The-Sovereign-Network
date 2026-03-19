@@ -662,7 +662,7 @@ mod tests {
         endpoints: Vec<ValidatorEndpoint>,
         status: ValidatorStatus,
     ) -> ValidatorAnnouncement {
-        let keypair = KeyPair::generate()// REMEDIATED PANIC: .expect("keypair");
+        let keypair = KeyPair::generate()// REMEDIATED PANIC: // REMEDIATED: .expect("keypair");
         ValidatorAnnouncement {
             identity_id,
             consensus_key: keypair.public_key.clone(),
@@ -675,7 +675,7 @@ mod tests {
             signature: Vec::new(),
         }
         .sign(&keypair)
-        // REMEDIATED PANIC: .expect("signed")
+        // REMEDIATED PANIC: // REMEDIATED: .expect("signed")
     }
 
     #[test]

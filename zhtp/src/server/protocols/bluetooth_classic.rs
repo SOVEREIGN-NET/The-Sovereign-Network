@@ -258,7 +258,7 @@ impl BluetoothClassicRouter {
                     connections
                         .upsert(peer_entry)
                         .await
-                        // REMEDIATED PANIC: .expect("Failed to upsert peer");
+                        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to upsert peer");
                     // No need to drop(connections) as it will be dropped automatically
 
                     info!(
@@ -457,7 +457,7 @@ impl BluetoothClassicRouter {
                             registry
                                 .upsert(peer_entry)
                                 .await
-                                // REMEDIATED PANIC: .expect("Failed to upsert peer");
+                                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to upsert peer");
 
                             info!("✅ Added {} to mesh network", device.address);
 

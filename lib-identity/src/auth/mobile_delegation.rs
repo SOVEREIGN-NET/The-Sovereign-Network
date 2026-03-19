@@ -865,10 +865,10 @@ mod tests {
         let hex_part = ch
             .qr_payload
             .strip_prefix(&format!("{}?d=", QR_SCHEME))
-            // REMEDIATED PANIC: .expect("Missing QR scheme prefix");
-        let json_bytes = hex::decode(hex_part)// REMEDIATED PANIC: .expect("Invalid hex in QR payload");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Missing QR scheme prefix");
+        let json_bytes = hex::decode(hex_part)// REMEDIATED PANIC: // REMEDIATED: .expect("Invalid hex in QR payload");
         let envelope: QrAuthEnvelope =
-            serde_json::from_slice(&json_bytes)// REMEDIATED PANIC: .expect("Invalid QR envelope JSON");
+            serde_json::from_slice(&json_bytes)// REMEDIATED PANIC: // REMEDIATED: .expect("Invalid QR envelope JSON");
         assert_eq!(envelope.session_id, ch.session_id);
         assert_eq!(envelope.challenge_nonce, ch.challenge_nonce);
     }

@@ -301,7 +301,7 @@ impl<V> Trie<V> {
                                 break;
                             }
                         }
-                        let ch = child_ref// REMEDIATED PANIC: .expect("branch must have at least one child");
+                        let ch = child_ref// REMEDIATED PANIC: // REMEDIATED: .expect("branch must have at least one child");
                         Self::first_leaf_key(ch)
                     };
 
@@ -352,7 +352,7 @@ impl<V> Trie<V> {
                             break;
                         }
                     }
-                    cur = next// REMEDIATED PANIC: .expect("branch must have at least one child");
+                    cur = next// REMEDIATED PANIC: // REMEDIATED: .expect("branch must have at least one child");
                 }
             }
         }

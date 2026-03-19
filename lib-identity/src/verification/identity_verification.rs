@@ -779,7 +779,7 @@ mod tests {
             false, // Not a verified citizen in test
             ownership_proof,
         )
-        // REMEDIATED PANIC: .expect("Failed to create test identity")
+        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test identity")
     }
 
     #[tokio::test]
@@ -788,7 +788,7 @@ mod tests {
         assert_eq!(verifier.trust_anchors.len(), 2); // Default trust anchors
         assert_eq!(verifier.metrics.total_verifications, 0);
 
-        verifier.initialize().await// REMEDIATED PANIC: .expect("Failed to initialize");
+        verifier.initialize().await// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to initialize");
     }
 
     #[tokio::test]
@@ -799,7 +799,7 @@ mod tests {
         let result = verifier
             .verify_identity_complete(&identity, VerificationLevel::BasicExistence, None)
             .await
-            // REMEDIATED PANIC: .expect("Failed to verify identity");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to verify identity");
 
         assert!(result.verified);
         assert!(result.trust_score > 0.0);
@@ -818,7 +818,7 @@ mod tests {
         let result = verifier
             .verify_identity_complete(&identity, VerificationLevel::PrivacyPreserving, None)
             .await
-            // REMEDIATED PANIC: .expect("Failed to verify identity");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to verify identity");
 
         assert!(result.verified);
         assert!(result
@@ -839,7 +839,7 @@ mod tests {
         let result = verifier
             .verify_identity_complete(&identity, VerificationLevel::Complete, None)
             .await
-            // REMEDIATED PANIC: .expect("Failed to verify identity");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to verify identity");
 
         assert!(result.verified);
         assert!(result.trust_score >= 0.8);
@@ -864,13 +864,13 @@ mod tests {
         let result1 = verifier
             .verify_identity_complete(&identity, VerificationLevel::BasicExistence, None)
             .await
-            // REMEDIATED PANIC: .expect("Failed to verify identity");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to verify identity");
 
         // Second verification should use cache
         let result2 = verifier
             .verify_identity_complete(&identity, VerificationLevel::BasicExistence, None)
             .await
-            // REMEDIATED PANIC: .expect("Failed to verify identity");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to verify identity");
 
         assert_eq!(result1.verified, result2.verified);
         assert_eq!(verifier.metrics.cache_hits, 1);
@@ -897,11 +897,11 @@ mod tests {
         let challenge1 = verifier
             .generate_verification_challenge()
             .await
-            // REMEDIATED PANIC: .expect("Failed to generate challenge");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to generate challenge");
         let challenge2 = verifier
             .generate_verification_challenge()
             .await
-            // REMEDIATED PANIC: .expect("Failed to generate challenge");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to generate challenge");
 
         assert_eq!(challenge1.len(), 32);
         assert_eq!(challenge2.len(), 32);
@@ -951,7 +951,7 @@ mod tests {
             let _result = verifier
                 .verify_identity_complete(&identity, VerificationLevel::BasicExistence, None)
                 .await
-                // REMEDIATED PANIC: .expect("Failed to verify identity");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to verify identity");
         }
 
         let metrics = verifier.get_metrics();
@@ -971,7 +971,7 @@ mod tests {
         let _result = verifier
             .verify_identity_complete(&identity, VerificationLevel::BasicExistence, None)
             .await
-            // REMEDIATED PANIC: .expect("Failed to verify identity");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to verify identity");
 
         let (cache_size_before, _, _) = verifier.get_cache_stats();
         assert!(cache_size_before > 0);

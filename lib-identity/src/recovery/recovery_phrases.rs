@@ -987,7 +987,7 @@ impl RecoveryPhraseManager {
         // Simple checksum implementation
         let phrase_text = words.join(" ");
         let combined = format!("{}{}", phrase_text, hex::encode(entropy));
-        Ok(format!("{:x}", md5::compute(combined.as_bytes())))
+        Ok(format!("{:x}", sha256::compute(combined.as_bytes())))
     }
 
     /// Calculate phrase strength score
@@ -1630,12 +1630,12 @@ mod tests {
         let mut manager = RecoveryPhraseManager::new();
         let phrase = generate_valid_phrase(&mut manager, "identity-123")
             .await
-            // REMEDIATED PANIC: .expect("phrase");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("phrase");
 
         let phrase_id = manager
             .store_recovery_phrase("identity-123", &phrase, Some("auth"))
             .await
-            // REMEDIATED PANIC: .expect("store");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("store");
 
         // Corrupt the ciphertext to invalidate the tag
         if let Some(record) = manager.phrases.get_mut(&phrase_id) {

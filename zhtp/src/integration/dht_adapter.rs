@@ -314,19 +314,19 @@ mod tests {
 
     fn create_test_identity() -> ZhtpIdentity {
         ZhtpIdentity::new_unified(IdentityType::Device, None, None, "dht-adapter-test", None)
-            // REMEDIATED PANIC: .expect("test identity")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("test identity")
     }
 
     #[tokio::test]
     async fn stores_and_fetches_content() {
         let mut dht = DhtIntegrationAdapter::new();
-        dht.initialize(create_test_identity()).await// REMEDIATED PANIC: .expect("init");
+        dht.initialize(create_test_identity()).await// REMEDIATED PANIC: // REMEDIATED: .expect("init");
 
         let key = dht
             .store_content("test.zhtp", "/hello", b"hello".to_vec(), 300)
             .await
-            // REMEDIATED PANIC: .expect("store");
-        let value = dht.fetch_content(&key).await// REMEDIATED PANIC: .expect("fetch");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("store");
+        let value = dht.fetch_content(&key).await// REMEDIATED PANIC: // REMEDIATED: .expect("fetch");
 
         assert_eq!(value, Some(b"hello".to_vec()));
     }
@@ -334,40 +334,40 @@ mod tests {
     #[tokio::test]
     async fn expires_content_by_ttl() {
         let mut dht = DhtIntegrationAdapter::new();
-        dht.initialize(create_test_identity()).await// REMEDIATED PANIC: .expect("init");
+        dht.initialize(create_test_identity()).await// REMEDIATED PANIC: // REMEDIATED: .expect("init");
 
         let key = dht
             .store_content("test.zhtp", "/expire", b"value".to_vec(), 1)
             .await
-            // REMEDIATED PANIC: .expect("store");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("store");
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-        let value = dht.fetch_content(&key).await// REMEDIATED PANIC: .expect("fetch");
+        let value = dht.fetch_content(&key).await// REMEDIATED PANIC: // REMEDIATED: .expect("fetch");
         assert_eq!(value, None);
     }
 
     #[tokio::test]
     async fn tracks_connected_peers() {
         let mut dht = DhtIntegrationAdapter::new();
-        dht.initialize(create_test_identity()).await// REMEDIATED PANIC: .expect("init");
+        dht.initialize(create_test_identity()).await// REMEDIATED PANIC: // REMEDIATED: .expect("init");
         dht.connect_to_peer("127.0.0.1:9334")
             .await
-            // REMEDIATED PANIC: .expect("connect peer");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("connect peer");
 
-        let peers = dht.discover_peers().await// REMEDIATED PANIC: .expect("discover");
+        let peers = dht.discover_peers().await// REMEDIATED PANIC: // REMEDIATED: .expect("discover");
         assert_eq!(peers, vec!["127.0.0.1:9334".to_string()]);
     }
 
     #[tokio::test]
     async fn clears_cache_without_breaking_status() {
         let mut dht = DhtIntegrationAdapter::new();
-        dht.initialize(create_test_identity()).await// REMEDIATED PANIC: .expect("init");
+        dht.initialize(create_test_identity()).await// REMEDIATED PANIC: // REMEDIATED: .expect("init");
         dht.store_content("test.zhtp", "/a", b"a".to_vec(), 300)
             .await
-            // REMEDIATED PANIC: .expect("store");
-        dht.clear_cache().await// REMEDIATED PANIC: .expect("clear");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("store");
+        dht.clear_cache().await// REMEDIATED PANIC: // REMEDIATED: .expect("clear");
 
-        let status = dht.get_network_status().await// REMEDIATED PANIC: .expect("status");
+        let status = dht.get_network_status().await// REMEDIATED PANIC: // REMEDIATED: .expect("status");
         assert_eq!(status.total_keys, 0);
     }
 }

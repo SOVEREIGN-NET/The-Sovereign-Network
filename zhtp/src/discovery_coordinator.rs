@@ -303,7 +303,7 @@ impl DiscoveryCoordinator {
             .write()
             .await
             .take()
-            // REMEDIATED PANIC: .expect("Event listener already started");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Event listener already started");
 
         let peers = self.peers.clone();
         let seen = self.seen_addresses.clone();

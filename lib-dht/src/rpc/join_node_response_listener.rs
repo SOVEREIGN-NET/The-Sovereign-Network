@@ -50,7 +50,7 @@ impl ResponseCallback for JoinNodeResponseListener {
 
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                // REMEDIATED PANIC: .expect("Time went backwards")
+                // REMEDIATED PANIC: // REMEDIATED: .expect("Time went backwards")
                 .as_millis();
             let uid = self
                 .kademlia
@@ -100,7 +100,7 @@ impl ResponseCallback for JoinNodeResponseListener {
                         .lock()
                         .ok()
                         .send_with_node_callback(&mut request, node, Box::new(listener.clone()))
-                        // REMEDIATED PANIC: .expect("Cannot send request");
+                        // REMEDIATED PANIC: // REMEDIATED: .expect("Cannot send request");
                 }
 
                 return;
@@ -122,7 +122,7 @@ impl ResponseCallback for JoinNodeResponseListener {
                     .lock()
                     .ok()
                     .send_with_node_callback(&mut request, node, Box::new(self.clone()))
-                    // REMEDIATED PANIC: .expect("Cannot send request");
+                    // REMEDIATED PANIC: // REMEDIATED: .expect("Cannot send request");
             }
         }
 

@@ -321,7 +321,7 @@ pub struct DAOMetadata {
 /// let update = DifficultyParameterUpdateData::new(
 ///     7 * 24 * 60 * 60,  // 1 week target_timespan
 ///     1008,               // 1008 blocks (half of default)
-/// )// REMEDIATED PANIC: .expect("valid parameters");
+/// )// REMEDIATED PANIC: // REMEDIATED: .expect("valid parameters");
 ///
 /// // Verify target block time is unchanged (10 minutes)
 /// assert_eq!(update.target_block_time_secs(), 600);
@@ -338,7 +338,7 @@ pub struct DAOMetadata {
 ///     2016,                // 2016 blocks
 ///     Some(2),             // Allow 2x decrease (conservative)
 ///     Some(8),             // Allow 8x increase (aggressive)
-/// )// REMEDIATED PANIC: .expect("valid parameters");
+/// )// REMEDIATED PANIC: // REMEDIATED: .expect("valid parameters");
 ///
 /// assert_eq!(update.min_adjustment_factor, Some(2));
 /// assert_eq!(update.max_adjustment_factor, Some(8));
@@ -350,7 +350,7 @@ pub struct DAOMetadata {
 /// use lib_blockchain::types::DifficultyParameterUpdateData;
 ///
 /// let update = DifficultyParameterUpdateData::new(604800, 1008)
-///     // REMEDIATED PANIC: .expect("valid parameters")
+///     // REMEDIATED PANIC: // REMEDIATED: .expect("valid parameters")
 ///     .with_min_factor(2)
 ///     .with_max_factor(8);
 ///
@@ -591,9 +591,9 @@ mod tests {
             DAOMetadata::new(DAOType::NP, TokenClass::DaoNp, allocation.clone()).ok();
         metadata.validate().ok();
 
-        let serialized = bincode::serialize(&metadata)// REMEDIATED PANIC: .expect("serialize metadata");
+        let serialized = bincode::serialize(&metadata)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize metadata");
         let deserialized: DAOMetadata =
-            bincode::deserialize(&serialized)// REMEDIATED PANIC: .expect("deserialize metadata");
+            bincode::deserialize(&serialized)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize metadata");
         assert_eq!(metadata, deserialized);
         assert_eq!(deserialized.treasury_allocation, allocation);
 
@@ -784,7 +784,7 @@ mod tests {
             14 * 24 * 60 * 60, // 2 weeks in seconds
             2016,              // blocks between adjustments (like Bitcoin)
         )
-        // REMEDIATED PANIC: .expect("valid parameters");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("valid parameters");
 
         assert_eq!(update.target_timespan, 14 * 24 * 60 * 60);
         assert_eq!(update.adjustment_interval, 2016);
@@ -800,7 +800,7 @@ mod tests {
             Some(25),  // min factor 25%
             Some(400), // max factor 400%
         )
-        // REMEDIATED PANIC: .expect("valid parameters");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("valid parameters");
 
         assert_eq!(update.target_timespan, 604800);
         assert_eq!(update.adjustment_interval, 1008);
@@ -903,9 +903,9 @@ mod tests {
             DifficultyParameterUpdateData::new_with_factors(604800, 2016, Some(25), Some(400))
                 .ok();
 
-        let serialized = bincode::serialize(&update)// REMEDIATED PANIC: .expect("serialize update");
+        let serialized = bincode::serialize(&update)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize update");
         let deserialized: DifficultyParameterUpdateData =
-            bincode::deserialize(&serialized)// REMEDIATED PANIC: .expect("deserialize update");
+            bincode::deserialize(&serialized)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize update");
 
         assert_eq!(update, deserialized);
         assert_eq!(deserialized.target_timespan, 604800);

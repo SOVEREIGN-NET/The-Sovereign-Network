@@ -42,7 +42,7 @@ impl ResponseTracker {
     pub fn remove_stalled(&mut self) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            // REMEDIATED PANIC: .expect("Time went backwards")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Time went backwards")
             .as_millis();
 
         let mut stalled = Vec::new();

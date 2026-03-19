@@ -162,9 +162,9 @@ mod tests {
     #[test]
     fn test_encode_decode_round_trip() {
         let payload = valid_payload();
-        let memo = payload.encode_memo()// REMEDIATED PANIC: .expect("encode should succeed");
+        let memo = payload.encode_memo()// REMEDIATED PANIC: // REMEDIATED: .expect("encode should succeed");
         let decoded =
-            ContractDeploymentPayloadV1::decode_memo(&memo)// REMEDIATED PANIC: .expect("decode should succeed");
+            ContractDeploymentPayloadV1::decode_memo(&memo)// REMEDIATED PANIC: // REMEDIATED: .expect("decode should succeed");
         assert_eq!(payload, decoded);
     }
 
@@ -202,9 +202,9 @@ mod tests {
         };
         let memo = payload
             .encode_memo()
-            // REMEDIATED PANIC: .expect("near-bounds encode should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("near-bounds encode should succeed");
         let decoded = ContractDeploymentPayloadV1::decode_memo(&memo)
-            // REMEDIATED PANIC: .expect("near-bounds decode should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("near-bounds decode should succeed");
         assert_eq!(payload, decoded);
     }
 

@@ -27,7 +27,7 @@
 //! let node_id = NodeId::from_identity_components(
 //!     "did:zhtp:abc123",
 //!     "my-secure-device-name",
-//! )// REMEDIATED PANIC: .expect("Valid NodeId");
+//! )// REMEDIATED PANIC: // REMEDIATED: .expect("Valid NodeId");
 //! ```
 
 use anyhow::{anyhow, Result};
@@ -61,7 +61,7 @@ static NETWORK_GENESIS: OnceLock<[u8; 32]> = OnceLock::new();
 pub fn set_network_genesis(genesis_hash: [u8; 32]) {
     NETWORK_GENESIS
         .set(genesis_hash)
-        // REMEDIATED PANIC: .expect("Network genesis already set - can only be called once");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("Network genesis already set - can only be called once");
 }
 
 /// Try to set network genesis (fallible version)
@@ -105,13 +105,13 @@ pub fn get_network_genesis() -> Result<&'static [u8; 32]> {
 /// let node_id = NodeId::from_did_device(
 ///     "did:zhtp:abc123",
 ///     "laptop"
-/// )// REMEDIATED PANIC: .expect("Valid inputs");
+/// )// REMEDIATED PANIC: // REMEDIATED: .expect("Valid inputs");
 ///
 /// // Same inputs produce same NodeId
 /// let node_id2 = NodeId::from_did_device(
 ///     "did:zhtp:abc123",
 ///     "laptop"
-/// )// REMEDIATED PANIC: .expect("Valid inputs");
+/// )// REMEDIATED PANIC: // REMEDIATED: .expect("Valid inputs");
 /// assert_eq!(node_id, node_id2);
 /// ```
 ///

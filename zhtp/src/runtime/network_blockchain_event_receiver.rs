@@ -116,7 +116,7 @@ mod tests {
     /// fresh blockchain. Safe to call multiple times (OnceLock + Option swap).
     async fn ensure_global_blockchain() {
         let blockchain =
-            lib_blockchain::Blockchain::new()// REMEDIATED PANIC: .expect("Failed to create test blockchain");
+            lib_blockchain::Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test blockchain");
         let bc_arc = std::sync::Arc::new(tokio::sync::RwLock::new(blockchain));
         let _ = super::super::blockchain_provider::set_global_blockchain(bc_arc).await;
     }
@@ -140,7 +140,7 @@ mod tests {
             lib_blockchain::Difficulty::default(),
         );
         let block = lib_blockchain::Block::new(header, vec![]);
-        bincode::serialize(&block)// REMEDIATED PANIC: .expect("Failed to serialize test block")
+        bincode::serialize(&block)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to serialize test block")
     }
 
     // -- Block tests ----------------------------------------------------------

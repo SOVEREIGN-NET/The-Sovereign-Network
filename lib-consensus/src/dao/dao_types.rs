@@ -996,8 +996,8 @@ mod tests {
             delay_epochs: 2,
         };
 
-        let encoded = bincode::serialize(&params)// REMEDIATED PANIC: .expect("serialize");
-        let decoded: MintAuthorizationParams = bincode::deserialize(&encoded)// REMEDIATED PANIC: .expect("deserialize");
+        let encoded = bincode::serialize(&params)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize");
+        let decoded: MintAuthorizationParams = bincode::deserialize(&encoded)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize");
 
         assert_eq!(decoded.amount, 1_000_000);
         assert_eq!(decoded.recipient_key_id, [42u8; 32]);
@@ -1013,8 +1013,8 @@ mod tests {
             delay_epochs: 0,
         };
 
-        let encoded = bincode::serialize(&params)// REMEDIATED PANIC: .expect("serialize");
-        let decoded: BurnAuthorizationParams = bincode::deserialize(&encoded)// REMEDIATED PANIC: .expect("deserialize");
+        let encoded = bincode::serialize(&params)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize");
+        let decoded: BurnAuthorizationParams = bincode::deserialize(&encoded)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize");
 
         assert_eq!(decoded.amount, 500_000);
         assert_eq!(decoded.from_key_id, [7u8; 32]);
@@ -1055,8 +1055,8 @@ mod tests {
             }),
         };
 
-        let encoded = bincode::serialize(&params)// REMEDIATED PANIC: .expect("serialize");
-        let decoded: DaoExecutionParams = bincode::deserialize(&encoded)// REMEDIATED PANIC: .expect("deserialize");
+        let encoded = bincode::serialize(&params)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize");
+        let decoded: DaoExecutionParams = bincode::deserialize(&encoded)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize");
 
         match decoded.action {
             DaoExecutionAction::MintAuthorization(p) => {
@@ -1081,9 +1081,9 @@ mod tests {
     fn test_governance_parameter_token_creation_fee_roundtrip() {
         let value = GovernanceParameterValue::TokenCreationFee(1_000);
 
-        let encoded = bincode::serialize(&value)// REMEDIATED PANIC: .expect("serialize");
+        let encoded = bincode::serialize(&value)// REMEDIATED PANIC: // REMEDIATED: .expect("serialize");
         let decoded: GovernanceParameterValue =
-            bincode::deserialize(&encoded)// REMEDIATED PANIC: .expect("deserialize");
+            bincode::deserialize(&encoded)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize");
 
         assert!(matches!(
             decoded,

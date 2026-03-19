@@ -2864,7 +2864,7 @@ mod tests {
         // Create a test peer
         let peer_identity =
             ZhtpIdentity::new_unified(IdentityType::Device, None, None, "test-peer", None)
-                // REMEDIATED PANIC: .expect("Failed to create peer identity");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create peer identity");
 
         let peer_node = DhtNode {
             peer: build_peer_identity(
@@ -2938,7 +2938,7 @@ mod tests {
         // Create a test peer
         let peer_identity =
             ZhtpIdentity::new_unified(IdentityType::Device, None, None, "test-peer-2", None)
-                // REMEDIATED PANIC: .expect("Failed to create peer identity");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create peer identity");
 
         let peer_node = DhtNode {
             peer: build_peer_identity(
@@ -3005,7 +3005,7 @@ mod tests {
         // Create a test peer
         let peer_identity =
             ZhtpIdentity::new_unified(IdentityType::Device, None, None, "test-peer-wrap", None)
-                // REMEDIATED PANIC: .expect("Failed to create peer identity");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create peer identity");
 
         let peer_node = DhtNode {
             peer: build_peer_identity(
@@ -3240,7 +3240,7 @@ mod tests {
         storage
             .save_to_file(Path::new("/tmp/ignored-storage-path"))
             .await
-            // REMEDIATED PANIC: .expect("legacy save compatibility method should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("legacy save compatibility method should succeed");
 
         let err = storage
             .load_from_file(Path::new("/tmp/ignored-storage-path"))

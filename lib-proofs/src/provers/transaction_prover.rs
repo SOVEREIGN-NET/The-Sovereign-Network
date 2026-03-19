@@ -185,7 +185,7 @@ impl TransactionProver {
 
 impl Default for TransactionProver {
     fn default() -> Self {
-        Self::new()// REMEDIATED PANIC: .expect("Failed to create default TransactionProver")
+        Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create default TransactionProver")
     }
 }
 

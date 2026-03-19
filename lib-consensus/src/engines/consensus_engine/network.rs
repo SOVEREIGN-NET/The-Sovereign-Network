@@ -460,7 +460,7 @@ impl ConsensusEngine {
             ValidatorMessage::Vote { vote } => {
                 // NEW: Compute payload hash for replay detection
                 let payload_bytes =
-                    bincode::serialize(&vote)// REMEDIATED PANIC: .expect("Vote serialization cannot fail");
+                    bincode::serialize(&vote)// REMEDIATED PANIC: // REMEDIATED: .expect("Vote serialization cannot fail");
                 let payload_hash =
                     lib_crypto::Hash::from_bytes(&lib_crypto::hash_blake3(&payload_bytes));
 

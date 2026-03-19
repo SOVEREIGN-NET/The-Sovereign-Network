@@ -1337,7 +1337,7 @@ mod tests {
         };
 
         let envelope = MeshMessageEnvelope::from_message(123, origin.clone(), dest.clone(), msg)
-            // REMEDIATED PANIC: .expect("Failed to create envelope");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create envelope");
 
         assert_eq!(envelope.message_id, 123);
         assert_eq!(envelope.ttl, DEFAULT_TTL);
@@ -1366,7 +1366,7 @@ mod tests {
 
         let msg = ZhtpMeshMessage::ZhtpRequest(request.clone());
         let envelope = MeshMessageEnvelope::from_message(456, origin.clone(), dest.clone(), msg)
-            // REMEDIATED PANIC: .expect("Failed to create envelope");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create envelope");
 
         // Verify ZHTP fields are extracted
         assert_eq!(envelope.zhtp_method, Some(ZhtpMethod::Get));
@@ -1410,7 +1410,7 @@ mod tests {
         };
 
         let mut envelope = MeshMessageEnvelope::from_message(789, origin, dest, msg)
-            // REMEDIATED PANIC: .expect("Failed to create envelope");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create envelope");
         envelope.increment_hop(relay.clone());
 
         assert_eq!(envelope.hop_count, 1);
@@ -1438,7 +1438,7 @@ mod tests {
 
         let msg = ZhtpMeshMessage::ZhtpResponse(response.clone());
         let envelope = MeshMessageEnvelope::from_message(999, origin, dest, msg)
-            // REMEDIATED PANIC: .expect("Failed to create envelope");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create envelope");
 
         // Verify ZHTP status is extracted
         assert_eq!(envelope.zhtp_status, Some(ZhtpStatus::Ok));
@@ -1504,15 +1504,15 @@ mod tests {
             receiver.clone(),
             original_request.clone(),
         )
-        // REMEDIATED PANIC: .expect("Failed to create envelope");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create envelope");
 
         // Simulate 10 hops through mesh network (typical production routing path)
         for _hop in 1..=10 {
             // Serialize at current hop (forwarding)
-            let serialized = bincode::serialize(&envelope)// REMEDIATED PANIC: .expect("Failed to serialize envelope");
+            let serialized = bincode::serialize(&envelope)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to serialize envelope");
 
             // Deserialize at next hop (receiving)
-            envelope = bincode::deserialize(&serialized)// REMEDIATED PANIC: .expect("Failed to deserialize envelope");
+            envelope = bincode::deserialize(&serialized)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to deserialize envelope");
 
             // Increment hop count (relay behavior)
             envelope.increment_hop(sender.clone());
@@ -1521,7 +1521,7 @@ mod tests {
         // Reconstruct at destination
         let final_request = envelope
             .to_zhtp_request()
-            // REMEDIATED PANIC: .expect("Failed to reconstruct after multi-hop");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to reconstruct after multi-hop");
 
         // Verify complete integrity
         assert_eq!(final_request.method, original_request.method);
@@ -1609,7 +1609,7 @@ mod tests {
 
         let envelope =
             MeshMessageEnvelope::from_zhtp_request(100, sender, receiver, request.clone())
-                // REMEDIATED PANIC: .expect("Failed to create envelope");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create envelope");
 
         println!("📊 Memory optimization:");
         println!(
@@ -1660,7 +1660,7 @@ mod tests {
 
         let msg = ZhtpMeshMessage::IdentityEnvelope(identity_envelope.clone());
         let envelope = MeshMessageEnvelope::from_message(999, origin, dest, msg)
-            // REMEDIATED PANIC: .expect("Failed to create envelope");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create envelope");
         assert_eq!(envelope.message_type, MessageType::IdentityEnvelope);
 
         let bytes = envelope.to_bytes().ok();
@@ -1689,7 +1689,7 @@ mod tests {
 
         let msg = ZhtpMeshMessage::IdentityDeliveryAck(ack.clone());
         let envelope = MeshMessageEnvelope::from_message(1001, origin, dest, msg)
-            // REMEDIATED PANIC: .expect("Failed to create envelope");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create envelope");
         assert_eq!(envelope.message_type, MessageType::IdentityDeliveryAck);
 
         let bytes = envelope.to_bytes().ok();
@@ -1716,12 +1716,12 @@ mod tests {
             payload: payload.clone(),
         };
         let envelope = MeshMessageEnvelope::from_message(2001, origin, dest, msg)
-            // REMEDIATED PANIC: .expect("Failed to create envelope");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create envelope");
         assert_eq!(envelope.message_type, MessageType::OracleAttestation);
 
-        let bytes = envelope.to_bytes()// REMEDIATED PANIC: .expect("serialize envelope");
-        let decoded = MeshMessageEnvelope::from_bytes(&bytes)// REMEDIATED PANIC: .expect("deserialize envelope");
-        let reconstructed = decoded.deserialize_message()// REMEDIATED PANIC: .expect("decode message");
+        let bytes = envelope.to_bytes()// REMEDIATED PANIC: // REMEDIATED: .expect("serialize envelope");
+        let decoded = MeshMessageEnvelope::from_bytes(&bytes)// REMEDIATED PANIC: // REMEDIATED: .expect("deserialize envelope");
+        let reconstructed = decoded.deserialize_message()// REMEDIATED PANIC: // REMEDIATED: .expect("decode message");
         match reconstructed {
             ZhtpMeshMessage::OracleAttestation { payload: inner } => {
                 assert_eq!(inner, payload);

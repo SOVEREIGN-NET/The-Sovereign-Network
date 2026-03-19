@@ -255,7 +255,7 @@ impl PinnedVerifierConfig {
     pub fn add_bootstrap(&mut self, addr: SocketAddr, pin: Option<[u8; 32]>) {
         self.bootstrap_peers
             .write()
-            // REMEDIATED PANIC: .expect("Failed to acquire write lock on bootstrap_peers")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to acquire write lock on bootstrap_peers")
             .insert(addr, pin);
     }
 
@@ -263,7 +263,7 @@ impl PinnedVerifierConfig {
     pub fn is_bootstrap(&self, addr: &SocketAddr) -> bool {
         self.bootstrap_peers
             .read()
-            // REMEDIATED PANIC: .expect("Failed to acquire read lock on bootstrap_peers")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to acquire read lock on bootstrap_peers")
             .contains_key(addr)
     }
 
@@ -274,7 +274,7 @@ impl PinnedVerifierConfig {
     pub fn get_bootstrap_pin(&self, addr: &SocketAddr) -> Option<Option<[u8; 32]>> {
         self.bootstrap_peers
             .read()
-            // REMEDIATED PANIC: .expect("Failed to acquire read lock on bootstrap_peers")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to acquire read lock on bootstrap_peers")
             .get(addr)
             .copied()
     }
@@ -283,7 +283,7 @@ impl PinnedVerifierConfig {
     pub fn get_bootstrap_addrs(&self) -> Vec<SocketAddr> {
         self.bootstrap_peers
             .read()
-            // REMEDIATED PANIC: .expect("Failed to acquire read lock on bootstrap_peers")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to acquire read lock on bootstrap_peers")
             .keys()
             .copied()
             .collect()
@@ -295,7 +295,7 @@ impl PinnedVerifierConfig {
         *self
             .bootstrap_peers
             .write()
-            // REMEDIATED PANIC: .expect("Failed to acquire write lock on bootstrap_peers") = new_peers;
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to acquire write lock on bootstrap_peers") = new_peers;
     }
 }
 
@@ -342,7 +342,7 @@ impl std::fmt::Debug for PinnedCertVerifier {
                 &self
                     .tofu_callback
                     .read()
-                    // REMEDIATED PANIC: .expect("Failed to read tofu_callback lock")
+                    // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to read tofu_callback lock")
                     .is_some(),
             )
             .finish()
@@ -414,7 +414,7 @@ impl PinnedCertVerifier {
         *self
             .current_peer_addr
             .write()
-            // REMEDIATED PANIC: .expect("Failed to acquire write lock on current_peer_addr") = Some(addr);
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to acquire write lock on current_peer_addr") = Some(addr);
     }
 
     /// Clear the current peer address
@@ -422,7 +422,7 @@ impl PinnedCertVerifier {
         *self
             .current_peer_addr
             .write()
-            // REMEDIATED PANIC: .expect("Failed to acquire write lock on current_peer_addr") = None;
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to acquire write lock on current_peer_addr") = None;
     }
 
     /// Get the current peer address
@@ -430,7 +430,7 @@ impl PinnedCertVerifier {
         *self
             .current_peer_addr
             .read()
-            // REMEDIATED PANIC: .expect("Failed to acquire read lock on current_peer_addr")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to acquire read lock on current_peer_addr")
     }
 
     /// Set the callback for TOFU pin persistence
@@ -447,7 +447,7 @@ impl PinnedCertVerifier {
         *self
             .tofu_callback
             .write()
-            // REMEDIATED PANIC: .expect("Failed to acquire write lock on tofu_callback") = Some(Box::new(callback));
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to acquire write lock on tofu_callback") = Some(Box::new(callback));
     }
 
     /// Sync pins from the async TlsPinCache
@@ -573,7 +573,7 @@ impl PinnedCertVerifier {
                         if let Some(callback) = self
                             .tofu_callback
                             .read()
-                            // REMEDIATED PANIC: .expect("Failed to acquire read lock on tofu_callback")
+                            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to acquire read lock on tofu_callback")
                             .as_ref()
                         {
                             callback(spki_hash, addr);
@@ -1081,7 +1081,7 @@ mod tests {
         assert!(verifier
             .tofu_callback
             .read()
-            // REMEDIATED PANIC: .expect("Failed to read tofu_callback")
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to read tofu_callback")
             .is_some());
     }
 

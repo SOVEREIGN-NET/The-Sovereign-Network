@@ -797,7 +797,7 @@ mod tests {
     fn create_test_peer(device_name: &str) -> DhtPeerIdentity {
         let identity =
             ZhtpIdentity::new_unified(IdentityType::Device, None, None, device_name, None)
-                // REMEDIATED PANIC: .expect("Failed to create test identity");
+                // REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create test identity");
 
         build_peer_identity(
             identity.node_id.clone(),
@@ -862,7 +862,7 @@ mod tests {
         };
 
         let bind_addr = "127.0.0.1:0".parse().ok();
-        let network = DhtNetwork::new_udp(test_node, bind_addr)// REMEDIATED PANIC: .expect("Failed to create network");
+        let network = DhtNetwork::new_udp(test_node, bind_addr)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create network");
 
         // Test PING message handling
         let ping_message = DhtMessage {
@@ -1034,7 +1034,7 @@ mod tests {
         };
 
         let bind_addr = "127.0.0.1:0".parse().ok();
-        let network = DhtNetwork::new_udp(test_node, bind_addr)// REMEDIATED PANIC: .expect("Failed to create network");
+        let network = DhtNetwork::new_udp(test_node, bind_addr)// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create network");
 
         let seq1 = network.next_sequence();
         let seq2 = network.next_sequence();

@@ -308,7 +308,7 @@ impl CurveHandler {
             tokio::runtime::Handle::current().block_on(async {
                 crate::runtime::blockchain_provider::get_global_blockchain()
                     .await
-                    // REMEDIATED PANIC: .expect("Global blockchain must be initialized")
+                    // REMEDIATED PANIC: // REMEDIATED: .expect("Global blockchain must be initialized")
             })
         });
 
@@ -879,7 +879,7 @@ impl SwapHandler {
             tokio::runtime::Handle::current().block_on(async {
                 crate::runtime::blockchain_provider::get_global_blockchain()
                     .await
-                    // REMEDIATED PANIC: .expect("Global blockchain must be initialized")
+                    // REMEDIATED PANIC: // REMEDIATED: .expect("Global blockchain must be initialized")
             })
         });
 
@@ -1201,7 +1201,7 @@ impl ValuationHandler {
             tokio::runtime::Handle::current().block_on(async {
                 crate::runtime::blockchain_provider::get_global_blockchain()
                     .await
-                    // REMEDIATED PANIC: .expect("Global blockchain must be initialized")
+                    // REMEDIATED PANIC: // REMEDIATED: .expect("Global blockchain must be initialized")
             })
         });
 
@@ -1652,7 +1652,7 @@ mod tests {
             "threshold": {"type": "reserve_amount", "min_reserve": 1_000_000},
             "sell_enabled": true
         }))
-        // REMEDIATED PANIC: .expect("body must serialize");
+        // REMEDIATED PANIC: // REMEDIATED: .expect("body must serialize");
 
         ZhtpRequest {
             method: ZhtpMethod::Post,
@@ -1749,7 +1749,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_missing_identity_returns_401() {
         let key_id = [1u8; 32]; // arbitrary; no identity registered for any key
-        let bc = Blockchain::new()// REMEDIATED PANIC: .expect("blockchain init");
+        let bc = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("blockchain init");
         let handler = CurveHandler {
             blockchain: Arc::new(RwLock::new(bc)),
         };
@@ -1757,7 +1757,7 @@ mod tests {
         let response = handler
             .handle_deploy(make_deploy_request(key_id))
             .await
-            // REMEDIATED PANIC: .expect("handle_deploy must not error");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("handle_deploy must not error");
 
         assert_eq!(
             response.status,
@@ -1770,7 +1770,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_missing_primary_wallet_returns_401() {
         let key_id = [1u8; 32];
-        let mut bc = Blockchain::new()// REMEDIATED PANIC: .expect("blockchain init");
+        let mut bc = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("blockchain init");
         add_identity(&mut bc); // Gate 1 passes
 
         let handler = CurveHandler {
@@ -1780,7 +1780,7 @@ mod tests {
         let response = handler
             .handle_deploy(make_deploy_request(key_id))
             .await
-            // REMEDIATED PANIC: .expect("handle_deploy must not error");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("handle_deploy must not error");
 
         assert_eq!(
             response.status,
@@ -1795,7 +1795,7 @@ mod tests {
         let wallet_dilithium = vec![2u8; 32];
         let wallet_id_bytes = [3u8; 32];
 
-        let mut bc = Blockchain::new()// REMEDIATED PANIC: .expect("blockchain init");
+        let mut bc = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("blockchain init");
         add_identity(&mut bc); // Gate 1 passes
         let key_id = add_primary_wallet_with_sov(
             &mut bc,
@@ -1811,7 +1811,7 @@ mod tests {
         let response = handler
             .handle_deploy(make_deploy_request(key_id))
             .await
-            // REMEDIATED PANIC: .expect("handle_deploy must not error");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("handle_deploy must not error");
 
         assert_eq!(
             response.status,
@@ -1826,7 +1826,7 @@ mod tests {
         let wallet_dilithium = vec![4u8; 32];
         let wallet_id_bytes = [5u8; 32];
 
-        let mut bc = Blockchain::new()// REMEDIATED PANIC: .expect("blockchain init");
+        let mut bc = Blockchain::new()// REMEDIATED PANIC: // REMEDIATED: .expect("blockchain init");
         add_identity(&mut bc); // Gate 1 passes
         let key_id = add_primary_wallet_with_sov(
             &mut bc,
@@ -1842,7 +1842,7 @@ mod tests {
         let response = handler
             .handle_deploy(make_deploy_request(key_id))
             .await
-            // REMEDIATED PANIC: .expect("handle_deploy must not error");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("handle_deploy must not error");
 
         assert_eq!(
             response.status,

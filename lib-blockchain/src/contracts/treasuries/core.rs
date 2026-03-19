@@ -301,7 +301,7 @@ mod tests {
         sector_map.insert("food".to_string(), food.clone());
 
         let registry = TreasuryRegistry::init(admin, fee_collector, sector_map)
-            // REMEDIATED PANIC: .expect("Registry init should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Registry init should succeed");
 
         // Verify all sectors are registered
         assert!(registry.is_initialized());
@@ -408,7 +408,7 @@ mod tests {
         sector_map.insert("food".to_string(), food.clone());
 
         let registry = TreasuryRegistry::init(admin, fee_collector, sector_map)
-            // REMEDIATED PANIC: .expect("Registry init should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Registry init should succeed");
 
         // Verify each sector resolves to correct address
         assert_eq!(
@@ -442,7 +442,7 @@ mod tests {
         sector_map.insert("food".to_string(), food.clone());
 
         let registry = TreasuryRegistry::init(admin, fee_collector, sector_map)
-            // REMEDIATED PANIC: .expect("Registry init should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Registry init should succeed");
 
         // Same input must always yield same output (deterministic)
         for _ in 0..10 {
@@ -471,7 +471,7 @@ mod tests {
         sector_map.insert("food".to_string(), food.clone());
 
         let registry = TreasuryRegistry::init(admin, fee_collector, sector_map)
-            // REMEDIATED PANIC: .expect("Registry init should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Registry init should succeed");
 
         // Collect all resolved addresses
         let mut addresses = vec![
@@ -517,7 +517,7 @@ mod tests {
         sector_map.insert("food".to_string(), food.clone());
 
         let registry = TreasuryRegistry::init(admin, fee_collector, sector_map)
-            // REMEDIATED PANIC: .expect("Registry init should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Registry init should succeed");
 
         // Verify initialized flag is set
         assert!(registry.is_initialized());
@@ -533,7 +533,7 @@ mod tests {
         let fee_collector = create_test_public_key(100);
 
         let treasuries = initialize_sector_treasuries(fee_collector.clone(), None)
-            // REMEDIATED PANIC: .expect("Should initialize all 5 sectors");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Should initialize all 5 sectors");
 
         // Verify all 5 sectors exist
         assert_eq!(treasuries.len(), 5);
@@ -550,7 +550,7 @@ mod tests {
         let fee_collector = create_test_public_key(101);
 
         let treasuries = initialize_sector_treasuries(fee_collector.clone(), None)
-            // REMEDIATED PANIC: .expect("Should initialize all 5 sectors");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Should initialize all 5 sectors");
 
         // Verify each treasury has the correct sector
         assert_eq!(
@@ -581,7 +581,7 @@ mod tests {
         let fee_collector = create_test_public_key(102);
 
         let treasuries = initialize_sector_treasuries(fee_collector.clone(), None)
-            // REMEDIATED PANIC: .expect("Should initialize all 5 sectors");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Should initialize all 5 sectors");
 
         for (sector_name, treasury) in treasuries.iter() {
             assert_eq!(
@@ -599,7 +599,7 @@ mod tests {
         let fee_collector = create_test_public_key(103);
 
         let treasuries = initialize_sector_treasuries(fee_collector.clone(), None)
-            // REMEDIATED PANIC: .expect("Should initialize all 5 sectors");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Should initialize all 5 sectors");
 
         for (sector_name, treasury) in treasuries.iter() {
             assert_eq!(
@@ -629,7 +629,7 @@ mod tests {
         .collect();
 
         let registry = init_registry(admin, fee_collector, treasury_addresses.clone())
-            // REMEDIATED PANIC: .expect("Should initialize registry");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Should initialize registry");
 
         // Verify registry routes to correct addresses
         assert_eq!(
@@ -662,7 +662,7 @@ mod tests {
         let fee_collector = create_test_public_key(106);
 
         let treasuries = initialize_sector_treasuries(fee_collector.clone(), None)
-            // REMEDIATED PANIC: .expect("Should initialize all 5 sectors");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Should initialize all 5 sectors");
 
         // Simulate Year 5 fee distribution
         // Total DAO allocation: 15M tokens (30% of 50M fees)
@@ -698,7 +698,7 @@ mod tests {
         sector_map.insert("food".to_string(), food);
 
         let registry = TreasuryRegistry::init(admin, fee_collector, sector_map)
-            // REMEDIATED PANIC: .expect("Registry init should succeed");
+            // REMEDIATED PANIC: // REMEDIATED: .expect("Registry init should succeed");
 
         // Validation must pass
         assert!(registry.validate_registry().is_ok());

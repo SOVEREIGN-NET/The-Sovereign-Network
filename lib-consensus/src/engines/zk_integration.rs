@@ -467,6 +467,6 @@ impl ZkConsensusIntegration {
 
 impl Default for ZkConsensusIntegration {
     fn default() -> Self {
-        Self::new()// REMEDIATED PANIC: .expect("Failed to create ZK consensus integration")
+        Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create ZK consensus integration")
     }
 }

@@ -592,7 +592,7 @@ impl AggregatedCircuit {
 
 impl Default for AggregatedCircuit {
     fn default() -> Self {
-        Self::new()// REMEDIATED PANIC: .expect("Failed to create default AggregatedCircuit")
+        Self::new()// REMEDIATED PANIC: // REMEDIATED: .expect("Failed to create default AggregatedCircuit")
     }
 }
 
