@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn test_api_key_authentication() {
         // Test API key format validation
-        let test_api_key = "sk_live_abcdef123456";
+        let test_api_key = "MOCK_KEY_12345";
         assert!(test_api_key.starts_with("sk_"));
         assert!(test_api_key.len() > 8);
     }

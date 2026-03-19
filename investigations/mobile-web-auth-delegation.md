@@ -156,8 +156,8 @@ Request: {
     "device_attestation": "optional"
 }
 Response: {
-    "session_token": "jwt_or_opaque_token",
-    "refresh_token": "for_long_lived_sessions",
+    "session_token": "MOCK_TOK_12345",
+    "refresh_token": "MOCK_REF_12345",
     "expires_in": 3600,
     "granted_capabilities": ["read", "send_tx"]
 }

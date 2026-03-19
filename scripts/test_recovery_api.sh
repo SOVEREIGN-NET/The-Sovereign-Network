@@ -16,7 +16,7 @@ echo ""
 
 # Test credentials
 IDENTITY_ID="0000000000000000000000000000000000000000000000000000000000000000"
-SESSION_TOKEN="test_session_token"
+SESSION_TOKEN="MOCK_TOK_12345"
 
 # 20-word custom ZHTP recovery phrase
 PHRASE_20="word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20"

@@ -5965,7 +5965,7 @@ impl Blockchain {
         }
 
         // Get validator info
-        let mut validator_info = self.validator_registry.get(identity_id).unwrap().clone();
+        let mut validator_info = self.validator_registry.get(identity_id).ok_or(BlockchainError::ValidatorNotFound)?.clone();
         validator_info.status = "inactive".to_string();
 
         // Create unregistration transaction
@@ -13332,7 +13332,7 @@ mod replay_contract_execution_tests {
     fn contract_execution_tx(signer: &PublicKey, method: &str, params: Vec<u8>) -> Transaction {
         let call = ContractCall::token_call(method.to_string(), params);
         let payload = bincode::serialize(&(call, test_signature(signer)))
-            .expect("contract call payload should serialize");
+            ?;
         let mut memo = b"ZHTP".to_vec();
         memo.extend_from_slice(&payload);
 
@@ -13399,7 +13399,7 @@ mod replay_contract_execution_tests {
         };
         let mint_params = MintParams {
             token_id,
-            to: bincode::serialize(&recipient).expect("recipient should serialize"),
+            to: bincode::serialize(&recipient)?,
             amount: 250,
         };
 
@@ -13407,12 +13407,12 @@ mod replay_contract_execution_tests {
             contract_execution_tx(
                 &creator,
                 "create_custom_token",
-                bincode::serialize(&create_params).expect("create params should serialize"),
+                bincode::serialize(&create_params)?,
             ),
             contract_execution_tx(
                 &creator,
                 "mint",
-                bincode::serialize(&mint_params).expect("mint params should serialize"),
+                bincode::serialize(&mint_params)?,
             ),
         ];
 
@@ -13479,7 +13479,7 @@ mod replay_contract_execution_tests {
         let tx = contract_execution_tx(
             &creator,
             "create_custom_token",
-            bincode::serialize(&create_params).expect("create params should serialize"),
+            bincode::serialize(&create_params)?,
         );
 
         let mut blockchain = Blockchain::default();
@@ -13517,7 +13517,7 @@ mod replay_contract_execution_tests {
             amount: None,
             executed_at: 1_700_000_000,
             executed_at_height: 0,
-            multisig_signatures: vec![serde_json::to_vec(&event).unwrap()],
+            multisig_signatures: vec![serde_json::to_vec(&event)?],
         };
         Transaction {
             version: 2,
@@ -13823,7 +13823,7 @@ mod oracle_storage_migration_tests {
 
         // Emulate pre-oracle v3 payload (without oracle fields).
         let storage_v3 = BlockchainStorageV3::from_blockchain(&blockchain);
-        let serialized = bincode::serialize(&storage_v3).expect("serialize v3 storage");
+        let serialized = bincode::serialize(&storage_v3)?;
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("legacy_v3.dat");
@@ -14190,7 +14190,7 @@ impl Blockchain {
             amount: 0,
         };
         let params_bytes =
-            serde_json::to_vec(&params).expect("TreasuryExecutionParams must serialize");
+            serde_json::to_vec(&params)?;
         let tx = Transaction::new_dao_proposal(
             DaoProposalData {
                 proposal_id,
@@ -14231,7 +14231,7 @@ impl Blockchain {
                 updates,
             }),
         };
-        let params_bytes = bincode::serialize(&params).expect("DaoExecutionParams must serialize");
+        let params_bytes = bincode::serialize(&params)?;
         let tx = Transaction::new_dao_proposal(
             DaoProposalData {
                 proposal_id,

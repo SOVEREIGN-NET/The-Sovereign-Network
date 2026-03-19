@@ -535,7 +535,7 @@ export ZHTP_API_PORT="9333"
 
 # Security
 export ZHTP_SECURITY_LEVEL="high"
-export ZHTP_API_KEY="your-api-key-here"
+export ZHTP_API_KEY="ENV_VAR_NEEDED"
 
 # Economics
 export ZHTP_ENABLE_UBI="true"

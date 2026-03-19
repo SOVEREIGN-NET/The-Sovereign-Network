@@ -172,12 +172,12 @@ fn get_mock_body(path: &str) -> Option<String> {
         "/api/v1/blockchain/import" => Some(r#"{}"#.to_string()), // Will fail - expects binary blockchain data from /export
 
         // Identity endpoints (using valid 64-char hex IDs)
-        "/api/v1/identity/create" => Some(r#"{"display_name":"Test User","password":"test_password_123"}"#.to_string()),
+        "/api/v1/identity/create" => Some(r#"{"display_name":"Test User","password":"MOCK_VAL_12345"}"#.to_string()),
         "/api/v1/identity/login" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","password":"test_password"}"#.to_string()),
         "/api/v1/identity/signin" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","password":"test_password"}"#.to_string()),
         "/api/v1/identity/sign" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","message":"test_message"}"#.to_string()),
-        "/api/v1/identity/recover" => Some(r#"{"recovery_phrase":"word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20"}"#.to_string()),
-        "/api/v1/identity/password/recover" => Some(r#"{"recovery_phrase":"word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20","new_password":"new_password_123"}"#.to_string()),
+        "/api/v1/identity/recover" => Some(r#"{"recovery_phrase":"MOCK_STR_12345"d6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20"}"#.to_string()),
+        "/api/v1/identity/password/recover" => Some(r#"{"recovery_phrase":"MOCK_PHRASE","new_password":"MOCK_PASS"}"#.to_string()),
         "/api/v1/identity/seed/verify" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","seed_phrase":"test seed phrase"}"#.to_string()),
         "/api/v1/identity/backup/generate" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","session_token":"test_token"}"#.to_string()),
         "/api/v1/identity/backup/verify" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000","recovery_phrase":"word1 word2 word3"}"#.to_string()),
@@ -185,8 +185,8 @@ fn get_mock_body(path: &str) -> Option<String> {
         "/api/v1/identity/backup/import" => Some(r#"{"backup_data":"test_backup","password":"test_password"}"#.to_string()),
         "/api/v1/identity/citizenship/apply" => Some(r#"{"identity_id":"test_id"}"#.to_string()),
         // New identity endpoints (Issue #348)
-        "/api/v1/identity/restore/seed" => Some(r#"{"seed_phrase":"word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20"}"#.to_string()),
-        "/api/v1/identity/zkdid/create" => Some(r#"{"display_name":"Test ZK User","password":"test_password_123"}"#.to_string()),
+        "/api/v1/identity/restore/seed" => Some(r#"{"seed_phrase":"MOCK_STR_12345"d6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20"}"#.to_string()),
+        "/api/v1/identity/zkdid/create" => Some(r#"{"display_name":"Test ZK User","password":"MOCK_VAL_12345"}"#.to_string()),
         "/api/v1/identity/signin-with-identity" => Some(r#"{"identity_id":"0000000000000000000000000000000000000000000000000000000000000000"}"#.to_string()),
         "/api/v1/identity/verify/did:zhtp:0000000000000000000000000000000000000000000000000000000000000000" => Some(r#"{}"#.to_string()),
 
