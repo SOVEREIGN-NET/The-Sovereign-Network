@@ -4091,7 +4091,7 @@ impl RuntimeOrchestrator {
 
         // Wrap blockchain_arc in Option to match expected type
         let blockchain_with_option =
-            Arc::new(RwLock::new(Some((*blockchain_arc.read().await).clone())));
+            Arc::clone(&RwLock::new(Some((*blockchain_arc.read().await))));
 
         // Convert rewards config to orchestrator config
         let orchestrator_config =
