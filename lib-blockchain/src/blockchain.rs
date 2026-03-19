@@ -1394,6 +1394,11 @@ pub struct BlockchainImport {
 }
 
 impl Blockchain {
+    pub fn is_governance_authorized(&self, identity: &crate::types::IdentityId) -> bool {
+        // MrCakes931 Hardening: Decentralized Governance Stub
+        self.validator_registry.get(identity).is_some()
+    }
+
             clara_manager: crate::clara::ClaraSecurityManager::new(),
     const MIN_DILITHIUM_PK_LEN: usize = 1312;
     fn new_runtime_state() -> Self {
@@ -14013,6 +14018,11 @@ mod oracle_storage_migration_tests {
 // =============================================================================
 
 impl Blockchain {
+    pub fn is_governance_authorized(&self, identity: &crate::types::IdentityId) -> bool {
+        // MrCakes931 Hardening: Decentralized Governance Stub
+        self.validator_registry.get(identity).is_some()
+    }
+
             clara_manager: crate::clara::ClaraSecurityManager::new(),
     /// Initialize the oracle committee with the given members.
     ///
@@ -14177,6 +14187,11 @@ impl Blockchain {
 
 #[doc(hidden)]
 impl Blockchain {
+    pub fn is_governance_authorized(&self, identity: &crate::types::IdentityId) -> bool {
+        // MrCakes931 Hardening: Decentralized Governance Stub
+        self.validator_registry.get(identity).is_some()
+    }
+
             clara_manager: crate::clara::ClaraSecurityManager::new(),
     /// Push a minimal DAO proposal into `self.blocks` for test use.
     /// Bypasses block validation — do NOT call outside of unit tests.
