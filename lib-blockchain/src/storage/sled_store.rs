@@ -1157,6 +1157,60 @@ impl BlockchainStore for SledStore {
         Ok(())
     }
 
+    fn begin_supplementary_writes(&self) -> StorageResult<()> {
+        // No transaction must be active
+        if self.tx_active.swap(true, Ordering::SeqCst) {
+            return Err(StorageError::TransactionAlreadyActive);
+        }
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        *batch_guard = Some(PendingBatch::new());
+        Ok(())
+    }
+
+    fn commit_supplementary_writes(&self) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let batch = {
+            let mut batch_guard = self.tx_batch.lock().unwrap();
+            batch_guard
+                .take()
+                .ok_or(StorageError::NoActiveTransaction)?
+        };
+
+        // Apply identity and wallet side-data only.
+        // Do NOT update LATEST_HEIGHT — the executor already did that.
+        self.identities
+            .apply_batch(batch.identities)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.identity_metadata
+            .apply_batch(batch.identity_metadata)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.identity_by_owner
+            .apply_batch(batch.identity_by_owner)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.accounts
+            .apply_batch(batch.accounts)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.tx_active.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn rollback_supplementary_writes(&self) -> StorageResult<()> {
+        self.require_transaction()?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        *batch_guard = None;
+        self.tx_active.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
     // =========================================================================
     // Bonding Curve Operations
     // =========================================================================

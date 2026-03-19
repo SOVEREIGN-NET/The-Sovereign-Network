@@ -98,19 +98,27 @@ impl BlockchainHandler {
     }
 
     fn tx_to_info(tx: &lib_blockchain::transaction::Transaction) -> TransactionInfo {
+        // Derive from/to/amount from the typed transaction data fields
+        let (from, to, amount) = if let Some(ref d) = tx.token_transfer_data {
+            (hex::encode(d.from), hex::encode(d.to), d.amount as u64)
+        } else if let Some(ref d) = tx.token_mint_data {
+            ("system".to_string(), hex::encode(d.to), d.amount as u64)
+        } else if let Some(ref d) = tx.wallet_data {
+            let owner = d.owner_identity_id
+                .map(|id| hex::encode(id.as_bytes()))
+                .unwrap_or_else(|| "unknown".to_string());
+            (owner, hex::encode(d.wallet_id.as_bytes()), 0)
+        } else if let Some(ref d) = tx.identity_data {
+            ("system".to_string(), d.did.clone(), 0)
+        } else {
+            ("unknown".to_string(), "unknown".to_string(), 0)
+        };
+
         TransactionInfo {
             hash: tx.hash().to_string(),
-            from: tx
-                .inputs
-                .first()
-                .map(|i| i.previous_output.to_string())
-                .unwrap_or_else(|| "genesis".to_string()),
-            to: tx
-                .outputs
-                .first()
-                .map(|o| format!("{:02x?}", &o.recipient.key_id[..8]))
-                .unwrap_or_else(|| "unknown".to_string()),
-            amount: 0, // Amount is hidden in commitment for privacy
+            from,
+            to,
+            amount,
             fee: tx.fee,
             transaction_type: format!("{:?}", tx.transaction_type),
             timestamp: tx.signature.timestamp,

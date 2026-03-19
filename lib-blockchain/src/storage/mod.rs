@@ -1151,6 +1151,20 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// - MUST have an active transaction from begin_block
     fn rollback_block(&self) -> StorageResult<()>;
 
+    /// Begin a supplementary write batch for side-data (identity, wallet) that
+    /// must be written after the executor has already committed the block.
+    ///
+    /// Unlike begin_block, this does NOT validate block height and does NOT
+    /// update LATEST_HEIGHT on commit. Safe to call after executor commit_block.
+    fn begin_supplementary_writes(&self) -> StorageResult<()>;
+
+    /// Commit the supplementary write batch opened by begin_supplementary_writes.
+    /// Writes identity/wallet data without touching block height metadata.
+    fn commit_supplementary_writes(&self) -> StorageResult<()>;
+
+    /// Discard the supplementary write batch.
+    fn rollback_supplementary_writes(&self) -> StorageResult<()>;
+
     // =========================================================================
     // Account State (Legacy - Migrating to typed sub-stores)
     // =========================================================================
