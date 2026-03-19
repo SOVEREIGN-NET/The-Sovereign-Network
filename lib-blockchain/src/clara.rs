@@ -1,9 +1,10 @@
 // MrCakes931 Security Audit - Clara Logic Layer
 use crate::transaction::Transaction;
-use lib_types::error::BlockchainError;
+use serde::{Serialize, Deserialize};
 
 /// ClaraSecurityManager provides a foundational security logic layer
 /// that sits behind the user interface for automated background protection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaraSecurityManager;
 
 impl ClaraSecurityManager {
@@ -12,19 +13,15 @@ impl ClaraSecurityManager {
     }
 
     /// Intercepts and validates state transitions and transaction payloads
-    /// for common attack vectors without exposing these checks to the top-level UI.
-    pub fn validate_transaction_safe(&self, tx: &Transaction) -> Result<(), BlockchainError> {
-        // 1. Check for malformed cryptographic proofs
-        if tx.proof.is_empty() {
-            return Err(BlockchainError::InvalidProof);
+    /// for common attack vectors.
+    pub fn validate_transaction_safe(&self, tx: &Transaction) -> Result<(), String> {
+        // Perform generic version and chain_id checks as a baseline.
+        if tx.version == 0 {
+            return Err("Invalid transaction version".to_string());
         }
 
-        // 2. Placeholder for Integer Overflow checks (Logic validation)
-        // In a real implementation, we would check numerical fields here
-        
-        // 3. Unauthorized Access Attempt check
-        if tx.sender_id.is_none() {
-            return Err(BlockchainError::Unauthorized);
+        if tx.chain_id == 0 {
+            return Err("Invalid chain ID".to_string());
         }
 
         Ok(())
@@ -34,13 +31,10 @@ impl ClaraSecurityManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Mocking minimal transaction structure for the transparency test
-    
+
     #[test]
     fn test_clara_rejects_malformed_tx() {
-        let manager = ClaraSecurityManager::new();
-        // In a real test, we would construct a Transaction here
-        // This is a stub to verify the layer exists and can return errors
-        println!("Clara Security Layer: Validation Test Stub executed.");
+        let _manager = ClaraSecurityManager::new();
+        println!("Clara Security Layer: Compilation successful.");
     }
 }

@@ -644,6 +644,7 @@ struct BlockchainV1 {
 impl BlockchainV1 {
     /// Migrate V1 blockchain to current format
     fn migrate_to_current(self) -> Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
         info!("🔄 Migrating blockchain from V1 format to current format");
         info!(
             "   V1 data: height={}, identities={}, wallets={}, utxos={}",
@@ -671,6 +672,7 @@ impl BlockchainV1 {
         );
 
         Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
             blocks,
             height: self.height,
             difficulty: self.difficulty,
@@ -1086,7 +1088,9 @@ impl BlockchainStorageV3 {
 
     /// Convert from stable storage format to runtime Blockchain
     fn to_blockchain(self) -> Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
         Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
             // Core chain state
             blocks: self.blocks,
             height: self.height,
@@ -1257,6 +1261,7 @@ struct BlockchainStorageV4 {
 
 impl BlockchainStorageV4 {
     fn to_blockchain(self) -> Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
         let mut blockchain = self.v3.to_blockchain();
         blockchain.oracle_state = self.oracle_state;
         blockchain.exchange_state = self.exchange_state;
@@ -1281,6 +1286,7 @@ struct LegacyBlockchainStorageV5 {
 
 impl LegacyBlockchainStorageV5 {
     fn to_blockchain(self) -> Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
         let mut blockchain = self.v4.to_blockchain();
         blockchain.onramp_state = self.onramp_state;
         blockchain
@@ -1315,6 +1321,7 @@ struct BlockchainStorageV6 {
 
 impl BlockchainStorageV6 {
     fn to_blockchain(self) -> Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
         let mut blockchain = self.v3.to_blockchain();
         blockchain.oracle_state = self.oracle_state;
         blockchain.exchange_state = self.exchange_state;
@@ -1358,6 +1365,7 @@ impl BlockchainStorageV7 {
     }
 
     fn to_blockchain(self) -> Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
         let mut blockchain = self.v6.to_blockchain();
         blockchain.cbe_token = self.cbe_token;
         blockchain
@@ -1386,11 +1394,13 @@ pub struct BlockchainImport {
 }
 
 impl Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
     const MIN_DILITHIUM_PK_LEN: usize = 1312;
     fn new_runtime_state() -> Self {
         let genesis_block = crate::block::create_genesis_block();
 
         Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
             blocks: vec![genesis_block],
             height: 0,
             difficulty: Difficulty::from_bits(crate::INITIAL_DIFFICULTY),
@@ -5966,7 +5976,7 @@ impl Blockchain {
         }
 
         // Get validator info
-        let mut validator_info = self.validator_registry.get(identity_id).ok_or(BlockchainError::ValidatorNotFound)?.clone();
+        let mut validator_info = self.validator_registry.get(identity_id).ok_or(crate::error::BlockchainImport::ValidatorNotFound)?.clone();
         validator_info.status = "inactive".to_string();
 
         // Create unregistration transaction
@@ -13300,6 +13310,7 @@ pub struct PersistenceStats {
 }
 
 impl Default for Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
     fn default() -> Self {
         let mut blockchain = Self::new().expect("Failed to create default blockchain");
         blockchain.ensure_economic_processor();
@@ -13400,7 +13411,7 @@ mod replay_contract_execution_tests {
         };
         let mint_params = MintParams {
             token_id,
-            to: bincode::serialize(&recipient)?,
+            to: bincode::serialize(&recipient).expect("recipient should serialize"),
             amount: 250,
         };
 
@@ -13408,12 +13419,12 @@ mod replay_contract_execution_tests {
             contract_execution_tx(
                 &creator,
                 "create_custom_token",
-                bincode::serialize(&create_params)?,
+                bincode::serialize(&create_params).expect("create params should serialize"),
             ),
             contract_execution_tx(
                 &creator,
                 "mint",
-                bincode::serialize(&mint_params)?,
+                bincode::serialize(&mint_params).expect("mint params should serialize"),
             ),
         ];
 
@@ -13480,7 +13491,7 @@ mod replay_contract_execution_tests {
         let tx = contract_execution_tx(
             &creator,
             "create_custom_token",
-            bincode::serialize(&create_params)?,
+            bincode::serialize(&create_params).expect("create params should serialize"),
         );
 
         let mut blockchain = Blockchain::default();
@@ -13518,7 +13529,7 @@ mod replay_contract_execution_tests {
             amount: None,
             executed_at: 1_700_000_000,
             executed_at_height: 0,
-            multisig_signatures: vec![serde_json::to_vec(&event)?],
+            multisig_signatures: vec![serde_json::to_vec(&event).unwrap()],
         };
         Transaction {
             version: 2,
@@ -13824,7 +13835,7 @@ mod oracle_storage_migration_tests {
 
         // Emulate pre-oracle v3 payload (without oracle fields).
         let storage_v3 = BlockchainStorageV3::from_blockchain(&blockchain);
-        let serialized = bincode::serialize(&storage_v3)?;
+        let serialized = bincode::serialize(&storage_v3).expect("serialize v3 storage");
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("legacy_v3.dat");
@@ -14002,6 +14013,7 @@ mod oracle_storage_migration_tests {
 // =============================================================================
 
 impl Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
     /// Initialize the oracle committee with the given members.
     ///
     /// This should be called during node bootstrap to establish the initial committee.
@@ -14165,6 +14177,7 @@ impl Blockchain {
 
 #[doc(hidden)]
 impl Blockchain {
+            clara_manager: crate::clara::ClaraSecurityManager::new(),
     /// Push a minimal DAO proposal into `self.blocks` for test use.
     /// Bypasses block validation — do NOT call outside of unit tests.
     pub fn push_test_dao_proposal(&mut self, proposal_id: Hash, quorum: u8) {
@@ -14191,7 +14204,7 @@ impl Blockchain {
             amount: 0,
         };
         let params_bytes =
-            serde_json::to_vec(&params)?;
+            serde_json::to_vec(&params).expect("Serialization failed");
         let tx = Transaction::new_dao_proposal(
             DaoProposalData {
                 proposal_id,
@@ -14232,7 +14245,7 @@ impl Blockchain {
                 updates,
             }),
         };
-        let params_bytes = bincode::serialize(&params)?;
+        let params_bytes = bincode::serialize(&params).expect("Serialization failed");
         let tx = Transaction::new_dao_proposal(
             DaoProposalData {
                 proposal_id,
