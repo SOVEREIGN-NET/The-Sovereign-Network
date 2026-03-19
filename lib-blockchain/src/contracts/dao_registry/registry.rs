@@ -929,7 +929,7 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_only_owner_can_update_metadata() {
+    fn test_only_authorized_governance_can_update_metadata() {
         let mut registry = DAORegistry::new();
         let token = test_public_key(1);
         let treasury = test_public_key(2);

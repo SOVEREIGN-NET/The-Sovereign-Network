@@ -68,7 +68,7 @@ impl GroupChat {
     }
 
     /// Check if a user is an admin
-    pub fn is_admin(&self, user: &PublicKey) -> bool {
+    pub fn is_governance_authorized(&self, user: &PublicKey) -> bool {
         self.admins.contains(user)
     }
 
@@ -113,7 +113,7 @@ impl GroupChat {
             return Err("User must be a member to become admin".to_string());
         }
 
-        if self.is_admin(&user) {
+        if self.is_governance_authorized(&user) {
             return Err("User is already an admin".to_string());
         }
 
@@ -127,7 +127,7 @@ impl GroupChat {
             return Err("Cannot remove creator from admin role".to_string());
         }
 
-        if !self.is_admin(user) {
+        if !self.is_governance_authorized(user) {
             return Err("User is not an admin".to_string());
         }
 
@@ -171,7 +171,7 @@ impl GroupChat {
             return Err("Creator must be a member of the group".to_string());
         }
 
-        if !self.is_admin(&self.creator) {
+        if !self.is_governance_authorized(&self.creator) {
             return Err("Creator must be an admin of the group".to_string());
         }
 
@@ -340,7 +340,7 @@ impl GroupContract {
     ) -> Result<(), String> {
         let group = self.groups.get(group_id).ok_or("Group not found")?;
 
-        if !group.is_admin(approver) {
+        if !group.is_governance_authorized(approver) {
             return Err("Only admins can approve join requests".to_string());
         }
 
@@ -375,7 +375,7 @@ impl GroupContract {
     ) -> Result<(), String> {
         let group = self.groups.get(group_id).ok_or("Group not found")?;
 
-        if !group.is_admin(inviter) {
+        if !group.is_governance_authorized(inviter) {
             return Err("Only admins can invite users".to_string());
         }
 
@@ -468,7 +468,7 @@ impl GroupContract {
     ) -> Result<(), String> {
         let group = self.groups.get_mut(group_id).ok_or("Group not found")?;
 
-        if !group.is_admin(promoter) {
+        if !group.is_governance_authorized(promoter) {
             return Err("Only admins can promote users".to_string());
         }
 
@@ -508,7 +508,7 @@ impl GroupContract {
     ) -> Result<Vec<&JoinRequest>, String> {
         let group = self.groups.get(group_id).ok_or("Group not found")?;
 
-        if !group.is_admin(requester) {
+        if !group.is_governance_authorized(requester) {
             return Err("Only admins can view join requests".to_string());
         }
 
@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(group.name, "Test Group");
         assert_eq!(group.creator, creator);
         assert!(group.is_member(&creator));
-        assert!(group.is_admin(&creator));
+        assert!(group.is_governance_authorized(&creator));
     }
 
     #[test]
@@ -766,13 +766,13 @@ mod tests {
             .ok();
 
         let group = contract.get_group(&group_id).ok();
-        assert!(group.is_admin(&user));
+        assert!(group.is_governance_authorized(&user));
 
         // Remove admin privileges
         contract.remove_admin(&group_id, &creator, &user).ok();
 
         let group = contract.get_group(&group_id).ok();
-        assert!(!group.is_admin(&user));
+        assert!(!group.is_governance_authorized(&user));
     }
 
     #[test]

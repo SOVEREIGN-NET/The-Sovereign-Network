@@ -69,7 +69,7 @@ impl ContractPermissions {
     }
 
     /// Check if a public key is an admin
-    pub fn is_admin(&self, public_key: &crate::integration::crypto_integration::PublicKey) -> bool {
+    pub fn is_governance_authorized(&self, public_key: &crate::integration::crypto_integration::PublicKey) -> bool {
         self.admins.contains(public_key)
     }
 
@@ -97,10 +97,10 @@ impl ContractPermissions {
         caller: &crate::integration::crypto_integration::PublicKey,
     ) -> bool {
         match operation {
-            "mint" => self.can_mint && (self.admins.is_empty() || self.is_admin(caller)),
+            "mint" => self.can_mint && (self.admins.is_empty() || self.is_governance_authorized(caller)),
             "burn" => self.can_burn,
-            "pause" => self.can_pause && self.is_admin(caller),
-            "admin" => self.is_admin(caller),
+            "pause" => self.can_pause && self.is_governance_authorized(caller),
+            "admin" => self.is_governance_authorized(caller),
             _ => false,
         }
     }
@@ -139,7 +139,7 @@ mod tests {
         assert!(permissions.can_burn);
         assert!(!permissions.can_pause);
         assert_eq!(permissions.admins.len(), 1);
-        assert!(permissions.is_admin(&public_key));
+        assert!(permissions.is_governance_authorized(&public_key));
     }
 
     #[test]
@@ -157,19 +157,19 @@ mod tests {
         let public_key2 = create_test_public_key(2);
         let mut permissions = ContractPermissions::new();
 
-        assert!(!permissions.is_admin(&public_key1));
+        assert!(!permissions.is_governance_authorized(&public_key1));
 
         permissions.add_admin(public_key1.clone());
-        assert!(permissions.is_admin(&public_key1));
-        assert!(!permissions.is_admin(&public_key2));
+        assert!(permissions.is_governance_authorized(&public_key1));
+        assert!(!permissions.is_governance_authorized(&public_key2));
 
         permissions.add_admin(public_key2.clone());
-        assert!(permissions.is_admin(&public_key2));
+        assert!(permissions.is_governance_authorized(&public_key2));
         assert_eq!(permissions.admins.len(), 2);
 
         permissions.remove_admin(&public_key1);
-        assert!(!permissions.is_admin(&public_key1));
-        assert!(permissions.is_admin(&public_key2));
+        assert!(!permissions.is_governance_authorized(&public_key1));
+        assert!(permissions.is_governance_authorized(&public_key2));
         assert_eq!(permissions.admins.len(), 1);
     }
 

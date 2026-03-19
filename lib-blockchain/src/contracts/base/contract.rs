@@ -294,7 +294,7 @@ mod tests {
         assert_eq!(contract.contract_type, ContractType::Token);
         assert!(contract.permissions.can_mint);
         assert!(contract.permissions.can_burn);
-        assert!(contract.permissions.is_admin(&public_key));
+        assert!(contract.permissions.is_governance_authorized(&public_key));
     }
 
     #[test]
