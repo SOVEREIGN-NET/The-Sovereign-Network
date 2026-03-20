@@ -100,9 +100,9 @@ impl BlockchainHandler {
     fn tx_to_info(tx: &lib_blockchain::transaction::Transaction) -> TransactionInfo {
         // Derive from/to/amount from the typed transaction data fields
         let (from, to, amount) = if let Some(ref d) = tx.token_transfer_data {
-            (hex::encode(d.from), hex::encode(d.to), d.amount as u64)
+            (hex::encode(d.from), hex::encode(d.to), d.amount.min(u64::MAX as u128) as u64)
         } else if let Some(ref d) = tx.token_mint_data {
-            ("system".to_string(), hex::encode(d.to), d.amount as u64)
+            ("system".to_string(), hex::encode(d.to), d.amount.min(u64::MAX as u128) as u64)
         } else if let Some(ref d) = tx.wallet_data {
             let owner = d.owner_identity_id
                 .map(|id| hex::encode(id.as_bytes()))

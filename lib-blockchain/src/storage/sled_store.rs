@@ -1177,8 +1177,10 @@ impl BlockchainStore for SledStore {
                 .ok_or(StorageError::NoActiveTransaction)?
         };
 
-        // Apply identity and wallet side-data only.
+        // Apply identity, wallet, and token side-data only.
         // Do NOT update LATEST_HEIGHT — the executor already did that.
+        // NOTE: token_contracts must be included because process_wallet_transactions
+        // calls put_token_contract() (e.g. for initial SOV registration).
         self.identities
             .apply_batch(batch.identities)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -1193,6 +1195,10 @@ impl BlockchainStore for SledStore {
 
         self.accounts
             .apply_batch(batch.accounts)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.token_contracts
+            .apply_batch(batch.token_contracts)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
         self.db
