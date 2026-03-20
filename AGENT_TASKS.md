@@ -1,5 +1,30 @@
 # Agent Task List - TokenCreation Fee Cleanup
 
+## Active Deferred Boundaries
+
+### 2026-03-19: Canonical Bonding Curve Envelope Signature Boundary
+
+- Scope:
+  Fixed-width canonical curve transaction work on branch `codex/1928-fixed-width-curve-tx`.
+- Implemented:
+  [`/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/bonding_curve_codec.rs`](/Users/supertramp/Dev/SOVN-workspace/SOVN/The-Sovereign-Network/lib-blockchain/src/transaction/bonding_curve_codec.rs) now defines:
+  - canonical `88`-byte `BUY_CBE` / `SELL_CBE` payloads
+  - canonical envelope wrapper
+  - sender/signature-key ownership matching
+- Explicitly deferred:
+  full executor-side cryptographic signature verification of the canonical curve envelope against the signed payload bytes via `lib_crypto`.
+- Reason:
+  this stacked slice is locking the fixed-width wire format and executor entry boundary first; full cryptographic verification belongs in the next executor integration step so the verification contract is introduced together with the canonical execution lane, not as an isolated helper.
+- Required follow-up:
+  when wiring canonical curve execution into state mutation, replace sender/signature-key ownership matching with real signature verification over the canonical signed region and keep the sender equality check as a second invariant, not the only one.
+- Rule for future slices:
+  whenever work intentionally stops at a boundary like this, record:
+  - what was implemented
+  - what was explicitly deferred
+  - why it was deferred
+  - what exact follow-up is required
+  in this file before continuing.
+
 **Last Updated:** 2026-03-09 UTC by Codex
 **Primary Agent:** Agent 3 - Token Consensus Agent
 **Secondary Reviewers Required:** Agent 2 - Storage and Atomicity, Agent 4 - Runtime/API Contract, Agent 8 - Security and Replay Assurance, Agent 10 - QA and Release Readiness

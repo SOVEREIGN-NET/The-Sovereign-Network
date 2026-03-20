@@ -1363,33 +1363,6 @@ impl BlockchainStorageV7 {
     }
 }
 
-/// Stable storage format V8 for blockchain serialization.
-///
-/// V8 extends V7 with persisted `bonding_curve_registry` so the CBE bonding curve
-/// price survives node restarts. Without this, `get_cbe_curve_price_atomic()` always
-/// returns `None` after restart, causing the oracle to emit `cbe_usd_price: None`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BlockchainStorageV8 {
-    pub v7: BlockchainStorageV7,
-    #[serde(default)]
-    pub bonding_curve_registry: crate::contracts::bonding_curve::BondingCurveRegistry,
-}
-
-impl BlockchainStorageV8 {
-    fn from_blockchain(bc: &Blockchain) -> Self {
-        Self {
-            v7: BlockchainStorageV7::from_blockchain(bc),
-            bonding_curve_registry: bc.bonding_curve_registry.clone(),
-        }
-    }
-
-    fn to_blockchain(self) -> Blockchain {
-        let mut blockchain = self.v7.to_blockchain();
-        blockchain.bonding_curve_registry = self.bonding_curve_registry;
-        blockchain
-    }
-}
-
 /// Blockchain import structure for deserializing received chains
 #[derive(Serialize, Deserialize)]
 pub struct BlockchainImport {
@@ -2180,12 +2153,6 @@ impl Blockchain {
             );
         }
 
-        // Evict any Phase-2-invalid pending transactions that were persisted before
-        // the fee=0 rule was enforced at intake. Must run before the node starts
-        // proposing blocks, otherwise BlockExecutor rejects every proposed block.
-        blockchain.evict_phase2_invalid_transactions("load_from_store");
-        blockchain.evict_invalid_signature_transactions("load_from_store");
-
         // NOTE: Do not mint SOV in-memory here. SledStore requires writes inside
         // an active block transaction. Missing or underfunded balances are
         // repaired via TokenMint backfill after startup.
@@ -2203,18 +2170,6 @@ impl Blockchain {
         if !blockchain.cbe_token.is_initialized() {
             info!("CBE token not found in storage — running one-time backfill from genesis allocation");
             blockchain.initialize_cbe_token_genesis();
-        }
-
-        // Restore CBE bonding curve registry entry if missing (not persisted pre-V8).
-        // bonding_curve_registry is loaded from blockchain.dat (V8+). For older files or
-        // sled-only nodes that predate V8, re-register via initialize_cbe_genesis() so that
-        // get_cbe_curve_price_atomic() returns a valid price and the oracle emits CBE/USD.
-        {
-            let cbe_token_id = Self::derive_cbe_token_id();
-            if !blockchain.bonding_curve_registry.contains(&cbe_token_id) {
-                blockchain.initialize_cbe_genesis();
-                info!("Restored CBE bonding curve registry entry (pre-V8 compatibility)");
-            }
         }
 
         // Sync SOV balances from the authoritative token_balances Sled tree into in-memory
@@ -2976,68 +2931,18 @@ impl Blockchain {
         self.remove_pending_transactions(&block.transactions);
 
         // Begin sled transaction for remaining processing
-        let sled_began = if let Some(ref store) = self.store {
+        if let Some(ref store) = self.store {
             store
                 .begin_block(block.header.height)
                 .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
-            true
-        } else {
-            false
-        };
-
-        // Helper: roll back the open sled transaction on early-exit so that
-        // tx_active is reset to false and the next block-commit attempt can
-        // call begin_block() without hitting TransactionAlreadyActive.
-        let rollback_sled = |store: &dyn crate::storage::BlockchainStore| {
-            if let Err(rb_err) = store.rollback_block() {
-                error!("Failed to rollback Sled transaction after block processing error: {}", rb_err);
-            }
-        };
-
-        // Macro to run a fallible expression, rolling back sled on error.
-        // We use a closure pattern instead of a macro to keep this readable.
+        }
 
         // Process identity transactions
-        if let Err(e) = self.process_identity_transactions(&block) {
-            if sled_began {
-                if let Some(ref store) = self.store {
-                    rollback_sled(store.as_ref());
-                }
-            }
-            return Err(e);
-        }
-        if let Err(e) = self.process_wallet_transactions(&block) {
-            if sled_began {
-                if let Some(ref store) = self.store {
-                    rollback_sled(store.as_ref());
-                }
-            }
-            return Err(e);
-        }
-        if let Err(e) = self.process_entity_registry_transactions(&block) {
-            if sled_began {
-                if let Some(ref store) = self.store {
-                    rollback_sled(store.as_ref());
-                }
-            }
-            return Err(e);
-        }
-        if let Err(e) = self.process_contract_transactions(&block) {
-            if sled_began {
-                if let Some(ref store) = self.store {
-                    rollback_sled(store.as_ref());
-                }
-            }
-            return Err(e);
-        }
-        if let Err(e) = self.process_token_transactions(&block) {
-            if sled_began {
-                if let Some(ref store) = self.store {
-                    rollback_sled(store.as_ref());
-                }
-            }
-            return Err(e);
-        }
+        self.process_identity_transactions(&block)?;
+        self.process_wallet_transactions(&block)?;
+        self.process_entity_registry_transactions(&block)?;
+        self.process_contract_transactions(&block)?;
+        self.process_token_transactions(&block)?;
         self.process_validator_registration_transactions(&block);
         for tx in &block.transactions {
             self.index_dao_registry_entry_from_tx(tx, block.header.height);
@@ -3099,20 +3004,16 @@ impl Blockchain {
             }
         }
 
-        // Persist block to SledStore (also calls commit_block, clearing tx_active)
-        if sled_began {
-            if let Some(ref store) = self.store {
-                if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
-                    error!(
-                        "Failed to persist block {} to SledStore: {}",
-                        block.height(),
-                        e
-                    );
-                    // Rollback so tx_active is cleared; the block is already in memory.
-                    rollback_sled(store.as_ref());
-                } else {
-                    debug!("Block {} persisted to SledStore", block.height());
-                }
+        // Persist block to SledStore
+        if let Some(ref store) = self.store {
+            if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
+                error!(
+                    "Failed to persist block {} to SledStore: {}",
+                    block.height(),
+                    e
+                );
+            } else {
+                debug!("Block {} persisted to SledStore", block.height());
             }
         }
 
@@ -3152,80 +3053,27 @@ impl Blockchain {
         self.remove_pending_transactions(&block.transactions);
 
         // When the BlockExecutor is active it has already called begin_block/commit_block
-        // inside apply_block(). We cannot call begin_block() for the same height again
-        // (it would fail with InvalidBlockHeight). Instead, open a supplementary write
-        // batch that allows identity/wallet side-data to be written without touching
-        // LATEST_HEIGHT (which the executor already updated).
+        // inside apply_block(). Starting a second begin_block() for the same height would
+        // fail with an InvalidBlockHeight error. Only open a new SledStore transaction on
+        // the legacy path (no executor).
         let using_executor = self.executor.is_some();
-        let sled_began = if let Some(ref store) = self.store {
-            if !using_executor {
+        if !using_executor {
+            if let Some(ref store) = self.store {
                 store
                     .begin_block(block.header.height)
                     .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
-            } else {
-                store
-                    .begin_supplementary_writes()
-                    .map_err(|e| anyhow::anyhow!("Failed to begin supplementary Sled writes: {}", e))?;
             }
-            true
-        } else {
-            false
-        };
-
-        let rollback_sled = |store: &dyn crate::storage::BlockchainStore, supplementary: bool| {
-            if supplementary {
-                if let Err(rb_err) = store.rollback_supplementary_writes() {
-                    error!("Failed to rollback supplementary Sled writes: {}", rb_err);
-                }
-            } else if let Err(rb_err) = store.rollback_block() {
-                error!("Failed to rollback Sled transaction after block processing error: {}", rb_err);
-            }
-        };
+        }
 
         // Process identity transactions
-        if let Err(e) = self.process_identity_transactions(&block) {
-            if sled_began {
-                if let Some(ref store) = self.store {
-                    rollback_sled(store.as_ref(), using_executor);
-                }
-            }
-            return Err(e);
-        }
-        if let Err(e) = self.process_wallet_transactions(&block) {
-            if sled_began {
-                if let Some(ref store) = self.store {
-                    rollback_sled(store.as_ref(), using_executor);
-                }
-            }
-            return Err(e);
-        }
-        if let Err(e) = self.process_entity_registry_transactions(&block) {
-            if sled_began {
-                if let Some(ref store) = self.store {
-                    rollback_sled(store.as_ref(), using_executor);
-                }
-            }
-            return Err(e);
-        }
+        self.process_identity_transactions(&block)?;
+        self.process_wallet_transactions(&block)?;
+        self.process_entity_registry_transactions(&block)?;
 
         // Skip token/contract processing when using BlockExecutor - it handles these
         if !self.has_executor() {
-            if let Err(e) = self.process_contract_transactions(&block) {
-                if sled_began {
-                    if let Some(ref store) = self.store {
-                        rollback_sled(store.as_ref(), using_executor);
-                    }
-                }
-                return Err(e);
-            }
-            if let Err(e) = self.process_token_transactions(&block) {
-                if sled_began {
-                    if let Some(ref store) = self.store {
-                        rollback_sled(store.as_ref(), using_executor);
-                    }
-                }
-                return Err(e);
-            }
+            self.process_contract_transactions(&block)?;
+            self.process_token_transactions(&block)?;
         } else {
             debug!("Skipping legacy token/contract processing - BlockExecutor is single source of truth");
         }
@@ -3290,34 +3138,27 @@ impl Blockchain {
             }
         }
 
-        // Persist block to SledStore.
-        // Legacy path: persist_to_sled_store calls append_block + commit_block.
-        // Executor path: block was already committed by the executor; only commit
-        // the supplementary writes (identity/wallet) opened above.
-        if sled_began {
+        // Persist block to SledStore — skip when using the BlockExecutor because
+        // apply_block() already committed the block (begin_block → append_block →
+        // commit_block). Calling persist_to_sled_store() again would open a second
+        // store transaction for the same block height, causing an InvalidBlockHeight error.
+        if !using_executor {
             if let Some(ref store) = self.store {
-                if using_executor {
-                    if let Err(e) = store.commit_supplementary_writes() {
-                        error!(
-                            "Failed to commit supplementary Sled writes for block {}: {}",
-                            block.height(),
-                            e
-                        );
-                        let _ = store.rollback_supplementary_writes();
-                    } else {
-                        debug!("Block {} supplementary data (identity/wallet) persisted to SledStore", block.height());
-                    }
-                } else if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
+                if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
                     error!(
                         "Failed to persist block {} to SledStore: {}",
                         block.height(),
                         e
                     );
-                    rollback_sled(store.as_ref(), false);
                 } else {
                     debug!("Block {} persisted to SledStore", block.height());
                 }
             }
+        } else {
+            debug!(
+                "Block {} already persisted by BlockExecutor",
+                block.height()
+            );
         }
 
         self.blocks_since_last_persist += 1;
@@ -4185,23 +4026,6 @@ impl Blockchain {
             transaction.inputs.len(),
             transaction.outputs.len()
         );
-
-        // Phase 2 invariant: TokenMint and TokenTransfer must have fee=0.
-        // Reject at intake so these never enter the mempool and poison proposed blocks.
-        use crate::types::transaction_type::TransactionType;
-        if transaction.fee != 0
-            && matches!(
-                transaction.transaction_type,
-                TransactionType::TokenMint | TransactionType::TokenTransfer
-            )
-        {
-            return Err(anyhow::anyhow!(
-                "Phase 2: {:?} transaction must have fee=0, got fee={}",
-                transaction.transaction_type,
-                transaction.fee
-            ));
-        }
-
         if !self.verify_transaction(&transaction)? {
             return Err(anyhow::anyhow!("Transaction verification failed"));
         }
@@ -5144,15 +4968,12 @@ impl Blockchain {
         if fee_amount == 0 {
             return Ok(());
         }
-        // At this point, token.transfer(net_amount) has already debited net_amount from
-        // the sender.  The sender's remaining balance is exactly fee_amount (assuming the
-        // pre-check `from_bal >= amount` passed).  Check against fee_amount, not amount.
         let sender_bal = token.balance_of(sender);
-        if sender_bal < fee_amount {
+        if sender_bal < amount {
             return Err(anyhow::anyhow!(
-                "TokenTransfer fee deduction failed: have {}, need fee {}",
+                "TokenTransfer insufficient balance: have {}, need {}",
                 sender_bal,
-                fee_amount
+                amount
             ));
         }
         let sender_bal_post = token.balance_of(sender);
@@ -5200,55 +5021,6 @@ impl Blockchain {
         }
         evicted
     }
-    /// Evict pending transactions that carry a non-empty but invalid signature.
-    ///
-    /// System transactions (e.g. IdentityRegistration) historically bypassed signature
-    /// validation at mempool intake. Clients that accidentally attached a malformed
-    /// Dilithium5 signature (wrong byte length) would therefore slip into the mempool
-    /// and stay there indefinitely, because:
-    ///   - They always pass g1's intake check (signature skipped for system txs).
-    ///   - They always fail block verification on other validators (sig parsing fails).
-    ///   - g1's proposed blocks are rejected via NIL votes → only the invalid txs' own
-    ///     proposer is ever blocked, but the txs never get committed or removed.
-    ///
-    /// This function must be called at startup (load_from_file / load_from_store) to
-    /// drain the backlog accumulated before the fix was deployed.
-    pub fn evict_invalid_signature_transactions(&mut self, context: &str) -> usize {
-        use crate::transaction::validation::TransactionValidator;
-        let validator = TransactionValidator::new();
-        let before = self.pending_transactions.len();
-        self.pending_transactions.retain(|tx| {
-            // Only inspect transactions that carry a non-empty signature.
-            if tx.signature.signature.is_empty() {
-                return true;
-            }
-            // Reuse the shared validator; treat every such transaction as non-system
-            // so that validate_signature is always invoked.
-            match validator.validate_transaction_with_system_flag(tx, false) {
-                Ok(_) => true,
-                Err(e) => {
-                    warn!(
-                        "{}: evicting invalid-signature pending tx hash={} type={:?} sig_len={} err={:?}",
-                        context,
-                        hex::encode(&tx.hash().as_bytes()[..8]),
-                        tx.transaction_type,
-                        tx.signature.signature.len(),
-                        e,
-                    );
-                    false
-                }
-            }
-        });
-        let evicted = before - self.pending_transactions.len();
-        if evicted > 0 {
-            warn!(
-                "{}: evicted {} invalid-signature pending transaction(s)",
-                context, evicted
-            );
-        }
-        evicted
-    }
-
     fn resolve_credit_pubkey_from_parts(
         &self,
         public_key: Vec<u8>,
@@ -11939,7 +11711,7 @@ impl Blockchain {
     /// File format magic bytes - "ZHTP"
     const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
     /// Current file format version
-    const FILE_VERSION: u16 = 8;
+    const FILE_VERSION: u16 = 7;
 
     #[deprecated(
         since = "0.2.0",
@@ -11964,8 +11736,8 @@ impl Blockchain {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Convert to stable storage format (V8)
-        let storage = BlockchainStorageV8::from_blockchain(self);
+        // Convert to stable storage format (V7)
+        let storage = BlockchainStorageV7::from_blockchain(self);
 
         // Serialize to bincode
         let serialized = bincode::serialize(&storage)
@@ -12040,25 +11812,10 @@ impl Blockchain {
             info!("📂 Detected versioned format v{}", version);
 
             match version {
-                8 => match bincode::deserialize::<BlockchainStorageV8>(data) {
-                    Ok(storage) => {
-                        info!("📂 Loaded blockchain storage v8 (bonding-curve-registry persistence format)");
-                        storage.to_blockchain()
-                    }
-                    Err(storage_err) => {
-                        error!("❌ Failed to deserialize v8 blockchain: {}", storage_err);
-                        return Err(anyhow::anyhow!(
-                            "Failed to deserialize v8 blockchain: {}",
-                            storage_err
-                        ));
-                    }
-                },
                 7 => match bincode::deserialize::<BlockchainStorageV7>(data) {
                     Ok(storage) => {
-                        info!("📂 Loaded blockchain storage v7 (migrating to v8)");
+                        info!("📂 Loaded blockchain storage v7 (cbe-token persistence format)");
                         storage.to_blockchain()
-                        // bonding_curve_registry will be empty; the post-load
-                        // backfill below will re-register the CBE genesis entry.
                     }
                     Err(storage_err) => {
                         error!("❌ Failed to deserialize v7 blockchain: {}", storage_err);
@@ -12217,17 +11974,6 @@ impl Blockchain {
         }
         blockchain.rebuild_dao_registry_index();
 
-        // V7→V8 migration: re-register CBE bonding curve entry if registry is empty.
-        // Pre-V8 files did not persist bonding_curve_registry, so get_cbe_curve_price_atomic()
-        // returned None after every restart, causing the oracle to emit cbe_usd_price: None.
-        {
-            let cbe_token_id = Self::derive_cbe_token_id();
-            if !blockchain.bonding_curve_registry.contains(&cbe_token_id) {
-                blockchain.initialize_cbe_genesis();
-                info!("📂 Restored CBE bonding curve registry entry (V7→V8 migration)");
-            }
-        }
-
         let elapsed = start.elapsed();
 
         // Migrate legacy initial_balance values from human SOV to atomic units.
@@ -12372,7 +12118,6 @@ impl Blockchain {
         // disk after the next successful block save, even if no other valid transaction
         // arrives in the same session.
         blockchain.evict_phase2_invalid_transactions("load_from_file");
-        blockchain.evict_invalid_signature_transactions("load_from_file");
 
         info!("📂 Blockchain loaded successfully (height: {}, identities: {}, wallets: {}, tokens: {}, UTXOs: {}, {:?})",
               blockchain.height, blockchain.identity_registry.len(),

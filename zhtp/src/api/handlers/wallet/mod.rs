@@ -205,10 +205,7 @@ struct TransactionHistoryResponse {
 struct TransactionRecord {
     tx_hash: String,
     tx_type: String,
-    /// Raw atomic amount (1 SOV = 100_000_000 atomic units). Use `amount_human` for display.
     amount: u64,
-    /// Human-readable amount in SOV (atomic / 100_000_000). Use this for display.
-    amount_human: f64,
     fee: u64,
     from_wallet: Option<String>,
     to_address: Option<String>,
@@ -1094,7 +1091,6 @@ impl WalletHandler {
         status: &str,
         timestamp: u64,
         block_height: Option<u64>,
-        token_decimals: u8,
     ) -> TransactionRecord {
         let tx_hash = tx.hash();
         let amount = Self::infer_transaction_amount(tx);
@@ -1105,14 +1101,10 @@ impl WalletHandler {
             .map(|d| hex::encode(d.to))
             .or_else(|| tx.token_mint_data.as_ref().map(|d| hex::encode(d.to)));
 
-        let divisor = 10u64.pow(token_decimals as u32) as f64;
-        let amount_human = amount as f64 / divisor;
-
         TransactionRecord {
             tx_hash: hex::encode(tx_hash.as_bytes()),
             tx_type: format!("{:?}", tx.transaction_type),
             amount,
-            amount_human,
             fee: tx.fee,
             from_wallet,
             to_address,
@@ -1191,24 +1183,6 @@ impl WalletHandler {
         // Use a map keyed by hash to avoid duplicate records.
         let mut tx_by_hash: HashMap<String, TransactionRecord> = HashMap::new();
 
-        // Helper: look up decimals for a transaction's token (defaults to 18 if unknown).
-        let token_decimals_for_tx =
-            |tx: &lib_blockchain::transaction::Transaction| -> u8 {
-                let token_id = tx
-                    .token_transfer_data
-                    .as_ref()
-                    .map(|d| d.token_id)
-                    .or_else(|| tx.token_mint_data.as_ref().map(|d| d.token_id));
-                match token_id {
-                    Some(tid) => blockchain
-                        .token_contracts
-                        .get(&tid)
-                        .map(|c| c.decimals)
-                        .unwrap_or(18),
-                    None => 18,
-                }
-            };
-
         // Search through all blocks for transactions
         for block in &blockchain.blocks {
             for tx in &block.transactions {
@@ -1219,13 +1193,11 @@ impl WalletHandler {
                     identity_id,
                     &identity_did,
                 ) {
-                    let decimals = token_decimals_for_tx(tx);
                     let record = Self::tx_to_record(
                         tx,
                         "confirmed",
                         block.timestamp(),
                         Some(block.height()),
-                        decimals,
                     );
                     tx_by_hash.insert(record.tx_hash.clone(), record);
                 }
@@ -1250,8 +1222,7 @@ impl WalletHandler {
                 } else {
                     now
                 };
-                let decimals = token_decimals_for_tx(tx);
-                let record = Self::tx_to_record(tx, "pending", ts, None, decimals);
+                let record = Self::tx_to_record(tx, "pending", ts, None);
                 tx_by_hash.entry(record.tx_hash.clone()).or_insert(record);
             }
         }

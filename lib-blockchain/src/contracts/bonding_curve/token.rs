@@ -262,14 +262,14 @@ impl BondingCurveToken {
         let token_amount = self.calculate_buy(stable_amount)?;
 
         // Issue #1844: Split purchase 40% reserve / 60% treasury.
-        // Compute treasury as floor(60%) and assign remainder to reserve so that
-        // reserve + treasury == stable_amount exactly (no atomic units destroyed).
-        let to_treasury = stable_amount
-                .checked_mul(3)
+        // Use u128 intermediate to prevent u64 overflow on large stable_amount values;
+        // use try_into() to explicitly guard the final cast back to u64.
+        let to_reserve = stable_amount
+                .checked_mul(RESERVE_SPLIT_NUMERATOR)
                 .ok_or(CurveError::Overflow)?
-                .checked_div(5)
+                .checked_div(RESERVE_SPLIT_DENOMINATOR)
                 .ok_or(CurveError::Overflow)?;
-        let to_reserve = stable_amount - to_treasury;
+        let to_treasury = stable_amount - to_reserve;
 
         // Update state
         self.reserve_balance = self

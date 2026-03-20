@@ -42,6 +42,7 @@ const EMBEDDED_GENESIS_TOML: &[u8] = include_bytes!("../../../genesis.toml");
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenesisConfig {
     pub chain: ChainConfig,
+    pub sov: SovConfig,
     pub cbe_token: CbeTokenConfig,
     pub entity_registry: EntityRegistryConfig,
     pub bootstrap_council: BootstrapCouncilConfig,
@@ -55,6 +56,11 @@ pub struct ChainConfig {
     pub chain_id: u8,
     pub name: String,
     pub genesis_time: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SovConfig {
+    pub initial_supply: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
