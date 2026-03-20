@@ -44,7 +44,7 @@ use crate::transaction::{
     contract_deployment::ContractDeploymentPayloadV1,
     contract_execution::DecodedContractExecutionMemo, decode_canonical_bonding_curve_tx,
     envelope_signer_matches_sender, hash_transaction, CanonicalBondingCurveEnvelope,
-    CanonicalBondingCurveTx,
+    CanonicalBondingCurveTx, BONDING_CURVE_TX_PAYLOAD_LEN,
     token_creation::TokenCreationPayloadV1, DEFAULT_TOKEN_CREATION_FEE,
 };
 use crate::types::TransactionType;
@@ -1802,6 +1802,28 @@ impl BlockExecutor {
         }
     }
 
+    fn canonical_bonding_curve_envelope_from_transaction(
+        &self,
+        tx: &crate::transaction::Transaction,
+    ) -> Result<CanonicalBondingCurveEnvelope, TxApplyError> {
+        let payload: [u8; BONDING_CURVE_TX_PAYLOAD_LEN] = tx
+            .memo
+            .as_slice()
+            .try_into()
+            .map_err(|_| {
+                TxApplyError::InvalidType(format!(
+                    "Canonical curve payload must be exactly {} bytes, got {}",
+                    BONDING_CURVE_TX_PAYLOAD_LEN,
+                    tx.memo.len()
+                ))
+            })?;
+
+        Ok(CanonicalBondingCurveEnvelope {
+            payload,
+            signature: tx.signature.clone(),
+        })
+    }
+
     fn apply_canonical_bonding_curve_envelope(
         &self,
         mutator: &StateMutator<'_>,
@@ -2147,12 +2169,38 @@ impl BlockExecutor {
                 Ok(TxOutcome::BondingCurveDeploy(outcome))
             }
             TransactionType::BondingCurveBuy => {
-                let outcome = self.apply_bonding_curve_buy(mutator, tx)?;
-                Ok(TxOutcome::BondingCurveBuy(outcome))
+                if tx.bonding_curve_buy_data.is_some() {
+                    let outcome = self.apply_bonding_curve_buy(mutator, tx)?;
+                    Ok(TxOutcome::BondingCurveBuy(outcome))
+                } else {
+                    let envelope = self.canonical_bonding_curve_envelope_from_transaction(tx)?;
+                    match self.apply_canonical_bonding_curve_envelope(mutator, &envelope)? {
+                        CanonicalBondingCurveOutcome::Buy(outcome) => {
+                            Ok(TxOutcome::BondingCurveBuy(outcome))
+                        }
+                        CanonicalBondingCurveOutcome::Sell(_) => Err(TxApplyError::InvalidType(
+                            "Canonical SELL_CBE payload cannot execute as BondingCurveBuy"
+                                .to_string(),
+                        )),
+                    }
+                }
             }
             TransactionType::BondingCurveSell => {
-                let outcome = self.apply_bonding_curve_sell(mutator, tx)?;
-                Ok(TxOutcome::BondingCurveSell(outcome))
+                if tx.bonding_curve_sell_data.is_some() {
+                    let outcome = self.apply_bonding_curve_sell(mutator, tx)?;
+                    Ok(TxOutcome::BondingCurveSell(outcome))
+                } else {
+                    let envelope = self.canonical_bonding_curve_envelope_from_transaction(tx)?;
+                    match self.apply_canonical_bonding_curve_envelope(mutator, &envelope)? {
+                        CanonicalBondingCurveOutcome::Sell(outcome) => {
+                            Ok(TxOutcome::BondingCurveSell(outcome))
+                        }
+                        CanonicalBondingCurveOutcome::Buy(_) => Err(TxApplyError::InvalidType(
+                            "Canonical BUY_CBE payload cannot execute as BondingCurveSell"
+                                .to_string(),
+                        )),
+                    }
+                }
             }
             TransactionType::BondingCurveGraduate => {
                 let outcome =
@@ -2362,8 +2410,8 @@ pub struct BondingCurveGraduateOutcome {
 /// Outcome of parsing a canonical fixed-width bonding curve transaction.
 #[derive(Debug, Clone)]
 pub enum CanonicalBondingCurveOutcome {
-    Buy([u8; 32]),
-    Sell([u8; 32]),
+    Buy(BondingCurveBuyOutcome),
+    Sell(BondingCurveSellOutcome),
 }
 
 /// Outcome of an oracle attestation transaction (ORACLE-R3: Canonical Path)
@@ -3887,6 +3935,139 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("Canonical curve signer does not match payload sender")
+        );
+    }
+
+    #[test]
+    fn test_apply_transaction_routes_bonding_curve_buy_to_canonical_memo_lane() {
+        use crate::execution::tx_apply::StateMutator;
+        use crate::transaction::{
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx,
+            BONDING_CURVE_BUY_ACTION,
+        };
+        use crate::types::transaction_type::TransactionType;
+        use lib_crypto::KeyPair;
+        use lib_types::{BondingCurveBuyTx, Nonce48};
+
+        let store = create_test_store();
+        store.begin_block(0).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let executor = BlockExecutor::with_store(store.clone());
+        let signer = KeyPair::generate().unwrap();
+
+        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
+            BondingCurveBuyTx {
+                action: BONDING_CURVE_BUY_ACTION,
+                chain_id: 0x03,
+                nonce: Nonce48::from_u64(55).unwrap(),
+                sender: signer.public_key.key_id,
+                amount_in: 1000,
+                max_price: 2000,
+                expected_s_c: 3000,
+            },
+        ));
+        let tx = crate::transaction::Transaction {
+            version: crate::transaction::TX_VERSION_V3,
+            chain_id: 0x03,
+            transaction_type: TransactionType::BondingCurveBuy,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: signer.sign(&payload).unwrap(),
+            memo: payload.to_vec(),
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
+        };
+
+        let err = executor
+            .apply_transaction(&mutator, &tx, 0, 0)
+            .expect_err("canonical buy tx should reach memo lane and reject as not wired");
+        assert!(err.to_string().contains("Canonical BUY_CBE lane parsed"));
+    }
+
+    #[test]
+    fn test_apply_transaction_rejects_canonical_action_type_mismatch() {
+        use crate::execution::tx_apply::StateMutator;
+        use crate::transaction::{
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx,
+            BONDING_CURVE_SELL_ACTION,
+        };
+        use crate::types::transaction_type::TransactionType;
+        use lib_crypto::KeyPair;
+        use lib_types::{BondingCurveSellTx, Nonce48};
+
+        let store = create_test_store();
+        store.begin_block(0).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let executor = BlockExecutor::with_store(store.clone());
+        let signer = KeyPair::generate().unwrap();
+
+        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(
+            BondingCurveSellTx {
+                action: BONDING_CURVE_SELL_ACTION,
+                chain_id: 0x03,
+                nonce: Nonce48::from_u64(56).unwrap(),
+                sender: signer.public_key.key_id,
+                amount_cbe: 100,
+                min_payout: 90,
+                expected_s_c: 3000,
+            },
+        ));
+        let tx = crate::transaction::Transaction {
+            version: crate::transaction::TX_VERSION_V3,
+            chain_id: 0x03,
+            transaction_type: TransactionType::BondingCurveBuy,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: signer.sign(&payload).unwrap(),
+            memo: payload.to_vec(),
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
+        };
+
+        let err = executor
+            .apply_transaction(&mutator, &tx, 0, 0)
+            .expect_err("mismatched canonical action/type must be rejected");
+        assert!(
+            err.to_string()
+                .contains("Canonical SELL_CBE payload cannot execute as BondingCurveBuy")
         );
     }
 

@@ -4,6 +4,9 @@
 
 use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use crate::integration::zk_integration::is_valid_proof_structure;
+use crate::transaction::{
+    decode_bonding_curve_buy, decode_bonding_curve_sell, BONDING_CURVE_TX_PAYLOAD_LEN,
+};
 use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
 use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
@@ -107,6 +110,42 @@ impl TransactionValidator {
     /// the mempool and BlockExecutor have consistent fee rules.
     fn compute_economics_is_system(transaction: &Transaction, is_system_transaction: bool) -> bool {
         is_system_transaction || transaction.transaction_type == TransactionType::TokenTransfer
+    }
+
+    fn validate_canonical_bonding_curve_memo(
+        &self,
+        transaction: &Transaction,
+        expected_type: TransactionType,
+    ) -> ValidationResult {
+        if transaction.memo.len() != BONDING_CURVE_TX_PAYLOAD_LEN {
+            return Err(ValidationError::MissingRequiredData);
+        }
+
+        match expected_type {
+            TransactionType::BondingCurveBuy => {
+                let data = decode_bonding_curve_buy(&transaction.memo)
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+                if data.chain_id != transaction.chain_id {
+                    return Err(ValidationError::InvalidTransaction);
+                }
+                if transaction.signature.public_key.key_id != data.sender {
+                    return Err(ValidationError::InvalidSignature);
+                }
+            }
+            TransactionType::BondingCurveSell => {
+                let data = decode_bonding_curve_sell(&transaction.memo)
+                    .map_err(|_| ValidationError::InvalidMemo)?;
+                if data.chain_id != transaction.chain_id {
+                    return Err(ValidationError::InvalidTransaction);
+                }
+                if transaction.signature.public_key.key_id != data.sender {
+                    return Err(ValidationError::InvalidSignature);
+                }
+            }
+            _ => return Err(ValidationError::InvalidTransactionType),
+        }
+
+        Ok(())
     }
 
     /// Validate a transaction completely
@@ -245,23 +284,29 @@ impl TransactionValidator {
                 }
             }
             TransactionType::BondingCurveBuy => {
-                let data = transaction
-                    .bonding_curve_buy_data
-                    .as_ref()
-                    .ok_or(ValidationError::InvalidInputs)?;
-                // Signer must be the declared buyer
-                if transaction.signature.public_key.key_id != data.buyer {
-                    return Err(ValidationError::InvalidSignature);
+                if let Some(data) = transaction.bonding_curve_buy_data.as_ref() {
+                    // Signer must be the declared buyer
+                    if transaction.signature.public_key.key_id != data.buyer {
+                        return Err(ValidationError::InvalidSignature);
+                    }
+                } else {
+                    self.validate_canonical_bonding_curve_memo(
+                        transaction,
+                        TransactionType::BondingCurveBuy,
+                    )?;
                 }
             }
             TransactionType::BondingCurveSell => {
-                let data = transaction
-                    .bonding_curve_sell_data
-                    .as_ref()
-                    .ok_or(ValidationError::InvalidInputs)?;
-                // Signer must be the declared seller
-                if transaction.signature.public_key.key_id != data.seller {
-                    return Err(ValidationError::InvalidSignature);
+                if let Some(data) = transaction.bonding_curve_sell_data.as_ref() {
+                    // Signer must be the declared seller
+                    if transaction.signature.public_key.key_id != data.seller {
+                        return Err(ValidationError::InvalidSignature);
+                    }
+                } else {
+                    self.validate_canonical_bonding_curve_memo(
+                        transaction,
+                        TransactionType::BondingCurveSell,
+                    )?;
                 }
             }
             TransactionType::BondingCurveGraduate => {
@@ -3335,5 +3380,72 @@ mod tests {
             "TokenCreation with non-canonical high fee must be rejected with InvalidFee, got: {:?}",
             result
         );
+    }
+
+    fn canonical_bonding_curve_buy_tx(sender_key: &PublicKey) -> Transaction {
+        let payload = crate::transaction::encode_bonding_curve_buy(&lib_types::BondingCurveBuyTx {
+            action: crate::transaction::BONDING_CURVE_BUY_ACTION,
+            chain_id: 0x03,
+            nonce: lib_types::Nonce48::from_u64(9).unwrap(),
+            sender: sender_key.key_id,
+            amount_in: 100,
+            max_price: 200,
+            expected_s_c: 300,
+        });
+
+        Transaction {
+            version: 3,
+            chain_id: 0x03,
+            transaction_type: TransactionType::BondingCurveBuy,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(sender_key),
+            memo: payload.to_vec(),
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
+        }
+    }
+
+    #[test]
+    fn test_canonical_bonding_curve_buy_memo_is_accepted_without_legacy_data() {
+        let sender = test_public_key(77);
+        let tx = canonical_bonding_curve_buy_tx(&sender);
+        let validator = TransactionValidator::new();
+
+        let result = validator.validate_transaction(&tx);
+        assert!(
+            result.is_ok(),
+            "canonical bonding-curve memo should validate without legacy buy data: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_canonical_bonding_curve_buy_rejects_chain_id_mismatch() {
+        let sender = test_public_key(78);
+        let mut tx = canonical_bonding_curve_buy_tx(&sender);
+        tx.chain_id = 0x02;
+        let validator = TransactionValidator::new();
+
+        let result = validator.validate_transaction(&tx);
+        assert!(matches!(result, Err(ValidationError::InvalidTransaction)));
     }
 }
