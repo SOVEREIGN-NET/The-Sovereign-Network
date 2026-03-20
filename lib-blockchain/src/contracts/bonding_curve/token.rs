@@ -21,8 +21,8 @@ const TOKEN_SCALE: u128 = SCALE;
 use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
 
-/// Issue #1844: Reserve/treasury split — 40% reserve / 60% treasury.
-pub const RESERVE_SPLIT_NUMERATOR: u128 = 2;
+/// Issue #1844: Reserve/treasury split — 20% reserve / 80% treasury (canonical spec).
+pub const RESERVE_SPLIT_NUMERATOR: u128 = 1;
 pub const RESERVE_SPLIT_DENOMINATOR: u128 = 5;
 
 /// Bonding Curve Token
@@ -70,8 +70,8 @@ pub struct BondingCurveToken {
     pub deployed_at_block: u64,
     /// Timestamp at deployment
     pub deployed_at_timestamp: u64,
-    /// Treasury balance in stablecoin (60% of purchases - protocol operations)
-    /// Issue #1844: Reserve and Treasury 40/60 Split
+    /// Treasury balance in stablecoin (80% of purchases - protocol operations)
+    /// Issue #1844: Reserve and Treasury 20/80 Split (canonical spec)
     /// NOTE: Field is at end of struct intentionally — bincode is positional.
     /// Adding fields mid-struct corrupts deserialization of existing stored tokens.
     #[serde(default)]
@@ -261,15 +261,15 @@ impl BondingCurveToken {
     ) -> Result<(u128, BondingCurveEvent), CurveError> {
         let token_amount = self.calculate_buy(stable_amount)?;
 
-        // Issue #1844: Split purchase 40% reserve / 60% treasury.
-        // Use u128 intermediate to prevent u64 overflow on large stable_amount values;
-        // use try_into() to explicitly guard the final cast back to u64.
-        let to_reserve = stable_amount
-                .checked_mul(RESERVE_SPLIT_NUMERATOR)
+        // Issue #1844: Split purchase 20% reserve / 80% treasury (canonical spec).
+        // Compute treasury as floor(80%) and assign remainder to reserve so that
+        // reserve + treasury == stable_amount exactly (no atomic units destroyed).
+        let to_treasury = stable_amount
+                .checked_mul(4)
                 .ok_or(CurveError::Overflow)?
-                .checked_div(RESERVE_SPLIT_DENOMINATOR)
+                .checked_div(5)
                 .ok_or(CurveError::Overflow)?;
-        let to_treasury = stable_amount - to_reserve;
+        let to_reserve = stable_amount - to_treasury;
 
         // Update state
         self.reserve_balance = self
@@ -428,10 +428,12 @@ impl BondingCurveToken {
         // Calculate price age
         let price_age_seconds = current_timestamp.saturating_sub(price_timestamp);
 
-        // Safety check 1: Oracle price must not be stale
+        // Safety check 1: Oracle price must not be stale.
+        // Do NOT reset graduation_pending_since_block here — stale price only pauses
+        // the check, it does not invalidate a threshold crossing that already occurred.
+        // Resetting on staleness would allow an operator to cycle stale→fresh to
+        // restart the confirmation window indefinitely.
         if price_age_seconds > max_price_age_seconds {
-            // Price is stale - reset pending status
-            self.graduation_pending_since_block = None;
             return false;
         }
 
@@ -1322,9 +1324,11 @@ mod tests {
         for i in 0..5 {
             let remaining_reserve = token.reserve_balance;
             let current_price = token.current_price();
-            // Calculate max tokens we can sell with remaining reserve
+            // Calculate max tokens we can sell with remaining reserve.
+            // reserve_balance and price are both in 18-decimal atomic units,
+            // so multiply by TOKEN_SCALE before dividing by price.
             let max_tokens = remaining_reserve
-                .saturating_mul(100_000_000)
+                .saturating_mul(TOKEN_SCALE)
                 .saturating_div(current_price.max(1));
             if max_tokens == 0 {
                 break;

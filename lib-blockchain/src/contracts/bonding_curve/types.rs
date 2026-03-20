@@ -200,7 +200,13 @@ impl CurveType {
                 }
             }
             CurveType::PiecewiseLinear(curve) => {
-                curve.price_at(u64::try_from(supply).unwrap_or(u64::MAX))
+                // PiecewiseLinear was designed for u64 supply; with 18-decimal u128
+                // values, supply routinely exceeds u64::MAX. Silently clamping to
+                // u64::MAX produces incorrect prices — return 0 to signal out-of-range.
+                match u64::try_from(supply) {
+                    Ok(s) => curve.price_at(s),
+                    Err(_) => 0,
+                }
             }
         }
     }
@@ -229,10 +235,19 @@ impl CurveType {
     pub fn calculate_buy_tokens(&self, current_supply: u128, stable_amount: u128) -> u128 {
         match self {
             CurveType::PiecewiseLinear(curve) => {
-                curve.quote_buy(
-                    u64::try_from(current_supply).unwrap_or(u64::MAX),
-                    u64::try_from(stable_amount).unwrap_or(u64::MAX),
-                ) as u128
+                // PiecewiseLinear was designed for u64 inputs; with 18-decimal u128
+                // amounts, both current_supply and stable_amount routinely exceed u64::MAX.
+                // Return 0 (no tokens quoted) rather than clamping to u64::MAX, which
+                // would silently return tokens for an out-of-range buy amount.
+                let s = match u64::try_from(current_supply) {
+                    Ok(v) => v,
+                    Err(_) => return 0,
+                };
+                let amt = match u64::try_from(stable_amount) {
+                    Ok(v) => v,
+                    Err(_) => return 0,
+                };
+                curve.quote_buy(s, amt) as u128
             }
             CurveType::Linear { base_price, slope } => {
                 // For linear curve: price = base + slope × supply

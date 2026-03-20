@@ -66,7 +66,8 @@ use serde::{Deserialize, Serialize};
 
 /// Minimum liquidity required for AMM pool creation.
 /// Prevents division by zero attacks and ensures meaningful liquidity.
-pub const MINIMUM_AMM_LIQUIDITY: u128 = 1_000_000; // 0.01 SOV or equivalent
+/// 0.01 SOV = 10^16 atomic units (18-decimal, not 1_000_000 which is 10^-12 SOV).
+pub const MINIMUM_AMM_LIQUIDITY: u128 = 10_000_000_000_000_000; // 0.01 SOV at 18 decimals
 
 /// AMM fee in basis points for graduated pools (0.3% = 30 bps).
 /// Lower than standard 1% to encourage trading post-graduation.
