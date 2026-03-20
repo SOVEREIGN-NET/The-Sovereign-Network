@@ -1001,8 +1001,8 @@ impl QuicMeshProtocol {
             loop {
                 match conn.accept_uni().await {
                     Ok(mut stream) => {
-                        match stream.read_to_end(4 * 1024 * 1024).await {
-                            // 4MB max (matches max_payload_bytes in BlockLimits)
+                        match stream.read_to_end(1024 * 1024).await {
+                            // 1MB max
                             Ok(encrypted) => {
                                 match decrypt_data(&encrypted, &session_key) {
                                     Ok(decrypted) => {
@@ -1248,7 +1248,7 @@ impl QuicMeshProtocol {
                                         loop {
                                             match quic_conn_clone.accept_uni().await {
                                                 Ok(mut stream) => {
-                                                    match stream.read_to_end(4 * 1024 * 1024).await {
+                                                    match stream.read_to_end(1024 * 1024).await {
                                                         Ok(encrypted) => {
                                                             match decrypt_data(
                                                                 &encrypted,
@@ -1792,7 +1792,7 @@ impl PqcQuicConnection {
 
         // Receive from QUIC (TLS 1.3 decryption automatic)
         let mut stream = self.quic_conn.accept_uni().await?;
-        let encrypted = stream.read_to_end(4 * 1024 * 1024).await?; // 4MB max (matches max_payload_bytes in BlockLimits)
+        let encrypted = stream.read_to_end(1024 * 1024).await?; // 1MB max message size
 
         // Decrypt using master key (nonce is embedded in encrypted data by lib-crypto)
         let decrypted = decrypt_data(&encrypted, &session_key)?;
