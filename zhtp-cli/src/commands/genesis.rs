@@ -8,7 +8,9 @@ use crate::argument_parsing::{GenesisArgs, GenesisCommand, ZhtpCli};
 pub async fn handle_genesis_command(args: GenesisArgs, _cli: &ZhtpCli) -> Result<()> {
     match args.command {
         GenesisCommand::Build { config, output } => cmd_build(config, output),
-        GenesisCommand::ExportState { dat_file, output } => cmd_export_state(dat_file, output),
+        GenesisCommand::ExportState { sled_dir, dat_file, output } => {
+            cmd_export_state(sled_dir, dat_file, output)
+        }
         GenesisCommand::MigrateState {
             snapshot,
             config,
@@ -46,16 +48,39 @@ fn cmd_build(config: Option<PathBuf>, output: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Export the full blockchain state from a blockchain.dat file to a JSON snapshot.
-fn cmd_export_state(dat_file: Option<PathBuf>, output: PathBuf) -> Result<()> {
-    let dat_path = dat_file.unwrap_or_else(|| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        PathBuf::from(home).join(".zhtp/data/testnet/blockchain.dat")
-    });
-
-    println!("Loading blockchain from: {}", dat_path.display());
-    let bc = lib_blockchain::Blockchain::load_from_file(&dat_path)
-        .with_context(|| format!("Failed to load {}", dat_path.display()))?;
+/// Export the full blockchain state to a JSON snapshot.
+///
+/// Prefers SledStore (live-node data directory) when `sled_dir` is supplied.
+/// Falls back to legacy `blockchain.dat` when only `dat_file` is given (or the
+/// default ~/.zhtp path).
+fn cmd_export_state(
+    sled_dir: Option<PathBuf>,
+    dat_file: Option<PathBuf>,
+    output: PathBuf,
+) -> Result<()> {
+    let bc = if let Some(ref sled_path) = sled_dir {
+        println!("Loading blockchain from SledStore: {}", sled_path.display());
+        println!(
+            "NOTE: SledStore does not support concurrent access. \
+             Ensure the node is stopped (or this is a copy of the sled directory) \
+             before running export-state."
+        );
+        let store = std::sync::Arc::new(
+            lib_blockchain::storage::SledStore::open(sled_path)
+                .with_context(|| format!("Failed to open SledStore at {}", sled_path.display()))?,
+        );
+        lib_blockchain::Blockchain::load_from_store(store)
+            .with_context(|| format!("Failed to load blockchain from SledStore at {}", sled_path.display()))?
+            .with_context(|| format!("SledStore at {} appears empty — no blocks found", sled_path.display()))?
+    } else {
+        let dat_path = dat_file.unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            PathBuf::from(home).join(".zhtp/data/testnet/blockchain.dat")
+        });
+        println!("Loading blockchain from: {}", dat_path.display());
+        lib_blockchain::Blockchain::load_from_file(&dat_path)
+            .with_context(|| format!("Failed to load {}", dat_path.display()))?
+    };
 
     println!(
         "Loaded blockchain: height={}, wallets={}, identities={}, web4={}",
