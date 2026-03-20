@@ -3,6 +3,7 @@
 //! Handles transaction structures, creation, validation, hashing, and signing.
 //! Identity transactions delegate processing to lib-identity package.
 
+pub mod bonding_curve_codec;
 pub mod contract_deployment;
 pub mod contract_execution;
 pub mod core;
@@ -22,6 +23,15 @@ pub use core::{
     Transaction, TransactionInput, TransactionOutput, UbiClaimData, ValidatorOperation,
     ValidatorTransactionData, WalletPrivateData, WalletReference, WalletTransactionData,
     TX_VERSION_V7,
+};
+
+pub use bonding_curve_codec::{
+    bonding_curve_signed_region, decode_bonding_curve_buy, decode_bonding_curve_sell,
+    decode_canonical_bonding_curve_tx, encode_bonding_curve_buy, encode_bonding_curve_sell,
+    encode_canonical_bonding_curve_tx, envelope_signer_matches_sender,
+    BondingCurveCodecError, CanonicalBondingCurveEnvelope, CanonicalBondingCurveTx,
+    BONDING_CURVE_BUY_ACTION, BONDING_CURVE_SELL_ACTION, BONDING_CURVE_TX_PAYLOAD_LEN,
+    BONDING_CURVE_TX_SIGNED_REGION_END,
 };
 
 // Re-exports from oracle_governance module
