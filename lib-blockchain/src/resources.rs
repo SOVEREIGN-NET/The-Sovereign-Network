@@ -23,10 +23,10 @@ pub struct BlockLimits {
 impl Default for BlockLimits {
     fn default() -> Self {
         Self {
-            max_payload_bytes: 1_048_576,     // 1 MB
-            max_witness_bytes: 524_288,       // 512 KB
+            max_payload_bytes: 4_194_304,     // 4 MB
+            max_witness_bytes: 2_097_152,     // 2 MB (matches fee params block_max_witness_bytes)
             max_verify_units: 1_000_000,      // 1M verify units
-            max_state_write_bytes: 2_097_152, // 2 MB
+            max_state_write_bytes: 4_194_304, // 4 MB
             max_tx_count: 10_000,             // 10k txs
         }
     }
@@ -516,10 +516,10 @@ mod tests {
     fn golden_default_limits() {
         let limits = BlockLimits::default();
 
-        assert_eq!(limits.max_payload_bytes, 1_048_576, "1 MB");
-        assert_eq!(limits.max_witness_bytes, 524_288, "512 KB");
+        assert_eq!(limits.max_payload_bytes, 4_194_304, "4 MB");
+        assert_eq!(limits.max_witness_bytes, 2_097_152, "2 MB");
         assert_eq!(limits.max_verify_units, 1_000_000, "1M units");
-        assert_eq!(limits.max_state_write_bytes, 2_097_152, "2 MB");
+        assert_eq!(limits.max_state_write_bytes, 4_194_304, "4 MB");
         assert_eq!(limits.max_tx_count, 10_000, "10k txs");
     }
 }

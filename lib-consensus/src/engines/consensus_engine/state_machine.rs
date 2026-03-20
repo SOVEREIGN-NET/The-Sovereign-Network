@@ -886,12 +886,14 @@ impl ConsensusEngine {
     ///
     /// This ensures Byzantine fault tolerance - no single node can inject blocks.
     #[allow(deprecated)]
-    async fn process_committed_block(&mut self, proposal_id: &Hash) -> ConsensusResult<()> {
+    async fn process_committed_block(&mut self, round: u32, proposal_id: &Hash) -> ConsensusResult<()> {
         // SAFETY: Verify commit quorum before processing (Issue #939)
-        // This is a defense-in-depth check - callers must already verify commit votes
+        // This is a defense-in-depth check - callers must already verify commit votes.
+        // Use `round` (not self.current_round.round) because this may be called for a past
+        // round when late commit votes arrive after the node advanced to the next round.
         let commit_count = self.count_commits_for(
             self.current_round.height,
-            self.current_round.round,
+            round,
             proposal_id,
         );
         let total_validators = self.validator_manager.get_active_validators().len() as u64;
@@ -2132,10 +2134,21 @@ impl ConsensusEngine {
                 // Process the committed block (finalization) directly
                 // Note: This is safe even if we've already finalized once,
                 // process_committed_block is idempotent.
-                self.process_committed_block(proposal_id).await?;
+                self.process_committed_block(round, proposal_id).await?;
+            } else if self.current_round.height == height {
+                // Late-finalization: commit votes for a past round arrived after we advanced
+                // to a new round at the same height. The quorum is valid — apply the block.
+                // The commit_finalized_block callback is idempotent (skips if already applied).
+                tracing::info!(
+                    "Late-finalization: commit quorum for H={} R={} reached while at R={}, applying block",
+                    height,
+                    round,
+                    self.current_round.round
+                );
+                self.process_committed_block(round, proposal_id).await?;
             } else {
                 tracing::debug!(
-                    "Commit quorum observed for past round (H={} R={}) while at H={} R={}",
+                    "Commit quorum observed for past height (H={} R={}) while at H={} R={}",
                     height,
                     round,
                     self.current_round.height,

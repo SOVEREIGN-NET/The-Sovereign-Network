@@ -648,7 +648,10 @@ impl BondingCurveApiHandler {
 
     /// Get current supply band for CBE
     fn get_current_band(&self, supply: u128) -> u32 {
-        u32::try_from(band_for_supply(supply).index + 1).unwrap_or(u32::MAX)
+        band_for_supply(supply)
+            .ok()
+            .and_then(|b| u32::try_from(b.index + 1).ok())
+            .unwrap_or(u32::MAX)
     }
 
     /// Get requester public key from authenticated request

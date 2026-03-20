@@ -308,6 +308,9 @@ impl TransactionValidator {
         // Signature validation:
         // - Historically, "system transactions" (empty inputs) skipped signatures.
         // - WalletUpdate and TokenMint must always be signed (privileged state mutations).
+        // - If a system transaction carries a non-empty signature anyway, validate it.
+        //   This prevents malformed signatures (wrong size, invalid bytes) from passing
+        //   mempool intake and poisoning block proposals on other validators.
         let require_signature = !is_system_transaction
             || matches!(
                 transaction.transaction_type,
@@ -316,7 +319,8 @@ impl TransactionValidator {
                     | TransactionType::TokenCreation
                     | TransactionType::InitEntityRegistry
             );
-        if require_signature {
+        let has_nonempty_sig = !transaction.signature.signature.is_empty();
+        if require_signature || has_nonempty_sig {
             self.validate_signature(transaction)?;
         }
 
@@ -511,6 +515,9 @@ impl TransactionValidator {
         // Signature validation:
         // - Historically, "system transactions" (empty inputs) skipped signatures.
         // - WalletUpdate and TokenMint must always be signed (privileged state mutations).
+        // - If a system transaction carries a non-empty signature anyway, validate it.
+        //   This prevents malformed signatures (wrong size, invalid bytes) from passing
+        //   mempool intake and poisoning block proposals on other validators.
         let require_signature = !is_system_transaction
             || matches!(
                 transaction.transaction_type,
@@ -519,7 +526,8 @@ impl TransactionValidator {
                     | TransactionType::TokenCreation
                     | TransactionType::InitEntityRegistry
             );
-        if require_signature {
+        let has_nonempty_sig = !transaction.signature.signature.is_empty();
+        if require_signature || has_nonempty_sig {
             self.validate_signature(transaction)?;
         }
 
