@@ -13,6 +13,7 @@ fn test_voting_power_mode_default_is_identity() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_voting_power_mode_survives_dat_round_trip() -> Result<()> {
     use tempfile::NamedTempFile;
 
@@ -32,11 +33,11 @@ fn test_voting_power_mode_survives_dat_round_trip() -> Result<()> {
 #[test]
 fn test_voting_power_no_wallet_returns_zero() {
     let bc = Blockchain::new().expect("genesis");
-    // An identity with no wallets should return 0
+    // Identity mode is one-person-one-vote regardless of wallet holdings.
     let id_bytes = [1u8; 32];
     let identity_id = lib_crypto::Hash(id_bytes);
     let power = bc.calculate_user_voting_power(&identity_id);
-    assert_eq!(power, 0);
+    assert_eq!(power, 1);
 }
 
 #[test]
@@ -70,6 +71,7 @@ fn test_vote_delegations_default_empty() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_vote_delegations_survive_dat_round_trip() -> Result<()> {
     use tempfile::NamedTempFile;
 
@@ -92,9 +94,8 @@ fn test_vote_delegations_survive_dat_round_trip() -> Result<()> {
 
 #[test]
 fn test_voting_power_delegation_aggregates_correctly() -> Result<()> {
-    // A delegator with no SOV balance contributes 0 extra power.
-    // The delegate's own power is also 0 in this minimal test setup.
-    // This test validates that the code path doesn't panic.
+    // In Identity mode, the delegate still has the base one-person-one-vote floor
+    // even when both identities hold no SOV.
     let mut bc = Blockchain::new()?;
     let delegate_bytes = [0xABu8; 32];
     let delegator_bytes = [0xCDu8; 32];
@@ -103,7 +104,6 @@ fn test_voting_power_delegation_aggregates_correctly() -> Result<()> {
 
     let delegate_id = lib_crypto::Hash(delegate_bytes);
     let power = bc.calculate_user_voting_power(&delegate_id);
-    // Both identities have no wallets → power = 0, but no panic
-    assert_eq!(power, 0);
+    assert_eq!(power, 1);
     Ok(())
 }

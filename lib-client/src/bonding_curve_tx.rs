@@ -106,8 +106,8 @@ pub fn build_bonding_curve_deploy_tx(
 pub fn build_bonding_curve_buy_tx(
     identity: &crate::Identity,
     token_id: &[u8; 32],
-    stable_amount: u64,
-    min_tokens_out: u64,
+    stable_amount: u128,
+    min_tokens_out: u128,
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
@@ -168,8 +168,8 @@ pub fn build_bonding_curve_buy_tx(
 pub fn build_bonding_curve_sell_tx(
     identity: &crate::Identity,
     token_id: &[u8; 32],
-    token_amount: u64,
-    min_stable_out: u64,
+    token_amount: u128,
+    min_stable_out: u128,
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {
@@ -231,8 +231,8 @@ pub fn build_bonding_curve_graduate_tx(
     identity: &crate::Identity,
     token_id: &[u8; 32],
     pool_id: &[u8; 32],
-    sov_seed_amount: u64,
-    token_seed_amount: u64,
+    sov_seed_amount: u128,
+    token_seed_amount: u128,
     chain_id: u8,
     nonce: u64,
 ) -> Result<String, String> {

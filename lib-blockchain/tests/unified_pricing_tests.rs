@@ -87,7 +87,7 @@ fn price_conversions_work() {
     //
     // from_cents formula: cents * PRICE_SCALE / 10_000
     // 218 * 100_000_000 / 10_000 = 2_180_000
-    let cents = 218u64; // $0.0218 in 4-decimal units (1 unit = $0.0001)
+    let cents = 218u128; // $0.0218 in 4-decimal units (1 unit = $0.0001)
     let price_8dec = PricingCalculator::from_cents(cents);
     assert_eq!(price_8dec, 2_180_000); // 8-decimal representation of $0.0218
 

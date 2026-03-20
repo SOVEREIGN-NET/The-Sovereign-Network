@@ -1,35 +1,78 @@
-/// Integer square root using Newton's method
-///
-/// Returns floor(sqrt(n)) for all u64 inputs using Newton's method for fast convergence.
-///
-/// # Error bounds
-///
-/// Newton's method converges quadratically for this function. For most inputs, the result
-/// is exact when `n` is a perfect square (e.g., sqrt(100) = 10, sqrt(10000) = 100).
-/// For non-perfect squares, returns the floor of the true mathematical square root,
-/// with 0 error in integer terms (e.g., sqrt(99) = 9, sqrt(101) = 10).
+use primitive_types::U256;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum MathError {
+    #[error("arithmetic overflow")]
+    Overflow,
+    #[error("division by zero")]
+    DivisionByZero,
+    #[error("u256 to u128 downcast overflow")]
+    DowncastOverflow,
+}
+
+/// Integer square root using canonical binary search for smaller utility callers.
 pub fn integer_sqrt(n: u64) -> u64 {
-    if n == 0 {
-        return 0;
-    }
-    if n == 1 {
-        return 1;
+    if n < 2 {
+        return n;
     }
 
-    // Use bit-length based initial guess (overestimate to ensure convergence from above)
-    // sqrt(n) < 2^((log2(n) + 1) / 2)
-    let shift = (63 - n.leading_zeros()) / 2 + 1;
-    let mut x = 1u64 << shift;
+    let mut lo = 0u64;
+    let mut hi = n.min(u32::MAX as u64 + 1);
 
-    // Newton's method: x_{n+1} = (x_n + n/x_n) / 2
-    // Converges when x doesn't change (or oscillates between floor and ceiling)
-    loop {
-        let next_x = (x + n / x) / 2;
-        if next_x >= x {
-            return x;
+    while lo + 1 < hi {
+        let mid = lo + (hi - lo) / 2;
+        if mid <= n / mid {
+            lo = mid;
+        } else {
+            hi = mid;
         }
-        x = next_x;
     }
+
+    lo
+}
+
+pub fn u256_to_u128(value: U256) -> Result<u128, MathError> {
+    if value > U256::from(u128::MAX) {
+        return Err(MathError::DowncastOverflow);
+    }
+    Ok(value.as_u128())
+}
+
+pub fn mul_div_floor_u256(a: U256, b: U256, den: U256) -> Result<U256, MathError> {
+    if den.is_zero() {
+        return Err(MathError::DivisionByZero);
+    }
+    Ok(a.checked_mul(b).ok_or(MathError::Overflow)? / den)
+}
+
+pub fn mul_div_floor_u128(a: u128, b: u128, den: u128) -> Result<u128, MathError> {
+    let result = mul_div_floor_u256(U256::from(a), U256::from(b), U256::from(den))?;
+    u256_to_u128(result)
+}
+
+pub fn scaled_mul_u128(a: u128, b: u128, scale: u128) -> Result<u128, MathError> {
+    mul_div_floor_u128(a, b, scale)
+}
+
+pub fn integer_sqrt_u256(n: U256) -> U256 {
+    if n <= U256::from(1u8) {
+        return n;
+    }
+
+    let mut lo = U256::zero();
+    let mut hi = U256::from(u128::MAX) + U256::from(1u8);
+
+    while lo + U256::from(1u8) < hi {
+        let mid = lo + ((hi - lo) >> 1);
+        if mid <= n / mid {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+
+    lo
 }
 
 #[cfg(test)]
@@ -72,5 +115,34 @@ mod tests {
         assert_eq!(integer_sqrt(2), 1);
         assert_eq!(integer_sqrt(3), 1);
         assert_eq!(integer_sqrt(4), 2);
+    }
+
+    #[test]
+    fn test_mul_div_floor_u128() {
+        assert_eq!(mul_div_floor_u128(10, 3, 4).unwrap(), 7);
+        assert_eq!(scaled_mul_u128(5_000_000_000_000_000_000, 2, 1).unwrap(), 10_000_000_000_000_000_000);
+    }
+
+    #[test]
+    fn test_mul_div_floor_rejects_zero_divisor() {
+        assert_eq!(mul_div_floor_u128(1, 2, 0), Err(MathError::DivisionByZero));
+    }
+
+    #[test]
+    fn test_integer_sqrt_u256_rounds_down() {
+        assert_eq!(integer_sqrt_u256(U256::from(0u8)), U256::zero());
+        assert_eq!(integer_sqrt_u256(U256::from(1u8)), U256::from(1u8));
+        assert_eq!(integer_sqrt_u256(U256::from(15u8)), U256::from(3u8));
+        assert_eq!(integer_sqrt_u256(U256::from(16u8)), U256::from(4u8));
+        assert_eq!(integer_sqrt_u256(U256::from(17u8)), U256::from(4u8));
+    }
+
+    #[test]
+    fn test_integer_sqrt_u256_large_value_properties() {
+        let n = U256::MAX;
+        let r = integer_sqrt_u256(n);
+        assert!(r <= n / r);
+        let next = r + U256::from(1u8);
+        assert!(next > n / next);
     }
 }

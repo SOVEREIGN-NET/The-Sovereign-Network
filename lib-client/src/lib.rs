@@ -1698,8 +1698,8 @@ pub extern "C" fn zhtp_client_build_bonding_curve_buy(
     match bonding_curve_tx::build_bonding_curve_buy_tx(
         identity,
         &token_id_arr,
-        stable_amount,
-        min_tokens_out,
+        stable_amount.into(),
+        min_tokens_out.into(),
         chain_id,
         nonce,
     ) {
@@ -1743,8 +1743,8 @@ pub extern "C" fn zhtp_client_build_bonding_curve_sell(
     match bonding_curve_tx::build_bonding_curve_sell_tx(
         identity,
         &token_id_arr,
-        token_amount,
-        min_stable_out,
+        token_amount.into(),
+        min_stable_out.into(),
         chain_id,
         nonce,
     ) {

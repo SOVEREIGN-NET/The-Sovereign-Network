@@ -8,12 +8,10 @@
 //! 5. Swap tokens on AMM after graduation
 //! 6. Add/remove liquidity on AMM
 
-use std::collections::HashMap;
-
 use lib_blockchain::contracts::bonding_curve::{
-    BondingCurveRegistry, BondingCurveToken, CurveType, Phase, Threshold,
+    BondingCurveToken, CurveType, Phase, Threshold,
 };
-use lib_blockchain::contracts::sov_swap::{SimulationResult, SovSwapPool};
+use lib_blockchain::contracts::sov_swap::SovSwapPool;
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::types::dao::DAOType;
 use lib_blockchain::Blockchain;
@@ -97,13 +95,13 @@ fn test_bonding_curve_full_lifecycle() {
             .get_mut(&token_id)
             .unwrap();
         token_mut.reserve_balance += buy_amount_stable;
-        token_mut.total_supply += expected_tokens;
+        token_mut.total_supply += expected_tokens as u128;
     }
 
     // Verify state update
     let token_ref = blockchain.bonding_curve_registry.get(&token_id).unwrap();
     assert_eq!(token_ref.reserve_balance, buy_amount_stable);
-    assert_eq!(token_ref.total_supply, expected_tokens);
+    assert_eq!(token_ref.total_supply, expected_tokens as u128);
 
     // Test 4: Check graduation eligibility (should not be ready yet)
     assert!(!token_ref.can_graduate(1_600_000_100, 0));
@@ -426,7 +424,7 @@ fn test_amm_slippage_protection() {
     let treasury = test_key(2);
     let token_id = test_token_id(1);
 
-    let mut pool = SovSwapPool::init_pool(
+    let pool = SovSwapPool::init_pool(
         token_id,
         DAOType::NP,
         1_000_000,

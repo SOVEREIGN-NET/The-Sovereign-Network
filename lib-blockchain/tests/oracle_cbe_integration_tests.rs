@@ -8,7 +8,6 @@
 use lib_blockchain::{
     contracts::bonding_curve::{BondingCurveToken, Phase, Threshold},
     contracts::tokens::CBE_SYMBOL,
-    Blockchain,
 };
 use lib_crypto::PublicKey;
 
@@ -16,27 +15,27 @@ mod common;
 use common::oracle_harness::OracleTestHarness;
 
 /// Create a test CBE token with specified reserve
-fn create_test_cbe_token(token_id: [u8; 32], reserve_micro_usd: u64) -> BondingCurveToken {
+fn create_test_cbe_token(token_id: [u8; 32], reserve_micro_usd: u128) -> BondingCurveToken {
     BondingCurveToken {
         token_id,
         name: "Test CBE".to_string(),
         symbol: CBE_SYMBOL.to_string(),
-        decimals: 8,
+        decimals: 18,
         phase: Phase::Curve,
-        total_supply: 1_000_000_000,
+        total_supply: 1_000_000_000u128,
         reserve_balance: reserve_micro_usd,
         curve_type: lib_blockchain::contracts::bonding_curve::CurveType::Linear {
-            base_price: 1,
-            slope: 1,
+            base_price: 1u128,
+            slope: 1u128,
         },
-        threshold: Threshold::ReserveAmount(269_000_000_000), // $269K
+        threshold: Threshold::ReserveAmount(269_000_000_000u128), // $269K
         sell_enabled: true,
         amm_pool_id: None,
         creator: PublicKey::new(vec![1u8; 32]),
         creator_did: None,
         deployed_at_block: 1,
         deployed_at_timestamp: 1,
-        treasury_balance: 0,
+        treasury_balance: 0u128,
         // Issue #1846-1847: Oracle-related fields
         graduation_pending_since_block: None,
         last_oracle_price: None,

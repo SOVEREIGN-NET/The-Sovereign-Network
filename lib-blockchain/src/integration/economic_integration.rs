@@ -853,10 +853,10 @@ mod tests {
         for tx in &blockchain_txs {
             assert_eq!(tx.inputs.len(), 0); // System transactions have no inputs
             assert_eq!(tx.fee, 0); // UBI distributions are fee-free
-                                   // Memo format: "Economic TX: Universal Basic Income - X ZHTP (Base: Y, DAO: Z)"
+                                   // Memo format: "Economic TX: Universal Basic Income - X SOV (Base: Y, DAO: Z)"
             assert!(tx.memo.starts_with(b"Economic TX: Universal Basic Income"));
             let memo_str = String::from_utf8_lossy(&tx.memo);
-            assert!(memo_str.contains("ZHTP")); // Should contain amount in ZHTP
+            assert!(memo_str.contains("SOV")); // Should contain amount in SOV
         }
 
         Ok(())

@@ -2404,9 +2404,9 @@ pub struct BondingCurveBuyData {
     /// Token ID being purchased
     pub token_id: [u8; 32],
     /// Amount of stablecoin to spend
-    pub stable_amount: u64,
+    pub stable_amount: u128,
     /// Minimum tokens expected (slippage protection)
-    pub min_tokens_out: u64,
+    pub min_tokens_out: u128,
     /// Buyer's address
     pub buyer: [u8; 32],
     /// Nonce for replay protection
@@ -2419,9 +2419,9 @@ pub struct BondingCurveSellData {
     /// Token ID being sold
     pub token_id: [u8; 32],
     /// Amount of tokens to sell
-    pub token_amount: u64,
+    pub token_amount: u128,
     /// Minimum stablecoin expected (slippage protection)
-    pub min_stable_out: u64,
+    pub min_stable_out: u128,
     /// Seller's address
     pub seller: [u8; 32],
     /// Nonce for replay protection
@@ -2436,9 +2436,9 @@ pub struct BondingCurveGraduateData {
     /// AMM pool ID to create/use
     pub pool_id: [u8; 32],
     /// SOV amount to seed into AMM pool
-    pub sov_seed_amount: u64,
+    pub sov_seed_amount: u128,
     /// Token amount to seed into AMM pool
-    pub token_seed_amount: u64,
+    pub token_seed_amount: u128,
     /// Graduator's address (must be creator or governance)
     pub graduator: [u8; 32],
     /// Nonce for replay protection

@@ -1,14 +1,8 @@
-//! Canonical SOV Token Constants — Single Source of Truth
+//! SOV token constants.
 //!
-//! ALL SOV-related constants MUST be defined here. No other file should
-//! define SOV constants — only re-export from this module.
-//!
-//! # On-Chain Compatibility
-//!
-//! `SOV_TOKEN_MAX_SUPPLY` is the runtime value used by `new_sov_native()` and
-//! persisted in `blockchain.dat` via bincode. Changing it would break deserialization
-//! of existing chain data. This value serves as a u64 ceiling for the TokenContract,
-//! not a distribution target.
+//! The semantic protocol values live in `lib-types::tokenomics`.
+//! This module keeps the existing `u64` runtime token-contract compatibility
+//! constants until the token core/storage model is widened to `u128`.
 
 /// Token name
 pub const SOV_TOKEN_NAME: &str = "Sovereign";
@@ -16,12 +10,20 @@ pub const SOV_TOKEN_NAME: &str = "Sovereign";
 /// Token symbol
 pub const SOV_TOKEN_SYMBOL: &str = "SOV";
 
-/// Number of decimal places (1 SOV = 10^8 atomic units)
+/// Canonical protocol decimals.
+pub use lib_types::SOV_DECIMALS as SOV_PROTOCOL_DECIMALS;
+
+/// Canonical protocol total supply in whole tokens.
+pub use lib_types::SOV_TOTAL_SUPPLY_TOKENS;
+
+/// Canonical protocol max supply in atomic units.
+pub use lib_types::SOV_MAX_SUPPLY as SOV_PROTOCOL_MAX_SUPPLY;
+
+/// Legacy runtime decimals still used by the `u64` token contract.
 pub const SOV_TOKEN_DECIMALS: u8 = 8;
 
-/// Maximum supply ceiling for the TokenContract (u64).
-/// This is the value stored on-chain in existing `.dat` files.
-/// 21,000,000 * 10^8 = 2,100,000,000,000,000 atomic units.
+/// Legacy runtime max-supply ceiling for the `u64` token contract.
+/// This is a compatibility ceiling, not the semantic SOV issuance target.
 pub const SOV_TOKEN_MAX_SUPPLY: u64 = 21_000_000 * 100_000_000;
 
 /// Transaction fee rate: 100 basis points = 1%
