@@ -18,8 +18,17 @@ mod tests {
     fn test_wallet_registry_structure() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
 
-        // Verify wallet registry is initialized
-        assert_eq!(blockchain.wallet_registry.len(), 0);
+        // Fresh genesis seeds wallet allocations for API/query surfaces.
+        assert!(!blockchain.wallet_registry.is_empty());
+
+        let wallet = blockchain
+            .wallet_registry
+            .values()
+            .next()
+            .expect("Expected seeded wallet allocation");
+        assert!(!wallet.wallet_name.is_empty());
+        assert!(!wallet.wallet_type.is_empty());
+        assert_ne!(wallet.wallet_id, lib_blockchain::types::Hash::default());
     }
 
     #[test]
@@ -109,8 +118,16 @@ mod tests {
         // - capabilities
         // - created_at
 
-        // These checks are structural - actual data querying happens in API layer
-        assert_eq!(blockchain.wallet_registry.len(), 0);
+        let wallet = blockchain
+            .wallet_registry
+            .values()
+            .next()
+            .expect("Expected seeded wallet allocation");
+
+        // These checks are structural - actual data querying happens in API layer.
+        assert_ne!(wallet.wallet_id, lib_blockchain::types::Hash::default());
+        assert!(!wallet.wallet_name.is_empty());
+        assert!(!wallet.wallet_type.is_empty());
     }
 
     #[test]

@@ -211,9 +211,9 @@ impl OracleComponent {
             match result {
                 Ok(admission) => {
                     info!(
-                        "🔮 Oracle attestation admitted (epoch={}, price={:.4} USD): {:?}",
+                        "🔮 Oracle attestation admitted (epoch={}, price={} USD): {:?}",
                         attestation.epoch_id,
-                        attestation.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64,
+                        format_price_8dec(attestation.sov_usd_price),
                         admission
                     );
                 }
@@ -374,34 +374,44 @@ impl OracleComponent {
                         // Mode B: SOV/USD = CBE/USD_vwap * ORACLE_PRICE_SCALE / CBE/SOV_curve
                         // cbe_usd is in ORACLE_PRICE_SCALE (1e8) units.
                         // cbe_sov is in ORACLE_PRICE_SCALE (1e8) units (SOV per CBE).
-                        let derived_sov_usd = cbe_usd
-                            .saturating_mul(ORACLE_PRICE_SCALE as u128)
-                            / cbe_sov as u128;
-                        info!(
-                            "🔮 Oracle Mode B: cbe_usd_vwap={}, cbe_sov_curve={}, \
-                             sov_usd={:.6} USD",
-                            cbe_usd,
-                            cbe_sov,
-                            derived_sov_usd as f64 / ORACLE_PRICE_SCALE as f64
-                        );
-                        let prices = vec![
-                            OracleFetchedPrice {
-                                source_id: "onramp_vwap_a".into(),
-                                sov_usd_price: derived_sov_usd,
-                                timestamp: now_ts,
-                            },
-                            OracleFetchedPrice {
-                                source_id: "onramp_vwap_b".into(),
-                                sov_usd_price: derived_sov_usd,
-                                timestamp: now_ts,
-                            },
-                            OracleFetchedPrice {
-                                source_id: "onramp_vwap_c".into(),
-                                sov_usd_price: derived_sov_usd,
-                                timestamp: now_ts,
-                            },
-                        ];
-                        (prices, Some(cbe_usd))
+                        if let Some(derived_sov_usd) = cbe_usd
+                            .checked_mul(ORACLE_PRICE_SCALE as u128)
+                            .and_then(|v| v.checked_div(cbe_sov as u128))
+                        {
+                            info!(
+                                "🔮 Oracle Mode B: cbe_usd_vwap={}, cbe_sov_curve={}, \
+                                 sov_usd={} USD",
+                                cbe_usd,
+                                cbe_sov,
+                                format_price_8dec(derived_sov_usd)
+                            );
+                            let prices = vec![
+                                OracleFetchedPrice {
+                                    source_id: "onramp_vwap_a".into(),
+                                    sov_usd_price: derived_sov_usd,
+                                    timestamp: now_ts,
+                                },
+                                OracleFetchedPrice {
+                                    source_id: "onramp_vwap_b".into(),
+                                    sov_usd_price: derived_sov_usd,
+                                    timestamp: now_ts,
+                                },
+                                OracleFetchedPrice {
+                                    source_id: "onramp_vwap_c".into(),
+                                    sov_usd_price: derived_sov_usd,
+                                    timestamp: now_ts,
+                                },
+                            ];
+                            (prices, Some(cbe_usd))
+                        } else {
+                            warn!(
+                                "Oracle Mode B: overflow or divide-by-zero deriving SOV/USD \
+                                 from cbe_usd_vwap={} cbe_sov_curve={}",
+                                cbe_usd,
+                                cbe_sov
+                            );
+                            (Vec::new(), None)
+                        }
                     }
                     _ => {
                         // Mode A: use SRV. CBE/USD derived from curve * SRV.
@@ -470,9 +480,9 @@ impl OracleComponent {
             ) {
                 Ok(Some(attestation)) => {
                     info!(
-                        "🔮 Oracle produced attestation (epoch={}, price={:.4} USD)",
+                        "🔮 Oracle produced attestation (epoch={}, price={} USD)",
                         current_epoch,
-                        attestation.sov_usd_price as f64 / ORACLE_PRICE_SCALE as f64
+                        format_price_8dec(attestation.sov_usd_price)
                     );
 
                     if is_strict_spec {
@@ -597,6 +607,44 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
+fn format_price_8dec(value: u128) -> String {
+    let whole = value / ORACLE_PRICE_SCALE as u128;
+    let frac = value % ORACLE_PRICE_SCALE as u128;
+    format!("{whole}.{frac:08}")
+}
+
+fn parse_decimal_to_8dec(input: &str) -> Option<u128> {
+    let trimmed = input.trim().trim_matches('"');
+    if trimmed.is_empty() || trimmed.starts_with('-') {
+        return None;
+    }
+
+    let mut parts = trimmed.split('.');
+    let whole = parts.next()?;
+    let frac = parts.next().unwrap_or("");
+    if parts.next().is_some() {
+        return None;
+    }
+
+    let whole_value: u128 = whole.parse().ok()?;
+    let mut frac_digits = frac.to_string();
+    if frac_digits.len() > 8 {
+        frac_digits.truncate(8);
+    }
+    while frac_digits.len() < 8 {
+        frac_digits.push('0');
+    }
+    let frac_value: u128 = if frac_digits.is_empty() {
+        0
+    } else {
+        frac_digits.parse().ok()?
+    };
+
+    whole_value
+        .checked_mul(ORACLE_PRICE_SCALE as u128)?
+        .checked_add(frac_value)
+}
+
 #[allow(dead_code)]
 fn exchange_http_client() -> Option<reqwest::Client> {
     reqwest::Client::builder()
@@ -631,8 +679,7 @@ async fn fetch_coingecko_sov_usd(now: u64) -> Option<OracleFetchedPrice> {
     let client = exchange_http_client()?;
     let resp = client.get(url).send().await.ok()?.error_for_status().ok()?;
     let json: serde_json::Value = resp.json().await.ok()?;
-    let price_f = json["sov-token"]["usd"].as_f64()?;
-    let price_atomic = (price_f * ORACLE_PRICE_SCALE as f64) as u128;
+    let price_atomic = parse_decimal_to_8dec(&json["sov-token"]["usd"].to_string())?;
     Some(OracleFetchedPrice {
         source_id: "coingecko".into(),
         sov_usd_price: price_atomic,
@@ -648,8 +695,7 @@ async fn fetch_binance_sov_usdt(now: u64) -> Option<OracleFetchedPrice> {
     let resp = client.get(url).send().await.ok()?.error_for_status().ok()?;
     let json: serde_json::Value = resp.json().await.ok()?;
     let price_str = json["price"].as_str()?;
-    let price_f: f64 = price_str.parse().ok()?;
-    let price_atomic = (price_f * ORACLE_PRICE_SCALE as f64) as u128;
+    let price_atomic = parse_decimal_to_8dec(price_str)?;
     Some(OracleFetchedPrice {
         source_id: "binance".into(),
         sov_usd_price: price_atomic,

@@ -10,10 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::convert::TryFrom;
 
-/// Maximum SOV supply for TokenAmount bounds (u128 version).
-/// This is the distribution target. The runtime TokenContract uses a larger u64 ceiling
-/// (see contracts::tokens::constants::SOV_TOKEN_MAX_SUPPLY).
-pub const SOV_MAX_SUPPLY: u128 = 1_000_000_000_000;
+/// Maximum SOV supply for TokenAmount bounds (u128, atomic units).
+pub use lib_types::SOV_MAX_SUPPLY;
 
 /// Strong type wrapper for token quantities (u128 for large numbers)
 ///
@@ -379,7 +377,7 @@ mod tests {
     /// Invariant test: SOV supply is always fixed
     #[test]
     fn sov_supply_invariant() {
-        assert_eq!(SOV_MAX_SUPPLY, 1_000_000_000_000);
+        assert_eq!(SOV_MAX_SUPPLY, lib_types::SOV_MAX_SUPPLY);
         let max_token = SOVToken::max_supply();
         assert_eq!(max_token.value(), SOV_MAX_SUPPLY);
         assert!(max_token.value() >= 0); // Always non-negative

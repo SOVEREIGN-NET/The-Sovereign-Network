@@ -6,7 +6,7 @@
 //! > "reliance on internal mechanisms rather than external oracles for price discovery"
 //!
 //! Architecture:
-//! ```
+//! ```text
 //! Bonding Curve (CBE/SOV) → Market Price → Oracle Observes
 //! Bonding Curve = PRIMARY price source
 //! Oracle = SECONDARY observer (graduation threshold validation only)
@@ -78,21 +78,21 @@ impl std::fmt::Display for PriceSource {
 /// Component prices for transparent calculation
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PriceComponents {
-    /// SRV value (for SOV fixed pricing)
+    /// SRV value in 8-decimal fixed-point units.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub srv: Option<f64>,
-    /// CBE/USD price from oracle (deprecated - Issue #1852)
+    pub srv: Option<u128>,
+    /// CBE/USD price from oracle (deprecated - Issue #1852), 8-decimal units.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cbe_usd: Option<f64>,
-    /// CBE/SOV ratio from bonding curve
+    pub cbe_usd: Option<u128>,
+    /// CBE/SOV ratio from bonding curve in 8-decimal units.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cbe_sov: Option<f64>,
-    /// Curve price in SOV for CBE tokens
+    pub cbe_sov: Option<u128>,
+    /// Curve price in SOV for CBE tokens, 8-decimal units.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub curve_price_sov: Option<f64>,
-    /// SOV/USD price used for CBE calculation
+    pub curve_price_sov: Option<u128>,
+    /// SOV/USD price used for CBE calculation, 8-decimal units.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sov_usd: Option<f64>,
+    pub sov_usd: Option<u128>,
 }
 
 /// Token price information
@@ -103,7 +103,7 @@ pub struct TokenPrice {
     /// Token symbol
     pub symbol: String,
     /// Price in USD cents
-    pub price_usd_cents: u64,
+    pub price_usd_cents: u128,
     /// Pricing phase
     pub pricing_phase: PricingPhase,
     /// Pricing mode (Issue #1852: deprecated, use pricing_phase)
@@ -131,7 +131,7 @@ pub struct TokenPricingState {
     pub last_updated: u64,
     /// Price history (token_id -> [(timestamp, price)])
     #[serde(default)]
-    pub price_history: HashMap<String, Vec<(u64, u64)>>,
+    pub price_history: HashMap<String, Vec<(u64, u128)>>,
     
     // Legacy fields for backward compatibility (Issue #1852 transition)
     /// Deprecated: CBE/USD from oracle (now observer-only)
@@ -172,7 +172,7 @@ pub enum PricingMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CbePriceInfo {
     /// Current price in USD (cents)
-    pub price_usd_cents: u64,
+    pub price_usd_cents: u128,
     /// Pricing mode
     pub price_mode: PricingMode,
     /// Price source
@@ -180,13 +180,13 @@ pub struct CbePriceInfo {
     /// Current phase
     pub phase: String,
     /// Reserve in USD
-    pub reserve_usd: u64,
+    pub reserve_usd: u128,
     /// Total supply
-    pub supply: u64,
+    pub supply: u128,
     /// Component prices
     pub components: PriceComponents,
-    /// Deprecated: always None (oracle is observer-only)
-    pub oracle_confidence: Option<f64>,
+    /// Deprecated: confidence in basis points (oracle is observer-only)
+    pub oracle_confidence_bps: Option<u16>,
     /// Last update timestamp
     pub last_updated: u64,
 }
@@ -230,7 +230,7 @@ impl TokenPricingState {
     }
 
     /// Record price in history
-    pub fn record_price(&mut self, token_id: &str, timestamp: u64, price_cents: u64) {
+    pub fn record_price(&mut self, token_id: &str, timestamp: u64, price_cents: u128) {
         let history = self.price_history.entry(token_id.to_string()).or_default();
         history.push((timestamp, price_cents));
         
@@ -241,7 +241,7 @@ impl TokenPricingState {
     }
 
     /// Get price history for a token
-    pub fn get_price_history(&self, token_id: &str) -> Vec<(u64, u64)> {
+    pub fn get_price_history(&self, token_id: &str) -> Vec<(u64, u128)> {
         self.price_history.get(token_id).cloned().unwrap_or_default()
     }
 
@@ -263,20 +263,16 @@ impl TokenPricingState {
     }
 
     /// Deprecated: Calculate CBE price components
-    pub fn calculate_cbe_price(&self, _sov_price_8dec: u128, curve_price_sov: u64) -> (u64, PriceComponents) {
-        let curve_sov = curve_price_sov as f64 / PRICE_SCALE as f64;
-        let sov_usd = GENESIS_SRV_8DEC as f64 / PRICE_SCALE as f64;
-        
-        // CBE/USD = CBE/SOV * SOV/USD
-        let cbe_usd = curve_sov * sov_usd;
-        // Encode in 4-decimal USD units to match stable API schema (price_usd_cents = price_usd * 10_000)
-        let cbe_usd_cents = (cbe_usd * 10_000.0).round() as u64;
+    pub fn calculate_cbe_price(&self, _sov_price_8dec: u128, curve_price_sov: u128) -> (u128, PriceComponents) {
+        let sov_usd = GENESIS_SRV_8DEC as u128;
+        let cbe_usd_8dec = PricingCalculator::calculate_cbe_usd(curve_price_sov, sov_usd);
+        let cbe_usd_cents = PricingCalculator::to_cents(cbe_usd_8dec);
 
         let components = PriceComponents {
             srv: Some(sov_usd),
             cbe_usd: None, // Issue #1852: oracle is observer-only
             cbe_sov: None,
-            curve_price_sov: Some(curve_sov),
+            curve_price_sov: Some(curve_price_sov),
             sov_usd: Some(sov_usd),
         };
 
@@ -300,7 +296,7 @@ impl TokenPricingState {
 
     /// Deprecated: Get SOV price components
     pub fn get_sov_components(&self) -> PriceComponents {
-        let srv = GENESIS_SRV_8DEC as f64 / PRICE_SCALE as f64;
+        let srv = GENESIS_SRV_8DEC as u128;
         
         PriceComponents {
             srv: Some(srv),
@@ -329,14 +325,14 @@ impl PricingCalculator {
 
     /// Convert 8-decimal price to 4-decimal USD units (price_usd_cents = price_usd * 10_000)
     /// 1 unit = $0.0001. Example: 2_180_000 (=$0.0218) → 218
-    pub fn to_cents(price_8dec: u128) -> u64 {
-        ((price_8dec * 10_000) / PRICE_SCALE) as u64
+    pub fn to_cents(price_8dec: u128) -> u128 {
+        (price_8dec * 10_000) / PRICE_SCALE
     }
 
     /// Convert 4-decimal USD units to 8-decimal price
     /// Example: 218 (=$0.0218) → 2_180_000
-    pub fn from_cents(cents: u64) -> u128 {
-        (cents as u128 * PRICE_SCALE) / 10_000
+    pub fn from_cents(cents: u128) -> u128 {
+        (cents * PRICE_SCALE) / 10_000
     }
 }
 
@@ -381,7 +377,7 @@ mod tests {
         //
         // from_cents formula: cents * PRICE_SCALE / 10_000
         // 218 * 100_000_000 / 10_000 = 2_180_000
-        let cents = 218u64; // $0.0218 in 4-decimal units
+        let cents = 218u128; // $0.0218 in 4-decimal units
         let price_8dec = PricingCalculator::from_cents(cents);
         assert_eq!(price_8dec, 2_180_000);
 

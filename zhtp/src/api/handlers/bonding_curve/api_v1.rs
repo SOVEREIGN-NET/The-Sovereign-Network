@@ -31,8 +31,11 @@ use tracing::{info, warn};
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 
+use lib_blockchain::contracts::bonding_curve::canonical::{band_for_supply, TOKEN_SCALE_18};
+use lib_blockchain::contracts::bonding_curve::token::{
+    RESERVE_SPLIT_DENOMINATOR, RESERVE_SPLIT_NUMERATOR,
+};
 use lib_blockchain::contracts::bonding_curve::{BondingCurveToken, Phase, PiecewiseLinearCurve};
-use lib_blockchain::contracts::bonding_curve::token::{RESERVE_SPLIT_NUMERATOR, RESERVE_SPLIT_DENOMINATOR};
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::Blockchain;
 
@@ -46,52 +49,52 @@ use super::{create_error_response, create_json_response};
 #[derive(Debug, Deserialize)]
 pub struct QuoteBuyRequest {
     /// Amount of SOV to spend (atomic units)
-    pub sov_amount: u64,
+    pub sov_amount: u128,
 }
 
 /// Quote sell request  
 #[derive(Debug, Deserialize)]
 pub struct QuoteSellRequest {
     /// Amount of CBE tokens to sell (atomic units)
-    pub cbe_amount: u64,
+    pub cbe_amount: u128,
 }
 
 /// Execute buy request
 #[derive(Debug, Deserialize)]
 pub struct ExecuteBuyRequest {
     /// Amount of SOV to spend (atomic units)
-    pub sov_amount: u64,
+    pub sov_amount: u128,
     /// Minimum CBE to receive (slippage protection)
-    pub min_cbe_out: Option<u64>,
+    pub min_cbe_out: Option<u128>,
 }
 
 /// Execute sell request
 #[derive(Debug, Deserialize)]
 pub struct ExecuteSellRequest {
     /// Amount of CBE tokens to sell (atomic units)
-    pub cbe_amount: u64,
+    pub cbe_amount: u128,
     /// Minimum SOV to receive (slippage protection)
-    pub min_sov_out: Option<u64>,
+    pub min_sov_out: Option<u128>,
 }
 
 /// Quote buy response
 #[derive(Debug, Serialize)]
 pub struct QuoteBuyResponse {
-    pub sov_input: u64,
-    pub cbe_output: u64,
-    pub to_reserve: u64,
-    pub to_treasury: u64,
+    pub sov_input: u128,
+    pub cbe_output: u128,
+    pub to_reserve: u128,
+    pub to_treasury: u128,
     pub price: f64,
-    pub price_8dec: u64,
+    pub price_8dec: u128,
 }
 
 /// Quote sell response
 #[derive(Debug, Serialize)]
 pub struct QuoteSellResponse {
-    pub cbe_input: u64,
-    pub sov_output: u64,
+    pub cbe_input: u128,
+    pub sov_output: u128,
     pub price: f64,
-    pub price_8dec: u64,
+    pub price_8dec: u128,
 }
 
 /// Curve state response
@@ -101,11 +104,11 @@ pub struct CurveStateResponse {
     pub name: String,
     pub symbol: String,
     pub phase: String,
-    pub total_supply: u64,
-    pub reserve_balance: u64,
-    pub treasury_balance: u64,
+    pub total_supply: u128,
+    pub reserve_balance: u128,
+    pub treasury_balance: u128,
     pub current_price: f64,
-    pub current_price_8dec: u64,
+    pub current_price_8dec: u128,
     pub current_band: u32,
 }
 
@@ -113,7 +116,7 @@ pub struct CurveStateResponse {
 #[derive(Debug, Serialize)]
 pub struct PriceResponse {
     pub cbe_sov_price: f64,
-    pub cbe_sov_price_8dec: u64,
+    pub cbe_sov_price_8dec: u128,
     pub current_band: u32,
     pub phase: String,
 }
@@ -141,9 +144,9 @@ pub struct TransactionHistoryEntry {
     pub tx_type: String,
     pub block_height: u64,
     pub timestamp: u64,
-    pub sov_amount: u64,
-    pub cbe_amount: u64,
-    pub price: u64,
+    pub sov_amount: u128,
+    pub cbe_amount: u128,
+    pub price: u128,
 }
 
 /// History response
@@ -211,7 +214,7 @@ impl BondingCurveApiHandler {
             total_supply: cbe_token.total_supply,
             reserve_balance: cbe_token.reserve_balance,
             treasury_balance: cbe_token.treasury_balance,
-            current_price: cbe_token.current_price() as f64 / 100_000_000.0,
+            current_price: cbe_token.current_price() as f64 / TOKEN_SCALE_18 as f64,
             current_price_8dec: cbe_token.current_price(),
             current_band,
         };
@@ -232,7 +235,7 @@ impl BondingCurveApiHandler {
         let price_8dec = cbe_token.current_price();
         
         let response = PriceResponse {
-            cbe_sov_price: price_8dec as f64 / 100_000_000.0,
+            cbe_sov_price: price_8dec as f64 / TOKEN_SCALE_18 as f64,
             cbe_sov_price_8dec: price_8dec,
             current_band,
             phase: cbe_token.phase.to_string(),
@@ -298,10 +301,9 @@ impl BondingCurveApiHandler {
 
         // Calculate reserve/treasury split using canonical constants (2/5 to reserve, 3/5 to treasury).
         // Use u128 for intermediate calculation to prevent overflow on large sov_amount.
-        let to_reserve = (req.sov_amount as u128)
+        let to_reserve = req.sov_amount
             .checked_mul(RESERVE_SPLIT_NUMERATOR as u128)
             .and_then(|v| v.checked_div(RESERVE_SPLIT_DENOMINATOR as u128))
-            .and_then(|v| u64::try_from(v).ok())
             .ok_or_else(|| anyhow::anyhow!("Reserve split calculation overflow"))?;
         let to_treasury = req.sov_amount.saturating_sub(to_reserve);
 
@@ -322,7 +324,7 @@ impl BondingCurveApiHandler {
             cbe_output,
             to_reserve,
             to_treasury,
-            price: price_8dec as f64 / 100_000_000.0,
+            price: price_8dec as f64 / TOKEN_SCALE_18 as f64,
             price_8dec,
         };
 
@@ -379,7 +381,7 @@ impl BondingCurveApiHandler {
         let response = QuoteSellResponse {
             cbe_input: req.cbe_amount,
             sov_output,
-            price: price_8dec as f64 / 100_000_000.0,
+            price: price_8dec as f64 / TOKEN_SCALE_18 as f64,
             price_8dec,
         };
 
@@ -416,7 +418,7 @@ impl BondingCurveApiHandler {
             .latest_finalized_price_at_or_before(current_epoch)
             .map(|fp| {
                 let price_ts = (fp.epoch_id + 1).saturating_mul(epoch_duration);
-                (fp.sov_usd_price as u64, price_ts)
+                (fp.sov_usd_price as u128, price_ts)
             });
 
         let token_id = self.get_cbe_token_id(&blockchain).await?;
@@ -645,9 +647,8 @@ impl BondingCurveApiHandler {
     }
 
     /// Get current supply band for CBE
-    fn get_current_band(&self, supply: u64) -> u32 {
-        let curve = PiecewiseLinearCurve::cbe_default();
-        u32::try_from(curve.band_index_for_supply(supply) + 1).unwrap_or(u32::MAX)
+    fn get_current_band(&self, supply: u128) -> u32 {
+        u32::try_from(band_for_supply(supply).index + 1).unwrap_or(u32::MAX)
     }
 
     /// Get requester public key from authenticated request

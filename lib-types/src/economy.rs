@@ -3,6 +3,7 @@
 //! Pure data types for the post-scarcity economics system.
 //! Behavior (calculation methods) lives in lib-economy via extension traits.
 
+use crate::tokenomics::SOV_TOTAL_SUPPLY_TOKENS;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
@@ -482,8 +483,8 @@ pub struct TreasuryStats {
 // ECONOMIC CONSTANTS
 // =============================================================================
 
-/// Total SOV supply: 1 trillion tokens (fixed, not inflationary)
-pub const SOV_TOTAL_SUPPLY: u64 = 1_000_000_000_000;
+/// Total SOV supply in whole tokens (fixed, not inflationary).
+pub const SOV_TOTAL_SUPPLY: u128 = SOV_TOTAL_SUPPLY_TOKENS;
 
 /// Transaction fee rate: 1% (expressed in basis points)
 pub const TRANSACTION_FEE_RATE: u64 = 100;
@@ -616,7 +617,7 @@ mod tests {
 
     #[test]
     fn test_sov_total_supply() {
-        assert_eq!(SOV_TOTAL_SUPPLY, 1_000_000_000_000);
+        assert_eq!(SOV_TOTAL_SUPPLY, SOV_TOTAL_SUPPLY_TOKENS);
     }
 
     #[test]

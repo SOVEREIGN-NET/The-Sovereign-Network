@@ -1639,17 +1639,17 @@ impl BlockExecutor {
         // Convert u8 curve type to CurveType
         let curve_type = match data.curve_type {
             0 => CurveType::Linear {
-                base_price: data.base_price,
-                slope: data.curve_param,
+                base_price: data.base_price as u128,
+                slope: data.curve_param as u128,
             },
             1 => CurveType::Exponential {
-                base_price: data.base_price,
-                growth_rate_bps: data.curve_param,
+                base_price: data.base_price as u128,
+                growth_rate_bps: data.curve_param as u128,
             },
             2 => CurveType::Sigmoid {
-                max_price: data.base_price,
-                midpoint_supply: data.midpoint_supply.unwrap_or(1_000_000_000_000_000),
-                steepness: data.curve_param,
+                max_price: data.base_price as u128,
+                midpoint_supply: data.midpoint_supply.unwrap_or(1_000_000_000_000_000) as u128,
+                steepness: data.curve_param as u128,
             },
             3 => CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             _ => {
@@ -1662,15 +1662,15 @@ impl BlockExecutor {
 
         // Convert threshold type to Threshold
         let threshold = match data.threshold_type {
-            0 => Threshold::ReserveAmount(data.threshold_value),
-            1 => Threshold::SupplyAmount(data.threshold_value),
+            0 => Threshold::ReserveAmount(data.threshold_value as u128),
+            1 => Threshold::SupplyAmount(data.threshold_value as u128),
             2 => Threshold::TimeAndReserve {
                 min_time_seconds: data.threshold_time_seconds.unwrap_or(0),
-                min_reserve: data.threshold_value,
+                min_reserve: data.threshold_value as u128,
             },
             3 => Threshold::TimeAndSupply {
                 min_time_seconds: data.threshold_time_seconds.unwrap_or(0),
-                min_supply: data.threshold_value,
+                min_supply: data.threshold_value as u128,
             },
             _ => {
                 return Err(TxApplyError::InvalidType(format!(
@@ -1684,7 +1684,7 @@ impl BlockExecutor {
             token_id: token_id_bytes,
             name: data.name.clone(),
             symbol: data.symbol.clone(),
-            decimals: 8, // Standard decimals
+            decimals: 18,
             phase: Phase::Curve,
             total_supply: 0,
             reserve_balance: 0,
@@ -1845,7 +1845,7 @@ impl BlockExecutor {
             token_id: data.token_id,
             seller: data.seller,
             tokens_sold: data.token_amount,
-            stable_received: stable_out,
+            stable_received: stable_out as u128,
         })
     }
 
@@ -2299,8 +2299,8 @@ pub struct BondingCurveDeployOutcome {
 pub struct BondingCurveBuyOutcome {
     pub token_id: [u8; 32],
     pub buyer: [u8; 32],
-    pub stable_spent: u64,
-    pub tokens_received: u64,
+    pub stable_spent: u128,
+    pub tokens_received: u128,
 }
 
 /// Outcome of a bonding curve sell transaction
@@ -2308,8 +2308,8 @@ pub struct BondingCurveBuyOutcome {
 pub struct BondingCurveSellOutcome {
     pub token_id: [u8; 32],
     pub seller: [u8; 32],
-    pub tokens_sold: u64,
-    pub stable_received: u64,
+    pub tokens_sold: u128,
+    pub stable_received: u128,
 }
 
 /// Outcome of a bonding curve graduate transaction
@@ -2676,33 +2676,41 @@ mod tests {
         let store = create_test_store();
         let executor = create_test_executor(store.clone());
 
-        // Apply funded genesis (contains coinbase) - UTXOs created via executor
-        let genesis = create_funded_genesis_block();
+        let genesis = create_genesis_block();
         let genesis_outcome = executor.apply_block(&genesis).unwrap();
         assert_eq!(genesis_outcome.height, 0);
 
+        // Apply a funded block that creates the spendable coinbase UTXO.
+        let funded_block = create_block_with_txs(
+            1,
+            genesis.header.block_hash,
+            vec![create_coinbase_tx(create_dummy_public_key())],
+        );
+        executor.apply_block(&funded_block).unwrap();
+        assert_eq!(store.latest_height().unwrap(), 1);
+
         // Get the coinbase tx hash to reference its outputs
-        let coinbase_tx = &genesis.transactions[0];
+        let coinbase_tx = &funded_block.transactions[0];
         let coinbase_tx_hash = hash_transaction(coinbase_tx);
 
         // Create a transfer spending the coinbase UTXO (output index 0)
         let spend_tx = create_transfer_tx(coinbase_tx_hash, 0);
-        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![spend_tx.clone()]);
+        let block2 = create_block_with_txs(2, funded_block.header.block_hash, vec![spend_tx.clone()]);
 
         // First spend should succeed
-        executor.apply_block(&block1).unwrap();
-        assert_eq!(store.latest_height().unwrap(), 1);
+        executor.apply_block(&block2).unwrap();
+        assert_eq!(store.latest_height().unwrap(), 2);
 
-        // Try to spend the same UTXO again in block 2
+        // Try to spend the same UTXO again in block 3
         let double_spend_tx = create_transfer_tx(coinbase_tx_hash, 0);
-        let block2 = create_block_with_txs(2, block1.header.block_hash, vec![double_spend_tx]);
+        let block3 = create_block_with_txs(3, block2.header.block_hash, vec![double_spend_tx]);
 
         // This should fail - UTXO already spent
-        let result = executor.apply_block(&block2);
+        let result = executor.apply_block(&block3);
         assert!(result.is_err(), "Double spend should be rejected");
 
-        // Height should remain at block 1
-        assert_eq!(store.latest_height().unwrap(), 1);
+        // Height should remain at block 2
+        assert_eq!(store.latest_height().unwrap(), 2);
     }
 
     /// T4: Token transfer with insufficient balance fails
@@ -3310,8 +3318,6 @@ mod tests {
     /// T5: State persists across store restart
     #[test]
     fn test_t5_persistence_across_restart() {
-        use std::path::PathBuf;
-
         // Create a temporary directory for the test
         let temp_dir = tempfile::tempdir().unwrap();
         let store_path = temp_dir.path().join("blockchain_test");

@@ -1,14 +1,11 @@
 //! Bonding Curve Transaction Integration Tests
 //!
-//! Tests for Issue #1820: Bonding Curve Token Deployment via Consensus
-//! 
-//! These tests verify that all four bonding curve transaction types
-//! (BondingCurveDeploy, BondingCurveBuy, BondingCurveSell, BondingCurveGraduate)
-//! are properly processed through process_token_transactions.
+//! These tests cover the legacy no-executor path only.
+//! Bonding-curve state mutations are no longer allowed there.
 
 use lib_blockchain::{
     block::{Block, BlockHeader},
-    contracts::bonding_curve::{Phase, Threshold, RESERVE_SPLIT_DENOMINATOR, RESERVE_SPLIT_NUMERATOR},
+    contracts::bonding_curve::Phase,
     contracts::tokens::CBE_SYMBOL,
     integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm},
     transaction::{
@@ -92,8 +89,8 @@ fn create_deploy_transaction(
 fn create_buy_transaction(
     buyer_key: &PublicKey,
     token_id: [u8; 32],
-    stable_amount: u64,
-    min_tokens_out: u64,
+    stable_amount: u128,
+    min_tokens_out: u128,
     nonce: u64,
 ) -> Transaction {
     let mut buyer_key_id = [0u8; 32];
@@ -118,8 +115,8 @@ fn create_buy_transaction(
 fn create_sell_transaction(
     seller_key: &PublicKey,
     token_id: [u8; 32],
-    token_amount: u64,
-    min_stable_out: u64,
+    token_amount: u128,
+    min_stable_out: u128,
     nonce: u64,
 ) -> Transaction {
     let mut seller_key_id = [0u8; 32];
@@ -167,403 +164,56 @@ fn create_graduate_transaction(
     )
 }
 
-// ============================================================================
-// BondingCurveDeploy Tests
-// ============================================================================
-
-#[test]
-fn test_bonding_curve_deploy_transaction_success() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
-    let creator = test_key(1);
-
-    let deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
-    let block = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-
-    // Process the transaction
-    let result = blockchain.process_token_transactions(&block);
-    assert!(result.is_ok(), "Deploy transaction should succeed: {:?}", result);
-
-    // Verify token was registered
-    let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
-    let expected_token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
-    
+fn assert_legacy_path_rejects(blockchain: &mut Blockchain, tx: Transaction, expected: &str) {
+    let block = make_test_block(1, 1_700_000_000, vec![tx]);
+    let err = blockchain
+        .process_token_transactions(&block)
+        .expect_err("legacy path should reject bonding-curve tx");
     assert!(
-        blockchain.bonding_curve_registry.contains(&expected_token_id),
-        "Token should be registered in bonding_curve_registry"
+        err.to_string().contains(expected),
+        "unexpected error: {}",
+        err
     );
-
-    let token = blockchain.bonding_curve_registry.get(&expected_token_id).unwrap();
-    assert_eq!(token.name, "Test Token");
-    assert_eq!(token.symbol, "TEST");
-    assert_eq!(token.phase, Phase::Curve);
-    assert!(token.sell_enabled);
 }
 
 #[test]
-fn test_bonding_curve_deploy_duplicate_symbol_fails() {
+fn test_legacy_path_rejects_bonding_curve_deploy() {
     let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
     let creator = test_key(1);
+    let tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
 
-    // First deploy should succeed
-    let deploy_tx1 = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
-    let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx1]);
-    let result = blockchain.process_token_transactions(&block1);
-    assert!(result.is_ok(), "First deploy should succeed");
-
-    // Second deploy with same symbol should fail
-    let deploy_tx2 = create_deploy_transaction(&creator, "Another Token", "TEST", 0);
-    let block2 = make_test_block(2, 1_700_000_100, vec![deploy_tx2]);
-    let result = blockchain.process_token_transactions(&block2);
-    assert!(result.is_err(), "Duplicate symbol should fail");
+    assert_legacy_path_rejects(&mut blockchain, tx, "BondingCurveDeploy requires BlockExecutor");
 }
 
 #[test]
-fn test_bonding_curve_deploy_empty_name_fails() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
-    let creator = test_key(1);
-
-    let mut deploy_tx = create_deploy_transaction(&creator, "", "TEST", 0);
-    // Manually set empty name in the data
-    if let Some(ref mut data) = deploy_tx.bonding_curve_deploy_data {
-        data.name = "".to_string();
-    }
-
-    let block = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    let result = blockchain.process_token_transactions(&block);
-    assert!(result.is_err(), "Empty name should fail");
-}
-
-// ============================================================================
-// BondingCurveBuy Tests
-// ============================================================================
-
-#[test]
-fn test_bonding_curve_buy_transaction_success() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
-    let creator = test_key(1);
-    let buyer = test_key(2);
-
-    // First deploy the token
-    let deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
-    let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
-
-    let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
-    let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
-
-    // Now buy tokens
-    let buy_amount = 1_000_000u64;
-    let buy_tx = create_buy_transaction(&buyer, token_id, buy_amount, 0, 0);
-    let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-
-    let result = blockchain.process_token_transactions(&block2);
-    assert!(result.is_ok(), "Buy transaction should succeed: {:?}", result);
-
-    // Verify token state updated - Issue #1844: 40/60 split
-    let expected_reserve = buy_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
-    let expected_treasury = buy_amount - expected_reserve;
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert_eq!(token.reserve_balance, expected_reserve, "Reserve should be 40% of buy amount");
-    assert_eq!(token.treasury_balance, expected_treasury, "Treasury should be 60% of buy amount");
-    assert!(token.total_supply > 0);
-}
-
-#[test]
-fn test_bonding_curve_buy_slippage_protection() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
-    let creator = test_key(1);
-    let buyer = test_key(2);
-
-    // Deploy token
-    let deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
-    let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
-
-    let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
-    let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
-
-    // Try to buy with very high min_tokens_out (should fail due to slippage)
-    let buy_tx = create_buy_transaction(&buyer, token_id, 1_000_000, 1_000_000_000, 0);
-    let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-    
-    let result = blockchain.process_token_transactions(&block2);
-    assert!(result.is_err(), "Buy with excessive slippage should fail");
-}
-
-#[test]
-fn test_bonding_curve_buy_nonexistent_token_fails() {
+fn test_legacy_path_rejects_bonding_curve_buy() {
     let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
     let buyer = test_key(2);
+    let tx = create_buy_transaction(&buyer, [9u8; 32], 1_000_000, 0, 0);
 
-    let fake_token_id = [99u8; 32];
-    let buy_tx = create_buy_transaction(&buyer, fake_token_id, 1_000_000, 0, 0);
-    let block = make_test_block(1, 1_700_000_000, vec![buy_tx]);
-    
-    let result = blockchain.process_token_transactions(&block);
-    assert!(result.is_err(), "Buy of nonexistent token should fail");
+    assert_legacy_path_rejects(&mut blockchain, tx, "BondingCurveBuy requires BlockExecutor");
 }
 
 #[test]
-fn test_bonding_curve_buy_key_mismatch_fails() {
+fn test_legacy_path_rejects_bonding_curve_sell() {
     let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
-    let creator = test_key(1);
-    let buyer = test_key(2);
-    let wrong_key = test_key(3);
+    let seller = test_key(3);
+    let tx = create_sell_transaction(&seller, [7u8; 32], 1_000_000, 0, 0);
 
-    // Deploy token
-    let deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
-    let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
-
-    let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
-    let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
-
-    // Create buy transaction with wrong signer
-    let mut buy_tx = create_buy_transaction(&wrong_key, token_id, 1_000_000, 0, 0);
-    // Set buyer to buyer's key_id but signature from wrong_key
-    if let Some(ref mut data) = buy_tx.bonding_curve_buy_data {
-        data.buyer = buyer.key_id[..32.min(buyer.key_id.len())].try_into().unwrap_or([0u8; 32]);
-    }
-
-    let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-    let result = blockchain.process_token_transactions(&block2);
-    assert!(result.is_err(), "Buy with key mismatch should fail");
-}
-
-// ============================================================================
-// BondingCurveSell Tests
-// ============================================================================
-
-#[test]
-fn test_bonding_curve_sell_transaction_success() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
-    let creator = test_key(1);
-    let buyer = test_key(2);
-    let seller = buyer.clone(); // Same as buyer
-
-    // Deploy token
-    let deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
-    let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
-
-    let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
-    let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
-
-    // Buy tokens first - use larger amount so reserve has enough for sells
-    // Issue #1844: 20/80 split - only 20% goes to reserve
-    let buy_tx = create_buy_transaction(&buyer, token_id, 100_000_000, 0, 0);
-    let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-    blockchain.process_token_transactions(&block2).expect("Buy should succeed");
-
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    // deploy() initializes total_supply to 0; all minted tokens come from buys
-    let initial_supply = token.total_supply;
-    let initial_reserve = token.reserve_balance;
-    let initial_treasury = token.treasury_balance;
-
-    // Issue #1845: Due to 20/80 split, reserve only has 20% of SOV
-    // Must sell small portion to stay within reserve limits
-    let sell_amount = initial_supply / 20; // Sell only 5% of tokens
-    let sell_tx = create_sell_transaction(&seller, token_id, sell_amount, 0, 0);
-    let block3 = make_test_block(3, 1_700_000_200, vec![sell_tx]);
-
-    let result = blockchain.process_token_transactions(&block3);
-    assert!(result.is_ok(), "Sell transaction should succeed: {:?}", result);
-
-    // Verify exact deltas: supply burns by sold amount, reserve decreases, treasury unchanged
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert_eq!(token.total_supply, initial_supply - sell_amount, "Supply should decrease by exact sell amount (burn)");
-    assert!(token.reserve_balance < initial_reserve, "Reserve should decrease after sell");
-    assert_eq!(token.treasury_balance, initial_treasury, "Treasury should be unaffected by sell");
+    assert_legacy_path_rejects(&mut blockchain, tx, "BondingCurveSell requires BlockExecutor");
 }
 
 #[test]
-fn test_bonding_curve_sell_disabled_fails() {
+fn test_legacy_path_rejects_bonding_curve_graduate() {
     let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
-    let creator = test_key(1);
-    let buyer = test_key(2);
+    let graduator = test_key(4);
+    let tx = create_graduate_transaction(&graduator, [5u8; 32], [6u8; 32], 0);
 
-    // Deploy token with sell_enabled = false
-    let mut deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
-    if let Some(ref mut data) = deploy_tx.bonding_curve_deploy_data {
-        data.sell_enabled = false;
-    }
-
-    let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
-
-    let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
-    let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
-
-    // Buy tokens first
-    let buy_tx = create_buy_transaction(&buyer, token_id, 10_000_000, 0, 0);
-    let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-    blockchain.process_token_transactions(&block2).expect("Buy should succeed");
-
-    // Try to sell (should fail because sell is disabled)
-    let sell_tx = create_sell_transaction(&buyer, token_id, 100_000, 0, 0);
-    let block3 = make_test_block(3, 1_700_000_200, vec![sell_tx]);
-    
-    let result = blockchain.process_token_transactions(&block3);
-    assert!(result.is_err(), "Sell should fail when sell_enabled is false");
-}
-
-// ============================================================================
-// BondingCurveGraduate Tests
-// ============================================================================
-
-#[test]
-fn test_bonding_curve_graduate_transaction_success() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
-    let creator = test_key(1);
-    let buyer = test_key(2);
-    let graduator = creator.clone(); // Creator graduates the token
-
-    // Deploy token with low threshold for easy graduation
-    let mut deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
-    if let Some(ref mut data) = deploy_tx.bonding_curve_deploy_data {
-        // Issue #1844: With 20/80 split, reserve gets 20% of buy amount
-        // To have 5 SOV in reserve, need 25 SOV buy
-        data.threshold_value = 5_000_000; // $50 threshold
-    }
-
-    let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
-
-    let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
-    let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
-
-    // Issue #1844: Buy tokens to reach graduation threshold
-    // With 20/80 split, need 5x the threshold amount in buys
-    // threshold = $50, so need $250 buy to get $50 in reserve
-    let buy_amount = 50_000_000u64;
-    let buy_tx = create_buy_transaction(&buyer, token_id, buy_amount, 0, 0);
-    let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-    blockchain.process_token_transactions(&block2).expect("Buy should succeed");
-
-    // Verify token can graduate
-    let expected_reserve = buy_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert_eq!(token.reserve_balance, expected_reserve, "Reserve should be 40% of buy amount");
-    assert!(token.can_graduate(1_700_000_200, 0), "Token should be ready to graduate");
-
-    // Graduate the token
-    let pool_id = [99u8; 32];
-    let graduate_tx = create_graduate_transaction(&graduator, token_id, pool_id, 0);
-    let block3 = make_test_block(3, 1_700_000_200, vec![graduate_tx]);
-    
-    let result = blockchain.process_token_transactions(&block3);
-    assert!(result.is_ok(), "Graduate transaction should succeed: {:?}", result);
-
-    // Verify token is now graduated
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert!(token.phase.is_graduated(), "Token should be in Graduated phase");
-}
-
-#[test]
-fn test_bonding_curve_graduate_threshold_not_met_fails() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
-    let creator = test_key(1);
-
-    // Deploy token with high threshold
-    let mut deploy_tx = create_deploy_transaction(&creator, "Test Token", "TEST", 0);
-    if let Some(ref mut data) = deploy_tx.bonding_curve_deploy_data {
-        data.threshold_value = 1_000_000_000; // $10,000 threshold (very high)
-    }
-
-    let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
-
-    let token_id_input = format!("Test Token:TEST:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
-    let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
-
-    // Try to graduate without meeting threshold
-    let pool_id = [99u8; 32];
-    let graduate_tx = create_graduate_transaction(&creator, token_id, pool_id, 0);
-    let block2 = make_test_block(2, 1_700_000_100, vec![graduate_tx]);
-    
-    let result = blockchain.process_token_transactions(&block2);
-    assert!(result.is_err(), "Graduate should fail when threshold not met");
-}
-
-// ============================================================================
-// Full Lifecycle Test
-// ============================================================================
-
-#[test]
-fn test_bonding_curve_full_lifecycle_via_transactions() {
-    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
-    let creator = test_key(1);
-    let buyer = test_key(2);
-
-    // Step 1: Deploy
-    let deploy_tx = create_deploy_transaction(&creator, "Lifecycle Token", "LIFE", 0);
-    let block1 = make_test_block(1, 1_700_000_000, vec![deploy_tx]);
-    blockchain.process_token_transactions(&block1).expect("Deploy should succeed");
-
-    let token_id_input = format!("Lifecycle Token:LIFE:{}", hex::encode(&creator.key_id[..32.min(creator.key_id.len())]));
-    let token_id = lib_crypto::hash_blake3(token_id_input.as_bytes());
-
-    // Verify deploy
-    assert!(blockchain.bonding_curve_registry.contains(&token_id));
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert_eq!(token.phase, Phase::Curve);
-
-    // Step 2: Buy - Issue #1844: 20/80 split - reserve gets 20%
-    let buy_amount = 50_000_000u64;
-    let buy_tx = create_buy_transaction(&buyer, token_id, buy_amount, 0, 0);
-    let block2 = make_test_block(2, 1_700_000_100, vec![buy_tx]);
-    blockchain.process_token_transactions(&block2).expect("Buy should succeed");
-
-    let expected_reserve = buy_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
-    let expected_treasury = buy_amount - expected_reserve;
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert_eq!(token.reserve_balance, expected_reserve, "Reserve should be 40% of buy amount");
-    assert_eq!(token.treasury_balance, expected_treasury, "Treasury should be 60% of buy amount");
-    let tokens_before_sell = token.total_supply;
-    let reserve_before_sell = token.reserve_balance;
-    // deploy() initializes total_supply to 0; all tokens come from buys
-
-    // Step 3: Sell a small portion
-    // Issue #1845: Due to 20/80 split, can only sell ~20% of tokens before reserve depleted
-    let sell_amount = tokens_before_sell / 20; // Sell 5% of tokens
-    let sell_tx = create_sell_transaction(&buyer, token_id, sell_amount, 0, 0);
-    let block3 = make_test_block(3, 1_700_000_200, vec![sell_tx]);
-    blockchain.process_token_transactions(&block3).expect("Sell should succeed");
-
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert!(token.reserve_balance < reserve_before_sell, "Reserve should decrease after sell");
-    assert_eq!(token.total_supply, tokens_before_sell - sell_amount, "Supply should decrease by sold amount (burn)");
-
-    // Step 4: Buy more to reach threshold
-    // First get current reserve and update threshold to be achievable
-    let current_reserve = {
-        let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-        token.reserve_balance
-    };
-    {
-        let token_mut = blockchain.bonding_curve_registry.get_mut(&token_id).unwrap();
-        token_mut.threshold = Threshold::ReserveAmount(current_reserve + 1);
-    }
-
-    let buy_tx2 = create_buy_transaction(&buyer, token_id, 2_000_000, 0, 1);
-    let block4 = make_test_block(4, 1_700_000_300, vec![buy_tx2]);
-    blockchain.process_token_transactions(&block4).expect("Buy should succeed");
-
-    // Step 5: Graduate
-    let pool_id = [42u8; 32];
-    let graduate_tx = create_graduate_transaction(&creator, token_id, pool_id, 0);
-    let block5 = make_test_block(5, 1_700_000_400, vec![graduate_tx]);
-    blockchain.process_token_transactions(&block5).expect("Graduate should succeed");
-
-    let token = blockchain.bonding_curve_registry.get(&token_id).unwrap();
-    assert!(token.phase.is_graduated(), "Token should be graduated");
-
-    println!("✅ Full lifecycle test passed!");
-    println!("   - Deployed: {} ({})", token.name, token.symbol);
-    println!("   - Final phase: {:?}", token.phase);
-    println!("   - Final reserve: {}", token.reserve_balance);
-    println!("   - Final supply: {}", token.total_supply);
+    assert_legacy_path_rejects(
+        &mut blockchain,
+        tx,
+        "BondingCurveGraduate requires BlockExecutor",
+    );
 }
 
 // ============================================================================

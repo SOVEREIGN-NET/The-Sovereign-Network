@@ -21,6 +21,7 @@ hex = "0.4"
 toml = "0.8"
 blake3 = "1.5"
 rand = "0.8"
+primitive-types = "0.12"
 
 # Additional dependencies for contracts
 chrono = { version = "0.4", features = ["serde"] }

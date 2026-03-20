@@ -37,24 +37,28 @@ use std::collections::HashMap;
 // CRITICAL CONSTANTS - NEVER CHANGE
 // ============================================================================
 
-/// Smallest unit of CBE: 1 CBE = 10^8 atoms.
-/// All balances and supply values are stored in atoms (same convention as SOV).
+/// Whole-token CBE supply target shared with the canonical tokenomics constants.
+pub const CBE_TOTAL_SUPPLY_TOKENS: u64 = lib_types::CBE_TOTAL_SUPPLY_TOKENS as u64;
+
+/// Smallest unit of legacy runtime CBE accounting: 1 CBE = 10^8 atoms.
+/// All balances and supply values are stored in atoms in this `u64` contract.
 pub const CBE_ATOMS_PER_TOKEN: u64 = 100_000_000;
 
-/// Total supply: 100 billion CBE × 10^8 atoms = 10^19 atoms.
-pub const CBE_TOTAL_SUPPLY: u64 = 100_000_000_000 * CBE_ATOMS_PER_TOKEN;
+/// Total supply in legacy runtime atoms.
+pub const CBE_TOTAL_SUPPLY: u64 = CBE_TOTAL_SUPPLY_TOKENS * CBE_ATOMS_PER_TOKEN;
 
 /// Compensation pool: 40 billion CBE × 10^8 atoms (40%)
-pub const CBE_COMPENSATION_POOL: u64 = 40_000_000_000 * CBE_ATOMS_PER_TOKEN;
+pub const CBE_COMPENSATION_POOL: u64 = (CBE_TOTAL_SUPPLY_TOKENS * 40 / 100) * CBE_ATOMS_PER_TOKEN;
 
 /// Operational treasury: 30 billion CBE × 10^8 atoms (30%)
-pub const CBE_OPERATIONAL_TREASURY: u64 = 30_000_000_000 * CBE_ATOMS_PER_TOKEN;
+pub const CBE_OPERATIONAL_TREASURY: u64 = (CBE_TOTAL_SUPPLY_TOKENS * 30 / 100) * CBE_ATOMS_PER_TOKEN;
 
 /// Performance incentives: 20 billion CBE × 10^8 atoms (20%)
-pub const CBE_PERFORMANCE_INCENTIVES: u64 = 20_000_000_000 * CBE_ATOMS_PER_TOKEN;
+pub const CBE_PERFORMANCE_INCENTIVES: u64 =
+    (CBE_TOTAL_SUPPLY_TOKENS * 20 / 100) * CBE_ATOMS_PER_TOKEN;
 
 /// Strategic reserves: 10 billion CBE × 10^8 atoms (10%)
-pub const CBE_STRATEGIC_RESERVES: u64 = 10_000_000_000 * CBE_ATOMS_PER_TOKEN;
+pub const CBE_STRATEGIC_RESERVES: u64 = (CBE_TOTAL_SUPPLY_TOKENS * 10 / 100) * CBE_ATOMS_PER_TOKEN;
 
 /// Number of decimal places for CBE token (1 CBE = 10^8 atoms)
 pub const CBE_DECIMALS: u8 = 8;

@@ -66,7 +66,8 @@ use serde::{Deserialize, Serialize};
 
 /// Minimum liquidity required for AMM pool creation.
 /// Prevents division by zero attacks and ensures meaningful liquidity.
-pub const MINIMUM_AMM_LIQUIDITY: u64 = 1_000_000; // 0.01 SOV or equivalent
+/// 0.01 SOV = 10^16 atomic units (18-decimal, not 1_000_000 which is 10^-12 SOV).
+pub const MINIMUM_AMM_LIQUIDITY: u128 = 10_000_000_000_000_000; // 0.01 SOV at 18 decimals
 
 /// AMM fee in basis points for graduated pools (0.3% = 30 bps).
 /// Lower than standard 1% to encourage trading post-graduation.
@@ -83,15 +84,15 @@ pub struct AmmPoolCreationResult {
     /// Pool ID (derived from token ID)
     pub pool_id: [u8; 32],
     /// Initial SOV reserve (from bonding curve reserve)
-    pub initial_sov_reserve: u64,
+    pub initial_sov_reserve: u128,
     /// Initial CBE token reserve (derived for price continuity)
-    pub initial_token_reserve: u64,
+    pub initial_token_reserve: u128,
     /// Initial k value (sov_reserve * token_reserve)
     pub initial_k: u128,
     /// Initial AMM price — equals final_curve_price by construction
-    pub initial_price: u64,
+    pub initial_price: u128,
     /// Final curve price before graduation (from curve pricing function)
-    pub final_curve_price: u64,
+    pub final_curve_price: u128,
 }
 
 /// Persisted AMM pool state for graduated bonding-curve tokens.
@@ -215,7 +216,7 @@ pub fn create_pol_pool_for_graduated_token(
     }
 
     // Verify minimum liquidity requirement
-    if token.reserve_balance < MINIMUM_AMM_LIQUIDITY {
+    if token.reserve_balance < MINIMUM_AMM_LIQUIDITY as u128 {
         return Err(CurveError::InsufficientReserve);
     }
 
@@ -237,10 +238,10 @@ pub fn create_pol_pool_for_graduated_token(
         ));
     }
 
-    let initial_cbe_u128 = (initial_sov as u128)
+    let initial_cbe_u128 = initial_sov
         .checked_mul(PRICE_SCALE)
         .ok_or(CurveError::Overflow)?
-        .checked_div(final_curve_price as u128)
+        .checked_div(final_curve_price)
         .ok_or(CurveError::Overflow)?;
     let initial_cbe = u64::try_from(initial_cbe_u128).map_err(|_| CurveError::Overflow)?;
 
@@ -249,20 +250,17 @@ pub fn create_pol_pool_for_graduated_token(
     }
 
     // Calculate k = sov * cbe
-    let k = (initial_sov as u128)
+    let k = initial_sov
         .checked_mul(initial_cbe as u128)
         .ok_or(CurveError::Overflow)?;
 
     // Verify price continuity
-    let initial_amm_price_u128 = (initial_sov as u128)
+    let initial_amm_price_u128 = initial_sov
         .checked_mul(PRICE_SCALE)
         .ok_or(CurveError::Overflow)?
         .checked_div(initial_cbe as u128)
         .ok_or(CurveError::Overflow)?;
-    let initial_amm_price =
-        u64::try_from(initial_amm_price_u128).map_err(|_| CurveError::Overflow)?;
-
-    if initial_amm_price != final_curve_price {
+    if initial_amm_price_u128 != final_curve_price {
         return Err(CurveError::InvalidParameters(
             "Price continuity check failed".to_string(),
         ));
@@ -271,7 +269,10 @@ pub fn create_pol_pool_for_graduated_token(
     // Create the POL pool using Issue #1849 hardened architecture
     // Note: PolPool has NO liquidity interface - liquidity is permanently locked
     let mut pool = PolPool::new(token.token_id);
-    pool.initialize(initial_sov, initial_cbe)
+    pool.initialize(
+        u64::try_from(initial_sov).map_err(|_| CurveError::Overflow)?,
+        initial_cbe,
+    )
         .map_err(map_pol_error_to_curve_error)?;
 
     // Issue #1849: The POL pool fee is hardcoded to POL_FEE_BPS (30 = 0.3%)
@@ -301,9 +302,9 @@ pub fn create_pol_pool_for_graduated_token(
     let result = AmmPoolCreationResult {
         pool_id,
         initial_sov_reserve: initial_sov,
-        initial_token_reserve: initial_cbe,
+        initial_token_reserve: initial_cbe as u128,
         initial_k: k,
-        initial_price: initial_amm_price,
+        initial_price: initial_amm_price_u128,
         final_curve_price,
     };
 
@@ -312,7 +313,7 @@ pub fn create_pol_pool_for_graduated_token(
         token_id: token.token_id,
         pool_id,
         sov_amount: initial_sov,
-        token_amount: initial_cbe,
+        token_amount: initial_cbe as u128,
         stable_to_treasury,
         block_height,
         timestamp,
@@ -467,8 +468,7 @@ mod tests {
         assert_eq!(creation_result.initial_sov_reserve, reserve_before);
 
         // Verify the CBE reserve was derived for price continuity, not taken as total_supply
-        let expected_cbe =
-            (reserve_before as u128 * PRICE_SCALE / final_curve_price as u128) as u64;
+        let expected_cbe = reserve_before * PRICE_SCALE / final_curve_price;
         assert_eq!(creation_result.initial_token_reserve, expected_cbe);
 
         // Verify k
@@ -486,8 +486,8 @@ mod tests {
         
         // Verify we can read reserves
         let (sov_reserve, token_reserve) = pool.get_reserves().unwrap();
-        assert_eq!(sov_reserve, reserve_before);
-        assert_eq!(token_reserve, expected_cbe);
+        assert_eq!(sov_reserve as u128, reserve_before);
+        assert_eq!(token_reserve as u128, expected_cbe);
 
         // Verify event
         match event {
@@ -718,7 +718,7 @@ mod tests {
             "AMM initial price must equal final curve price");
 
         // Verify the CBE amount was derived for continuity, not taken as total_supply
-        let expected_cbe = (reserve as u128 * PRICE_SCALE / final_curve_price as u128) as u64;
+        let expected_cbe = reserve * PRICE_SCALE / final_curve_price;
         assert_eq!(creation_result.initial_token_reserve, expected_cbe);
     }
 

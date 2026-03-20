@@ -301,7 +301,7 @@ mod tests {
     use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
     use crate::integration::zk_integration::ZkTransactionProof;
     use crate::transaction::{Transaction, TransactionInput, TransactionOutput};
-    use crate::types::{Difficulty, Hash, TransactionType};
+    use crate::types::{Difficulty, Hash};
 
     fn create_test_transfer() -> Transaction {
         Transaction::new(
