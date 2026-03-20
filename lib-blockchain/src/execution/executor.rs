@@ -42,7 +42,9 @@ use crate::storage::{
 };
 use crate::transaction::{
     contract_deployment::ContractDeploymentPayloadV1,
-    contract_execution::DecodedContractExecutionMemo, hash_transaction,
+    contract_execution::DecodedContractExecutionMemo, decode_canonical_bonding_curve_tx,
+    envelope_signer_matches_sender, hash_transaction, CanonicalBondingCurveEnvelope,
+    CanonicalBondingCurveTx,
     token_creation::TokenCreationPayloadV1, DEFAULT_TOKEN_CREATION_FEE,
 };
 use crate::types::TransactionType;
@@ -1779,6 +1781,44 @@ impl BlockExecutor {
         })
     }
 
+    fn apply_canonical_bonding_curve_tx(
+        &self,
+        _mutator: &StateMutator<'_>,
+        payload: &[u8],
+    ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
+        match decode_canonical_bonding_curve_tx(payload)
+            .map_err(|e| TxApplyError::InvalidType(format!("Invalid canonical curve payload: {e}")))?
+        {
+            CanonicalBondingCurveTx::Buy(tx) => Err(TxApplyError::InvalidType(format!(
+                "Canonical BUY_CBE lane parsed but is not wired to state execution yet (sender={}, nonce={})",
+                hex::encode(tx.sender),
+                tx.nonce.to_u64()
+            ))),
+            CanonicalBondingCurveTx::Sell(tx) => Err(TxApplyError::InvalidType(format!(
+                "Canonical SELL_CBE lane parsed but is not wired to state execution yet (sender={}, nonce={})",
+                hex::encode(tx.sender),
+                tx.nonce.to_u64()
+            ))),
+        }
+    }
+
+    fn apply_canonical_bonding_curve_envelope(
+        &self,
+        mutator: &StateMutator<'_>,
+        envelope: &CanonicalBondingCurveEnvelope,
+    ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
+        let signer_matches = envelope_signer_matches_sender(envelope).map_err(|e| {
+            TxApplyError::InvalidType(format!("Invalid canonical curve envelope: {e}"))
+        })?;
+        if !signer_matches {
+            return Err(TxApplyError::InvalidType(
+                "Canonical curve signer does not match payload sender".to_string(),
+            ));
+        }
+
+        self.apply_canonical_bonding_curve_tx(mutator, &envelope.payload)
+    }
+
     fn apply_bonding_curve_sell(
         &self,
         mutator: &StateMutator<'_>,
@@ -2317,6 +2357,13 @@ pub struct BondingCurveSellOutcome {
 pub struct BondingCurveGraduateOutcome {
     pub token_id: [u8; 32],
     pub pool_id: [u8; 32],
+}
+
+/// Outcome of parsing a canonical fixed-width bonding curve transaction.
+#[derive(Debug, Clone)]
+pub enum CanonicalBondingCurveOutcome {
+    Buy([u8; 32]),
+    Sell([u8; 32]),
 }
 
 /// Outcome of an oracle attestation transaction (ORACLE-R3: Canonical Path)
@@ -3745,6 +3792,101 @@ mod tests {
         assert!(
             msg.contains("not yet enabled"),
             "error must explain why sell is disabled: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_canonical_bonding_curve_lane_parses_buy_payload_and_rejects_as_not_wired() {
+        use crate::execution::tx_apply::StateMutator;
+        use crate::transaction::{
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
+        };
+        use lib_types::{BondingCurveBuyTx, Nonce48};
+
+        let store = create_test_store();
+        store.begin_block(0).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let executor = BlockExecutor::with_store(store.clone());
+
+        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
+            BondingCurveBuyTx {
+                action: BONDING_CURVE_BUY_ACTION,
+                chain_id: 0x03,
+                nonce: Nonce48::from_u64(42).unwrap(),
+                sender: [0x11; 32],
+                amount_in: 1000,
+                max_price: 2000,
+                expected_s_c: 3000,
+            },
+        ));
+
+        let err = executor
+            .apply_canonical_bonding_curve_tx(&mutator, &payload)
+            .expect_err("canonical lane should reject until state execution is wired");
+
+        let msg = err.to_string();
+        assert!(msg.contains("Canonical BUY_CBE lane parsed"));
+        assert!(msg.contains("nonce=42"));
+    }
+
+    #[test]
+    fn test_canonical_bonding_curve_lane_rejects_unknown_action() {
+        use crate::execution::tx_apply::StateMutator;
+
+        let store = create_test_store();
+        store.begin_block(0).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let executor = BlockExecutor::with_store(store.clone());
+
+        let mut payload = [0u8; 88];
+        payload[0] = 0xff;
+
+        let err = executor
+            .apply_canonical_bonding_curve_tx(&mutator, &payload)
+            .expect_err("unknown canonical action must be rejected");
+
+        assert!(err.to_string().contains("Invalid canonical curve payload"));
+    }
+
+    #[test]
+    fn test_canonical_bonding_curve_envelope_rejects_signer_sender_mismatch() {
+        use crate::execution::tx_apply::StateMutator;
+        use crate::transaction::{
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveEnvelope,
+            CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
+        };
+        use lib_crypto::KeyPair;
+        use lib_types::{BondingCurveBuyTx, Nonce48};
+
+        let store = create_test_store();
+        store.begin_block(0).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let executor = BlockExecutor::with_store(store.clone());
+        let signer = KeyPair::generate().unwrap();
+        let other = KeyPair::generate().unwrap();
+
+        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
+            BondingCurveBuyTx {
+                action: BONDING_CURVE_BUY_ACTION,
+                chain_id: 0x03,
+                nonce: Nonce48::from_u64(43).unwrap(),
+                sender: other.public_key.key_id,
+                amount_in: 1000,
+                max_price: 2000,
+                expected_s_c: 3000,
+            },
+        ));
+        let envelope = CanonicalBondingCurveEnvelope {
+            payload,
+            signature: signer.sign(&payload).unwrap(),
+        };
+
+        let err = executor
+            .apply_canonical_bonding_curve_envelope(&mutator, &envelope)
+            .expect_err("mismatched envelope signer must be rejected");
+        assert!(
+            err.to_string()
+                .contains("Canonical curve signer does not match payload sender")
         );
     }
 
