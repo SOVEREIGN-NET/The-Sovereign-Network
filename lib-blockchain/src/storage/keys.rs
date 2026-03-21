@@ -240,6 +240,21 @@ pub mod meta {
 
     /// Key for persisted oracle state (committee, config, signing pubkeys)
     pub const ORACLE_STATE: &[u8] = b"oracle_state";
+
+    /// Key for canonical CBE curve economic state (single global record).
+    pub const CBE_ECONOMIC_STATE: &[u8] = b"cbe_economic_state";
+}
+
+// =============================================================================
+// CANONICAL CBE ACCOUNT KEYS
+// =============================================================================
+
+/// Key for cbe_accounts tree: key_id (32 bytes) → BondingCurveAccountState
+///
+/// The key_id is the sender's public key hash (same as Address bytes).
+#[inline]
+pub fn cbe_account_key(key_id: &[u8; 32]) -> &[u8; 32] {
+    key_id
 }
 
 // =============================================================================
