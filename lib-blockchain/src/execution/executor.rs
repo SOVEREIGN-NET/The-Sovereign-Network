@@ -622,6 +622,13 @@ impl BlockExecutor {
         // We accept the genesis block as-is: just record it in the store and
         // return an empty outcome — the founding node already committed the state.
         if block_height == 0 {
+            // Explicitly persist the canonical CBE zero-state so that reads
+            // after genesis return a concrete record rather than an implicit
+            // default.  This makes genesis determinism auditable (#1927).
+            self.store
+                .put_cbe_economic_state(&lib_types::BondingCurveEconomicState::default())
+                .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
+
             self.store
                 .append_block(block)
                 .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;
@@ -2607,6 +2614,24 @@ mod tests {
         assert_eq!(outcome.height, 0);
         assert_eq!(outcome.tx_count, 0);
         assert_eq!(store.latest_height().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_genesis_writes_cbe_zero_state_to_sled() {
+        // #1927: genesis must explicitly persist the canonical CBE economic
+        // zero-state so reads after block 0 return a concrete record rather
+        // than an implicit fallback default.
+        let store = create_test_store();
+        let executor = BlockExecutor::with_store(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let state = store.get_cbe_economic_state().unwrap();
+        assert_eq!(state, lib_types::BondingCurveEconomicState::default());
+        assert_eq!(state.s_c, 0);
+        assert!(!state.graduated);
+        assert!(!state.sell_enabled);
     }
 
     #[test]

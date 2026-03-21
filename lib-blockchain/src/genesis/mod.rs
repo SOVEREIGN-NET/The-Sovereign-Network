@@ -47,6 +47,7 @@ pub struct GenesisConfig {
     pub entity_registry: EntityRegistryConfig,
     pub bootstrap_council: BootstrapCouncilConfig,
     pub bonding_curve: BondingCurveConfig,
+    pub cbe_curve: CbeCurveConfig,
     #[serde(default)]
     pub allocations: GenesisAllocations,
 }
@@ -115,6 +116,17 @@ pub struct BootstrapMember {
 pub struct BondingCurveConfig {
     pub reserve_ratio_ppm: u64,
     pub graduation_threshold: u64,
+}
+
+/// Canonical 18-decimal integer bonding curve config (#1922 / #1927).
+///
+/// `p_start_0` is the only free parameter — all five band `p_start` values
+/// are derived via price continuity in `canonical::derive_cbe_bands`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CbeCurveConfig {
+    /// Price at zero supply, in atomic SOV units (18-decimal).
+    /// Must match `canonical::P_START_0`.
+    pub p_start_0: u128,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
