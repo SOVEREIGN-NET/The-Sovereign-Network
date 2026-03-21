@@ -22,7 +22,7 @@ pub use core::{
     InitEntityRegistryData, ProfitDeclarationData, RevenueSource, TokenMintData, TokenTransferData,
     Transaction, TransactionInput, TransactionOutput, UbiClaimData, ValidatorOperation,
     ValidatorTransactionData, WalletPrivateData, WalletReference, WalletTransactionData,
-    TX_VERSION_V7,
+    TX_VERSION_V3, TX_VERSION_V7,
 };
 
 pub use bonding_curve_codec::{

@@ -1250,4 +1250,50 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
         let _ = symbol;
         Ok(())
     }
+
+    // =========================================================================
+    // Canonical CBE Curve State (#1926)
+    // =========================================================================
+    // Single global EconomicState + per-sender AccountState.
+    // These are the authoritative persistence records for the canonical CBE
+    // curve execution lane.  All other curve state (BondingCurveToken, etc.)
+    // is legacy and must not be used as the source of truth for canonical
+    // curve economics.
+    // =========================================================================
+
+    /// Load the global canonical CBE economic state.
+    ///
+    /// Returns a zero-initialised default when no state has been persisted yet
+    /// (first transaction on a fresh chain).
+    fn get_cbe_economic_state(
+        &self,
+    ) -> StorageResult<lib_types::BondingCurveEconomicState>;
+
+    /// Persist the global canonical CBE economic state.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_cbe_economic_state(
+        &self,
+        state: &lib_types::BondingCurveEconomicState,
+    ) -> StorageResult<()>;
+
+    /// Load the CBE account state for `key_id`.
+    ///
+    /// Returns `None` if no account exists yet (new participant with zero
+    /// balances and nonce = 0).
+    fn get_cbe_account_state(
+        &self,
+        key_id: &[u8; 32],
+    ) -> StorageResult<Option<lib_types::BondingCurveAccountState>>;
+
+    /// Persist the CBE account state for `key_id`.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_cbe_account_state(
+        &self,
+        key_id: &[u8; 32],
+        state: &lib_types::BondingCurveAccountState,
+    ) -> StorageResult<()>;
 }

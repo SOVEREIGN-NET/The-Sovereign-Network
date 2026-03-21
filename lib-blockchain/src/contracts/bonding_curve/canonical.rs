@@ -10,6 +10,10 @@ use crate::contracts::utils::{
 
 pub const SCALE: u128 = TOKEN_SCALE_18;
 pub const SLOPE_DEN: u128 = 100_000_000_000_000;
+
+/// Graduation threshold: reserve_balance must reach this value (in atomic units).
+/// Team decision: GRAD_THRESHOLD = 2_745_966 * SCALE
+pub const GRAD_THRESHOLD: u128 = 2_745_966 * SCALE;
 pub const BAND_COUNT: usize = 5;
 pub const MAX_GROSS_SOV_PER_TX: u128 = 1_000_000_000_000_000_000_000_000;
 pub const MAX_DELTA_S_PER_TX: u128 = 100_000_000_000 * SCALE;

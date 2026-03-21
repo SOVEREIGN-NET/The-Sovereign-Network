@@ -44,8 +44,9 @@ use crate::transaction::{
     contract_deployment::ContractDeploymentPayloadV1,
     contract_execution::DecodedContractExecutionMemo, decode_canonical_bonding_curve_tx,
     envelope_signer_matches_sender, hash_transaction, CanonicalBondingCurveEnvelope,
-    CanonicalBondingCurveTx, BONDING_CURVE_TX_PAYLOAD_LEN,
-    token_creation::TokenCreationPayloadV1, DEFAULT_TOKEN_CREATION_FEE,
+    CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION, BONDING_CURVE_SELL_ACTION,
+    BONDING_CURVE_TX_PAYLOAD_LEN, token_creation::TokenCreationPayloadV1,
+    DEFAULT_TOKEN_CREATION_FEE,
 };
 use crate::types::TransactionType;
 
@@ -1783,23 +1784,104 @@ impl BlockExecutor {
 
     fn apply_canonical_bonding_curve_tx(
         &self,
-        _mutator: &StateMutator<'_>,
+        mutator: &StateMutator<'_>,
         payload: &[u8],
     ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
-        match decode_canonical_bonding_curve_tx(payload)
-            .map_err(|e| TxApplyError::InvalidType(format!("Invalid canonical curve payload: {e}")))?
-        {
-            CanonicalBondingCurveTx::Buy(tx) => Err(TxApplyError::InvalidType(format!(
-                "Canonical BUY_CBE lane parsed but is not wired to state execution yet (sender={}, nonce={})",
-                hex::encode(tx.sender),
-                tx.nonce.to_u64()
-            ))),
-            CanonicalBondingCurveTx::Sell(tx) => Err(TxApplyError::InvalidType(format!(
-                "Canonical SELL_CBE lane parsed but is not wired to state execution yet (sender={}, nonce={})",
-                hex::encode(tx.sender),
-                tx.nonce.to_u64()
-            ))),
+        use crate::contracts::bonding_curve::canonical::GRAD_THRESHOLD;
+
+        // ── 1. Parse ──────────────────────────────────────────────────────────
+        let curve_tx = decode_canonical_bonding_curve_tx(payload)
+            .map_err(|e| TxApplyError::InvalidType(format!("Invalid canonical curve payload: {e}")))?;
+
+        // Extract common fields for shared pre-validation.
+        let (sender, tx_nonce, amount_in_or_cbe, is_buy) = match &curve_tx {
+            CanonicalBondingCurveTx::Buy(tx) => (tx.sender, tx.nonce, tx.amount_in, true),
+            CanonicalBondingCurveTx::Sell(tx) => (tx.sender, tx.nonce, tx.amount_cbe, false),
+        };
+
+        // ── 2. Non-zero amount ────────────────────────────────────────────────
+        if amount_in_or_cbe == 0 {
+            return Err(TxApplyError::InvalidType(
+                "Canonical curve tx: amount must be non-zero".to_string(),
+            ));
         }
+
+        // ── 3. Load global economic state ────────────────────────────────────
+        let econ = mutator.get_cbe_economic_state()?;
+
+        // ── 4. Phase / graduation check ───────────────────────────────────────
+        if econ.graduated {
+            return Err(TxApplyError::InvalidType(
+                "CBE curve has graduated; BUY_CBE and SELL_CBE are no longer valid".to_string(),
+            ));
+        }
+
+        // ── 5. Sell-enabled gate (SELL_CBE only) ─────────────────────────────
+        if !is_buy && !econ.sell_enabled {
+            return Err(TxApplyError::InvalidType(
+                "SELL_CBE is disabled by protocol flag sell_enabled=false".to_string(),
+            ));
+        }
+
+        // ── 6. Load account state (zero-default for new participants) ─────────
+        let account = mutator.get_cbe_account_state(&sender)?;
+
+        // ── 7. Nonce check ────────────────────────────────────────────────────
+        let expected_nonce = account.next_nonce.to_u64();
+        let provided_nonce = tx_nonce.to_u64();
+        if provided_nonce != expected_nonce {
+            return Err(TxApplyError::InvalidType(format!(
+                "Canonical curve nonce mismatch: expected {expected_nonce}, got {provided_nonce}"
+            )));
+        }
+
+        // ── 8. Balance check ──────────────────────────────────────────────────
+        if is_buy {
+            if account.balance_sov < amount_in_or_cbe {
+                return Err(TxApplyError::InvalidType(format!(
+                    "BUY_CBE: insufficient SOV balance (have {}, need {})",
+                    account.balance_sov, amount_in_or_cbe
+                )));
+            }
+        } else if account.balance_cbe < amount_in_or_cbe {
+            return Err(TxApplyError::InvalidType(format!(
+                "SELL_CBE: insufficient CBE balance (have {}, need {})",
+                account.balance_cbe, amount_in_or_cbe
+            )));
+        }
+
+        // ── 9. expected_s_c stale-state check ────────────────────────────────
+        let expected_s_c = match &curve_tx {
+            CanonicalBondingCurveTx::Buy(tx) => tx.expected_s_c,
+            CanonicalBondingCurveTx::Sell(tx) => tx.expected_s_c,
+        };
+        if expected_s_c != econ.s_c {
+            return Err(TxApplyError::InvalidType(format!(
+                "Canonical curve stale state: expected_s_c={expected_s_c} does not match current s_c={}",
+                econ.s_c
+            )));
+        }
+
+        // ── 10. Economic computation ──────────────────────────────────────────
+        // Deferred to #1930 (BUY_CBE) and #1931 (SELL_CBE).
+        // Pre-validation is complete; state mutation (econ + account + nonce
+        // increment) will be added atomically once the economic computation
+        // issues land.  Any failure above results in zero state mutation.
+        //
+        // When #1930/#1931 land, replace this block with:
+        //   - fee deduction (balance_sov -= fee; dao_treasury_sov += fee)
+        //   - reserve/treasury split using RHO
+        //   - mint/burn computation via canonical.rs functions
+        //   - slippage check (max_price / min_payout)
+        //   - graduation trigger when reserve_balance >= GRAD_THRESHOLD
+        //   - put_cbe_economic_state + put_cbe_account_state (with nonce++)
+        let _ = GRAD_THRESHOLD; // referenced here to avoid dead_code warning
+        Err(TxApplyError::InvalidType(format!(
+            "Canonical CBE economic computation not yet implemented (#1930/#1931): \
+             pre-validation passed for {} tx from sender={}, nonce={provided_nonce}",
+            if is_buy { "BUY_CBE" } else { "SELL_CBE" },
+            hex::encode(sender),
+        )))
     }
 
     fn canonical_bonding_curve_envelope_from_transaction(
@@ -2173,6 +2255,13 @@ impl BlockExecutor {
                     let outcome = self.apply_bonding_curve_buy(mutator, tx)?;
                     Ok(TxOutcome::BondingCurveBuy(outcome))
                 } else {
+                    // Type-mismatch guard: reject SELL payloads before full pre-validation.
+                    if tx.memo.first() == Some(&BONDING_CURVE_SELL_ACTION) {
+                        return Err(TxApplyError::InvalidType(
+                            "Canonical SELL_CBE payload cannot execute as BondingCurveBuy"
+                                .to_string(),
+                        ));
+                    }
                     let envelope = self.canonical_bonding_curve_envelope_from_transaction(tx)?;
                     match self.apply_canonical_bonding_curve_envelope(mutator, &envelope)? {
                         CanonicalBondingCurveOutcome::Buy(outcome) => {
@@ -2190,6 +2279,13 @@ impl BlockExecutor {
                     let outcome = self.apply_bonding_curve_sell(mutator, tx)?;
                     Ok(TxOutcome::BondingCurveSell(outcome))
                 } else {
+                    // Type-mismatch guard: reject BUY payloads before full pre-validation.
+                    if tx.memo.first() == Some(&BONDING_CURVE_BUY_ACTION) {
+                        return Err(TxApplyError::InvalidType(
+                            "Canonical BUY_CBE payload cannot execute as BondingCurveSell"
+                                .to_string(),
+                        ));
+                    }
                     let envelope = self.canonical_bonding_curve_envelope_from_transaction(tx)?;
                     match self.apply_canonical_bonding_curve_envelope(mutator, &envelope)? {
                         CanonicalBondingCurveOutcome::Sell(outcome) => {
@@ -2292,6 +2388,7 @@ impl BlockExecutor {
 }
 
 /// Outcome of applying a single transaction
+#[derive(Debug)]
 enum TxOutcome {
     Transfer(TransferOutcome),
     TokenTransfer(TokenTransferOutcome),
@@ -3849,10 +3946,30 @@ mod tests {
         use crate::transaction::{
             encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
         };
-        use lib_types::{BondingCurveBuyTx, Nonce48};
+        use lib_types::{BondingCurveAccountState, BondingCurveBuyTx, Nonce48};
 
         let store = create_test_store();
+
+        // Block 0: seed sender account so the state is committed to the sled tree.
+        // Writes go into the pending batch and only become readable after commit_block.
         store.begin_block(0).unwrap();
+        {
+            let seed = StateMutator::new(store.as_ref());
+            seed.put_cbe_account_state(
+                &[0x11; 32],
+                &BondingCurveAccountState {
+                    key_id: [0x11; 32],
+                    balance_cbe: 0,
+                    balance_sov: 10_000,
+                    next_nonce: Nonce48::from_u64(0).unwrap(),
+                },
+            )
+            .unwrap();
+        }
+        store.commit_block().unwrap();
+
+        // Block 1: the actual execution test (seed is now in the committed tree).
+        store.begin_block(1).unwrap();
         let mutator = StateMutator::new(store.as_ref());
         let executor = BlockExecutor::with_store(store.clone());
 
@@ -3860,21 +3977,23 @@ mod tests {
             BondingCurveBuyTx {
                 action: BONDING_CURVE_BUY_ACTION,
                 chain_id: 0x03,
-                nonce: Nonce48::from_u64(42).unwrap(),
+                // nonce=0 and expected_s_c=0 match the zero-default state so that
+                // pre-validation passes and we reach the economic computation stub.
+                nonce: Nonce48::from_u64(0).unwrap(),
                 sender: [0x11; 32],
                 amount_in: 1000,
                 max_price: 2000,
-                expected_s_c: 3000,
+                expected_s_c: 0,
             },
         ));
 
         let err = executor
             .apply_canonical_bonding_curve_tx(&mutator, &payload)
-            .expect_err("canonical lane should reject until state execution is wired");
+            .expect_err("canonical lane should reject until economic computation is implemented");
 
         let msg = err.to_string();
-        assert!(msg.contains("Canonical BUY_CBE lane parsed"));
-        assert!(msg.contains("nonce=42"));
+        assert!(msg.contains("Canonical CBE economic computation not yet implemented"));
+        assert!(msg.contains("BUY_CBE"));
     }
 
     #[test]
@@ -3947,23 +4066,43 @@ mod tests {
         };
         use crate::types::transaction_type::TransactionType;
         use lib_crypto::KeyPair;
-        use lib_types::{BondingCurveBuyTx, Nonce48};
+        use lib_types::{BondingCurveAccountState, BondingCurveBuyTx, Nonce48};
 
         let store = create_test_store();
+        let signer = KeyPair::generate().unwrap();
+
+        // Block 0: seed sender SOV balance (writes go into the batch; readable only after commit).
         store.begin_block(0).unwrap();
+        {
+            let seed = StateMutator::new(store.as_ref());
+            seed.put_cbe_account_state(
+                &signer.public_key.key_id,
+                &BondingCurveAccountState {
+                    key_id: signer.public_key.key_id,
+                    balance_cbe: 0,
+                    balance_sov: 10_000,
+                    next_nonce: Nonce48::from_u64(0).unwrap(),
+                },
+            )
+            .unwrap();
+        }
+        store.commit_block().unwrap();
+
+        // Block 1: actual execution test.
+        store.begin_block(1).unwrap();
         let mutator = StateMutator::new(store.as_ref());
         let executor = BlockExecutor::with_store(store.clone());
-        let signer = KeyPair::generate().unwrap();
 
         let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
             BondingCurveBuyTx {
                 action: BONDING_CURVE_BUY_ACTION,
                 chain_id: 0x03,
-                nonce: Nonce48::from_u64(55).unwrap(),
+                // nonce=0 and expected_s_c=0 pass pre-validation (zero-default state).
+                nonce: Nonce48::from_u64(0).unwrap(),
                 sender: signer.public_key.key_id,
                 amount_in: 1000,
                 max_price: 2000,
-                expected_s_c: 3000,
+                expected_s_c: 0,
             },
         ));
         let tx = crate::transaction::Transaction {
@@ -3999,8 +4138,8 @@ mod tests {
 
         let err = executor
             .apply_transaction(&mutator, &tx, 0, 0)
-            .expect_err("canonical buy tx should reach memo lane and reject as not wired");
-        assert!(err.to_string().contains("Canonical BUY_CBE lane parsed"));
+            .expect_err("canonical buy tx should reach memo lane and reject until economics are wired");
+        assert!(err.to_string().contains("Canonical CBE economic computation not yet implemented"));
     }
 
     #[test]

@@ -3400,7 +3400,14 @@ mod tests {
             inputs: vec![],
             outputs: vec![],
             fee: 0,
-            signature: test_signature(sender_key),
+            // Empty signature bytes: has_nonempty_sig = false, skipping crypto validation.
+            // The canonical CBE memo validator only checks public_key.key_id == data.sender.
+            signature: Signature {
+                signature: vec![],
+                public_key: sender_key.clone(),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: 0,
+            },
             memo: payload.to_vec(),
             identity_data: None,
             wallet_data: None,

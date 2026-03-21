@@ -278,6 +278,54 @@ impl<'a> StateMutator<'a> {
     }
 
     // =========================================================================
+    // Canonical CBE Curve State Primitives (#1926)
+    // =========================================================================
+
+    /// Load the global canonical CBE economic state.
+    ///
+    /// Returns a zero-initialised default on a fresh chain.
+    pub fn get_cbe_economic_state(
+        &self,
+    ) -> TxApplyResult<lib_types::BondingCurveEconomicState> {
+        Ok(self.store.get_cbe_economic_state()?)
+    }
+
+    /// Persist the global canonical CBE economic state.
+    pub fn put_cbe_economic_state(
+        &self,
+        state: &lib_types::BondingCurveEconomicState,
+    ) -> TxApplyResult<()> {
+        self.store.put_cbe_economic_state(state)?;
+        Ok(())
+    }
+
+    /// Load the CBE account state for `key_id`, or a zero-default if new.
+    pub fn get_cbe_account_state(
+        &self,
+        key_id: &[u8; 32],
+    ) -> TxApplyResult<lib_types::BondingCurveAccountState> {
+        Ok(self
+            .store
+            .get_cbe_account_state(key_id)?
+            .unwrap_or_else(|| lib_types::BondingCurveAccountState {
+                key_id: *key_id,
+                balance_cbe: 0,
+                balance_sov: 0,
+                next_nonce: lib_types::Nonce48::zero(),
+            }))
+    }
+
+    /// Persist the CBE account state for `key_id`.
+    pub fn put_cbe_account_state(
+        &self,
+        key_id: &[u8; 32],
+        state: &lib_types::BondingCurveAccountState,
+    ) -> TxApplyResult<()> {
+        self.store.put_cbe_account_state(key_id, state)?;
+        Ok(())
+    }
+
+    // =========================================================================
     // Contract State Primitives
     // =========================================================================
 
