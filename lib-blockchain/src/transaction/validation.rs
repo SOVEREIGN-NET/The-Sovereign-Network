@@ -145,6 +145,14 @@ impl TransactionValidator {
             _ => return Err(ValidationError::InvalidTransactionType),
         }
 
+        // Canonical CBE transactions carry a full ~7.2 KB Dilithium5 signature
+        // (2592-byte public key + 4595-byte signature).  We must actually verify
+        // it — key_id is only a BLAKE3 hash of the public key and provides zero
+        // cryptographic guarantee that the payload was signed by the private key.
+        // There is no "system transaction" exemption here: every canonical CBE tx
+        // MUST be signed, so we pay the bandwidth cost AND get the security. (#1942)
+        self.validate_signature(transaction)?;
+
         Ok(())
     }
 
@@ -3382,29 +3390,34 @@ mod tests {
         );
     }
 
-    fn canonical_bonding_curve_buy_tx(sender_key: &PublicKey) -> Transaction {
+    /// Build a canonical CBE BUY transaction signed with a real Dilithium5 keypair.
+    ///
+    /// Signing is over `hash_for_signature(&tx)` to match `validate_signature()`.
+    /// We pay the full ~7.2 KB Dilithium5 cost — and now we actually verify it (#1942).
+    fn canonical_bonding_curve_buy_tx(signer: &lib_crypto::KeyPair) -> Transaction {
+        use crate::transaction::hashing::hash_for_signature;
+
         let payload = crate::transaction::encode_bonding_curve_buy(&lib_types::BondingCurveBuyTx {
             action: crate::transaction::BONDING_CURVE_BUY_ACTION,
             chain_id: 0x03,
             nonce: lib_types::Nonce48::from_u64(9).unwrap(),
-            sender: sender_key.key_id,
+            sender: signer.public_key.key_id,
             amount_in: 100,
             max_price: 200,
             expected_s_c: 300,
         });
 
-        Transaction {
+        // Build with placeholder empty signature first so the signing hash is stable.
+        let mut tx = Transaction {
             version: 3,
             chain_id: 0x03,
             transaction_type: TransactionType::BondingCurveBuy,
             inputs: vec![],
             outputs: vec![],
             fee: 0,
-            // Empty signature bytes: has_nonempty_sig = false, skipping crypto validation.
-            // The canonical CBE memo validator only checks public_key.key_id == data.sender.
             signature: Signature {
                 signature: vec![],
-                public_key: sender_key.clone(),
+                public_key: signer.public_key.clone(),
                 algorithm: SignatureAlgorithm::Dilithium5,
                 timestamp: 0,
             },
@@ -3429,13 +3442,18 @@ mod tests {
             oracle_attestation_data: None,
             cancel_oracle_update_data: None,
             init_entity_registry_data: None,
-        }
+        };
+
+        // Sign the canonical message used by validate_signature().
+        let msg = hash_for_signature(&tx);
+        tx.signature = signer.sign(msg.as_bytes()).unwrap();
+        tx
     }
 
     #[test]
     fn test_canonical_bonding_curve_buy_memo_is_accepted_without_legacy_data() {
-        let sender = test_public_key(77);
-        let tx = canonical_bonding_curve_buy_tx(&sender);
+        let signer = lib_crypto::KeyPair::generate().unwrap();
+        let tx = canonical_bonding_curve_buy_tx(&signer);
         let validator = TransactionValidator::new();
 
         let result = validator.validate_transaction(&tx);
@@ -3447,8 +3465,8 @@ mod tests {
 
     #[test]
     fn test_canonical_bonding_curve_buy_rejects_chain_id_mismatch() {
-        let sender = test_public_key(78);
-        let mut tx = canonical_bonding_curve_buy_tx(&sender);
+        let signer = lib_crypto::KeyPair::generate().unwrap();
+        let mut tx = canonical_bonding_curve_buy_tx(&signer);
         tx.chain_id = 0x02;
         let validator = TransactionValidator::new();
 
