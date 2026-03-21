@@ -1830,9 +1830,10 @@ impl BlockExecutor {
         let expected_nonce = account.next_nonce.to_u64();
         let provided_nonce = tx_nonce.to_u64();
         if provided_nonce != expected_nonce {
-            return Err(TxApplyError::InvalidType(format!(
-                "Canonical curve nonce mismatch: expected {expected_nonce}, got {provided_nonce}"
-            )));
+            return Err(TxApplyError::InvalidNonce {
+                expected: expected_nonce,
+                actual: provided_nonce,
+            });
         }
 
         // ── 8. Balance check ──────────────────────────────────────────────────
