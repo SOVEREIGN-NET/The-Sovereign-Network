@@ -76,10 +76,9 @@ pub const BANDS: [Band; BAND_COUNT] = [
 /// `p_start_{N+1} = p_start_N + slope_num_N * band_size_N / SLOPE_DEN`
 /// where `band_size_N = end_supply_N - start_supply_N` (in 18-decimal atomic units).
 ///
-/// This function is the canonical source of truth for band derivation used by
-/// genesis initialisation (#1927).  The `BANDS` constant hard-codes the values
-/// derived from `P_START_0`; `derive_cbe_bands(P_START_0)` must return an
-/// identical table.
+/// This function is the canonical source of truth for band derivation.
+/// The `BANDS` constant hard-codes the values derived from `P_START_0`;
+/// `derive_cbe_bands(P_START_0)` must return an identical table.
 pub fn derive_cbe_bands(p_start_0: u128) -> [Band; BAND_COUNT] {
     const S1: u128 = 10_000_000_000u128 * SCALE; //  10 B CBE boundary
     const S2: u128 = 30_000_000_000u128 * SCALE; //  30 B CBE boundary

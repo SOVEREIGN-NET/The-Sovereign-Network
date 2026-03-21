@@ -625,6 +625,16 @@ impl BlockExecutor {
             // Explicitly persist the canonical CBE zero-state so that reads
             // after genesis return a concrete record rather than an implicit
             // default.  This makes genesis determinism auditable (#1927).
+            //
+            // PERSISTENCE CONTRACT:
+            // This is the first write of `BondingCurveEconomicState` to sled
+            // (serialised via bincode).  Its field layout is therefore part of
+            // the stable on-disk schema from block 0 onward.
+            // Do NOT add, remove, or reorder fields in `BondingCurveEconomicState`
+            // without either introducing a versioned wrapper (e.g. V1/V2) and a
+            // migration path, or coordinating a breaking storage-format change.
+            // Any such change without migration will corrupt deserialization of
+            // existing chains.
             self.store
                 .put_cbe_economic_state(&lib_types::BondingCurveEconomicState::default())
                 .map_err(|e| BlockApplyError::PersistFailed(e.to_string()))?;

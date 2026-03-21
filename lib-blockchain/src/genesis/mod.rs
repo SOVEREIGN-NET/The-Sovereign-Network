@@ -47,6 +47,7 @@ pub struct GenesisConfig {
     pub entity_registry: EntityRegistryConfig,
     pub bootstrap_council: BootstrapCouncilConfig,
     pub bonding_curve: BondingCurveConfig,
+    #[serde(default)]
     pub cbe_curve: CbeCurveConfig,
     #[serde(default)]
     pub allocations: GenesisAllocations,
@@ -122,11 +123,26 @@ pub struct BondingCurveConfig {
 ///
 /// `p_start_0` is the only free parameter — all five band `p_start` values
 /// are derived via price continuity in `canonical::derive_cbe_bands`.
+///
+/// The `Default` impl pins `p_start_0` to `canonical::P_START_0` so that
+/// older genesis files without a `[cbe_curve]` section continue to parse
+/// and produce the same canonical curve.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CbeCurveConfig {
     /// Price at zero supply, in atomic SOV units (18-decimal).
-    /// Must match `canonical::P_START_0`.
-    pub p_start_0: u128,
+    /// Stored as `u64` for TOML compatibility (value fits; max band price is
+    /// ~2.7e15, well within u64 range).  Cast to `u128` at runtime.
+    /// Must equal `canonical::P_START_0`; validated by `build_block0()`.
+    pub p_start_0: u64,
+}
+
+impl Default for CbeCurveConfig {
+    fn default() -> Self {
+        Self {
+            // Safe: P_START_0 = 313_345_700_000_000, fits in u64.
+            p_start_0: crate::contracts::bonding_curve::canonical::P_START_0 as u64,
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -354,6 +370,23 @@ impl GenesisConfig {
             "Building genesis block from config (chain_id={})",
             self.chain.chain_id
         );
+
+        // Validate that the config's p_start_0 matches the compiled-in
+        // canonical constant.  A mismatch means the genesis.toml was edited
+        // to use a non-canonical curve, which would produce a different band
+        // table at runtime while the executor still uses the hardcoded BANDS.
+        {
+            use crate::contracts::bonding_curve::canonical::P_START_0;
+            if self.cbe_curve.p_start_0 as u128 != P_START_0 {
+                bail!(
+                    "genesis.toml [cbe_curve] p_start_0 ({}) does not match \
+                     canonical::P_START_0 ({}); update genesis.toml or the \
+                     compiled constant",
+                    self.cbe_curve.p_start_0,
+                    P_START_0,
+                );
+            }
+        }
 
         let genesis_timestamp = self.genesis_timestamp()?;
 
