@@ -1787,8 +1787,6 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         payload: &[u8],
     ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
-        use crate::contracts::bonding_curve::canonical::GRAD_THRESHOLD;
-
         // ── 1. Parse ──────────────────────────────────────────────────────────
         let curve_tx = decode_canonical_bonding_curve_tx(payload)
             .map_err(|e| TxApplyError::InvalidType(format!("Invalid canonical curve payload: {e}")))?;
@@ -1876,7 +1874,6 @@ impl BlockExecutor {
         //   - slippage check (max_price / min_payout)
         //   - graduation trigger when reserve_balance >= GRAD_THRESHOLD
         //   - put_cbe_economic_state + put_cbe_account_state (with nonce++)
-        let _ = GRAD_THRESHOLD; // referenced here to avoid dead_code warning
         Err(TxApplyError::InvalidType(format!(
             "Canonical CBE economic computation not yet implemented (#1930/#1931): \
              pre-validation passed for {} tx from sender={}, nonce={provided_nonce}",
