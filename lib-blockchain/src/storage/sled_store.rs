@@ -38,6 +38,7 @@ const TREE_IDENTITY_METADATA: &str = "identity_meta"; // Non-consensus (for DID 
 const TREE_IDENTITY_BY_OWNER: &str = "identity_owner"; // Index: owner → did_hash
 const TREE_BONDING_CURVES: &str = "bonding_curves"; // Bonding curve tokens
 const TREE_BONDING_CURVE_SYMBOLS: &str = "bonding_curve_symbols"; // Index: symbol → token_id
+const TREE_CBE_ACCOUNTS: &str = "cbe_accounts"; // Canonical CBE account states (#1926)
 const TREE_META: &str = "meta";
 
 /// Sled-based implementation of BlockchainStore
@@ -60,6 +61,7 @@ pub struct SledStore {
     identity_by_owner: Tree,     // Index: owner_addr → did_hash
     bonding_curves: Tree,        // Bonding curve tokens: token_id → BondingCurveToken
     bonding_curve_symbols: Tree, // Index: symbol → token_id
+    cbe_accounts: Tree,          // Canonical CBE account states: key_id → BondingCurveAccountState
     meta: Tree,
 
     // Transaction state
@@ -85,6 +87,7 @@ struct PendingBatch {
     identity_by_owner: Batch,
     bonding_curves: Batch,
     bonding_curve_symbols: Batch,
+    cbe_accounts: Batch,
     meta: Batch,
     block_data: Option<(u64, BlockHash, Vec<u8>)>, // (height, hash, serialized block)
 }
@@ -107,6 +110,7 @@ impl PendingBatch {
             identity_by_owner: Batch::default(),
             bonding_curves: Batch::default(),
             bonding_curve_symbols: Batch::default(),
+            cbe_accounts: Batch::default(),
             meta: Batch::default(),
             block_data: None,
         }
@@ -160,6 +164,9 @@ impl SledStore {
         let bonding_curve_symbols = db
             .open_tree(TREE_BONDING_CURVE_SYMBOLS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let cbe_accounts = db
+            .open_tree(TREE_CBE_ACCOUNTS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -193,6 +200,7 @@ impl SledStore {
             identity_by_owner,
             bonding_curves,
             bonding_curve_symbols,
+            cbe_accounts,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -241,6 +249,9 @@ impl SledStore {
         let bonding_curve_symbols = db
             .open_tree(TREE_BONDING_CURVE_SYMBOLS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let cbe_accounts = db
+            .open_tree(TREE_CBE_ACCOUNTS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -274,6 +285,7 @@ impl SledStore {
             identity_by_owner,
             bonding_curves,
             bonding_curve_symbols,
+            cbe_accounts,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -1128,6 +1140,10 @@ impl BlockchainStore for SledStore {
             .apply_batch(batch.bonding_curve_symbols)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
+        self.cbe_accounts
+            .apply_batch(batch.cbe_accounts)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
         // Update latest height
         self.meta
             .insert(keys::meta::LATEST_HEIGHT, &height.to_be_bytes())
@@ -1281,6 +1297,71 @@ impl BlockchainStore for SledStore {
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
             batch.bonding_curve_symbols.remove(symbol.as_bytes());
+        }
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Canonical CBE Curve State (#1926)
+    // =========================================================================
+
+    fn get_cbe_economic_state(
+        &self,
+    ) -> StorageResult<lib_types::BondingCurveEconomicState> {
+        match self.meta.get(keys::meta::CBE_ECONOMIC_STATE) {
+            Ok(Some(bytes)) => {
+                let state: lib_types::BondingCurveEconomicState = Self::deserialize(&bytes)?;
+                Ok(state)
+            }
+            Ok(None) => Ok(lib_types::BondingCurveEconomicState::default()),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_cbe_economic_state(
+        &self,
+        state: &lib_types::BondingCurveEconomicState,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let value = Self::serialize(state)?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.meta.insert(keys::meta::CBE_ECONOMIC_STATE, value);
+        }
+
+        Ok(())
+    }
+
+    fn get_cbe_account_state(
+        &self,
+        key_id: &[u8; 32],
+    ) -> StorageResult<Option<lib_types::BondingCurveAccountState>> {
+        let key = keys::cbe_account_key(key_id);
+        match self.cbe_accounts.get(key) {
+            Ok(Some(bytes)) => {
+                let state: lib_types::BondingCurveAccountState = Self::deserialize(&bytes)?;
+                Ok(Some(state))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    fn put_cbe_account_state(
+        &self,
+        key_id: &[u8; 32],
+        state: &lib_types::BondingCurveAccountState,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let key = keys::cbe_account_key(key_id);
+        let value = Self::serialize(state)?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.cbe_accounts.insert(key.as_ref(), value);
         }
 
         Ok(())
