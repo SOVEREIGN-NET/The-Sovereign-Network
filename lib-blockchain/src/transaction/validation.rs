@@ -118,7 +118,7 @@ impl TransactionValidator {
         expected_type: TransactionType,
     ) -> ValidationResult {
         if transaction.memo.len() != BONDING_CURVE_TX_PAYLOAD_LEN {
-            return Err(ValidationError::MissingRequiredData);
+            return Err(ValidationError::InvalidMemo);
         }
 
         match expected_type {
