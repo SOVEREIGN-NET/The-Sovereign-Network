@@ -55,11 +55,8 @@ mod native {
         pub fn generate_keypair_from_seed(seed: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
             // Use crystals-dilithium for deterministic generation from seed.
             // This ensures the same seed always produces the same Dilithium5 keypair (for recovery).
-            //
-            // NOTE/TODO: Kyber1024::generate_keypair_from_seed below still uses random key
-            // generation and ignores the seed. It should be updated to use deterministic
-            // generation from the seed as well so identity recovery is fully reproducible.
-            // For now, only Dilithium (signing) keys are deterministic.
+            // Kyber1024 is an operational KEM key — it is intentionally NOT derived from the seed
+            // and is not part of the DID. See Kyber1024::generate_keypair_from_seed for details.
             if seed.len() != 32 {
                 return Err(ClientError::CryptoError(format!(
                     "Invalid Dilithium5 seed length: expected 32 bytes, got {}",
