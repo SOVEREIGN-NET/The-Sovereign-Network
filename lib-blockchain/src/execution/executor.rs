@@ -1878,144 +1878,152 @@ impl BlockExecutor {
             )));
         }
 
-        // ── 10. Economic computation ─────────────────────────────────────────
-        // Implements #1930 (BUY_CBE) and #1931 (SELL_CBE).
-        // All mutations below are atomic: either every put succeeds or the
-        // function returns Err before touching sled.
+        // ── 10. Dispatch to typed economic computation ───────────────────────
+        let next_nonce = lib_types::Nonce48::from_u64(provided_nonce + 1)
+            .ok_or_else(|| TxApplyError::InvalidType("nonce overflow".to_string()))?;
+
+        match curve_tx {
+            CanonicalBondingCurveTx::Buy(tx) => {
+                self.apply_buy_cbe(mutator, tx.max_price, amount_in_or_cbe, sender, econ, account, next_nonce)
+            }
+            CanonicalBondingCurveTx::Sell(tx) => {
+                self.apply_sell_cbe(mutator, tx.min_payout, amount_in_or_cbe, sender, econ, account, next_nonce)
+            }
+        }
+    }
+
+    fn apply_buy_cbe(
+        &self,
+        mutator: &StateMutator<'_>,
+        max_price: u128,
+        amount_in: u128,
+        sender: [u8; 32],
+        mut econ: lib_types::BondingCurveEconomicState,
+        mut account: lib_types::BondingCurveAccountState,
+        next_nonce: lib_types::Nonce48,
+    ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
         use crate::contracts::bonding_curve::canonical::{
-            mint_with_reserve, payout_for_burn, GRAD_THRESHOLD, MAX_GROSS_SOV_PER_TX,
+            mint_with_reserve, GRAD_THRESHOLD, MAX_DELTA_S_PER_TX, MAX_GROSS_SOV_PER_TX, SCALE,
         };
         use primitive_types::U256;
 
-        let mut econ = econ;
-        let mut account = account;
-
-        // Increment nonce now (shared by both paths).
-        account.next_nonce = lib_types::Nonce48::from_u64(provided_nonce + 1)
-            .ok_or_else(|| TxApplyError::InvalidType("nonce overflow".to_string()))?;
-
-        if is_buy {
-            let max_price = match &curve_tx {
-                CanonicalBondingCurveTx::Buy(t) => t.max_price,
-                _ => unreachable!(),
-            };
-
-            if amount_in_or_cbe > MAX_GROSS_SOV_PER_TX {
-                return Err(TxApplyError::InvalidType(format!(
-                    "BUY_CBE: amount_in {amount_in_or_cbe} exceeds MAX_GROSS_SOV_PER_TX"
-                )));
-            }
-
-            // Reserve / treasury split: 20 % to reserve, remainder to treasury.
-            // Integer division floors treasury; remainder assigned to reserve so
-            // reserve_credit + treasury_credit == amount_in exactly.
-            let treasury_credit = amount_in_or_cbe * 80 / 100;
-            let reserve_credit = amount_in_or_cbe - treasury_credit;
-
-            // Multi-band mint from reserve credit only.
-            let delta_s = mint_with_reserve(reserve_credit, econ.s_c)
-                .map_err(|e| TxApplyError::InvalidType(format!("BUY_CBE: mint overflow: {e:?}")))?;
-
-            if delta_s == 0 {
-                return Err(TxApplyError::InvalidType(
-                    "BUY_CBE: zero tokens minted for given reserve credit".to_string(),
-                ));
-            }
-
-            // Slippage: buyer_effective = amount_in * SCALE / delta_s  >?  max_price
-            // Use U256 to avoid overflow (amount_in * SCALE can exceed u128::MAX).
-            let scale_u256 = U256::from(crate::contracts::bonding_curve::canonical::SCALE);
-            let effective = U256::from(amount_in_or_cbe)
-                .checked_mul(scale_u256)
-                .expect("amount_in * SCALE fits U256")
-                / U256::from(delta_s);
-            if effective > U256::from(max_price) {
-                return Err(TxApplyError::InvalidType(format!(
-                    "BUY_CBE: slippage — effective price {effective} > max_price {max_price}"
-                )));
-            }
-
-            // Atomic state commit.
-            econ.s_c = econ.s_c.checked_add(delta_s)
-                .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: s_c overflow".to_string()))?;
-            econ.reserve_balance = econ.reserve_balance.checked_add(reserve_credit)
-                .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: reserve overflow".to_string()))?;
-            econ.treasury_balance = econ.treasury_balance.checked_add(treasury_credit)
-                .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: treasury overflow".to_string()))?;
-
-            account.balance_sov = account.balance_sov.checked_sub(amount_in_or_cbe)
-                .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: SOV balance underflow".to_string()))?;
-            account.balance_cbe = account.balance_cbe.checked_add(delta_s)
-                .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: CBE balance overflow".to_string()))?;
-
-            // Graduation check.
-            if econ.reserve_balance >= GRAD_THRESHOLD {
-                econ.graduated = true;
-            }
-
-            mutator.put_cbe_economic_state(&econ)?;
-            mutator.put_cbe_account_state(&sender, &account)?;
-
-            Ok(CanonicalBondingCurveOutcome::Buy(BondingCurveBuyOutcome {
-                token_id: [0xCB; 32],
-                buyer: sender,
-                stable_spent: amount_in_or_cbe,
-                tokens_received: delta_s,
-            }))
-        } else {
-            let min_payout = match &curve_tx {
-                CanonicalBondingCurveTx::Sell(t) => t.min_payout,
-                _ => unreachable!(),
-            };
-
-            // Redemption value from exact cost integration.
-            let sov_out = payout_for_burn(amount_in_or_cbe, econ.s_c)
-                .map_err(|e| {
-                    TxApplyError::InvalidType(format!("SELL_CBE: payout_for_burn failed: {e:?}"))
-                })?;
-
-            if sov_out == 0 {
-                return Err(TxApplyError::InvalidType(
-                    "SELL_CBE: zero payout for given burn amount".to_string(),
-                ));
-            }
-
-            // Slippage floor.
-            if sov_out < min_payout {
-                return Err(TxApplyError::InvalidType(format!(
-                    "SELL_CBE: payout {sov_out} < min_payout {min_payout}"
-                )));
-            }
-
-            // Solvency check against reserve only (treasury_locked out of scope on this branch).
-            if econ.reserve_balance < sov_out {
-                return Err(TxApplyError::InvalidType(format!(
-                    "SELL_CBE: insolvent — reserve_balance {} < sov_out {sov_out}",
-                    econ.reserve_balance
-                )));
-            }
-
-            // Atomic state commit.
-            econ.s_c = econ.s_c.checked_sub(amount_in_or_cbe)
-                .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: s_c underflow".to_string()))?;
-            econ.reserve_balance = econ.reserve_balance.checked_sub(sov_out)
-                .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: reserve underflow".to_string()))?;
-
-            account.balance_cbe = account.balance_cbe.checked_sub(amount_in_or_cbe)
-                .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: CBE balance underflow".to_string()))?;
-            account.balance_sov = account.balance_sov.checked_add(sov_out)
-                .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: SOV balance overflow".to_string()))?;
-
-            mutator.put_cbe_economic_state(&econ)?;
-            mutator.put_cbe_account_state(&sender, &account)?;
-
-            Ok(CanonicalBondingCurveOutcome::Sell(BondingCurveSellOutcome {
-                token_id: [0xCB; 32],
-                seller: sender,
-                tokens_sold: amount_in_or_cbe,
-                stable_received: sov_out,
-            }))
+        if amount_in > MAX_GROSS_SOV_PER_TX {
+            return Err(TxApplyError::InvalidType(format!(
+                "BUY_CBE: amount_in {amount_in} exceeds MAX_GROSS_SOV_PER_TX"
+            )));
         }
+
+        // 20/80 ALPHA split: floors reserve (ALPHA leg), remainder to treasury so the sum is exact.
+        let reserve_credit = amount_in * 20 / 100;
+        let treasury_credit = amount_in - reserve_credit;
+
+        let delta_s = mint_with_reserve(reserve_credit, econ.s_c)
+            .map_err(|e| TxApplyError::InvalidType(format!("BUY_CBE: mint overflow: {e:?}")))?;
+
+        if delta_s == 0 {
+            return Err(TxApplyError::InvalidType(
+                "BUY_CBE: zero tokens minted for given reserve credit".to_string(),
+            ));
+        }
+
+        if delta_s > MAX_DELTA_S_PER_TX {
+            return Err(TxApplyError::InvalidType(format!(
+                "BUY_CBE: delta_s {delta_s} exceeds MAX_DELTA_S_PER_TX"
+            )));
+        }
+
+        // Slippage: effective = amount_in * SCALE / delta_s; use U256 to avoid overflow.
+        let effective = U256::from(amount_in)
+            .checked_mul(U256::from(SCALE))
+            .ok_or_else(|| TxApplyError::InvalidType(
+                "BUY_CBE: slippage overflow in amount_in * SCALE".to_string(),
+            ))?
+            / U256::from(delta_s);
+        if effective > U256::from(max_price) {
+            return Err(TxApplyError::InvalidType(format!(
+                "BUY_CBE: slippage — effective price {effective} > max_price {max_price}"
+            )));
+        }
+
+        econ.s_c = econ.s_c.checked_add(delta_s)
+            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: s_c overflow".to_string()))?;
+        econ.reserve_balance = econ.reserve_balance.checked_add(reserve_credit)
+            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: reserve overflow".to_string()))?;
+        econ.treasury_balance = econ.treasury_balance.checked_add(treasury_credit)
+            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: treasury overflow".to_string()))?;
+        if econ.reserve_balance >= GRAD_THRESHOLD {
+            econ.graduated = true;
+        }
+
+        account.balance_sov = account.balance_sov.checked_sub(amount_in)
+            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: SOV balance underflow".to_string()))?;
+        account.balance_cbe = account.balance_cbe.checked_add(delta_s)
+            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: CBE balance overflow".to_string()))?;
+        account.next_nonce = next_nonce;
+
+        mutator.put_cbe_economic_state(&econ)?;
+        mutator.put_cbe_account_state(&sender, &account)?;
+
+        Ok(CanonicalBondingCurveOutcome::Buy(BondingCurveBuyOutcome {
+            token_id: crate::Blockchain::derive_cbe_token_id_pub(),
+            buyer: sender,
+            stable_spent: amount_in,
+            tokens_received: delta_s,
+        }))
+    }
+
+    fn apply_sell_cbe(
+        &self,
+        mutator: &StateMutator<'_>,
+        min_payout: u128,
+        amount_cbe: u128,
+        sender: [u8; 32],
+        mut econ: lib_types::BondingCurveEconomicState,
+        mut account: lib_types::BondingCurveAccountState,
+        next_nonce: lib_types::Nonce48,
+    ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
+        use crate::contracts::bonding_curve::canonical::payout_for_burn;
+
+        let sov_out = payout_for_burn(amount_cbe, econ.s_c)
+            .map_err(|e| TxApplyError::InvalidType(format!("SELL_CBE: payout_for_burn failed: {e:?}")))?;
+
+        if sov_out == 0 {
+            return Err(TxApplyError::InvalidType(
+                "SELL_CBE: zero payout for given burn amount".to_string(),
+            ));
+        }
+        if sov_out < min_payout {
+            return Err(TxApplyError::InvalidType(format!(
+                "SELL_CBE: payout {sov_out} < min_payout {min_payout}"
+            )));
+        }
+        if econ.reserve_balance < sov_out {
+            return Err(TxApplyError::InvalidType(format!(
+                "SELL_CBE: insolvent — reserve_balance {} < sov_out {sov_out}",
+                econ.reserve_balance
+            )));
+        }
+
+        econ.s_c = econ.s_c.checked_sub(amount_cbe)
+            .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: s_c underflow".to_string()))?;
+        econ.reserve_balance = econ.reserve_balance.checked_sub(sov_out)
+            .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: reserve underflow".to_string()))?;
+
+        account.balance_cbe = account.balance_cbe.checked_sub(amount_cbe)
+            .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: CBE balance underflow".to_string()))?;
+        account.balance_sov = account.balance_sov.checked_add(sov_out)
+            .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: SOV balance overflow".to_string()))?;
+        account.next_nonce = next_nonce;
+
+        mutator.put_cbe_economic_state(&econ)?;
+        mutator.put_cbe_account_state(&sender, &account)?;
+
+        Ok(CanonicalBondingCurveOutcome::Sell(BondingCurveSellOutcome {
+            token_id: crate::Blockchain::derive_cbe_token_id_pub(),
+            seller: sender,
+            tokens_sold: amount_cbe,
+            stable_received: sov_out,
+        }))
     }
 
     fn canonical_bonding_curve_envelope_from_transaction(
@@ -2523,6 +2531,7 @@ impl BlockExecutor {
 
 /// Outcome of applying a single transaction
 #[derive(Debug)]
+#[allow(dead_code)]
 enum TxOutcome {
     Transfer(TransferOutcome),
     TokenTransfer(TokenTransferOutcome),
@@ -2808,7 +2817,7 @@ mod tests {
         executor.apply_block(&genesis).unwrap();
 
         // Try to apply block with wrong previous hash
-        let mut block1 = create_block_at_height(1, Hash::default()); // Wrong!
+        let block1 = create_block_at_height(1, Hash::default()); // Wrong!
         let result = executor.apply_block(&block1);
 
         assert!(matches!(
@@ -2932,6 +2941,7 @@ mod tests {
     }
 
     /// Create a genesis block with a coinbase transaction for funding
+    #[allow(dead_code)]
     fn create_funded_genesis_block() -> Block {
         let mut hash_bytes = [0u8; 32];
         hash_bytes[0] = 0x01; // Unique genesis hash
