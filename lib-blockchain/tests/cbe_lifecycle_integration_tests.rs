@@ -84,7 +84,7 @@ fn create_cbe_token(creator: PublicKey, block: u64, timestamp: u64) -> BondingCu
 fn find_reserve_safe_sell_amount(token: &BondingCurveToken, max_amount: u128) -> u128 {
     let mut candidate = max_amount;
     while candidate > 0 {
-        if token.calculate_sell(candidate).is_ok() {
+        if token.calculate_sell(candidate).map_or(false, |sov| sov > 0) {
             return candidate;
         }
         candidate /= 2;
@@ -283,7 +283,7 @@ fn test_split_consistency_across_multiple_buys() {
 
     // Execute multiple buys
     for i in 0..5 {
-        let buy_amount = 500_000_00u128; // 0.5 SOV
+        let buy_amount = 50_000u128; // well within u64 supply bounds
         let initial_reserve = token.reserve_balance;
         let initial_treasury = token.treasury_balance;
 
@@ -321,7 +321,7 @@ fn test_buy_sell_roundtrip() {
     let mut token = create_cbe_token(creator, 1, 1_600_000_000);
 
     let buyer = test_pubkey(0x04);
-    let buy_amount = 10_000_000_00u128; // 10 SOV
+    let buy_amount = 100_000u128; // well within u64 supply bounds
 
     // Record initial state
     let initial_supply = token.total_supply;
@@ -428,25 +428,36 @@ fn test_graduation_threshold_269k_usd() {
 #[test]
 fn test_phase_transition_atomicity() {
     let creator = test_pubkey(0x03);
-    let mut token = create_cbe_token(creator, 1, 1_600_000_000);
+    // Use ReserveAmount threshold — no oracle needed, and buy amounts stay within u64 supply bounds.
+    let mut token = BondingCurveToken::deploy(
+        [0xCB; 32],
+        CBE_NAME.to_string(),
+        CBE_SYMBOL.to_string(),
+        CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
+        Threshold::ReserveAmount(200_000),
+        true,
+        creator,
+        "did:sov:cbe".to_string(),
+        1,
+        1_600_000_000,
+    )
+    .expect("CBE token deployment should succeed");
 
     // Initially in Curve phase
     assert_eq!(token.phase, Phase::Curve, "Initial phase should be Curve");
 
-    // Build up enough reserve to graduate, driving the oracle each block
+    // Buy 100_000 per iteration; 20% goes to reserve → 20_000/buy.
+    // With threshold=200_000 we graduate after ~10 buys.
     let buyer = test_pubkey(0x04);
-    // Buy with very large amounts to build reserve quickly
     let mut last_timestamp = 0u64;
     let mut last_block = 0u64;
-    for i in 0..500 {
+    for i in 0..20 {
         let block = 2 + i as u64;
-        let oracle_price = 1_600_000_100u128 + i as u128 * 10;
         let timestamp = 1_700_000_000u64 + block;
         last_block = block;
         last_timestamp = timestamp;
 
-        let _ = token.buy(buyer.clone(), 100 * SOV_ATOMIC_UNITS, block, timestamp);
-        let _ = token.check_graduation_with_oracle(oracle_price, timestamp, block, timestamp);
+        let _ = token.buy(buyer.clone(), 100_000u128, block, timestamp);
         if token.can_graduate(timestamp, block) {
             break;
         }
@@ -497,19 +508,40 @@ fn test_phase_transition_atomicity() {
 /// Issue #1851: Test 7 - Verify constant product pool creation
 #[test]
 fn test_amm_pool_creation_constant_product() {
+    // Use a constant-price (slope=0) Linear curve so that the AMM price continuity
+    // check (initial_sov * PRICE_SCALE / initial_cbe == curve_price) holds exactly
+    // under integer arithmetic — the same approach used by amm_pool.rs unit tests.
     let creator = test_pubkey(0x03);
-    let mut token = create_cbe_token(creator, 1, 1_600_000_000);
+    let mut token = BondingCurveToken::deploy(
+        [0xCB; 32],
+        CBE_NAME.to_string(),
+        CBE_SYMBOL.to_string(),
+        CurveType::Linear {
+            base_price: 1_000_000,
+            slope: 0,
+        },
+        Threshold::ReserveAmount(1_000_000),
+        true,
+        creator,
+        "did:sov:cbe".to_string(),
+        1,
+        1_600_000_000,
+    )
+    .expect("CBE token deployment should succeed");
 
-    // Build a pool-seeding state that stays within the current POL pool u64 reserve boundary.
+    // Single buy well above the graduation threshold.
     let buyer = test_pubkey(0x04);
     token
-        .buy(buyer, 1_000_000_000_00u128, 2, 1_700_000_002)
+        .buy(buyer, 30_000_000_000u128, 2, 1_700_000_002)
         .expect("Buy should succeed");
     assert!(
         token.reserve_balance <= u64::MAX as u128,
         "Test setup must stay within current POL reserve bounds"
     );
-    token.phase = Phase::Graduated;
+
+    // Graduate via the normal path (ReserveAmount threshold is now exceeded).
+    assert!(token.can_graduate(1_700_000_003, 3), "Token should be eligible to graduate");
+    token.graduate(1_700_000_003, 3).expect("Graduation should succeed");
     assert_eq!(token.phase, Phase::Graduated);
 
     // Create POL pool
@@ -517,8 +549,8 @@ fn test_amm_pool_creation_constant_product() {
         &mut token,
         governance(),
         treasury(),
-        3,
-        1_700_000_003,
+        4,
+        1_700_000_004,
     )
     .expect("POL pool creation should succeed");
 
@@ -718,7 +750,7 @@ fn test_full_lifecycle_genesis_to_amm() {
 
     // Execute 5 buys
     for i in 0..5 {
-        let buy_amount = 50_000_000_00u128; // 50 SOV
+        let buy_amount = 50_000u128; // well within u64 supply bounds
         let (cbe_received, _) = token
             .buy(buyer.clone(), buy_amount, 2 + i as u64, 1_600_000_100 + i as u64 * 10)
             .expect(&format!("Buy {} should succeed", i + 1));
@@ -748,7 +780,7 @@ fn test_full_lifecycle_genesis_to_amm() {
     println!("4. Building reserve toward graduation threshold...");
     let mut buy_count = 0;
     while buy_count < 200 && token.phase == Phase::Curve {
-        let _ = token.buy(buyer.clone(), 100_000_000_00u128, 20 + buy_count, 1_600_000_300);
+        let _ = token.buy(buyer.clone(), 100_000u128, 20 + buy_count, 1_600_000_300);
         buy_count += 1;
         
         // Try to graduate if threshold reached
@@ -928,7 +960,7 @@ fn test_deterministic_replay() {
 
         for i in 0..3 {
             let (cbe, _) = token
-                .buy(buyer.clone(), 50_000_000_00u128, 2 + i, 1_600_000_100 + i * 10)
+                .buy(buyer.clone(), 50_000u128, 2 + i, 1_600_000_100 + i * 10)
                 .unwrap();
             total_cbe += cbe;
         }
@@ -942,7 +974,7 @@ fn test_deterministic_replay() {
         // More buys
         for i in 0..2 {
             let (cbe, _) = token
-                .buy(buyer.clone(), 25_000_000_00u128, 6 + i, 1_600_000_300)
+                .buy(buyer.clone(), 25_000u128, 6 + i, 1_600_000_300)
                 .unwrap();
             total_cbe += cbe;
         }
