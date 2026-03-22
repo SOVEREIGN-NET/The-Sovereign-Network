@@ -49,9 +49,17 @@ threshold = 3
 members = []
 
 [bonding_curve]
-# CBE public sale bonding curve parameters
+# CBE public sale bonding curve parameters (legacy in-memory curve)
 reserve_ratio_ppm    = 200_000   # 20% reserve ratio
 graduation_threshold = 2_745_966_000
+
+[cbe_curve]
+# Canonical 18-decimal integer bonding curve (BFT-A / #1922).
+# p_start_0 is the price (in atomic SOV units, 18-decimal) at zero supply.
+# Remaining band p_start values are derived deterministically via price
+# continuity: p_start_{N+1} = p_start_N + slope_num_N * band_size_N / SLOPE_DEN.
+# This value must match canonical.rs::P_START_0 exactly.
+p_start_0 = 313_345_700_000_000
 
 # Testnet state migration allocations — populated by `zhtp-cli genesis migrate-state`.
 # Empty until a migration is performed. Issue #1909 (GENESIS-1).

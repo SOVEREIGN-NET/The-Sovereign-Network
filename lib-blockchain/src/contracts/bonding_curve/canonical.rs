@@ -70,6 +70,36 @@ pub const BANDS: [Band; BAND_COUNT] = [
     },
 ];
 
+/// Derive the full 5-band table from a single `p_start_0` value.
+///
+/// All subsequent `p_start` values follow the price-continuity invariant:
+/// `p_start_{N+1} = p_start_N + slope_num_N * band_size_N / SLOPE_DEN`
+/// where `band_size_N = end_supply_N - start_supply_N` (in 18-decimal atomic units).
+///
+/// This function is the canonical source of truth for band derivation.
+/// The `BANDS` constant hard-codes the values derived from `P_START_0`;
+/// `derive_cbe_bands(P_START_0)` must return an identical table.
+pub fn derive_cbe_bands(p_start_0: u128) -> [Band; BAND_COUNT] {
+    const S1: u128 = 10_000_000_000u128 * SCALE; //  10 B CBE boundary
+    const S2: u128 = 30_000_000_000u128 * SCALE; //  30 B CBE boundary
+    const S3: u128 = 60_000_000_000u128 * SCALE; //  60 B CBE boundary
+    const S4: u128 = 85_000_000_000u128 * SCALE; //  85 B CBE boundary
+
+    // Integer division is exact: each band_size is an exact multiple of SLOPE_DEN.
+    let p1 = p_start_0 + 1 * (S1) / SLOPE_DEN;
+    let p2 = p1 + 2 * (S2 - S1) / SLOPE_DEN;
+    let p3 = p2 + 3 * (S3 - S2) / SLOPE_DEN;
+    let p4 = p3 + 4 * (S4 - S3) / SLOPE_DEN;
+
+    [
+        Band { index: 0, start_supply: 0,  end_supply: S1,        slope_num: 1, slope_den: SLOPE_DEN, p_start: p_start_0 },
+        Band { index: 1, start_supply: S1, end_supply: S2,        slope_num: 2, slope_den: SLOPE_DEN, p_start: p1 },
+        Band { index: 2, start_supply: S2, end_supply: S3,        slope_num: 3, slope_den: SLOPE_DEN, p_start: p2 },
+        Band { index: 3, start_supply: S3, end_supply: S4,        slope_num: 4, slope_den: SLOPE_DEN, p_start: p3 },
+        Band { index: 4, start_supply: S4, end_supply: MAX_SUPPLY, slope_num: 5, slope_den: SLOPE_DEN, p_start: p4 },
+    ]
+}
+
 fn price_at_supply_in_band(supply: u128, band: &Band) -> Result<u128, MathError> {
     if supply < band.start_supply || supply > band.end_supply {
         return Err(MathError::Overflow);
@@ -324,6 +354,26 @@ pub fn payout_for_burn(amount_cbe: u128, s_c: u128) -> Result<u128, MathError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn derive_cbe_bands_matches_hardcoded_table() {
+        let derived = derive_cbe_bands(P_START_0);
+        assert_eq!(derived, BANDS);
+    }
+
+    #[test]
+    fn derive_cbe_bands_continuity_invariant() {
+        let derived = derive_cbe_bands(P_START_0);
+        for pair in derived.windows(2) {
+            let price_at_left_end =
+                price_at_supply_in_band(pair[0].end_supply, &pair[0]).unwrap();
+            assert_eq!(
+                price_at_left_end, pair[1].p_start,
+                "Price continuity broken at band {} → {} boundary",
+                pair[0].index, pair[1].index
+            );
+        }
+    }
 
     #[test]
     fn band_table_is_contiguous_and_hits_max_supply() {
