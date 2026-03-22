@@ -11,7 +11,7 @@
 //!     |                               |
 //!     |-- Generate recovery_entropy   |
 //!     |-- Derive Dilithium5 keypair   |
-//!     |-- Derive Kyber1024 keypair    |
+//!     |-- Generate Kyber1024 keypair  |  (random, not derived — operational key)
 //!     |-- Compute DID from public key |
 //!     |                               |
 //!     |-- Send ONLY public keys ----->|  (Registration)
@@ -116,6 +116,8 @@ pub struct MigrateIdentityRequestPayload {
     pub display_name: String,
     /// Hex-encoded Dilithium5 public key (root signing key)
     pub new_public_key: String,
+    /// Hex-encoded Kyber1024 public key (operational KEM key, freshly generated on recovery)
+    pub kyber_public_key: String,
     pub device_id: String,
     pub timestamp: u64,
     /// Hex-encoded Dilithium5 signature over:
@@ -192,12 +194,11 @@ pub fn generate_identity(device_id: String) -> Result<Identity> {
 /// Restore an identity from a master seed
 ///
 /// Used for recovery when user enters their seed phrase on a new device.
-/// The same seed will produce the same keys (deterministic derivation).
 ///
-/// # Note
-///
-/// Currently generates new random keys because pqcrypto doesn't support
-/// seeded generation. TODO: Implement proper deterministic derivation.
+/// The Dilithium5 signing key is derived deterministically — same entropy always
+/// produces the same DID and public key. The Kyber1024 key is an operational key
+/// that is intentionally NOT part of the DID; it is regenerated fresh on each
+/// recovery. Callers must re-publish the new Kyber public key after recovery.
 pub fn restore_identity_from_seed(
     recovery_entropy: Vec<u8>,
     device_id: String,
@@ -294,6 +295,7 @@ pub fn build_migrate_identity_request(
     Ok(MigrateIdentityRequestPayload {
         display_name,
         new_public_key,
+        kyber_public_key: hex::encode(&identity.kyber_public_key),
         device_id: identity.device_id.clone(),
         timestamp,
         signature: hex::encode(signature_bytes),
