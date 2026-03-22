@@ -57,8 +57,12 @@ pub const P_START_4: u128 = 2_713_345_700_000_000;
 //   treasury_credit = amount_in - reserve_credit
 // Changing the split ratio requires a protocol upgrade.
 //
-// Band table (BANDS below): immutable after genesis — see section above.
-
+/// Canonical band table for the bonding curve.
+///
+/// Although defined here, BANDS (and BAND_COUNT, MAX_SUPPLY, SLOPE_DEN, and
+/// the P_START_* anchors) are part of the immutable curve shape defined
+/// above.  Changing any of these values is a hard fork and requires an
+/// explicit protocol upgrade transaction.
 pub const BANDS: [Band; BAND_COUNT] = [
     Band {
         index: 0,
