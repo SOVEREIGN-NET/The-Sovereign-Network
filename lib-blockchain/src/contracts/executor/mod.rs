@@ -910,9 +910,16 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     return Err(anyhow!("Unauthorized mint: only token creator can mint"));
                 }
 
-                #[allow(deprecated)] // TODO(#852): Route through TreasuryKernel
-                crate::contracts::tokens::functions::mint_tokens(token, &to, amount)
-                    .map_err(|e| anyhow!("{}", e))?;
+                // Kernel-authority tokens use mint_kernel_only() which re-validates
+                // the caller against kernel_mint_authority (defence in depth).
+                // Creator-gated tokens use mint() directly.
+                if token.kernel_mint_authority.is_some() {
+                    token
+                        .mint_kernel_only(&context.caller, &to, amount)
+                        .map_err(|e| anyhow!("{}", e))?;
+                } else {
+                    token.mint(&to, amount).map_err(|e| anyhow!("{}", e))?;
+                }
 
                 // Stage token change for atomic commit
                 let token_clone = token.clone();
@@ -1803,19 +1810,20 @@ impl<S: ContractStorage> ContractExecutor<S> {
     ///
     /// # Returns
     /// A vector of event data for the given epoch and type
-    ///
-    /// # Note
-    /// Events are stored with keys in format: `events:{epoch}:{event_type}:{index}`
-    /// TODO: Phase 4 - Implement with storage layer prefix scanning
     pub fn query_events(&self, epoch: u64, event_type: &str) -> Result<Vec<Vec<u8>>> {
-        let _prefix = format!("events:{}:{}:", epoch, event_type);
-        let events = Vec::new();
+        let counter_key = format!("event_index:{}:{}", epoch, event_type);
+        let count = match self.storage.get(counter_key.as_bytes())? {
+            Some(data) => bincode::deserialize::<u64>(&data).unwrap_or(0),
+            None => 0,
+        };
 
-        // Get all keys with this prefix by scanning storage
-        // Note: ContractStorage trait doesn't provide scan_prefix, so we use a workaround
-        // This will be enhanced in future iterations
-
-        // For now, return empty - to be implemented with storage layer support
+        let mut events = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let key = format!("events:{}:{}:{}", epoch, event_type, i);
+            if let Some(data) = self.storage.get(key.as_bytes())? {
+                events.push(data);
+            }
+        }
         Ok(events)
     }
 
@@ -1832,6 +1840,11 @@ impl<S: ContractStorage> ContractExecutor<S> {
         let index = self.get_next_event_index(epoch, event_type)?;
         let key = format!("events:{}:{}:{}", epoch, event_type, index);
         self.storage.set(key.as_bytes(), event_data)?;
+
+        // Increment the counter so the next event gets a unique index.
+        let counter_key = format!("event_index:{}:{}", epoch, event_type);
+        let next_index = bincode::serialize(&(index + 1))?;
+        self.storage.set(counter_key.as_bytes(), &next_index)?;
         Ok(())
     }
 

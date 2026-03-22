@@ -60,20 +60,27 @@ impl StateVersionManager {
         self.storage.get(&versioned_key)
     }
 
-    /// Get the latest state value (highest block height)
+    /// Get the latest state value (highest block height) for a specific key
     pub fn get_latest(&self, key: &[u8]) -> StorageResult<Option<Vec<u8>>> {
-        // Scan for the highest version across all block heights
-        // TODO: Optimize with a manifest tracking latest versions per key
+        // Key format: "state:" (6) + height_be (8) + ":" (1) + original_key
+        const KEY_OFFSET: usize = 6 + 8 + 1;
+
         let prefix = b"state:";
         let entries = self.storage.scan_prefix(prefix)?;
 
         let mut latest_value: Option<Vec<u8>> = None;
-        let mut latest_height: u64 = 0;
+        let mut latest_height: Option<u64> = None;
 
         for (versioned_key, value) in entries {
+            if versioned_key.len() <= KEY_OFFSET {
+                continue;
+            }
+            if &versioned_key[KEY_OFFSET..] != key {
+                continue;
+            }
             if let Some(height) = Self::extract_height_from_key(&versioned_key) {
-                if height > latest_height {
-                    latest_height = height;
+                if latest_height.map_or(true, |h| height > h) {
+                    latest_height = Some(height);
                     latest_value = Some(value);
                 }
             }
@@ -127,12 +134,18 @@ impl StateVersionManager {
     pub fn prune_old_versions(&self, current_height: u64) -> StorageResult<u64> {
         let min_height = current_height.saturating_sub(self.max_versions_to_keep);
 
-        // Scan and delete all versions before min_height
+        // Scan all state: entries and delete those below min_height.
+        // Heights are stored as big-endian bytes, not decimal strings, so we
+        // must decode via extract_height_from_key rather than format a string prefix.
+        let entries = self.storage.scan_prefix(b"state:")?;
         let mut deleted_count = 0u64;
-        for height in 0..min_height {
-            let prefix = format!("state:{}:", height);
-            let count = self.storage.delete_prefix(prefix.as_bytes())?;
-            deleted_count += count;
+        for (versioned_key, _) in entries {
+            if let Some(height) = Self::extract_height_from_key(&versioned_key) {
+                if height < min_height {
+                    self.storage.delete(&versioned_key)?;
+                    deleted_count += 1;
+                }
+            }
         }
 
         Ok(deleted_count)
@@ -175,5 +188,58 @@ mod tests {
         // Update and retrieve
         manager.update_last_finalized_height(42).unwrap();
         assert_eq!(manager.get_last_finalized_height().unwrap(), Some(42));
+    }
+
+    #[test]
+    fn test_get_latest_returns_correct_key_not_highest_height_across_all_keys() {
+        // Regression test: get_latest must filter by key, not just find the
+        // entry with the highest block height across all keys in storage.
+        let temp_dir = TempDir::new().unwrap();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let manager = StateVersionManager::new(storage, Some(100));
+
+        // Store two different keys at different heights
+        manager.store_versioned(1, b"key_a", b"a_at_1").unwrap();
+        manager.store_versioned(5, b"key_b", b"b_at_5").unwrap();
+        manager.store_versioned(3, b"key_a", b"a_at_3").unwrap();
+
+        // get_latest(key_a) must return "a_at_3", not "b_at_5"
+        assert_eq!(
+            manager.get_latest(b"key_a").unwrap(),
+            Some(b"a_at_3".to_vec())
+        );
+        assert_eq!(
+            manager.get_latest(b"key_b").unwrap(),
+            Some(b"b_at_5".to_vec())
+        );
+        // Unknown key returns None
+        assert_eq!(manager.get_latest(b"key_c").unwrap(), None);
+    }
+
+    #[test]
+    fn test_prune_old_versions_actually_deletes_using_binary_height_keys() {
+        // Regression test: prune used format!("state:{}:", height) (decimal string)
+        // but keys encode height as big-endian bytes. Pruning was silently a no-op.
+        let temp_dir = TempDir::new().unwrap();
+        let storage = PersistentStorage::new(temp_dir.path().to_str().unwrap(), None).unwrap();
+        let manager = StateVersionManager::new(storage, Some(2));
+
+        manager.store_versioned(1, b"k", b"v1").unwrap();
+        manager.store_versioned(2, b"k", b"v2").unwrap();
+        manager.store_versioned(3, b"k", b"v3").unwrap();
+
+        // current_height=4, max_versions=2 → prune heights < 2
+        let deleted = manager.prune_old_versions(4).unwrap();
+        assert_eq!(deleted, 1, "expected height-1 entry to be deleted");
+
+        assert_eq!(manager.get_versioned(b"k", 1).unwrap(), None);
+        assert_eq!(
+            manager.get_versioned(b"k", 2).unwrap(),
+            Some(b"v2".to_vec())
+        );
+        assert_eq!(
+            manager.get_versioned(b"k", 3).unwrap(),
+            Some(b"v3".to_vec())
+        );
     }
 }

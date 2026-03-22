@@ -127,13 +127,16 @@ pub enum TxValidateError {
     CoinbaseNonZeroFee(u64),
 
     // =========================================================================
-    // Signature Errors
+    // Signature / Authorization Errors
     // =========================================================================
     #[error("Invalid signature")]
     InvalidSignature,
 
     #[error("Signature verification failed")]
     SignatureVerificationFailed,
+
+    #[error("Signer is not the owner of UTXO: {0}")]
+    UnauthorizedSpend(OutPoint),
 
     // =========================================================================
     // Field Errors

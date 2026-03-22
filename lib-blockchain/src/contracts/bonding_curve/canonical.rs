@@ -8,25 +8,61 @@ use crate::contracts::utils::{
     integer_sqrt_u256, mul_div_floor_u128, u256_to_u128, MathError,
 };
 
+// ── Immutable curve logic ────────────────────────────────────────────────────
+//
+// The following constants encode the CBE bonding curve execution rules as
+// defined in "CBE Bonding Curve — Rust Implementation Specification" sections
+// 2, 3, and 5.  They are IMMUTABLE after genesis: changing any of these values
+// constitutes a hard fork and requires an explicit protocol upgrade transaction.
+//
+// Do NOT modify these constants in a regular code change.  Any PR that touches
+// them must carry a protocol-upgrade migration path and be reviewed accordingly.
+
 pub const SCALE: u128 = TOKEN_SCALE_18;
 pub const SLOPE_DEN: u128 = 100_000_000_000_000;
 
-/// Graduation threshold: reserve_balance must reach this value (in atomic units).
-/// Team decision: GRAD_THRESHOLD = 2_745_966 * SCALE
-/// Used by the economic computation in #1930/#1931; allow until those land.
-#[allow(dead_code)]
+/// Graduation threshold (atomic SOV units).  Locked by team decision.
+/// Changing this value is a hard fork.
 pub const GRAD_THRESHOLD: u128 = 2_745_966 * SCALE;
+
 pub const BAND_COUNT: usize = 5;
+
+/// Per-transaction gross-SOV cap.  Changing this value is a hard fork.
 pub const MAX_GROSS_SOV_PER_TX: u128 = 1_000_000_000_000_000_000_000_000;
+
+/// Per-transaction minted-supply cap.  Changing this value is a hard fork.
 pub const MAX_DELTA_S_PER_TX: u128 = 100_000_000_000 * SCALE;
+
 pub const MAX_SUPPLY: u128 = CBE_MAX_SUPPLY;
 
+/// Band price anchors — part of the immutable curve shape.
 pub const P_START_0: u128 = 313_345_700_000_000;
 pub const P_START_1: u128 = 413_345_700_000_000;
 pub const P_START_2: u128 = 813_345_700_000_000;
 pub const P_START_3: u128 = 1_713_345_700_000_000;
 pub const P_START_4: u128 = 2_713_345_700_000_000;
 
+// ── Upgrade-gated curve parameters ──────────────────────────────────────────
+//
+// The following parameters CAN change via a protocol upgrade transaction but
+// must NEVER be mutated ad-hoc at runtime or by background services.
+//
+// sell_enabled: bool   — stored in BondingCurveEconomicState; starts false at
+//                        genesis; may be set to true by a future upgrade tx.
+//                        The executor gate is in apply_canonical_bonding_curve_tx
+//                        (step 5).  No runtime service may set this flag.
+//
+// ALPHA / RHO split (20 / 80): encoded directly in apply_buy_cbe as
+//   reserve_credit = amount_in * 20 / 100
+//   treasury_credit = amount_in - reserve_credit
+// Changing the split ratio requires a protocol upgrade.
+//
+/// Canonical band table for the bonding curve.
+///
+/// Although defined here, BANDS (and BAND_COUNT, MAX_SUPPLY, SLOPE_DEN, and
+/// the P_START_* anchors) are part of the immutable curve shape defined
+/// above.  Changing any of these values is a hard fork and requires an
+/// explicit protocol upgrade transaction.
 pub const BANDS: [Band; BAND_COUNT] = [
     Band {
         index: 0,

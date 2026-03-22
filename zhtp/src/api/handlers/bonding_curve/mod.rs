@@ -464,19 +464,6 @@ impl CurveHandler {
 
         let mut blockchain = self.blockchain.write().await;
 
-        // Fetch latest oracle price before mutably borrowing the token.
-        // Used by check_graduation_with_oracle for USD-threshold tokens.
-        let current_epoch = blockchain.oracle_state.epoch_id(timestamp);
-        let epoch_duration = blockchain.oracle_state.config.epoch_duration_secs;
-        let oracle_price_data = blockchain
-            .oracle_state
-            .latest_finalized_price_at_or_before(current_epoch)
-            .map(|fp| {
-                // Approximate price timestamp as the end of the epoch it was finalized in.
-                let price_ts = (fp.epoch_id + 1).saturating_mul(epoch_duration);
-                (fp.sov_usd_price as u128, price_ts)
-            });
-
         let token = blockchain
             .bonding_curve_registry
             .get_mut(&token_id)
@@ -487,25 +474,8 @@ impl CurveHandler {
             .buy(buyer, buy_req.stable_amount, block_height, timestamp)
             .map_err(|e| anyhow::anyhow!("Buy failed: {}", e))?;
 
-        // For USD-threshold tokens, update graduation state with the latest oracle price.
-        // This sets graduation_pending_since_block when threshold is first met.
-        if let Some((sov_usd_price, price_ts)) = oracle_price_data {
-            token.check_graduation_with_oracle(sov_usd_price, price_ts, block_height, timestamp);
-        }
-
-        // Check for automatic graduation
-        let graduated = if token.can_graduate(timestamp, block_height) {
-            match token.graduate(timestamp, block_height) {
-                Ok(grad_event) => {
-                    info!("Token {} auto-graduated", hex::encode(&token_id[..8]));
-                    // Emit graduation event (in production, this would be indexed)
-                    Some(grad_event)
-                }
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
+        // Graduation is handled exclusively by the canonical block executor (apply_buy_cbe).
+        // This API path operates on the legacy registry only and must not trigger graduation.
 
         drop(blockchain);
 
@@ -514,7 +484,6 @@ impl CurveHandler {
             "token_id": buy_req.token_id,
             "stable_paid": buy_req.stable_amount,
             "tokens_received": token_amount,
-            "auto_graduated": graduated.is_some(),
             "tx_status": "confirmed"
         }))
     }
