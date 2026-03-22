@@ -216,9 +216,22 @@ fn validate_transfer_stateful(
     tx: &Transaction,
     store: &dyn BlockchainStore,
 ) -> TxValidateResult<()> {
+    use crate::storage::derive_address_from_public_key;
+    use crate::transaction::signing::verify_transaction_signature;
+
+    // Verify the transaction signature is cryptographically valid.
+    let sig_valid = verify_transaction_signature(tx, &tx.signature.public_key)
+        .map_err(|_| TxValidateError::InvalidSignature)?;
+    if !sig_valid {
+        return Err(TxValidateError::SignatureVerificationFailed);
+    }
+
+    // Derive the address corresponding to the signing key once — all inputs
+    // in a single-signer Transfer must be owned by the same address.
+    let signer_address = derive_address_from_public_key(tx.signature.public_key.as_bytes());
+
     let mut total_input: u64 = 0;
 
-    // Verify all inputs exist and are unspent
     for input in &tx.inputs {
         let outpoint = OutPoint::new(
             TxHash::new(input.previous_output.as_array()),
@@ -230,16 +243,17 @@ fn validate_transfer_stateful(
             .map_err(|e| TxValidateError::StorageError(e.to_string()))?
             .ok_or_else(|| TxValidateError::UtxoNotFound(outpoint.clone()))?;
 
-        total_input = total_input.saturating_add(utxo.amount);
+        // Confirm the signer owns this UTXO.
+        if utxo.owner != signer_address {
+            return Err(TxValidateError::UnauthorizedSpend(outpoint));
+        }
 
-        // TODO: Verify signature matches UTXO owner
-        // This requires access to the signature verification logic
+        total_input = total_input.saturating_add(utxo.amount);
     }
 
     // Note: Cannot calculate total_output from TransactionOutput because it uses
     // ZK commitments instead of plain amounts. Value conservation is verified
     // during execution when UTXOs are actually created.
-    //
     // We only verify that total input covers the fee.
     if total_input < tx.fee {
         return Err(TxValidateError::InsufficientInputs {
