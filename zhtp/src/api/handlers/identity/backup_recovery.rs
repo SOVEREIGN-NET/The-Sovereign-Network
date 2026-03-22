@@ -886,6 +886,8 @@ pub struct MigrateIdentityRequest {
     pub display_name: String,
     /// New Dilithium5 public key (hex encoded, derived from seed on client)
     pub new_public_key: String,
+    /// Kyber1024 public key (hex encoded, freshly generated on recovery — not derived from seed)
+    pub kyber_public_key: String,
     /// Device ID
     pub device_id: String,
     /// Timestamp for signature freshness (unix seconds)
@@ -1588,6 +1590,7 @@ pub async fn handle_migrate_identity(
     let identity_record = serde_json::json!({
         "did": new_did.clone(),
         "public_key": hex::encode(&new_public_key_bytes),
+        "kyber_public_key": req.kyber_public_key.clone(),
         "display_name": display_name.clone(),
         "device_id": req.device_id.clone(),
         "identity_type": "Human",
@@ -1916,6 +1919,7 @@ mod tests {
         let req = MigrateIdentityRequest {
             display_name: "alice".to_string(),
             new_public_key: hex::encode(vec![2u8; 2592]),
+            kyber_public_key: hex::encode(vec![0u8; 1568]),
             device_id: "device-new".to_string(),
             timestamp,
             // Invalid signature to force Unauthorized
@@ -1968,6 +1972,7 @@ mod tests {
         let req = MigrateIdentityRequest {
             display_name: "alice".to_string(),
             new_public_key: hex::encode(new_pk_bytes),
+            kyber_public_key: hex::encode(vec![0u8; 1568]),
             device_id: "device-new".to_string(),
             timestamp,
             signature: hex::encode(signature_bytes),
@@ -2014,6 +2019,7 @@ mod tests {
                 display_name: "alice".to_string(),
                 // Invalid length to force failure and record rate limit attempts.
                 new_public_key: hex::encode(vec![50 + i; 10]),
+                kyber_public_key: hex::encode(vec![0u8; 1568]),
                 device_id: "device-new".to_string(),
                 timestamp: 1234567890u64,
                 signature: hex::encode(vec![0u8; 4595]),
