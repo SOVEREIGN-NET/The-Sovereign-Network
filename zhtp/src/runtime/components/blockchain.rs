@@ -36,8 +36,6 @@ pub struct BlockchainComponent {
     /// This is IMMUTABLE and set at construction time based on configuration
     /// The role cannot change after the component is created
     node_role: Arc<NodeRole>,
-    /// Auto-graduation service for bonding curve tokens
-    auto_graduation_service: Arc<RwLock<Option<crate::runtime::services::AutoGraduationService>>>,
 }
 
 impl BlockchainComponent {
@@ -59,7 +57,6 @@ impl BlockchainComponent {
             node_identity: Arc::new(RwLock::new(None)),
             is_edge_node: false,
             node_role: Arc::new(node_role),
-            auto_graduation_service: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -87,7 +84,6 @@ impl BlockchainComponent {
             node_identity: Arc::new(RwLock::new(None)),
             is_edge_node: false,
             node_role: Arc::new(node_role),
-            auto_graduation_service: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -111,7 +107,6 @@ impl BlockchainComponent {
             node_identity: Arc::new(RwLock::new(None)),
             is_edge_node: false,
             node_role: Arc::new(node_role),
-            auto_graduation_service: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -138,7 +133,6 @@ impl BlockchainComponent {
             node_identity: Arc::new(RwLock::new(None)),
             is_edge_node: false,
             node_role: Arc::new(node_role),
-            auto_graduation_service: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -765,21 +759,6 @@ impl Component for BlockchainComponent {
             }
         }
 
-        // Start auto-graduation service for bonding curve tokens
-        // This runs on all node types, not just validators
-        if let Ok(blockchain_arc) =
-            crate::runtime::blockchain_provider::get_global_blockchain().await
-        {
-            let auto_grad_service =
-                crate::runtime::services::AutoGraduationService::with_defaults(blockchain_arc);
-            if let Err(e) = auto_grad_service.start().await {
-                warn!("Failed to start auto-graduation service: {}", e);
-            } else {
-                info!("✓ Auto-graduation service started");
-                *self.auto_graduation_service.write().await = Some(auto_grad_service);
-            }
-        }
-
         // Run periodic gap-fill sync for joiners and non-mining nodes.
         // The bootstrap leader with local chain data should not run this loop.
         let should_run_peer_sync_loop = Self::should_run_peer_sync_loop(
@@ -896,15 +875,6 @@ impl Component for BlockchainComponent {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        // Stop auto-graduation service
-        if let Some(service) = self.auto_graduation_service.write().await.take() {
-            if let Err(e) = service.stop().await {
-                warn!("Error stopping auto-graduation service: {}", e);
-            } else {
-                info!("Auto-graduation service stopped");
-            }
-        }
-
         *self.blockchain.write().await = None;
         *self.start_time.write().await = None;
         *self.status.write().await = ComponentStatus::Stopped;
@@ -917,11 +887,6 @@ impl Component for BlockchainComponent {
 
         if let Some(handle) = self.mining_handle.write().await.take() {
             handle.abort();
-        }
-
-        // Stop auto-graduation service
-        if let Some(service) = self.auto_graduation_service.write().await.take() {
-            let _ = service.stop().await;
         }
 
         *self.blockchain.write().await = None;
