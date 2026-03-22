@@ -228,7 +228,7 @@ fn validate_transfer_stateful(
 
     // Derive the address corresponding to the signing key once — all inputs
     // in a single-signer Transfer must be owned by the same address.
-    let signer_address = derive_address_from_public_key(tx.signature.public_key.as_bytes());
+    let signer_address = derive_address_from_public_key(&tx.signature.public_key.as_bytes());
 
     let mut total_input: u64 = 0;
 
