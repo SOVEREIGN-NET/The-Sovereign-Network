@@ -1878,25 +1878,144 @@ impl BlockExecutor {
             )));
         }
 
-        // ── 10. Economic computation ──────────────────────────────────────────
-        // Deferred to #1930 (BUY_CBE) and #1931 (SELL_CBE).
-        // Pre-validation is complete; state mutation (econ + account + nonce
-        // increment) will be added atomically once the economic computation
-        // issues land.  Any failure above results in zero state mutation.
-        //
-        // When #1930/#1931 land, replace this block with:
-        //   - fee deduction (balance_sov -= fee; dao_treasury_sov += fee)
-        //   - reserve/treasury split using RHO
-        //   - mint/burn computation via canonical.rs functions
-        //   - slippage check (max_price / min_payout)
-        //   - graduation trigger when reserve_balance >= GRAD_THRESHOLD
-        //   - put_cbe_economic_state + put_cbe_account_state (with nonce++)
-        Err(TxApplyError::InvalidType(format!(
-            "Canonical CBE economic computation not yet implemented (#1930/#1931): \
-             pre-validation passed for {} tx from sender={}, nonce={provided_nonce}",
-            if is_buy { "BUY_CBE" } else { "SELL_CBE" },
-            hex::encode(sender),
-        )))
+        // ── 10. Economic computation ─────────────────────────────────────────
+        // Implements #1930 (BUY_CBE) and #1931 (SELL_CBE).
+        // All mutations below are atomic: either every put succeeds or the
+        // function returns Err before touching sled.
+        use crate::contracts::bonding_curve::canonical::{
+            mint_with_reserve, payout_for_burn, GRAD_THRESHOLD, MAX_GROSS_SOV_PER_TX,
+        };
+        use primitive_types::U256;
+
+        let mut econ = econ;
+        let mut account = account;
+
+        // Increment nonce now (shared by both paths).
+        account.next_nonce = lib_types::Nonce48::from_u64(provided_nonce + 1)
+            .ok_or_else(|| TxApplyError::InvalidType("nonce overflow".to_string()))?;
+
+        if is_buy {
+            let max_price = match &curve_tx {
+                CanonicalBondingCurveTx::Buy(t) => t.max_price,
+                _ => unreachable!(),
+            };
+
+            if amount_in_or_cbe > MAX_GROSS_SOV_PER_TX {
+                return Err(TxApplyError::InvalidType(format!(
+                    "BUY_CBE: amount_in {amount_in_or_cbe} exceeds MAX_GROSS_SOV_PER_TX"
+                )));
+            }
+
+            // Reserve / treasury split: 20 % to reserve, remainder to treasury.
+            // Integer division floors treasury; remainder assigned to reserve so
+            // reserve_credit + treasury_credit == amount_in exactly.
+            let treasury_credit = amount_in_or_cbe * 80 / 100;
+            let reserve_credit = amount_in_or_cbe - treasury_credit;
+
+            // Multi-band mint from reserve credit only.
+            let delta_s = mint_with_reserve(reserve_credit, econ.s_c)
+                .map_err(|e| TxApplyError::InvalidType(format!("BUY_CBE: mint overflow: {e:?}")))?;
+
+            if delta_s == 0 {
+                return Err(TxApplyError::InvalidType(
+                    "BUY_CBE: zero tokens minted for given reserve credit".to_string(),
+                ));
+            }
+
+            // Slippage: buyer_effective = amount_in * SCALE / delta_s  >?  max_price
+            // Use U256 to avoid overflow (amount_in * SCALE can exceed u128::MAX).
+            let scale_u256 = U256::from(crate::contracts::bonding_curve::canonical::SCALE);
+            let effective = U256::from(amount_in_or_cbe)
+                .checked_mul(scale_u256)
+                .expect("amount_in * SCALE fits U256")
+                / U256::from(delta_s);
+            if effective > U256::from(max_price) {
+                return Err(TxApplyError::InvalidType(format!(
+                    "BUY_CBE: slippage — effective price {effective} > max_price {max_price}"
+                )));
+            }
+
+            // Atomic state commit.
+            econ.s_c = econ.s_c.checked_add(delta_s)
+                .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: s_c overflow".to_string()))?;
+            econ.reserve_balance = econ.reserve_balance.checked_add(reserve_credit)
+                .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: reserve overflow".to_string()))?;
+            econ.treasury_balance = econ.treasury_balance.checked_add(treasury_credit)
+                .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: treasury overflow".to_string()))?;
+
+            account.balance_sov = account.balance_sov.checked_sub(amount_in_or_cbe)
+                .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: SOV balance underflow".to_string()))?;
+            account.balance_cbe = account.balance_cbe.checked_add(delta_s)
+                .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: CBE balance overflow".to_string()))?;
+
+            // Graduation check.
+            if econ.reserve_balance >= GRAD_THRESHOLD {
+                econ.graduated = true;
+            }
+
+            mutator.put_cbe_economic_state(&econ)?;
+            mutator.put_cbe_account_state(&sender, &account)?;
+
+            Ok(CanonicalBondingCurveOutcome::Buy(BondingCurveBuyOutcome {
+                token_id: [0xCB; 32],
+                buyer: sender,
+                stable_spent: amount_in_or_cbe,
+                tokens_received: delta_s,
+            }))
+        } else {
+            let min_payout = match &curve_tx {
+                CanonicalBondingCurveTx::Sell(t) => t.min_payout,
+                _ => unreachable!(),
+            };
+
+            // Redemption value from exact cost integration.
+            let sov_out = payout_for_burn(amount_in_or_cbe, econ.s_c)
+                .map_err(|e| {
+                    TxApplyError::InvalidType(format!("SELL_CBE: payout_for_burn failed: {e:?}"))
+                })?;
+
+            if sov_out == 0 {
+                return Err(TxApplyError::InvalidType(
+                    "SELL_CBE: zero payout for given burn amount".to_string(),
+                ));
+            }
+
+            // Slippage floor.
+            if sov_out < min_payout {
+                return Err(TxApplyError::InvalidType(format!(
+                    "SELL_CBE: payout {sov_out} < min_payout {min_payout}"
+                )));
+            }
+
+            // Solvency check against reserve only (treasury_locked out of scope on this branch).
+            if econ.reserve_balance < sov_out {
+                return Err(TxApplyError::InvalidType(format!(
+                    "SELL_CBE: insolvent — reserve_balance {} < sov_out {sov_out}",
+                    econ.reserve_balance
+                )));
+            }
+
+            // Atomic state commit.
+            econ.s_c = econ.s_c.checked_sub(amount_in_or_cbe)
+                .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: s_c underflow".to_string()))?;
+            econ.reserve_balance = econ.reserve_balance.checked_sub(sov_out)
+                .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: reserve underflow".to_string()))?;
+
+            account.balance_cbe = account.balance_cbe.checked_sub(amount_in_or_cbe)
+                .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: CBE balance underflow".to_string()))?;
+            account.balance_sov = account.balance_sov.checked_add(sov_out)
+                .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: SOV balance overflow".to_string()))?;
+
+            mutator.put_cbe_economic_state(&econ)?;
+            mutator.put_cbe_account_state(&sender, &account)?;
+
+            Ok(CanonicalBondingCurveOutcome::Sell(BondingCurveSellOutcome {
+                token_id: [0xCB; 32],
+                seller: sender,
+                tokens_sold: amount_in_or_cbe,
+                stable_received: sov_out,
+            }))
+        }
     }
 
     fn canonical_bonding_curve_envelope_from_transaction(
@@ -3974,7 +4093,8 @@ mod tests {
     }
 
     #[test]
-    fn test_canonical_bonding_curve_lane_parses_buy_payload_and_rejects_as_not_wired() {
+    fn test_canonical_bonding_curve_buy_executes_economic_computation() {
+        use crate::contracts::bonding_curve::canonical::SCALE;
         use crate::execution::tx_apply::StateMutator;
         use crate::transaction::{
             encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
@@ -3983,8 +4103,7 @@ mod tests {
 
         let store = create_test_store();
 
-        // Block 0: seed sender account so the state is committed to the sled tree.
-        // Writes go into the pending batch and only become readable after commit_block.
+        // Block 0: seed the sender with SOV so pre-validation passes.
         store.begin_block(0).unwrap();
         {
             let seed = StateMutator::new(store.as_ref());
@@ -3993,7 +4112,7 @@ mod tests {
                 &BondingCurveAccountState {
                     key_id: [0x11; 32],
                     balance_cbe: 0,
-                    balance_sov: 10_000,
+                    balance_sov: 10_000 * SCALE, // plenty of SOV
                     next_nonce: Nonce48::from_u64(0).unwrap(),
                 },
             )
@@ -4001,32 +4120,453 @@ mod tests {
         }
         store.commit_block().unwrap();
 
-        // Block 1: the actual execution test (seed is now in the committed tree).
+        // Block 1: actual execution.
         store.begin_block(1).unwrap();
         let mutator = StateMutator::new(store.as_ref());
         let executor = BlockExecutor::with_store(store.clone());
 
+        let amount_in = 1_000 * SCALE; // generous buy amount
         let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
             BondingCurveBuyTx {
                 action: BONDING_CURVE_BUY_ACTION,
                 chain_id: 0x03,
-                // nonce=0 and expected_s_c=0 match the zero-default state so that
-                // pre-validation passes and we reach the economic computation stub.
                 nonce: Nonce48::from_u64(0).unwrap(),
                 sender: [0x11; 32],
-                amount_in: 1000,
-                max_price: 2000,
+                amount_in,
+                max_price: u128::MAX, // no slippage restriction
+                expected_s_c: 0,
+            },
+        ));
+
+        let outcome = executor
+            .apply_canonical_bonding_curve_tx(&mutator, &payload)
+            .expect("BUY_CBE economic computation should succeed");
+
+        // The outcome return value is readable immediately (no sled involved).
+        let delta_s = match outcome {
+            CanonicalBondingCurveOutcome::Buy(ref o) => {
+                assert_eq!(o.stable_spent, amount_in);
+                assert!(o.tokens_received > 0, "buyer must receive CBE tokens");
+                o.tokens_received
+            }
+            CanonicalBondingCurveOutcome::Sell(_) => panic!("expected Buy outcome"),
+        };
+
+        // put_cbe_economic_state writes to the pending sled batch; commit to flush.
+        drop(mutator);
+        store.commit_block().unwrap();
+
+        // Read from the committed tree.
+        let econ = store.get_cbe_economic_state().unwrap();
+        assert_eq!(econ.s_c, delta_s, "supply must equal minted tokens");
+        assert!(econ.reserve_balance > 0, "reserve must be credited");
+        assert!(econ.treasury_balance > 0, "treasury must be credited");
+        assert_eq!(
+            econ.reserve_balance + econ.treasury_balance,
+            amount_in,
+            "reserve + treasury must equal amount_in exactly"
+        );
+
+        // Account state: SOV debited, CBE credited, nonce incremented.
+        let acc = store.get_cbe_account_state(&[0x11; 32]).unwrap().unwrap();
+        assert_eq!(acc.balance_sov, 10_000 * SCALE - amount_in);
+        assert_eq!(acc.balance_cbe, delta_s);
+        assert_eq!(acc.next_nonce.to_u64(), 1);
+    }
+
+    #[test]
+    fn test_canonical_bonding_curve_buy_rejects_slippage_violation() {
+        use crate::contracts::bonding_curve::canonical::SCALE;
+        use crate::execution::tx_apply::StateMutator;
+        use crate::transaction::{
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
+        };
+        use lib_types::{BondingCurveAccountState, BondingCurveBuyTx, Nonce48};
+
+        let store = create_test_store();
+
+        store.begin_block(0).unwrap();
+        {
+            let seed = StateMutator::new(store.as_ref());
+            seed.put_cbe_account_state(
+                &[0x22; 32],
+                &BondingCurveAccountState {
+                    key_id: [0x22; 32],
+                    balance_cbe: 0,
+                    balance_sov: 10_000 * SCALE,
+                    next_nonce: Nonce48::from_u64(0).unwrap(),
+                },
+            )
+            .unwrap();
+        }
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let executor = BlockExecutor::with_store(store.clone());
+
+        // max_price = 1 (1 atomic SOV per CBE) is impossibly cheap → slippage rejection.
+        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
+            BondingCurveBuyTx {
+                action: BONDING_CURVE_BUY_ACTION,
+                chain_id: 0x03,
+                nonce: Nonce48::from_u64(0).unwrap(),
+                sender: [0x22; 32],
+                amount_in: 1_000 * SCALE,
+                max_price: 1, // absurdly tight slippage cap
                 expected_s_c: 0,
             },
         ));
 
         let err = executor
             .apply_canonical_bonding_curve_tx(&mutator, &payload)
-            .expect_err("canonical lane should reject until economic computation is implemented");
+            .expect_err("slippage violation must be rejected");
 
-        let msg = err.to_string();
-        assert!(msg.contains("Canonical CBE economic computation not yet implemented"));
-        assert!(msg.contains("BUY_CBE"));
+        assert!(
+            err.to_string().contains("slippage"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_canonical_bonding_curve_buy_triggers_graduation() {
+        use crate::contracts::bonding_curve::canonical::{GRAD_THRESHOLD, SCALE};
+        use crate::execution::tx_apply::StateMutator;
+        use crate::transaction::{
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
+        };
+        use lib_types::{BondingCurveAccountState, BondingCurveBuyTx, BondingCurveEconomicState, Nonce48};
+
+        let store = create_test_store();
+
+        // Seed: place the reserve just one step below the graduation threshold.
+        // reserve_credit = amount_in * 20/100; so amount_in that tips = (GRAD_THRESHOLD - (threshold-1)) * 100 / 20
+        // Easiest: seed economic state with reserve = GRAD_THRESHOLD - 1.
+        store.begin_block(0).unwrap();
+        {
+            let seed = StateMutator::new(store.as_ref());
+            seed.put_cbe_account_state(
+                &[0x33; 32],
+                &BondingCurveAccountState {
+                    key_id: [0x33; 32],
+                    balance_cbe: 0,
+                    balance_sov: 100_000 * SCALE,
+                    next_nonce: Nonce48::from_u64(0).unwrap(),
+                },
+            )
+            .unwrap();
+            // Pre-load reserve so the next buy tips graduation.
+            // reserve_credit of a 100 * SCALE buy ≈ 20 * SCALE; GRAD_THRESHOLD ≈ 2_745_966 * SCALE.
+            // Use seeded econ state with reserve = GRAD_THRESHOLD - 1.
+            seed.put_cbe_economic_state(&BondingCurveEconomicState {
+                s_c: 0,
+                reserve_balance: GRAD_THRESHOLD - 1,
+                treasury_balance: (GRAD_THRESHOLD - 1) * 4, // 80% split equivalent
+                graduated: false,
+                sell_enabled: false,
+            })
+            .unwrap();
+        }
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let executor = BlockExecutor::with_store(store.clone());
+
+        // Even a tiny buy (amount_in = 5) yields reserve_credit = 1, tipping GRAD_THRESHOLD.
+        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
+            BondingCurveBuyTx {
+                action: BONDING_CURVE_BUY_ACTION,
+                chain_id: 0x03,
+                nonce: Nonce48::from_u64(0).unwrap(),
+                sender: [0x33; 32],
+                amount_in: 100 * SCALE,
+                max_price: u128::MAX,
+                expected_s_c: 0,
+            },
+        ));
+
+        executor
+            .apply_canonical_bonding_curve_tx(&mutator, &payload)
+            .expect("graduation-triggering buy must succeed");
+
+        drop(mutator);
+        store.commit_block().unwrap();
+
+        let econ = store.get_cbe_economic_state().unwrap();
+        assert!(
+            econ.graduated,
+            "curve must be marked graduated once reserve >= GRAD_THRESHOLD"
+        );
+        assert!(econ.reserve_balance >= GRAD_THRESHOLD);
+    }
+
+    #[test]
+    fn test_canonical_bonding_curve_sell_executes_economic_computation() {
+        use crate::contracts::bonding_curve::canonical::SCALE;
+        use crate::execution::tx_apply::StateMutator;
+        use crate::transaction::{
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
+            BONDING_CURVE_SELL_ACTION,
+        };
+        use lib_types::{BondingCurveAccountState, BondingCurveBuyTx, BondingCurveSellTx, Nonce48};
+
+        let store = create_test_store();
+
+        // Block 0: seed SOV so we can buy first.
+        store.begin_block(0).unwrap();
+        {
+            let seed = StateMutator::new(store.as_ref());
+            seed.put_cbe_account_state(
+                &[0x44; 32],
+                &BondingCurveAccountState {
+                    key_id: [0x44; 32],
+                    balance_cbe: 0,
+                    balance_sov: 10_000 * SCALE,
+                    next_nonce: Nonce48::from_u64(0).unwrap(),
+                },
+            )
+            .unwrap();
+        }
+        store.commit_block().unwrap();
+
+        // Block 1: BUY to acquire CBE.
+        let amount_in = 1_000 * SCALE;
+        store.begin_block(1).unwrap();
+        let (delta_s, reserve_after_buy) = {
+            let mutator = StateMutator::new(store.as_ref());
+            let executor = BlockExecutor::with_store(store.clone());
+            let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
+                BondingCurveBuyTx {
+                    action: BONDING_CURVE_BUY_ACTION,
+                    chain_id: 0x03,
+                    nonce: Nonce48::from_u64(0).unwrap(),
+                    sender: [0x44; 32],
+                    amount_in,
+                    max_price: u128::MAX,
+                    expected_s_c: 0,
+                },
+            ));
+            let outcome = executor
+                .apply_canonical_bonding_curve_tx(&mutator, &payload)
+                .expect("BUY must succeed");
+            let delta_s = match outcome {
+                CanonicalBondingCurveOutcome::Buy(ref o) => o.tokens_received,
+                _ => panic!("expected Buy"),
+            };
+            drop(mutator);
+            store.commit_block().unwrap();
+            let econ = store.get_cbe_economic_state().unwrap();
+            (delta_s, econ.reserve_balance)
+        };
+
+        // Block 2: enable selling (protocol flag).
+        store.begin_block(2).unwrap();
+        {
+            let seed = StateMutator::new(store.as_ref());
+            let mut econ = store.get_cbe_economic_state().unwrap();
+            econ.sell_enabled = true;
+            seed.put_cbe_economic_state(&econ).unwrap();
+        }
+        store.commit_block().unwrap();
+
+        // Block 3: SELL all acquired CBE back.
+        store.begin_block(3).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let executor = BlockExecutor::with_store(store.clone());
+
+        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(
+            BondingCurveSellTx {
+                action: BONDING_CURVE_SELL_ACTION,
+                chain_id: 0x03,
+                nonce: Nonce48::from_u64(1).unwrap(),
+                sender: [0x44; 32],
+                amount_cbe: delta_s,
+                min_payout: 0, // no slippage floor
+                expected_s_c: delta_s,
+            },
+        ));
+
+        let outcome = executor
+            .apply_canonical_bonding_curve_tx(&mutator, &payload)
+            .expect("SELL_CBE economic computation should succeed");
+
+        let sov_out = match outcome {
+            CanonicalBondingCurveOutcome::Sell(ref o) => {
+                assert_eq!(o.tokens_sold, delta_s);
+                assert!(o.stable_received > 0, "seller must receive SOV");
+                o.stable_received
+            }
+            CanonicalBondingCurveOutcome::Buy(_) => panic!("expected Sell outcome"),
+        };
+
+        drop(mutator);
+        store.commit_block().unwrap();
+
+        let econ = store.get_cbe_economic_state().unwrap();
+        assert_eq!(econ.s_c, 0, "all CBE burned, supply must return to 0");
+        assert_eq!(econ.reserve_balance, reserve_after_buy - sov_out);
+
+        let acc = store.get_cbe_account_state(&[0x44; 32]).unwrap().unwrap();
+        assert_eq!(acc.balance_cbe, 0, "all CBE must be consumed");
+        assert_eq!(acc.balance_sov, 10_000 * SCALE - amount_in + sov_out);
+        assert_eq!(acc.next_nonce.to_u64(), 2);
+    }
+
+    #[test]
+    fn test_canonical_bonding_curve_sell_rejects_insufficient_reserve() {
+        use crate::contracts::bonding_curve::canonical::SCALE;
+        use crate::execution::tx_apply::StateMutator;
+        use crate::transaction::{
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_SELL_ACTION,
+        };
+        use lib_types::{BondingCurveAccountState, BondingCurveEconomicState, BondingCurveSellTx, Nonce48};
+
+        let store = create_test_store();
+
+        // Seed: account has CBE but reserve is empty.
+        let cbe_amount = 100 * SCALE;
+        store.begin_block(0).unwrap();
+        {
+            let seed = StateMutator::new(store.as_ref());
+            seed.put_cbe_account_state(
+                &[0x55; 32],
+                &BondingCurveAccountState {
+                    key_id: [0x55; 32],
+                    balance_cbe: cbe_amount,
+                    balance_sov: 0,
+                    next_nonce: Nonce48::from_u64(0).unwrap(),
+                },
+            )
+            .unwrap();
+            // s_c must equal cbe_amount so payout_for_burn can compute a non-zero sov_out.
+            // sell_enabled=true so the solvency check (not the flag) is what triggers the error.
+            seed.put_cbe_economic_state(&BondingCurveEconomicState {
+                s_c: cbe_amount,
+                reserve_balance: 0, // empty — solvency check must fail
+                treasury_balance: 0,
+                graduated: false,
+                sell_enabled: true,
+            })
+            .unwrap();
+        }
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let executor = BlockExecutor::with_store(store.clone());
+
+        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(
+            BondingCurveSellTx {
+                action: BONDING_CURVE_SELL_ACTION,
+                chain_id: 0x03,
+                nonce: Nonce48::from_u64(0).unwrap(),
+                sender: [0x55; 32],
+                amount_cbe: cbe_amount,
+                min_payout: 0,
+                expected_s_c: cbe_amount,
+            },
+        ));
+
+        let err = executor
+            .apply_canonical_bonding_curve_tx(&mutator, &payload)
+            .expect_err("sell against empty reserve must fail");
+
+        assert!(
+            err.to_string().contains("reserve") || err.to_string().contains("Insolvent"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_canonical_bonding_curve_sell_rejects_min_payout_violation() {
+        use crate::contracts::bonding_curve::canonical::SCALE;
+        use crate::execution::tx_apply::StateMutator;
+        use crate::transaction::{
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
+            BONDING_CURVE_SELL_ACTION,
+        };
+        use lib_types::{BondingCurveAccountState, BondingCurveBuyTx, BondingCurveSellTx, Nonce48};
+
+        let store = create_test_store();
+
+        // Block 0: seed and buy some CBE.
+        store.begin_block(0).unwrap();
+        {
+            let seed = StateMutator::new(store.as_ref());
+            seed.put_cbe_account_state(
+                &[0x66; 32],
+                &BondingCurveAccountState {
+                    key_id: [0x66; 32],
+                    balance_cbe: 0,
+                    balance_sov: 10_000 * SCALE,
+                    next_nonce: Nonce48::from_u64(0).unwrap(),
+                },
+            )
+            .unwrap();
+        }
+        store.commit_block().unwrap();
+
+        store.begin_block(1).unwrap();
+        let delta_s = {
+            let mutator = StateMutator::new(store.as_ref());
+            let executor = BlockExecutor::with_store(store.clone());
+            let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
+                BondingCurveBuyTx {
+                    action: BONDING_CURVE_BUY_ACTION,
+                    chain_id: 0x03,
+                    nonce: Nonce48::from_u64(0).unwrap(),
+                    sender: [0x66; 32],
+                    amount_in: 1_000 * SCALE,
+                    max_price: u128::MAX,
+                    expected_s_c: 0,
+                },
+            ));
+            let outcome = executor
+                .apply_canonical_bonding_curve_tx(&mutator, &payload)
+                .unwrap();
+            match outcome {
+                CanonicalBondingCurveOutcome::Buy(ref o) => o.tokens_received,
+                _ => panic!("expected Buy"),
+            }
+        };
+        store.commit_block().unwrap();
+
+        // Block 2: enable selling (protocol flag).
+        store.begin_block(2).unwrap();
+        {
+            let seed = StateMutator::new(store.as_ref());
+            let mut econ = store.get_cbe_economic_state().unwrap();
+            econ.sell_enabled = true;
+            seed.put_cbe_economic_state(&econ).unwrap();
+        }
+        store.commit_block().unwrap();
+
+        // Block 3: SELL with an impossibly high min_payout.
+        store.begin_block(3).unwrap();
+        let mutator = StateMutator::new(store.as_ref());
+        let executor = BlockExecutor::with_store(store.clone());
+
+        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(
+            BondingCurveSellTx {
+                action: BONDING_CURVE_SELL_ACTION,
+                chain_id: 0x03,
+                nonce: Nonce48::from_u64(1).unwrap(),
+                sender: [0x66; 32],
+                amount_cbe: delta_s,
+                min_payout: u128::MAX, // impossible floor
+                expected_s_c: delta_s,
+            },
+        ));
+
+        let err = executor
+            .apply_canonical_bonding_curve_tx(&mutator, &payload)
+            .expect_err("min_payout violation must be rejected");
+
+        assert!(
+            err.to_string().contains("slippage") || err.to_string().contains("min_payout"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -4134,7 +4674,7 @@ mod tests {
                 nonce: Nonce48::from_u64(0).unwrap(),
                 sender: signer.public_key.key_id,
                 amount_in: 1000,
-                max_price: 2000,
+                max_price: u128::MAX, // no slippage restriction — routing test only
                 expected_s_c: 0,
             },
         ));
@@ -4169,10 +4709,16 @@ mod tests {
             init_entity_registry_data: None,
         };
 
-        let err = executor
+        // Economics are now wired: the transaction should succeed end-to-end.
+        let outcome = executor
             .apply_transaction(&mutator, &tx, 0, 0)
-            .expect_err("canonical buy tx should reach memo lane and reject until economics are wired");
-        assert!(err.to_string().contains("Canonical CBE economic computation not yet implemented"));
+            .expect("canonical BUY_CBE should succeed once economic computation is wired");
+
+        // Routing verified: the tx reached the canonical memo lane and returned a Buy outcome.
+        assert!(
+            matches!(outcome, TxOutcome::BondingCurveBuy(_)),
+            "expected BondingCurveBuy outcome, got: {outcome:?}"
+        );
     }
 
     #[test]
