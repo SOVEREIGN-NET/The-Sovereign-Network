@@ -3216,7 +3216,17 @@ mod tests {
             inputs: vec![],
             outputs: vec![],
             fee,
-            signature: test_signature(&sender_key),
+            // Empty signature — simulates a true system-generated transaction.
+            // With is_system=true the validator skips sig-validation only when
+            // the signature bytes are empty (has_nonempty_sig=false); a non-empty
+            // dummy signature would trigger crypto verification and fire
+            // InvalidSignature before the fee check.
+            signature: Signature {
+                signature: vec![],
+                public_key: sender_key.clone(),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: 0,
+            },
             memo: vec![],
             identity_data: None,
             wallet_data: None,

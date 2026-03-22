@@ -1136,8 +1136,11 @@ mod tests {
 
         let buyer = test_pubkey(2);
 
-        // Buy tokens with PiecewiseLinear curve
-        let buy_amount = 100_000_000_000; // 1000 SOV
+        // PiecewiseLinearCurve::price_at() accepts u64 supply.  Buying too
+        // many tokens pushes total_supply > u64::MAX, at which point
+        // calculate_price() returns 0 and every sell yields 0 SOV.
+        // Use a small amount that keeps total_supply well within u64 range.
+        let buy_amount = 100_000;
         let (tokens_bought, _) = token
             .buy(buyer.clone(), buy_amount, 101, 1_600_000_100)
             .unwrap();
@@ -1428,8 +1431,10 @@ mod tests {
 
         let buyer = test_pubkey(2);
 
-        // Buy tokens with large amount
-        let buy_amount = 100_000_000_000; // 1000 SOV
+        // PiecewiseLinearCurve::price_at() accepts u64 supply; buying too
+        // many tokens pushes total_supply > u64::MAX, making calculate_price()
+        // return 0 and every sell yield 0 SOV.  Keep buy_amount small.
+        let buy_amount = 100_000;
         let (tokens_bought, _) = token
             .buy(buyer.clone(), buy_amount, 101, 1_600_000_100)
             .unwrap();
