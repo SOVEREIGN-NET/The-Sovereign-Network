@@ -37,7 +37,6 @@ pub mod transaction;
 pub mod types;
 pub mod utils;
 pub mod validation;
-pub mod vm;
 
 // Smart contracts submodule (feature-gated)
 #[cfg(feature = "contracts")]
