@@ -41,3 +41,101 @@ fn test_cbe_genesis_initialization() {
     assert_eq!(cbe.phase, Phase::Curve);
     assert!(cbe.sell_enabled);
 }
+
+// ============================================================================
+// Legacy Path Rejection Regression Test (#1945)
+// ============================================================================
+//
+// This test ensures the safety guard in blockchain.rs that rejects
+// BondingCurve* transactions at the process_token_transactions layer
+// remains in place. This prevents accidental re-enablement of the
+// legacy non-executor mutation path.
+
+#[test]
+fn test_legacy_bonding_curve_path_rejected() {
+    use lib_blockchain::block::Block;
+    use lib_blockchain::transaction::Transaction;
+    use lib_blockchain::types::TransactionType;
+    use lib_crypto::types::{PublicKey, Signature, SignatureAlgorithm};
+
+    let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+
+    // Create a minimal PublicKey
+    let fake_public_key = PublicKey {
+        dilithium_pk: vec![0u8; 32],
+        kyber_pk: vec![0u8; 32],
+        key_id: [0u8; 32],
+    };
+
+    // Create a minimal BondingCurveDeploy transaction
+    let fake_signature = Signature {
+        signature: vec![0u8; 64],
+        public_key: fake_public_key,
+        algorithm: SignatureAlgorithm::Dilithium5,
+        timestamp: 1000,
+    };
+
+    let bc_deploy_tx = Transaction {
+        version: 1,
+        chain_id: 0x03, // development
+        transaction_type: TransactionType::BondingCurveDeploy,
+        inputs: vec![],
+        outputs: vec![],
+        fee: 0,
+        signature: fake_signature,
+        memo: vec![],
+        identity_data: None,
+        wallet_data: None,
+        validator_data: None,
+        dao_proposal_data: None,
+        dao_vote_data: None,
+        dao_execution_data: None,
+        ubi_claim_data: None,
+        profit_declaration_data: None,
+        token_transfer_data: None,
+        token_mint_data: None,
+        governance_config_data: None,
+        bonding_curve_deploy_data: None,
+        bonding_curve_buy_data: None,
+        bonding_curve_sell_data: None,
+        bonding_curve_graduate_data: None,
+        oracle_committee_update_data: None,
+        oracle_config_update_data: None,
+        oracle_attestation_data: None,
+        cancel_oracle_update_data: None,
+        init_entity_registry_data: None,
+    };
+
+    let block = Block {
+        header: lib_blockchain::block::BlockHeader {
+            version: 1,
+            previous_block_hash: [0u8; 32].into(),
+            merkle_root: [0u8; 32].into(),
+            timestamp: 1000,
+            difficulty: Default::default(),
+            nonce: 0,
+            height: 1,
+            transaction_count: 1,
+            block_size: 0,
+            cumulative_difficulty: Default::default(),
+            fee_model_version: 1,
+            block_hash: [0u8; 32].into(),
+            state_root: [0u8; 32].into(),
+        },
+        transactions: vec![bc_deploy_tx],
+    };
+
+    // The legacy path should be rejected
+    let result = blockchain.process_token_transactions(&block);
+    assert!(
+        result.is_err(),
+        "Legacy BondingCurveDeploy path should be rejected"
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("legacy bonding-curve mutation path is disabled"),
+        "Error should mention legacy path disabled"
+    );
+}

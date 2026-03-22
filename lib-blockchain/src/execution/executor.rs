@@ -731,10 +731,10 @@ impl BlockExecutor {
                 }
                 TxOutcome::BondingCurveDeploy => {}
                 TxOutcome::BondingCurveBuy(_) => {
-                    summary.balance_changes += 2; // stablecoin debit + token credit
+                    summary.balance_changes += 2; // SOV debit (balance_sov) + token credit
                 }
                 TxOutcome::BondingCurveSell(_) => {
-                    summary.balance_changes += 2; // token debit + stablecoin credit
+                    summary.balance_changes += 2; // token debit + SOV credit (balance_sov)
                 }
                 TxOutcome::BondingCurveGraduate => {}
                 TxOutcome::OracleAttestation(_) => {
@@ -2077,9 +2077,8 @@ impl BlockExecutor {
             // BondingCurveDeploy and BondingCurveGraduate are wire-format legacy variants
             // retained for backward compatibility. There is only one CBE curve, initialized
             // at genesis; user-deployed curves are not supported. No-op in the executor.
-            TransactionType::BondingCurveDeploy | TransactionType::BondingCurveGraduate => {
-                Ok(TxOutcome::LegacySystem)
-            }
+            TransactionType::BondingCurveDeploy => Ok(TxOutcome::BondingCurveDeploy),
+            TransactionType::BondingCurveGraduate => Ok(TxOutcome::BondingCurveGraduate),
             TransactionType::BondingCurveBuy => {
                 // Type-mismatch guard: reject SELL payloads before full pre-validation.
                 if tx.memo.first() == Some(&BONDING_CURVE_SELL_ACTION) {
