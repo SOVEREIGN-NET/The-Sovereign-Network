@@ -4,6 +4,7 @@
 
 pub mod blockchain;
 pub mod bonding_curve;
+pub mod cbe;
 pub mod constants;
 pub mod crypto;
 pub mod dao;
@@ -30,6 +31,7 @@ pub mod zkp;
 
 pub use blockchain::BlockchainHandler;
 pub use bonding_curve::{CurveHandler, SwapHandler, ValuationHandler};
+pub use cbe::CbeHandler;
 pub use crypto::CryptoHandler;
 pub use dao::DaoHandler;
 pub use dht::DhtHandler;

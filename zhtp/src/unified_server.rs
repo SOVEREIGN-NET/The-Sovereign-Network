@@ -64,6 +64,7 @@ use crate::api::handlers::{
     Web4Handler,
     DnsHandler,
     TokenHandler,
+    CbeHandler,
     MonitorHandler,
     ObserverHandler,
 };
@@ -812,6 +813,10 @@ impl ZhtpUnifiedServer {
             TokenHandler::new()
         );
         zhtp_router.register_handler("/api/v1/token".to_string(), token_handler);
+
+        // CBE token operations (init pools, employment contracts, payroll)
+        let cbe_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(CbeHandler::new());
+        zhtp_router.register_handler("/api/v1/cbe".to_string(), cbe_handler);
 
         // Bonding curve operations (CurveHandler - deploy, buy, sell, graduation)
         let curve_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
