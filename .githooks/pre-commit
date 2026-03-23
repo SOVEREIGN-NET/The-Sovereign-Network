@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# pre-commit hook — blocks commits containing sensitive or local-only artifacts.
+# Issue #1934: enforce repository hygiene for the Sovereign Network.
+#
+# Install (one-time per clone):
+#   git config core.hooksPath .githooks
+
+set -euo pipefail
+
+ERRORS=()
+
+BLOCKED_PATHS=(
+    "tmp/"
+    ".zhtp/"
+)
+
+BLOCKED_PATTERNS=(
+    "*.b64"
+    "*.key"
+    "*.pem"
+    "keystore*"
+    ".env"
+    ".env.*"
+)
+
+# Only check files being added or modified (not deletions).
+while IFS= read -r staged_file; do
+    [[ -z "$staged_file" ]] && continue
+
+    # Symlink check
+    if [[ -L "$staged_file" ]]; then
+        ERRORS+=("symlink staged: $staged_file")
+    fi
+
+    basename_file="$(basename "$staged_file")"
+
+    for prefix in "${BLOCKED_PATHS[@]}"; do
+        if [[ "$staged_file" == "$prefix"* ]]; then
+            ERRORS+=("blocked path staged: $staged_file  (matches '$prefix')")
+        fi
+    done
+
+    for pattern in "${BLOCKED_PATTERNS[@]}"; do
+        # shellcheck disable=SC2053
+        if [[ "$basename_file" == $pattern ]]; then
+            ERRORS+=("blocked file pattern staged: $staged_file  (matches '$pattern')")
+        fi
+    done
+done < <(git diff --cached --name-only --diff-filter=AM)
+
+if [[ ${#ERRORS[@]} -gt 0 ]]; then
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  pre-commit: BLOCKED — sensitive/local artifacts detected   ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    for err in "${ERRORS[@]}"; do
+        echo "  ✗ $err"
+    done
+    echo ""
+    echo "  Remove the file(s) from staging ('git reset HEAD <file>') and"
+    echo "  ensure they are listed in .gitignore before committing."
+    echo ""
+    exit 1
+fi
+
+exit 0
