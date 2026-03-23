@@ -1343,6 +1343,91 @@ impl Transaction {
             payload: TransactionPayload::InitEntityRegistry(data),
         }
     }
+
+    pub fn new_init_cbe_token(
+        chain_id: u8,
+        compensation_key_id: [u8; 32],
+        operational_key_id: [u8; 32],
+        performance_key_id: [u8; 32],
+        strategic_key_id: [u8; 32],
+        initialized_at: u64,
+        initialized_at_height: u64,
+        signature: Signature,
+    ) -> Self {
+        let data = InitCbeTokenData {
+            compensation_key_id,
+            operational_key_id,
+            performance_key_id,
+            strategic_key_id,
+            initialized_at,
+            initialized_at_height,
+        };
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::InitCbeToken,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_INIT_CBE_TOKEN".to_vec(),
+            payload: TransactionPayload::InitCbeToken(data),
+        }
+    }
+
+    pub fn new_create_employment_contract(
+        chain_id: u8,
+        dao_id: [u8; 32],
+        employee_key_id: [u8; 32],
+        contract_type: u8,
+        compensation_amount: u64,
+        payment_period: u8,
+        tax_rate_basis_points: u16,
+        tax_jurisdiction: String,
+        profit_share_percentage: u16,
+        signature: Signature,
+    ) -> Self {
+        let data = CreateEmploymentContractData {
+            dao_id,
+            employee_key_id,
+            contract_type,
+            compensation_amount,
+            payment_period,
+            tax_rate_basis_points,
+            tax_jurisdiction,
+            profit_share_percentage,
+        };
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::CreateEmploymentContract,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_CREATE_EMPLOYMENT_CONTRACT".to_vec(),
+            payload: TransactionPayload::CreateEmploymentContract(data),
+        }
+    }
+
+    pub fn new_process_payroll(
+        chain_id: u8,
+        contract_id: [u8; 32],
+        signature: Signature,
+    ) -> Self {
+        let data = ProcessPayrollData { contract_id };
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::ProcessPayroll,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_PROCESS_PAYROLL".to_vec(),
+            payload: TransactionPayload::ProcessPayroll(data),
+        }
+    }
 }
 
 impl TransactionInput {
