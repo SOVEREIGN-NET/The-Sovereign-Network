@@ -120,6 +120,19 @@ pub enum TransactionType {
     ///
     /// Must be signed by a Bootstrap Council member. Locks EntityRegistry permanently after execution.
     InitEntityRegistry = 38,
+    /// Initialize the CBE token contract (one-time, irreversible)
+    ///
+    /// Sets the CBE token's initial parameters (name, symbol, total supply, vesting schedules).
+    /// Must be signed by a Bootstrap Council member. Locks CbeToken permanently after execution.
+    InitCbeToken = 39,
+    /// Create an employment contract between an employer entity and an employee wallet
+    ///
+    /// Records the contract terms (salary, payment schedule, profit-share %) on-chain via EmploymentRegistry.
+    CreateEmploymentContract = 40,
+    /// Process payroll disbursement for an active employment contract
+    ///
+    /// Disburses CBE salary and optional profit-share from employer treasury to employee wallet.
+    ProcessPayroll = 41,
 }
 
 impl TransactionType {
@@ -260,6 +273,15 @@ impl TransactionType {
             TransactionType::InitEntityRegistry => {
                 "Initialize entity registry with CBE and Nonprofit treasury addresses (one-time)"
             }
+            TransactionType::InitCbeToken => {
+                "Initialize CBE token contract (one-time)"
+            }
+            TransactionType::CreateEmploymentContract => {
+                "Create employment contract on-chain via EmploymentRegistry"
+            }
+            TransactionType::ProcessPayroll => {
+                "Process payroll disbursement for active employment contract"
+            }
         }
     }
 
@@ -305,6 +327,9 @@ impl TransactionType {
             TransactionType::OracleAttestation => "oracle_attestation",
             TransactionType::CancelOracleUpdate => "cancel_oracle_update",
             TransactionType::InitEntityRegistry => "init_entity_registry",
+            TransactionType::InitCbeToken => "init_cbe_token",
+            TransactionType::CreateEmploymentContract => "create_employment_contract",
+            TransactionType::ProcessPayroll => "process_payroll",
         }
     }
 
@@ -350,6 +375,9 @@ impl TransactionType {
             "oracle_attestation" => Some(TransactionType::OracleAttestation),
             "cancel_oracle_update" => Some(TransactionType::CancelOracleUpdate),
             "init_entity_registry" => Some(TransactionType::InitEntityRegistry),
+            "init_cbe_token" => Some(TransactionType::InitCbeToken),
+            "create_employment_contract" => Some(TransactionType::CreateEmploymentContract),
+            "process_payroll" => Some(TransactionType::ProcessPayroll),
             _ => None,
         }
     }

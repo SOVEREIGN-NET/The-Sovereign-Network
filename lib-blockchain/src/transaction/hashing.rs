@@ -228,22 +228,11 @@ pub fn hash_for_signature(transaction: &Transaction) -> Hash {
     hasher.update(&(transaction.memo.len() as u64).to_le_bytes());
     hasher.update(&transaction.memo);
 
-    // 8-17. Optional data fields (0x00 = None, 0x01 + bincode = Some)
-    // Each field MUST be included to prevent malleability
-
-    hash_optional_field(&mut hasher, &transaction.identity_data);
-    hash_optional_field(&mut hasher, &transaction.wallet_data);
-    hash_optional_field(&mut hasher, &transaction.validator_data);
-    hash_optional_field(&mut hasher, &transaction.dao_proposal_data);
-    hash_optional_field(&mut hasher, &transaction.dao_vote_data);
-    hash_optional_field(&mut hasher, &transaction.dao_execution_data);
-    hash_optional_field(&mut hasher, &transaction.ubi_claim_data);
-    hash_optional_field(&mut hasher, &transaction.profit_declaration_data);
-    hash_optional_field(&mut hasher, &transaction.token_transfer_data);
-    if transaction.version >= 2 {
-        hash_optional_field(&mut hasher, &transaction.token_mint_data);
-    }
-    hash_optional_field(&mut hasher, &transaction.governance_config_data);
+    // 8. Payload (V8+: single tagged enum, replaces old flat Option<FooData> fields)
+    let payload_bytes = bincode::serialize(&transaction.payload)
+        .expect("TransactionPayload serialization should never fail");
+    hasher.update(&(payload_bytes.len() as u64).to_le_bytes());
+    hasher.update(&payload_bytes);
 
     let mut hash_bytes = [0u8; 32];
     hash_bytes.copy_from_slice(hasher.finalize().as_bytes());

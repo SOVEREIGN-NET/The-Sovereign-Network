@@ -121,7 +121,7 @@ fn validate_transfer_stateless(tx: &Transaction) -> TxValidateResult<()> {
 fn validate_token_transfer_stateless(tx: &Transaction) -> TxValidateResult<()> {
     // Token transfer MUST have token_transfer_data field
     // This matches the executor's requirement at executor.rs:489-495
-    let data = tx.token_transfer_data.as_ref().ok_or_else(|| {
+    let data = tx.token_transfer_data().ok_or_else(|| {
         TxValidateError::MissingField(
             "TokenTransfer requires token_transfer_data field".to_string(),
         )
@@ -148,7 +148,7 @@ fn validate_token_mint_stateless(tx: &Transaction) -> TxValidateResult<()> {
         ));
     }
 
-    let data = tx.token_mint_data.as_ref().ok_or_else(|| {
+    let data = tx.token_mint_data().ok_or_else(|| {
         TxValidateError::MissingField("TokenMint requires token_mint_data field".to_string())
     })?;
 
@@ -437,7 +437,7 @@ mod tests {
             vec![],
         );
         tx.transaction_type = TransactionType::TokenTransfer;
-        tx.token_transfer_data = Some(crate::transaction::TokenTransferData {
+        tx.payload = crate::transaction::TransactionPayload::TokenTransfer(crate::transaction::TokenTransferData {
             token_id: [0u8; 32],
             from: [1u8; 32],
             to: [2u8; 32],

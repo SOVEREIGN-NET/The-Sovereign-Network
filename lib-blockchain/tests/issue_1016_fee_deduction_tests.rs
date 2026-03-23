@@ -6,7 +6,7 @@
 use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::contracts::utils::generate_lib_token_id;
 use lib_blockchain::contracts::TokenContract;
-use lib_blockchain::transaction::{Transaction, TransactionInput, TransactionOutput};
+use lib_blockchain::transaction::{Transaction, TransactionInput, TransactionOutput, TransactionPayload};
 use lib_blockchain::types::TransactionType;
 use lib_blockchain::types::{Difficulty, Hash};
 use lib_blockchain::Blockchain;
@@ -53,26 +53,7 @@ fn create_transfer_tx(sender: &PublicKey, fee: u64, nullifier_id: u8) -> Transac
         fee,
         signature: create_test_signature(sender),
         memo: b"test transfer".to_vec(),
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::None,
     }
 }
 

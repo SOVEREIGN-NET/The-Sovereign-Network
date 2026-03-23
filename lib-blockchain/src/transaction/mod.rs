@@ -18,11 +18,13 @@ pub mod validation;
 // Explicit re-exports from core module
 pub use core::{
     BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData, BondingCurveSellData,
-    DaoExecutionData, DaoProposalData, DaoVoteData, IdentityTransactionData,
-    InitEntityRegistryData, ProfitDeclarationData, RevenueSource, TokenMintData, TokenTransferData,
-    Transaction, TransactionInput, TransactionOutput, UbiClaimData, ValidatorOperation,
+    CreateEmploymentContractData, DaoExecutionData, DaoProposalData, DaoVoteData,
+    GovernanceConfigUpdateData, GovernanceConfigOperation, IdentityTransactionData,
+    InitCbeTokenData, InitEntityRegistryData, ProfitDeclarationData, ProcessPayrollData,
+    RevenueSource, TokenMintData, TokenTransferData, Transaction, TransactionInput,
+    TransactionOutput, TransactionPayload, UbiClaimData, ValidatorOperation,
     ValidatorTransactionData, WalletPrivateData, WalletReference, WalletTransactionData,
-    TX_VERSION_V3, TX_VERSION_V7,
+    TX_VERSION_V3, TX_VERSION_V7, TX_VERSION_V8,
 };
 
 pub use bonding_curve_codec::{

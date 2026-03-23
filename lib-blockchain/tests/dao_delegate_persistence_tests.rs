@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::storage::{BlockchainStore, SledStore};
-use lib_blockchain::transaction::{DaoExecutionData, Transaction};
+use lib_blockchain::transaction::{DaoExecutionData, Transaction, TransactionPayload};
 use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 use lib_crypto::types::keys::PublicKey;
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
@@ -56,26 +56,7 @@ fn dao_execution_tx(
         fee: 0,
         signature: test_signature(&test_pubkey(executor_key), timestamp),
         memo: format!("dao:delegate:{execution_type}").into_bytes(),
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: Some(execution_data),
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::DaoExecution(execution_data),
     }
 }
 

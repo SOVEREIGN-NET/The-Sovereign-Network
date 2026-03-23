@@ -787,8 +787,7 @@ impl Web4Handler {
                 .map_err(|e| anyhow!("Invalid fee_payment_tx payload: {}", e))?;
 
         let fee_transfer = fee_payment_tx
-            .token_transfer_data
-            .as_ref()
+            .token_transfer_data()
             .ok_or_else(|| anyhow!("fee_payment_tx missing token_transfer_data"))?;
         if fee_payment_tx.transaction_type != lib_blockchain::TransactionType::TokenTransfer {
             return Err(anyhow!(

@@ -9,10 +9,10 @@ use crate::transaction::oracle_governance::{
     OracleConfigUpdateData,
 };
 use crate::types::{transaction_type::TransactionType, Hash};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 /// Zero-knowledge transaction with identity support
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     /// Transaction version
     pub version: u32,
@@ -30,299 +30,24 @@ pub struct Transaction {
     pub signature: Signature,
     /// Optional memo data
     pub memo: Vec<u8>,
-    /// Identity-specific data (only for identity transactions)
-    /// This data is processed by lib-identity package
-    pub identity_data: Option<IdentityTransactionData>,
-    /// Wallet-specific data (only for wallet transactions)
-    /// This data is processed by lib-identity package
-    pub wallet_data: Option<WalletTransactionData>,
-    /// Validator-specific data (only for validator transactions)
-    /// This data is processed by lib-consensus package
-    pub validator_data: Option<ValidatorTransactionData>,
-    /// DAO proposal data (only for DAO proposal transactions)
-    /// This data is processed by lib-consensus package
-    pub dao_proposal_data: Option<DaoProposalData>,
-    /// DAO vote data (only for DAO vote transactions)
-    /// This data is processed by lib-consensus package
-    pub dao_vote_data: Option<DaoVoteData>,
-    /// DAO execution data (only for DAO execution transactions)
-    /// This data is processed by lib-consensus package
-    pub dao_execution_data: Option<DaoExecutionData>,
-    /// UBI claim data (only for UBI claim transactions - Week 7)
-    /// This data is processed by lib-contracts package
-    pub ubi_claim_data: Option<UbiClaimData>,
-    /// Profit declaration data (only for profit declaration transactions - Week 7)
-    /// This data is processed by lib-contracts package
-    pub profit_declaration_data: Option<ProfitDeclarationData>,
-    /// Token transfer data (Phase 2 - balance model transfers)
-    /// Required for TransactionType::TokenTransfer
-    pub token_transfer_data: Option<TokenTransferData>,
-    /// Token mint data (Phase 2 - balance model mints)
-    /// Required for TransactionType::TokenMint
-    pub token_mint_data: Option<TokenMintData>,
-    /// Governance config update data (Phase 3D - restricted config changes)
-    /// Required for TransactionType::GovernanceConfigUpdate
-    pub governance_config_data: Option<GovernanceConfigUpdateData>,
-    /// Bonding curve deploy data
-    pub bonding_curve_deploy_data: Option<BondingCurveDeployData>,
-    /// Bonding curve buy data
-    pub bonding_curve_buy_data: Option<BondingCurveBuyData>,
-    /// Bonding curve sell data
-    pub bonding_curve_sell_data: Option<BondingCurveSellData>,
-    /// Bonding curve graduate data
-    pub bonding_curve_graduate_data: Option<BondingCurveGraduateData>,
-    /// Oracle committee update data (ORACLE-6)
-    /// Required for TransactionType::UpdateOracleCommittee
-    pub oracle_committee_update_data: Option<OracleCommitteeUpdateData>,
-    /// Oracle config update data (ORACLE-6)
-    /// Required for TransactionType::UpdateOracleConfig
-    pub oracle_config_update_data: Option<OracleConfigUpdateData>,
-    /// Oracle attestation data (ORACLE-9)
-    /// Required for TransactionType::OracleAttestation
-    pub oracle_attestation_data: Option<OracleAttestationData>,
-    /// Oracle cancel update data (ORACLE-11)
-    /// Required for TransactionType::CancelOracleUpdate
-    pub cancel_oracle_update_data:
-        Option<crate::transaction::oracle_governance::CancelOracleUpdateData>,
-    /// Entity registry initialization data (TSR)
-    /// Required for TransactionType::InitEntityRegistry
-    pub init_entity_registry_data: Option<InitEntityRegistryData>,
+    /// Typed transaction payload — replaces the old flat Option<FooData> field scatter.
+    pub payload: TransactionPayload,
 }
 
-/// Version constants for the `Transaction` wire format.
+/// Transaction wire-format version constants.
+///
 /// Never renumber — each constant is embedded in serialized blocks on-chain.
-/// When adding fields, append a new V(N+1) constant and gate on it everywhere.
-pub const TX_VERSION_V1: u32 = 1; // Base: 18 fields
-pub const TX_VERSION_V2: u32 = 2; // +token_mint_data → 19 fields
-pub const TX_VERSION_V3: u32 = 3; // +bonding_curve_*_data → 23 fields
-pub const TX_VERSION_V4: u32 = 4; // +oracle_*_data → 25 fields
-pub const TX_VERSION_V5: u32 = 5; // +oracle_attestation_data → 26 fields
-pub const TX_VERSION_V6: u32 = 6; // +cancel_oracle_update_data → 27 fields
-pub const TX_VERSION_V7: u32 = 7; // +init_entity_registry_data → 28 fields
-
-/// V1 has 18 fields (no token_mint_data). V2 has 19 (token_mint_data between
-/// token_transfer_data and governance_config_data). V3 adds bonding curve data.
-/// V4 adds oracle governance data. V5 adds oracle attestation data. V6 adds cancel oracle update data.
-/// Serialization writes the field count matching the version so old blocks stay byte-identical.
-/// Deserialization requests V6 slots (the max); for older versions we read
-/// only as many fields as the version declares.
-const TX_FIELD_COUNT_V1: usize = 18;
-const TX_FIELD_COUNT_V2: usize = 19;
-const TX_FIELD_COUNT_V3: usize = 23; // Added bonding curve data fields
-const TX_FIELD_COUNT_V4: usize = 25; // Added oracle governance data fields
-const TX_FIELD_COUNT_V5: usize = 26; // Added oracle attestation data
-const TX_FIELD_COUNT_V6: usize = 27; // Added cancel oracle update data
-const TX_FIELD_COUNT_V7: usize = 28; // Added init entity registry data
-
-impl Serialize for Transaction {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeTuple;
-
-        let field_count = if self.version >= TX_VERSION_V7 {
-            TX_FIELD_COUNT_V7
-        } else if self.version >= TX_VERSION_V6 {
-            TX_FIELD_COUNT_V6
-        } else if self.version >= TX_VERSION_V5 {
-            TX_FIELD_COUNT_V5
-        } else if self.version >= TX_VERSION_V4 {
-            TX_FIELD_COUNT_V4
-        } else if self.version >= TX_VERSION_V3 {
-            TX_FIELD_COUNT_V3
-        } else if self.version >= TX_VERSION_V2 {
-            TX_FIELD_COUNT_V2
-        } else {
-            TX_FIELD_COUNT_V1
-        };
-        let mut tup = serializer.serialize_tuple(field_count)?;
-
-        tup.serialize_element(&self.version)?;
-        tup.serialize_element(&self.chain_id)?;
-        tup.serialize_element(&self.transaction_type)?;
-        tup.serialize_element(&self.inputs)?;
-        tup.serialize_element(&self.outputs)?;
-        tup.serialize_element(&self.fee)?;
-        tup.serialize_element(&self.signature)?;
-        tup.serialize_element(&self.memo)?;
-        tup.serialize_element(&self.identity_data)?;
-        tup.serialize_element(&self.wallet_data)?;
-        tup.serialize_element(&self.validator_data)?;
-        tup.serialize_element(&self.dao_proposal_data)?;
-        tup.serialize_element(&self.dao_vote_data)?;
-        tup.serialize_element(&self.dao_execution_data)?;
-        tup.serialize_element(&self.ubi_claim_data)?;
-        tup.serialize_element(&self.profit_declaration_data)?;
-        tup.serialize_element(&self.token_transfer_data)?;
-        if self.version >= TX_VERSION_V2 {
-            tup.serialize_element(&self.token_mint_data)?;
-        }
-        tup.serialize_element(&self.governance_config_data)?;
-        if self.version >= TX_VERSION_V3 {
-            tup.serialize_element(&self.bonding_curve_deploy_data)?;
-            tup.serialize_element(&self.bonding_curve_buy_data)?;
-            tup.serialize_element(&self.bonding_curve_sell_data)?;
-            tup.serialize_element(&self.bonding_curve_graduate_data)?;
-        }
-        if self.version >= TX_VERSION_V4 {
-            tup.serialize_element(&self.oracle_committee_update_data)?;
-            tup.serialize_element(&self.oracle_config_update_data)?;
-        }
-        if self.version >= TX_VERSION_V5 {
-            tup.serialize_element(&self.oracle_attestation_data)?;
-        }
-        if self.version >= TX_VERSION_V6 {
-            tup.serialize_element(&self.cancel_oracle_update_data)?;
-        }
-        if self.version >= TX_VERSION_V7 {
-            tup.serialize_element(&self.init_entity_registry_data)?;
-        }
-
-        tup.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for Transaction {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct TxVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for TxVisitor {
-            type Value = Transaction;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("Transaction")
-            }
-
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut seq: A,
-            ) -> Result<Self::Value, A::Error> {
-                use serde::de::Error;
-
-                macro_rules! next {
-                    ($name:literal) => {
-                        seq.next_element()?
-                            .ok_or_else(|| A::Error::missing_field($name))?
-                    };
-                }
-
-                let version: u32 = next!("version");
-                let chain_id: u8 = next!("chain_id");
-                let transaction_type: TransactionType = next!("transaction_type");
-                let inputs: Vec<TransactionInput> = next!("inputs");
-                let outputs: Vec<TransactionOutput> = next!("outputs");
-                let fee: u64 = next!("fee");
-                let signature: Signature = next!("signature");
-                let memo: Vec<u8> = next!("memo");
-                let identity_data: Option<IdentityTransactionData> = next!("identity_data");
-                let wallet_data: Option<WalletTransactionData> = next!("wallet_data");
-                let validator_data: Option<ValidatorTransactionData> = next!("validator_data");
-                let dao_proposal_data: Option<DaoProposalData> = next!("dao_proposal_data");
-                let dao_vote_data: Option<DaoVoteData> = next!("dao_vote_data");
-                let dao_execution_data: Option<DaoExecutionData> = next!("dao_execution_data");
-                let ubi_claim_data: Option<UbiClaimData> = next!("ubi_claim_data");
-                let profit_declaration_data: Option<ProfitDeclarationData> =
-                    next!("profit_declaration_data");
-                let token_transfer_data: Option<TokenTransferData> = next!("token_transfer_data");
-
-                // V2 added token_mint_data between token_transfer_data and governance_config_data.
-                // V1 data (version < TX_VERSION_V2) does not contain it; default to None.
-                let token_mint_data: Option<TokenMintData> = if version >= TX_VERSION_V2 {
-                    next!("token_mint_data")
-                } else {
-                    None
-                };
-
-                let governance_config_data: Option<GovernanceConfigUpdateData> =
-                    next!("governance_config_data");
-
-                // V3 added bonding curve data fields
-                let (
-                    bonding_curve_deploy_data,
-                    bonding_curve_buy_data,
-                    bonding_curve_sell_data,
-                    bonding_curve_graduate_data,
-                ) = if version >= TX_VERSION_V3 {
-                    (
-                        next!("bonding_curve_deploy_data"),
-                        next!("bonding_curve_buy_data"),
-                        next!("bonding_curve_sell_data"),
-                        next!("bonding_curve_graduate_data"),
-                    )
-                } else {
-                    (None, None, None, None)
-                };
-
-                // V4 added oracle governance data fields
-                let (oracle_committee_update_data, oracle_config_update_data) =
-                    if version >= TX_VERSION_V4 {
-                        (
-                            next!("oracle_committee_update_data"),
-                            next!("oracle_config_update_data"),
-                        )
-                    } else {
-                        (None, None)
-                    };
-
-                // V5 added oracle attestation data field
-                let oracle_attestation_data: Option<OracleAttestationData> =
-                    if version >= TX_VERSION_V5 {
-                        next!("oracle_attestation_data")
-                    } else {
-                        None
-                    };
-                // V6 added cancel oracle update data field
-                let cancel_oracle_update_data: Option<CancelOracleUpdateData> =
-                    if version >= TX_VERSION_V6 {
-                        next!("cancel_oracle_update_data")
-                    } else {
-                        None
-                    };
-
-                // V7 added entity registry initialization data
-                let init_entity_registry_data: Option<InitEntityRegistryData> =
-                    if version >= TX_VERSION_V7 {
-                        next!("init_entity_registry_data")
-                    } else {
-                        None
-                    };
-
-                Ok(Transaction {
-                    version,
-                    chain_id,
-                    transaction_type,
-                    inputs,
-                    outputs,
-                    fee,
-                    signature,
-                    memo,
-                    identity_data,
-                    wallet_data,
-                    validator_data,
-                    dao_proposal_data,
-                    dao_vote_data,
-                    dao_execution_data,
-                    ubi_claim_data,
-                    profit_declaration_data,
-                    token_transfer_data,
-                    token_mint_data,
-                    governance_config_data,
-                    bonding_curve_deploy_data,
-                    bonding_curve_buy_data,
-                    bonding_curve_sell_data,
-                    bonding_curve_graduate_data,
-                    oracle_committee_update_data,
-                    oracle_config_update_data,
-                    oracle_attestation_data,
-                    cancel_oracle_update_data,
-                    init_entity_registry_data,
-                })
-            }
-        }
-
-        // Request V7 field count (the maximum). For older versions the visitor reads
-        // fewer elements; leftover slots are never consumed.
-        deserializer.deserialize_tuple(TX_FIELD_COUNT_V7, TxVisitor)
-    }
-}
+/// V1–V7 used a positional tuple format (hand-rolled serde). V8 switches to
+/// a tagged-payload model (`TransactionPayload` enum) with `#[derive(Serialize, Deserialize)]`.
+/// V1–V7 deserialization is intentionally not supported in V8+ nodes (testnet reset required).
+pub const TX_VERSION_V1: u32 = 1; // [historical] 18 positional fields
+pub const TX_VERSION_V2: u32 = 2; // [historical] +token_mint_data
+pub const TX_VERSION_V3: u32 = 3; // [historical] +bonding_curve_* data
+pub const TX_VERSION_V4: u32 = 4; // [historical] +oracle_* data
+pub const TX_VERSION_V5: u32 = 5; // [historical] +oracle_attestation_data
+pub const TX_VERSION_V6: u32 = 6; // [historical] +cancel_oracle_update_data
+pub const TX_VERSION_V7: u32 = 7; // [historical] +init_entity_registry_data
+pub const TX_VERSION_V8: u32 = 8; // Tagged payload model (TransactionPayload enum)
 
 /// DAO proposal transaction data (processed by lib-consensus package)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -860,7 +585,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::Transfer,
             inputs,
@@ -868,27 +593,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::None,
         }
     }
 
@@ -900,7 +605,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::IdentityRegistration,
             inputs: Vec::new(), // Identity registration doesn't have inputs
@@ -908,27 +613,7 @@ impl Transaction {
             fee: identity_data.registration_fee + identity_data.dao_fee,
             signature,
             memo,
-            identity_data: Some(identity_data),
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::Identity(identity_data),
         }
     }
 
@@ -942,7 +627,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::IdentityUpdate,
             inputs,
@@ -950,27 +635,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: Some(identity_data),
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::Identity(identity_data),
         }
     }
 
@@ -1000,7 +665,7 @@ impl Transaction {
         };
 
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::IdentityRevocation,
             inputs,
@@ -1008,27 +673,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: Some(revocation_data),
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::Identity(revocation_data),
         }
     }
 
@@ -1040,7 +685,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::WalletRegistration,
             inputs: Vec::new(), // Wallet registration doesn't need inputs
@@ -1048,27 +693,7 @@ impl Transaction {
             fee: 0, // System transactions must have zero fee (registration_fee stored in wallet_data for records)
             signature,
             memo,
-            identity_data: None,
-            wallet_data: Some(wallet_data),
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::Wallet(wallet_data),
         }
     }
 
@@ -1097,7 +722,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::WalletUpdate,
             inputs: Vec::new(), // Update authorization is consensus-defined; system updates use empty inputs
@@ -1105,27 +730,7 @@ impl Transaction {
             fee: 0, // System-style update: zero fee (registration_fee remains for historical record only)
             signature,
             memo,
-            identity_data: None,
-            wallet_data: Some(wallet_data),
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::Wallet(wallet_data),
         }
     }
 
@@ -1146,7 +751,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::TokenTransfer,
             inputs: Vec::new(),  // Balance-model transfer has no UTXO inputs
@@ -1154,27 +759,7 @@ impl Transaction {
             fee: 0,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: Some(token_transfer_data),
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::TokenTransfer(token_transfer_data),
         }
     }
 
@@ -1195,7 +780,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 2,
+            version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::TokenMint,
             inputs: Vec::new(),
@@ -1203,26 +788,7 @@ impl Transaction {
             fee: 0,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: Some(token_mint_data),
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::TokenMint(token_mint_data),
         }
     }
 
@@ -1238,7 +804,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 2,
+            version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::TokenCreation,
             inputs: Vec::new(),
@@ -1246,26 +812,7 @@ impl Transaction {
             fee: 0,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::None,
         }
     }
 
@@ -1277,7 +824,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::ValidatorRegistration,
             inputs: Vec::new(), // Validator registration via staking
@@ -1285,27 +832,7 @@ impl Transaction {
             fee: 0, // Fee paid via stake
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: Some(validator_data),
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::Validator(validator_data),
         }
     }
 
@@ -1319,7 +846,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::ValidatorUpdate,
             inputs,
@@ -1327,27 +854,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: Some(validator_data),
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::Validator(validator_data),
         }
     }
 
@@ -1361,7 +868,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::ValidatorUnregister,
             inputs,
@@ -1369,27 +876,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: Some(validator_data),
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::Validator(validator_data),
         }
     }
 
@@ -1403,7 +890,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::DaoProposal,
             inputs,
@@ -1411,27 +898,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: Some(proposal_data),
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::DaoProposal(proposal_data),
         }
     }
 
@@ -1445,7 +912,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::DaoVote,
             inputs,
@@ -1453,27 +920,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: Some(vote_data),
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::DaoVote(vote_data),
         }
     }
 
@@ -1487,7 +934,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::DaoExecution,
             inputs,
@@ -1495,27 +942,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: Some(execution_data),
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::DaoExecution(execution_data),
         }
     }
 
@@ -1541,7 +968,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::UBIClaim,
             inputs: Vec::new(), // UBI claims don't require inputs (claiming from pool)
@@ -1549,27 +976,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: Some(claim_data),
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::UbiClaim(claim_data),
         }
     }
 
@@ -1602,7 +1009,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::ProfitDeclaration,
             inputs,
@@ -1610,27 +1017,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: Some(declaration_data),
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::ProfitDeclaration(declaration_data),
         }
     }
 
@@ -1661,7 +1048,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::GovernanceConfigUpdate,
             inputs: Vec::new(), // Governance updates don't need inputs
@@ -1669,27 +1056,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-
-            governance_config_data: Some(config_data),
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::GovernanceConfigUpdate(config_data),
         }
     }
 
@@ -1738,7 +1105,82 @@ impl Transaction {
 
     /// Check if transaction has identity data
     pub fn has_identity_data(&self) -> bool {
-        self.identity_data.is_some()
+        matches!(self.payload, TransactionPayload::Identity(_))
+    }
+
+    // -------------------------------------------------------------------------
+    // Payload accessor methods
+    // These provide the same API as the old flat Option<FooData> fields.
+    // -------------------------------------------------------------------------
+
+    pub fn identity_data(&self) -> Option<&IdentityTransactionData> {
+        match &self.payload { TransactionPayload::Identity(d) => Some(d), _ => None }
+    }
+    pub fn wallet_data(&self) -> Option<&WalletTransactionData> {
+        match &self.payload { TransactionPayload::Wallet(d) => Some(d), _ => None }
+    }
+    pub fn validator_data(&self) -> Option<&ValidatorTransactionData> {
+        match &self.payload { TransactionPayload::Validator(d) => Some(d), _ => None }
+    }
+    pub fn dao_proposal_data(&self) -> Option<&DaoProposalData> {
+        match &self.payload { TransactionPayload::DaoProposal(d) => Some(d), _ => None }
+    }
+    pub fn dao_vote_data(&self) -> Option<&DaoVoteData> {
+        match &self.payload { TransactionPayload::DaoVote(d) => Some(d), _ => None }
+    }
+    pub fn dao_execution_data(&self) -> Option<&DaoExecutionData> {
+        match &self.payload { TransactionPayload::DaoExecution(d) => Some(d), _ => None }
+    }
+    pub fn ubi_claim_data(&self) -> Option<&UbiClaimData> {
+        match &self.payload { TransactionPayload::UbiClaim(d) => Some(d), _ => None }
+    }
+    pub fn profit_declaration_data(&self) -> Option<&ProfitDeclarationData> {
+        match &self.payload { TransactionPayload::ProfitDeclaration(d) => Some(d), _ => None }
+    }
+    pub fn token_transfer_data(&self) -> Option<&TokenTransferData> {
+        match &self.payload { TransactionPayload::TokenTransfer(d) => Some(d), _ => None }
+    }
+    pub fn token_mint_data(&self) -> Option<&TokenMintData> {
+        match &self.payload { TransactionPayload::TokenMint(d) => Some(d), _ => None }
+    }
+    pub fn governance_config_data(&self) -> Option<&GovernanceConfigUpdateData> {
+        match &self.payload { TransactionPayload::GovernanceConfigUpdate(d) => Some(d), _ => None }
+    }
+    pub fn bonding_curve_deploy_data(&self) -> Option<&BondingCurveDeployData> {
+        match &self.payload { TransactionPayload::BondingCurveDeploy(d) => Some(d), _ => None }
+    }
+    pub fn bonding_curve_buy_data(&self) -> Option<&BondingCurveBuyData> {
+        match &self.payload { TransactionPayload::BondingCurveBuy(d) => Some(d), _ => None }
+    }
+    pub fn bonding_curve_sell_data(&self) -> Option<&BondingCurveSellData> {
+        match &self.payload { TransactionPayload::BondingCurveSell(d) => Some(d), _ => None }
+    }
+    pub fn bonding_curve_graduate_data(&self) -> Option<&BondingCurveGraduateData> {
+        match &self.payload { TransactionPayload::BondingCurveGraduate(d) => Some(d), _ => None }
+    }
+    pub fn oracle_committee_update_data(&self) -> Option<&OracleCommitteeUpdateData> {
+        match &self.payload { TransactionPayload::OracleCommitteeUpdate(d) => Some(d), _ => None }
+    }
+    pub fn oracle_config_update_data(&self) -> Option<&OracleConfigUpdateData> {
+        match &self.payload { TransactionPayload::OracleConfigUpdate(d) => Some(d), _ => None }
+    }
+    pub fn oracle_attestation_data(&self) -> Option<&OracleAttestationData> {
+        match &self.payload { TransactionPayload::OracleAttestation(d) => Some(d), _ => None }
+    }
+    pub fn cancel_oracle_update_data(&self) -> Option<&CancelOracleUpdateData> {
+        match &self.payload { TransactionPayload::CancelOracleUpdate(d) => Some(d), _ => None }
+    }
+    pub fn init_entity_registry_data(&self) -> Option<&InitEntityRegistryData> {
+        match &self.payload { TransactionPayload::InitEntityRegistry(d) => Some(d), _ => None }
+    }
+    pub fn init_cbe_token_data(&self) -> Option<&InitCbeTokenData> {
+        match &self.payload { TransactionPayload::InitCbeToken(d) => Some(d), _ => None }
+    }
+    pub fn create_employment_contract_data(&self) -> Option<&CreateEmploymentContractData> {
+        match &self.payload { TransactionPayload::CreateEmploymentContract(d) => Some(d), _ => None }
+    }
+    pub fn process_payroll_data(&self) -> Option<&ProcessPayrollData> {
+        match &self.payload { TransactionPayload::ProcessPayroll(d) => Some(d), _ => None }
     }
 
     /// Get the size of the transaction in bytes
@@ -1759,7 +1201,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: TX_VERSION_V3,
+            version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::BondingCurveDeploy,
             inputs: Vec::new(),
@@ -1767,26 +1209,7 @@ impl Transaction {
             fee: 0,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: Some(bonding_curve_deploy_data),
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::BondingCurveDeploy(bonding_curve_deploy_data),
         }
     }
 
@@ -1798,7 +1221,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: TX_VERSION_V3,
+            version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::BondingCurveBuy,
             inputs: Vec::new(),
@@ -1806,26 +1229,7 @@ impl Transaction {
             fee: 0,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: Some(bonding_curve_buy_data),
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::BondingCurveBuy(bonding_curve_buy_data),
         }
     }
 
@@ -1837,7 +1241,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: TX_VERSION_V3,
+            version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::BondingCurveSell,
             inputs: Vec::new(),
@@ -1845,26 +1249,7 @@ impl Transaction {
             fee: 0,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: Some(bonding_curve_sell_data),
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::BondingCurveSell(bonding_curve_sell_data),
         }
     }
 
@@ -1876,7 +1261,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: TX_VERSION_V3,
+            version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::BondingCurveGraduate,
             inputs: Vec::new(),
@@ -1884,26 +1269,7 @@ impl Transaction {
             fee: 0,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: Some(bonding_curve_graduate_data),
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::BondingCurveGraduate(bonding_curve_graduate_data),
         }
     }
 
@@ -1915,7 +1281,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: TX_VERSION_V4,
+            version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::UpdateOracleCommittee,
             inputs: Vec::new(),
@@ -1923,26 +1289,7 @@ impl Transaction {
             fee: 0,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: Some(oracle_committee_update_data),
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::OracleCommitteeUpdate(oracle_committee_update_data),
         }
     }
 
@@ -1954,7 +1301,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: TX_VERSION_V4,
+            version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::UpdateOracleConfig,
             inputs: Vec::new(),
@@ -1962,26 +1309,7 @@ impl Transaction {
             fee: 0,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: Some(oracle_config_update_data),
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: TransactionPayload::OracleConfigUpdate(oracle_config_update_data),
         }
     }
 
@@ -2004,7 +1332,7 @@ impl Transaction {
             initialized_at_height,
         };
         Transaction {
-            version: TX_VERSION_V7,
+            version: TX_VERSION_V8,
             chain_id,
             transaction_type: TransactionType::InitEntityRegistry,
             inputs: Vec::new(),
@@ -2012,26 +1340,7 @@ impl Transaction {
             fee: 0,
             signature,
             memo: b"ZHTP_INIT_ENTITY_REGISTRY".to_vec(),
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: Some(data),
+            payload: TransactionPayload::InitEntityRegistry(data),
         }
     }
 }
@@ -2466,4 +1775,107 @@ pub struct InitEntityRegistryData {
     /// Block height at time of signing (client-provided; part of the signed payload
     /// so it cannot be modified post-signing without invalidating the signature).
     pub initialized_at_height: u64,
+}
+
+// ============================================================================
+// CBE Transaction Payload Structs
+// ============================================================================
+
+/// CBE token initialization data (one-time, irreversible)
+///
+/// Carries the 4 pool addresses that `CbeToken::init()` requires.
+/// The block processor resolves each key_id to a full `PublicKey` via
+/// `resolve_public_key_by_key_id` before calling the contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InitCbeTokenData {
+    /// Compensation pool wallet key_id — receives 40% of CBE supply
+    pub compensation_key_id: [u8; 32],
+    /// Operational treasury wallet key_id — receives 30% of CBE supply
+    pub operational_key_id: [u8; 32],
+    /// Performance incentives wallet key_id — receives 20% of CBE supply
+    pub performance_key_id: [u8; 32],
+    /// Strategic reserves wallet key_id — receives 10% of CBE supply
+    pub strategic_key_id: [u8; 32],
+    /// Unix timestamp of initialization
+    pub initialized_at: u64,
+    /// Block height at initialization (client-provided, part of signed payload)
+    pub initialized_at_height: u64,
+}
+
+/// Employment contract creation data
+///
+/// Maps 1-to-1 to `EmploymentRegistry::create_employment_contract()` parameters.
+/// Enum types (`ContractAccessType`, `EconomicPeriod`) are encoded as `u8` discriminants
+/// to avoid `#[cfg(feature = "contracts")]` dependencies in the transaction core.
+/// The block processor converts them to the correct enum variants.
+///
+/// ContractAccessType discriminants: 0 = PublicAccess, 1 = Employment
+/// EconomicPeriod discriminants:     0 = Monthly, 1 = Quarterly, 2 = Annually
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateEmploymentContractData {
+    /// DAO / employer key_id (32-byte)
+    pub dao_id: [u8; 32],
+    /// Employee wallet key_id (32-byte) — resolved to PublicKey in block processor
+    pub employee_key_id: [u8; 32],
+    /// Contract type discriminant (0=PublicAccess, 1=Employment)
+    pub contract_type: u8,
+    /// Compensation amount in CBE atomic units
+    pub compensation_amount: u64,
+    /// Payment period discriminant (0=Monthly, 1=Quarterly, 2=Annually)
+    pub payment_period: u8,
+    /// Tax rate in basis points (max 5000 = 50%)
+    pub tax_rate_basis_points: u16,
+    /// Tax jurisdiction string
+    pub tax_jurisdiction: String,
+    /// Profit share in basis points (max 2000 = 20%)
+    pub profit_share_percentage: u16,
+}
+
+/// Payroll disbursement trigger data
+///
+/// The block processor calls `EmploymentRegistry::process_payroll(contract_id, current_height)`.
+/// All amounts are computed by the contract; this payload only identifies which contract to pay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessPayrollData {
+    /// Contract to process payroll for (32-byte contract_id from CreateEmploymentContract)
+    pub contract_id: [u8; 32],
+}
+
+// ============================================================================
+// TransactionPayload enum
+// ============================================================================
+
+/// Typed transaction payload - replaces the flat Option<FooData> field scatter on Transaction.
+///
+/// Adding a new transaction type = adding one variant here. No version constant, no positional
+/// field count, no `if version >= TX_VERSION_VN` ladder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TransactionPayload {
+    /// No typed payload (Transfer, Coinbase, SessionCreation, SessionTermination,
+    /// ContentUpload, UbiDistribution, DifficultyUpdate, CancelOracleUpdate, and
+    /// other types that use inputs/outputs/memo only)
+    None,
+    Identity(IdentityTransactionData),
+    Wallet(WalletTransactionData),
+    Validator(ValidatorTransactionData),
+    DaoProposal(DaoProposalData),
+    DaoVote(DaoVoteData),
+    DaoExecution(DaoExecutionData),
+    UbiClaim(UbiClaimData),
+    ProfitDeclaration(ProfitDeclarationData),
+    TokenTransfer(TokenTransferData),
+    TokenMint(TokenMintData),
+    GovernanceConfigUpdate(GovernanceConfigUpdateData),
+    BondingCurveDeploy(BondingCurveDeployData),
+    BondingCurveBuy(BondingCurveBuyData),
+    BondingCurveSell(BondingCurveSellData),
+    BondingCurveGraduate(BondingCurveGraduateData),
+    OracleCommitteeUpdate(OracleCommitteeUpdateData),
+    OracleConfigUpdate(OracleConfigUpdateData),
+    OracleAttestation(OracleAttestationData),
+    CancelOracleUpdate(CancelOracleUpdateData),
+    InitEntityRegistry(InitEntityRegistryData),
+    InitCbeToken(InitCbeTokenData),
+    CreateEmploymentContract(CreateEmploymentContractData),
+    ProcessPayroll(ProcessPayrollData),
 }

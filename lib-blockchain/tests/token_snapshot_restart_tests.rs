@@ -7,7 +7,8 @@ use lib_blockchain::contracts::TokenContract;
 use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::storage::{BlockchainStore, SledStore, TokenStateSnapshot};
 use lib_blockchain::transaction::{
-    TokenTransferData, Transaction, TransactionInput, TransactionOutput, WalletTransactionData,
+    TokenTransferData, Transaction, TransactionInput, TransactionOutput, TransactionPayload,
+    WalletTransactionData,
 };
 use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
@@ -35,38 +36,7 @@ fn wallet_registration_tx(wallet_id: [u8; 32], owner_pubkey: &PublicKey) -> Tran
         fee: 0,
         signature: test_signature(owner_pubkey),
         memo: Vec::new(),
-        identity_data: None,
-        wallet_data: Some(WalletTransactionData {
-            wallet_id: Hash::new(wallet_id),
-            wallet_type: "Primary".to_string(),
-            wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
-            alias: None,
-            public_key: owner_pubkey.dilithium_pk.clone(),
-            owner_identity_id: None,
-            seed_commitment: Hash::zero(),
-            created_at: 1_700_000_000,
-            registration_fee: 0,
-            capabilities: 0,
-            initial_balance: 0,
-        }),
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::Wallet(WalletTransactionData { wallet_id: Hash::new(wallet_id), wallet_type: "Primary".to_string(), wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])), alias: None, public_key: owner_pubkey.dilithium_pk.clone(), owner_identity_id: None, seed_commitment: Hash::zero(), created_at: 1_700_000_000, registration_fee: 0, capabilities: 0, initial_balance: 0, }),
     }
 }
 
@@ -96,32 +66,7 @@ fn token_transfer_tx(
         fee: 0,
         signature: test_signature(sender),
         memo: Vec::new(),
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: Some(TokenTransferData {
-            token_id,
-            from,
-            to,
-            amount: amount as u128,
-            nonce,
-        }),
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::TokenTransfer(TokenTransferData { token_id, from, to, amount: amount as u128, nonce, }),
     }
 }
 

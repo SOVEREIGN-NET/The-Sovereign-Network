@@ -8,7 +8,7 @@ use crate::integration::crypto_integration::{
 use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
 use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
-    WalletTransactionData,
+    TransactionPayload, WalletTransactionData, TX_VERSION_V8,
 };
 use crate::types::transaction_type::TransactionType;
 use tracing::debug;
@@ -175,9 +175,18 @@ impl TransactionBuilder {
             self.inputs
         };
 
+        // Build payload from legacy builder fields
+        let payload = if let Some(id) = self.identity_data {
+            TransactionPayload::Identity(id)
+        } else if let Some(wd) = self.wallet_data {
+            TransactionPayload::Wallet(wd)
+        } else {
+            TransactionPayload::None
+        };
+
         // Create unsigned transaction
         let mut transaction = Transaction {
-            version: self.version,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: self.transaction_type,
             inputs: inputs_with_proofs,
@@ -190,26 +199,7 @@ impl TransactionBuilder {
                 timestamp: 0,
             }, // Will be set below
             memo: self.memo,
-            validator_data: None,
-            identity_data: self.identity_data,
-            wallet_data: self.wallet_data,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload,
         };
 
         // Sign the transaction
@@ -592,7 +582,7 @@ pub mod utils {
         transaction_type: &TransactionType,
         inputs: &[TransactionInput],
         outputs: &[TransactionOutput],
-        identity_data: &Option<IdentityTransactionData>,
+        has_identity_data: bool,
     ) -> Result<(), TransactionCreateError> {
         match transaction_type {
             TransactionType::Transfer => {
@@ -603,7 +593,7 @@ pub mod utils {
             TransactionType::IdentityRegistration
             | TransactionType::IdentityUpdate
             | TransactionType::IdentityRevocation => {
-                if identity_data.is_none() {
+                if !has_identity_data {
                     return Err(TransactionCreateError::IdentityError);
                 }
             }
@@ -702,6 +692,17 @@ pub mod utils {
             }
             TransactionType::InitEntityRegistry => {
                 // Entity registry init - must have no inputs/outputs
+                if !inputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidInputs);
+                }
+                if !outputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidOutputs);
+                }
+            }
+            TransactionType::InitCbeToken
+            | TransactionType::CreateEmploymentContract
+            | TransactionType::ProcessPayroll => {
+                // CBE transactions - must have no inputs/outputs
                 if !inputs.is_empty() {
                     return Err(TransactionCreateError::InvalidInputs);
                 }

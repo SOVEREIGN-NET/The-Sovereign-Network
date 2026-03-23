@@ -73,7 +73,7 @@ fn test_identity_transaction_creation() -> Result<()> {
     assert_eq!(transaction.fee, 1100); // registration_fee + dao_fee
     assert!(transaction.inputs.is_empty());
 
-    let tx_identity_data = transaction.identity_data.as_ref().unwrap();
+    let tx_identity_data = transaction.identity_data().unwrap();
     assert_eq!(tx_identity_data.did, "did:zhtp:test_creation");
     assert_eq!(tx_identity_data.display_name, "Test User");
 
@@ -149,7 +149,7 @@ fn test_identity_revocation_transaction() -> Result<()> {
     assert!(transaction.has_identity_data());
     assert_eq!(transaction.fee, 25);
 
-    let revocation_data = transaction.identity_data.as_ref().unwrap();
+    let revocation_data = transaction.identity_data().unwrap();
     assert_eq!(revocation_data.did, "did:zhtp:test_revoke");
     assert_eq!(revocation_data.identity_type, "revoked");
     assert!(revocation_data.is_revoked());

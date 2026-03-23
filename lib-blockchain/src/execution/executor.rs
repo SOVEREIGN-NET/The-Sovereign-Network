@@ -915,7 +915,10 @@ impl BlockExecutor {
             | TransactionType::OracleAttestation
             | TransactionType::CancelOracleUpdate
             // Entity registry init - handled by process_entity_registry_transactions
-            | TransactionType::InitEntityRegistry => {
+            | TransactionType::InitEntityRegistry
+            | TransactionType::InitCbeToken
+            | TransactionType::CreateEmploymentContract
+            | TransactionType::ProcessPayroll => {
                 // Fall through to the general validation flow below without
                 // treating oracle attestations as automatically valid.
             }
@@ -962,14 +965,14 @@ impl BlockExecutor {
                     ));
                 }
                 // Coinbase must not have non-Phase-2 fields set
-                if tx.identity_data.is_some()
-                    || tx.wallet_data.is_some()
-                    || tx.validator_data.is_some()
-                    || tx.dao_proposal_data.is_some()
-                    || tx.dao_vote_data.is_some()
-                    || tx.dao_execution_data.is_some()
-                    || tx.ubi_claim_data.is_some()
-                    || tx.profit_declaration_data.is_some()
+                if tx.identity_data().is_some()
+                    || tx.wallet_data().is_some()
+                    || tx.validator_data().is_some()
+                    || tx.dao_proposal_data().is_some()
+                    || tx.dao_vote_data().is_some()
+                    || tx.dao_execution_data().is_some()
+                    || tx.ubi_claim_data().is_some()
+                    || tx.profit_declaration_data().is_some()
                 {
                     return Err(TxApplyError::InvalidType(
                         "Coinbase must not have non-Phase-2 data fields".to_string(),
@@ -978,13 +981,13 @@ impl BlockExecutor {
             }
             TransactionType::TokenTransfer => {
                 // Token transfer must have token_transfer_data
-                if tx.token_transfer_data.is_none() {
+                if tx.token_transfer_data().is_none() {
                     return Err(TxApplyError::InvalidType(
                         "TokenTransfer requires token_transfer_data field".to_string(),
                     ));
                 }
                 // Validate token_transfer_data fields
-                let data = tx.token_transfer_data.as_ref().unwrap();
+                let data = tx.token_transfer_data().unwrap();
                 if data.amount == 0 {
                     return Err(TxApplyError::InvalidType(
                         "Token transfer amount must be greater than 0".to_string(),
@@ -998,12 +1001,12 @@ impl BlockExecutor {
                             .to_string(),
                     ));
                 }
-                if tx.token_mint_data.is_none() {
+                if tx.token_mint_data().is_none() {
                     return Err(TxApplyError::InvalidType(
                         "TokenMint requires token_mint_data field".to_string(),
                     ));
                 }
-                let data = tx.token_mint_data.as_ref().unwrap();
+                let data = tx.token_mint_data().unwrap();
                 if data.amount == 0 {
                     return Err(TxApplyError::InvalidType(
                         "TokenMint amount must be greater than 0".to_string(),
@@ -1060,7 +1063,7 @@ impl BlockExecutor {
                 Self::decode_contract_call_memo(&tx.memo)?;
             }
             TransactionType::DaoProposal => {
-                let data = tx.dao_proposal_data.as_ref().ok_or_else(|| {
+                let data = tx.dao_proposal_data().ok_or_else(|| {
                     TxApplyError::InvalidType(
                         "DaoProposal requires dao_proposal_data field".to_string(),
                     )
@@ -1072,7 +1075,7 @@ impl BlockExecutor {
                 }
             }
             TransactionType::DaoVote => {
-                let data = tx.dao_vote_data.as_ref().ok_or_else(|| {
+                let data = tx.dao_vote_data().ok_or_else(|| {
                     TxApplyError::InvalidType("DaoVote requires dao_vote_data field".to_string())
                 })?;
                 if data.voter.trim().is_empty() || data.vote_choice.trim().is_empty() {
@@ -1082,7 +1085,7 @@ impl BlockExecutor {
                 }
             }
             TransactionType::DaoExecution => {
-                let data = tx.dao_execution_data.as_ref().ok_or_else(|| {
+                let data = tx.dao_execution_data().ok_or_else(|| {
                     TxApplyError::InvalidType(
                         "DaoExecution requires dao_execution_data field".to_string(),
                     )
@@ -1190,7 +1193,7 @@ impl BlockExecutor {
                 }
             }
             TransactionType::TokenTransfer => {
-                let transfer = tx.token_transfer_data.as_ref().ok_or_else(|| {
+                let transfer = tx.token_transfer_data().ok_or_else(|| {
                     TxApplyError::InvalidType("TokenTransfer requires token_transfer_data".into())
                 })?;
 
@@ -1258,11 +1261,11 @@ impl BlockExecutor {
         let outputs = tx.outputs.len() * 96;
 
         // Optional data fields (rough estimates)
-        let optional_data = tx.identity_data.as_ref().map(|_| 256).unwrap_or(0)
-            + tx.wallet_data.as_ref().map(|_| 128).unwrap_or(0)
-            + tx.validator_data.as_ref().map(|_| 256).unwrap_or(0)
-            + tx.token_transfer_data.as_ref().map(|_| 104).unwrap_or(0)
-            + tx.token_mint_data.as_ref().map(|_| 72).unwrap_or(0); // 32+32+8
+        let optional_data = tx.identity_data().map(|_| 256).unwrap_or(0)
+            + tx.wallet_data().map(|_| 128).unwrap_or(0)
+            + tx.validator_data().map(|_| 256).unwrap_or(0)
+            + tx.token_transfer_data().map(|_| 104).unwrap_or(0)
+            + tx.token_mint_data().map(|_| 72).unwrap_or(0); // 32+32+8
 
         (base + inputs_payload + outputs + optional_data) as u64
     }
@@ -1345,7 +1348,7 @@ impl BlockExecutor {
         tx: &crate::transaction::Transaction,
         _tx_hash: &crate::types::Hash,
     ) -> Result<DaoProposalOutcome, TxApplyError> {
-        let data = tx.dao_proposal_data.as_ref().ok_or_else(|| {
+        let data = tx.dao_proposal_data().ok_or_else(|| {
             TxApplyError::InvalidType("DaoProposal requires dao_proposal_data field".to_string())
         })?;
 
@@ -1384,7 +1387,7 @@ impl BlockExecutor {
         tx: &crate::transaction::Transaction,
         block_height: u64,
     ) -> Result<DaoVoteOutcome, TxApplyError> {
-        let data = tx.dao_vote_data.as_ref().ok_or_else(|| {
+        let data = tx.dao_vote_data().ok_or_else(|| {
             TxApplyError::InvalidType("DaoVote requires dao_vote_data field".to_string())
         })?;
 
@@ -1437,7 +1440,7 @@ impl BlockExecutor {
         tx: &crate::transaction::Transaction,
         _tx_hash: &crate::types::Hash,
     ) -> Result<DaoExecutionOutcome, TxApplyError> {
-        let data = tx.dao_execution_data.as_ref().ok_or_else(|| {
+        let data = tx.dao_execution_data().ok_or_else(|| {
             TxApplyError::InvalidType("DaoExecution requires dao_execution_data field".to_string())
         })?;
 
@@ -1890,7 +1893,7 @@ impl BlockExecutor {
             }
             TransactionType::TokenTransfer => {
                 // Extract token transfer data - must be present for TokenTransfer type
-                let transfer_data = tx.token_transfer_data.as_ref().ok_or_else(|| {
+                let transfer_data = tx.token_transfer_data().ok_or_else(|| {
                     TxApplyError::InvalidType(
                         "TokenTransfer requires token_transfer_data field".to_string(),
                     )
@@ -1936,7 +1939,7 @@ impl BlockExecutor {
                 }))
             }
             TransactionType::TokenMint => {
-                let mint_data = tx.token_mint_data.as_ref().ok_or_else(|| {
+                let mint_data = tx.token_mint_data().ok_or_else(|| {
                     TxApplyError::InvalidType(
                         "TokenMint requires token_mint_data field".to_string(),
                     )
@@ -2538,26 +2541,7 @@ mod tests {
             fee: 10_000, // High enough for testing fee params
             signature: create_dummy_signature(),
             memo: vec![],
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         }
     }
 
@@ -2575,26 +2559,7 @@ mod tests {
             fee: 0,
             signature: create_dummy_signature(),
             memo: vec![],
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         }
     }
 
@@ -2777,26 +2742,7 @@ mod tests {
             fee: 0,
             signature: create_dummy_signature(),
             memo: vec![],
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         }
     }
 
@@ -2943,26 +2889,7 @@ mod tests {
             fee,
             signature: create_dummy_signature(),
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         }
     }
 
@@ -3385,7 +3312,7 @@ mod tests {
     fn create_dao_proposal_tx(proposal_id: crate::types::Hash) -> Transaction {
         let mut tx = create_legacy_tx(TransactionType::DaoProposal);
         tx.fee = 1_000; // governance tx min fee with FeeParams::for_testing()
-        tx.dao_proposal_data = Some(crate::transaction::DaoProposalData {
+        tx.payload = crate::transaction::TransactionPayload::DaoProposal(crate::transaction::DaoProposalData {
             proposal_id,
             proposer: "alice".to_string(),
             title: "Test Proposal".to_string(),
@@ -3410,7 +3337,7 @@ mod tests {
         ));
         let mut tx = create_legacy_tx(TransactionType::DaoVote);
         tx.fee = 1_000; // governance tx min fee with FeeParams::for_testing()
-        tx.dao_vote_data = Some(crate::transaction::DaoVoteData {
+        tx.payload = crate::transaction::TransactionPayload::DaoVote(crate::transaction::DaoVoteData {
             vote_id,
             proposal_id,
             voter: voter.to_string(),
@@ -3425,7 +3352,7 @@ mod tests {
     fn create_dao_execution_tx(proposal_id: crate::types::Hash) -> Transaction {
         let mut tx = create_legacy_tx(TransactionType::DaoExecution);
         tx.fee = 1_000; // governance tx min fee with FeeParams::for_testing()
-        tx.dao_execution_data = Some(crate::transaction::DaoExecutionData {
+        tx.payload = crate::transaction::TransactionPayload::DaoExecution(crate::transaction::DaoExecutionData {
             proposal_id,
             executor: "council".to_string(),
             execution_type: "parameter_change".to_string(),
@@ -3561,7 +3488,7 @@ mod tests {
 
         // Block 1: proposal with a 1-block voting period (expires after height 2)
         let mut proposal_data = create_dao_proposal_tx(proposal_id);
-        if let Some(ref mut d) = proposal_data.dao_proposal_data {
+        if let crate::transaction::TransactionPayload::DaoProposal(ref mut d) = proposal_data.payload {
             d.voting_period_blocks = 1; // deadline = created_at_height(1) + 1 = height 2
         }
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_data]);
@@ -3587,10 +3514,10 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_bonding_curve_tx_constructors_use_version_v3() {
+    fn test_bonding_curve_tx_constructors_use_version_v8() {
         use crate::transaction::core::{
             BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData,
-            BondingCurveSellData, TX_VERSION_V3,
+            BondingCurveSellData, TX_VERSION_V8,
         };
 
         let sig = create_dummy_signature();
@@ -3616,11 +3543,11 @@ mod tests {
             vec![],
         );
         assert_eq!(
-            deploy_tx.version, TX_VERSION_V3,
-            "deploy tx must be version V3"
+            deploy_tx.version, TX_VERSION_V8,
+            "deploy tx must be version V8"
         );
         assert!(
-            deploy_tx.bonding_curve_deploy_data.is_some(),
+            deploy_tx.bonding_curve_deploy_data().is_some(),
             "deploy data must survive serialization gate"
         );
 
@@ -3636,7 +3563,7 @@ mod tests {
             sig.clone(),
             vec![],
         );
-        assert_eq!(buy_tx.version, TX_VERSION_V3);
+        assert_eq!(buy_tx.version, TX_VERSION_V8);
 
         let sell_tx = Transaction::new_bonding_curve_sell_with_chain_id(
             1,
@@ -3650,7 +3577,7 @@ mod tests {
             sig.clone(),
             vec![],
         );
-        assert_eq!(sell_tx.version, TX_VERSION_V3);
+        assert_eq!(sell_tx.version, TX_VERSION_V8);
 
         let grad_tx = Transaction::new_bonding_curve_graduate_with_chain_id(
             1,
@@ -3665,12 +3592,12 @@ mod tests {
             sig,
             vec![],
         );
-        assert_eq!(grad_tx.version, TX_VERSION_V3);
+        assert_eq!(grad_tx.version, TX_VERSION_V8);
     }
 
     #[test]
-    fn test_bonding_curve_tx_v3_roundtrips_data_fields() {
-        use crate::transaction::core::{BondingCurveDeployData, TX_VERSION_V3};
+    fn test_bonding_curve_tx_v8_roundtrips_data_fields() {
+        use crate::transaction::core::{BondingCurveDeployData, TX_VERSION_V8};
 
         let creator = [7u8; 32];
         let sig = create_dummy_signature();
@@ -3693,14 +3620,14 @@ mod tests {
             sig,
             vec![],
         );
-        assert_eq!(tx.version, TX_VERSION_V3);
+        assert_eq!(tx.version, TX_VERSION_V8);
 
         // Roundtrip through bincode — bonding curve data must survive
         let bytes = bincode::serialize(&tx).expect("serialize");
         let decoded: Transaction = bincode::deserialize(&bytes).expect("deserialize");
-        assert_eq!(decoded.version, TX_VERSION_V3);
+        assert_eq!(decoded.version, TX_VERSION_V8);
         let data = decoded
-            .bonding_curve_deploy_data
+            .bonding_curve_deploy_data()
             .expect("deploy_data must be Some after roundtrip");
         assert_eq!(data.symbol, "RT");
         assert_eq!(data.creator, creator);
@@ -4293,7 +4220,7 @@ mod tests {
             },
         ));
         let tx = crate::transaction::Transaction {
-            version: crate::transaction::TX_VERSION_V3,
+            version: crate::transaction::TX_VERSION_V8,
             chain_id: 0x03,
             transaction_type: TransactionType::BondingCurveBuy,
             inputs: vec![],
@@ -4301,26 +4228,7 @@ mod tests {
             fee: 0,
             signature: signer.sign(&payload).unwrap(),
             memo: payload.to_vec(),
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         };
 
         // Economics are now wired: the transaction should succeed end-to-end.
@@ -4364,7 +4272,7 @@ mod tests {
             },
         ));
         let tx = crate::transaction::Transaction {
-            version: crate::transaction::TX_VERSION_V3,
+            version: crate::transaction::TX_VERSION_V8,
             chain_id: 0x03,
             transaction_type: TransactionType::BondingCurveBuy,
             inputs: vec![],
@@ -4372,26 +4280,7 @@ mod tests {
             fee: 0,
             signature: signer.sign(&payload).unwrap(),
             memo: payload.to_vec(),
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         };
 
         let err = executor

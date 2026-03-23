@@ -13,7 +13,7 @@ use lib_blockchain::execution::{BlockExecutor, ExecutorConfig};
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::storage::{Address, BlockchainStore, SledStore, TokenId};
 use lib_blockchain::sync::{ChainSync, SyncError};
-use lib_blockchain::transaction::{TokenTransferData, Transaction, TransactionOutput};
+use lib_blockchain::transaction::{TokenTransferData, Transaction, TransactionOutput, TransactionPayload};
 use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 
 // =============================================================================
@@ -124,32 +124,7 @@ fn create_token_transfer_tx(
         fee: 0, // Token transfers have 0 fee per Phase-2 rules
         signature: create_dummy_signature(),
         memo: vec![],
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: Some(TokenTransferData {
-            token_id,
-            from,
-            to,
-            amount,
-            nonce: 0,
-        }),
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::TokenTransfer(TokenTransferData { token_id, from, to, amount, nonce: 0, }),
     }
 }
 

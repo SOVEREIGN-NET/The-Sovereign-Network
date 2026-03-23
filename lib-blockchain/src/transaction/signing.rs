@@ -282,7 +282,7 @@ pub mod utils {
         let zk_cost = transaction.inputs.len() as u64 * 5000;
 
         // Additional cost for identity transactions
-        let identity_cost = if transaction.identity_data.is_some() {
+        let identity_cost = if transaction.identity_data().is_some() {
             2000
         } else {
             0

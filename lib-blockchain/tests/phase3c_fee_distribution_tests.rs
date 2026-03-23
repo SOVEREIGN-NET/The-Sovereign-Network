@@ -15,7 +15,7 @@ use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, Sign
 use lib_blockchain::integration::zk_integration::ZkTransactionProof;
 use lib_blockchain::protocol::ProtocolParams;
 use lib_blockchain::storage::{Address, BlockchainStore, SledStore};
-use lib_blockchain::transaction::{Transaction, TransactionInput, TransactionOutput};
+use lib_blockchain::transaction::{Transaction, TransactionInput, TransactionOutput, TransactionPayload};
 use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 use lib_proofs::types::ZkProof;
 
@@ -102,26 +102,7 @@ fn create_coinbase_with_fees(
         fee: 0,
         signature: create_dummy_signature(),
         memo: vec![],
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::None,
     }
 }
 
@@ -197,26 +178,7 @@ fn create_transfer_tx(
         fee,
         signature: create_dummy_signature(),
         memo: vec![],
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::None,
     }
 }
 
@@ -373,26 +335,7 @@ fn test_fee_sink_balance_increases_deterministically() {
         fee: 0,
         signature: create_dummy_signature(),
         memo: vec![],
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::None,
     };
 
     let genesis = create_genesis_with_coinbase(genesis_coinbase.clone());
@@ -494,26 +437,7 @@ fn test_coinbase_without_fee_sink_rejected() {
         fee: 0,
         signature: create_dummy_signature(),
         memo: vec![],
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::None,
     };
 
     let block1 = create_block_with_txs(1, genesis.header.block_hash, bad_coinbase, vec![transfer]);
@@ -549,26 +473,7 @@ fn test_zero_fees_no_fee_sink_required() {
         fee: 0,
         signature: create_dummy_signature(),
         memo: vec![],
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::None,
     };
 
     let genesis = create_genesis_with_coinbase(coinbase);

@@ -504,7 +504,7 @@ impl EconomicTransactionProcessor {
 
         // Create blockchain transaction
         Ok(BlockchainTransaction {
-            version: 1,
+            version: crate::transaction::TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: blockchain_tx_type,
             inputs,
@@ -512,26 +512,9 @@ impl EconomicTransactionProcessor {
             fee: economy_tx.total_fee,
             signature,
             memo,
-            identity_data,
-            validator_data: None,
-            wallet_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: identity_data
+                .map(crate::transaction::TransactionPayload::Identity)
+                .unwrap_or(crate::transaction::TransactionPayload::None),
         })
     }
 
@@ -552,7 +535,7 @@ impl EconomicTransactionProcessor {
         };
 
         let temp_transaction = BlockchainTransaction {
-            version: 1,
+            version: crate::transaction::TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: BlockchainTransactionType::Transfer,
             inputs: inputs.to_vec(),
@@ -560,26 +543,7 @@ impl EconomicTransactionProcessor {
             fee: economy_tx.total_fee,
             signature: temp_signature,
             memo: format!("Economic signature for {}", hex::encode(economy_tx.tx_id)).into_bytes(),
-            identity_data: None,
-            validator_data: None,
-            wallet_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         };
 
         // Create signing hash
