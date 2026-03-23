@@ -118,7 +118,7 @@ pub enum TransactionType {
     CancelOracleUpdate = 37,
     /// Initialize entity registry with CBE and Nonprofit treasury addresses (one-time, irreversible)
     ///
-    /// Must be signed by a Bootstrap Council member. Locks EntityRegistry permanently after execution.
+    /// Requires Bootstrap Council threshold approvals. Locks EntityRegistry permanently after execution.
     InitEntityRegistry = 38,
     /// Record an oracle committee-attested fiat→CBE on-ramp trade.
     ///
@@ -414,5 +414,15 @@ impl TransactionType {
     /// Check if this transaction type relates to profit declarations (for-profit to nonprofit tribute)
     pub fn is_profit_declaration(&self) -> bool {
         matches!(self, TransactionType::ProfitDeclaration)
+    }
+
+    /// Check if this is a record on-ramp trade transaction
+    pub fn is_record_on_ramp_trade(&self) -> bool {
+        matches!(self, TransactionType::RecordOnRampTrade)
+    }
+
+    /// Check if this is a treasury allocation transaction
+    pub fn is_treasury_allocation(&self) -> bool {
+        matches!(self, TransactionType::TreasuryAllocation)
     }
 }

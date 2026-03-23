@@ -3158,6 +3158,9 @@ impl Blockchain {
             );
         }
 
+        // #1897: Process on-ramp trade transactions
+        self.process_on_ramp_trade_transactions(&block);
+
         // ORACLE-R3: Process oracle attestation transactions through canonical path
         // In V0 (legacy) mode: Also process gossip attestations (backward compatibility)
         // In V1 (strict spec) mode: Only transaction attestations are processed
@@ -6018,6 +6021,36 @@ impl Blockchain {
             );
         }
         Ok(())
+    }
+
+    // ========================================================================
+    // On-ramp trade processing (#1897)
+    // ========================================================================
+
+    /// Process RecordOnRampTrade transactions in a block.
+    ///
+    /// For each `RecordOnRampTrade` transaction, builds an `OnRampTrade` record
+    /// and appends it to `self.onramp_state`.
+    pub fn process_on_ramp_trade_transactions(&mut self, block: &Block) {
+        use crate::types::transaction_type::TransactionType;
+        for tx in &block.transactions {
+            if tx.transaction_type != TransactionType::RecordOnRampTrade {
+                continue;
+            }
+            if let Some(data) = tx.record_on_ramp_trade_data() {
+                let trade = crate::onramp::OnRampTrade {
+                    block_height: block.header.height,
+                    epoch_id: data.epoch_id,
+                    cbe_amount: data.cbe_amount,
+                    usdc_amount: data.usdc_amount,
+                };
+                self.onramp_state.record_trade(trade);
+                info!(
+                    "OnRampTrade recorded at height {} (epoch {}, cbe={}, usdc={})",
+                    block.header.height, data.epoch_id, data.cbe_amount, data.usdc_amount
+                );
+            }
+        }
     }
 
     // ========================================================================

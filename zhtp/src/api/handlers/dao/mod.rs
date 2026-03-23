@@ -2716,6 +2716,282 @@ fn dao_entry_json(entry: DAOEntry, dao_id: [u8; 32]) -> serde_json::Value {
     })
 }
 
+// =============================================================================
+// #1895 — Async Proposal API (threshold-approval multi-signer flow)
+// =============================================================================
+
+use lib_blockchain::transaction::{Approval, ThresholdApprovalSet};
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+
+/// An in-progress threshold-approval proposal awaiting sufficient signatures.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingProposal {
+    /// Stable identifier derived from hash of (tx_type, payload_bytes).
+    pub id: [u8; 32],
+    /// Canonical serialized payload bytes (without the approvals field).
+    pub payload_bytes: Vec<u8>,
+    /// The `u8` discriminant of the target `TransactionType`.
+    pub tx_type: u8,
+    /// Accumulated approvals (each validated before insertion).
+    pub approvals: Vec<Approval>,
+    /// Unix timestamp when this proposal was created.
+    pub created_at: u64,
+}
+
+/// Global in-memory store for pending proposals.
+///
+/// In production this should be persisted; for the initial implementation
+/// an in-process `RwLock<HashMap>` is sufficient for the scaffolding.
+static PENDING_PROPOSALS: Lazy<tokio::sync::RwLock<HashMap<[u8; 32], PendingProposal>>> =
+    Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
+
+/// Request body for `POST /api/v1/dao/proposal/payload`.
+#[derive(Debug, Deserialize)]
+struct CreateProposalPayloadRequest {
+    /// The `u8` value of the target `TransactionType` (e.g. 38 = InitEntityRegistry).
+    tx_type: u8,
+    /// Hex-encoded canonical payload bytes.
+    payload_hex: String,
+}
+
+/// Request body for `POST /api/v1/dao/proposal/{id}/approval`.
+#[derive(Debug, Deserialize)]
+struct AddApprovalRequest {
+    /// Hex-encoded Dilithium public key.
+    public_key_hex: String,
+    /// Hex-encoded signature bytes.
+    signature_hex: String,
+    /// Signature algorithm string (e.g. "Dilithium5").
+    algorithm: Option<String>,
+}
+
+fn current_unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+impl DaoHandler {
+    /// `POST /api/v1/dao/proposal/payload`
+    ///
+    /// Accept a tx_type + payload, store the pending proposal, return a `proposal_id`.
+    async fn handle_create_proposal_payload(
+        &self,
+        request: &lib_protocols::types::ZhtpRequest,
+    ) -> Result<lib_protocols::types::ZhtpResponse> {
+        let req: CreateProposalPayloadRequest =
+            serde_json::from_slice(&request.body).map_err(|e| {
+                anyhow::anyhow!("Invalid request body: {}", e)
+            })?;
+
+        let payload_bytes = hex::decode(&req.payload_hex)
+            .map_err(|e| anyhow::anyhow!("Invalid payload_hex: {}", e))?;
+
+        // Derive a stable proposal_id = blake3(tx_type || payload)
+        let id: [u8; 32] = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&[req.tx_type]);
+            hasher.update(&payload_bytes);
+            *hasher.finalize().as_bytes()
+        };
+
+        let proposal = PendingProposal {
+            id,
+            payload_bytes,
+            tx_type: req.tx_type,
+            approvals: Vec::new(),
+            created_at: current_unix_timestamp(),
+        };
+
+        let mut store = PENDING_PROPOSALS.write().await;
+        store.insert(id, proposal);
+
+        create_json_response(json!({
+            "status": "created",
+            "proposal_id": hex::encode(id),
+        }))
+    }
+
+    /// `POST /api/v1/dao/proposal/{id}/approval`
+    ///
+    /// Accept a single `Approval`, validate the signature over the stored payload,
+    /// and append it to the pending proposal.
+    async fn handle_add_approval(
+        &self,
+        request: &lib_protocols::types::ZhtpRequest,
+        proposal_id_hex: &str,
+    ) -> Result<lib_protocols::types::ZhtpResponse> {
+        use lib_blockchain::transaction::{compute_approval_preimage, ApprovalDomain};
+        use lib_crypto::verification::verify_signature;
+
+        let id_bytes = hex::decode(proposal_id_hex)
+            .map_err(|e| anyhow::anyhow!("Invalid proposal_id: {}", e))?;
+        if id_bytes.len() != 32 {
+            return Err(anyhow::anyhow!("proposal_id must be 32 bytes hex-encoded"));
+        }
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&id_bytes);
+
+        let req: AddApprovalRequest =
+            serde_json::from_slice(&request.body).map_err(|e| {
+                anyhow::anyhow!("Invalid request body: {}", e)
+            })?;
+
+        let pk_bytes = hex::decode(&req.public_key_hex)
+            .map_err(|e| anyhow::anyhow!("Invalid public_key_hex: {}", e))?;
+        let sig_bytes = hex::decode(&req.signature_hex)
+            .map_err(|e| anyhow::anyhow!("Invalid signature_hex: {}", e))?;
+
+        let algorithm = match req.algorithm.as_deref().unwrap_or("Dilithium5") {
+            "Dilithium2" => lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+            _ => lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
+        };
+
+        let mut store = PENDING_PROPOSALS.write().await;
+        let proposal = store.get_mut(&id).ok_or_else(|| {
+            anyhow::anyhow!("Proposal not found: {}", proposal_id_hex)
+        })?;
+
+        // Compute preimage for this proposal
+        // We use BootstrapCouncil as a default; callers that need OracleCommittee
+        // should pass the domain in the approval request body (future enhancement).
+        let preimage = compute_approval_preimage(
+            proposal.tx_type,
+            &ApprovalDomain::BootstrapCouncil,
+            &proposal.payload_bytes,
+        );
+
+        // Verify the signature
+        match verify_signature(&preimage, &sig_bytes, &pk_bytes) {
+            Ok(true) => {}
+            Ok(false) => return Err(anyhow::anyhow!("Signature verification failed")),
+            Err(e) => return Err(anyhow::anyhow!("Signature error: {:?}", e)),
+        }
+
+        // Compute key_id = blake3(dilithium_pk)
+        let key_id = lib_crypto::hashing::hash_blake3(&pk_bytes);
+
+        // Check for duplicate
+        if proposal.approvals.iter().any(|a| a.public_key.key_id == key_id) {
+            return Err(anyhow::anyhow!("Duplicate approval from key_id {}", hex::encode(key_id)));
+        }
+
+        let approval = Approval {
+            public_key: lib_blockchain::integration::crypto_integration::PublicKey {
+                dilithium_pk: pk_bytes,
+                kyber_pk: Vec::new(),
+                key_id,
+            },
+            algorithm,
+            signature: sig_bytes,
+        };
+        proposal.approvals.push(approval);
+
+        let count = proposal.approvals.len();
+        create_json_response(json!({
+            "status": "approval_added",
+            "proposal_id": proposal_id_hex,
+            "approval_count": count,
+        }))
+    }
+
+    /// `POST /api/v1/dao/proposal/{id}/assemble`
+    ///
+    /// Build the final `Transaction` from accumulated approvals and return it as JSON hex.
+    async fn handle_assemble_proposal(
+        &self,
+        _request: &lib_protocols::types::ZhtpRequest,
+        proposal_id_hex: &str,
+    ) -> Result<lib_protocols::types::ZhtpResponse> {
+        use lib_blockchain::transaction::{ApprovalDomain, ThresholdApprovalSet};
+
+        let id_bytes = hex::decode(proposal_id_hex)
+            .map_err(|e| anyhow::anyhow!("Invalid proposal_id: {}", e))?;
+        if id_bytes.len() != 32 {
+            return Err(anyhow::anyhow!("proposal_id must be 32 bytes hex-encoded"));
+        }
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&id_bytes);
+
+        let store = PENDING_PROPOSALS.read().await;
+        let proposal = store.get(&id).ok_or_else(|| {
+            anyhow::anyhow!("Proposal not found: {}", proposal_id_hex)
+        })?;
+
+        let approval_set = ThresholdApprovalSet {
+            domain: ApprovalDomain::BootstrapCouncil,
+            approvals: proposal.approvals.clone(),
+        };
+
+        // Return the assembled approval set and payload as JSON for the client to compose
+        // the final Transaction. The client knows the specific Transaction constructor to call.
+        create_json_response(json!({
+            "status": "assembled",
+            "proposal_id": proposal_id_hex,
+            "tx_type": proposal.tx_type,
+            "payload_hex": hex::encode(&proposal.payload_bytes),
+            "approval_count": proposal.approvals.len(),
+            "approval_set_json": serde_json::to_value(&approval_set)
+                .unwrap_or(serde_json::Value::Null),
+        }))
+    }
+
+    /// `POST /api/v1/dao/proposal/{id}/submit`
+    ///
+    /// Submit the assembled transaction to the mempool via `StatefulTransactionValidator`.
+    /// The request body must contain a `signed_tx` field with the hex-encoded serialized Transaction.
+    async fn handle_submit_proposal(
+        &self,
+        request: &lib_protocols::types::ZhtpRequest,
+        proposal_id_hex: &str,
+    ) -> Result<lib_protocols::types::ZhtpResponse> {
+        #[derive(Deserialize)]
+        struct SubmitRequest {
+            signed_tx: String,
+        }
+
+        let req: SubmitRequest =
+            serde_json::from_slice(&request.body).map_err(|e| {
+                anyhow::anyhow!("Invalid request body: {}", e)
+            })?;
+
+        let tx = self.decode_signed_tx_raw(&req.signed_tx)?;
+
+        let blockchain_arc = self.get_blockchain().await?;
+        let blockchain = blockchain_arc.read().await;
+
+        let validator = lib_blockchain::transaction::StatefulTransactionValidator::new(&blockchain);
+        validator
+            .validate_transaction_with_state(&tx)
+            .map_err(|e| anyhow::anyhow!("Validation failed: {}", e))?;
+
+        let tx_hash = tx.hash();
+
+        // Drop blockchain read lock before acquiring write
+        drop(blockchain);
+
+        let mut bc = blockchain_arc.write().await;
+        bc.add_pending_transaction(tx)
+            .map_err(|e| anyhow::anyhow!("Mempool rejection: {}", e))?;
+
+        // Mark the pending proposal as submitted
+        let id_bytes = hex::decode(proposal_id_hex).unwrap_or_default();
+        if id_bytes.len() == 32 {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&id_bytes);
+            PENDING_PROPOSALS.write().await.remove(&key);
+        }
+
+        create_json_response(json!({
+            "status": "submitted",
+            "proposal_id": proposal_id_hex,
+            "tx_hash": hex::encode(tx_hash.as_bytes()),
+        }))
+    }
+}
+
 #[async_trait::async_trait]
 impl ZhtpRequestHandler for DaoHandler {
     async fn handle_request(&self, request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
@@ -2875,6 +3151,24 @@ impl ZhtpRequestHandler for DaoHandler {
                 .map_err(anyhow::Error::from),
             (ZhtpMethod::Post, ["api", "v1", "dao", "proposals", id, "council-veto"]) => self
                 .handle_council_veto(&request, id)
+                .await
+                .map_err(anyhow::Error::from),
+
+            // #1895 — Async proposal API (threshold multi-signer flow)
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposal", "payload"]) => self
+                .handle_create_proposal_payload(&request)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposal", id, "approval"]) => self
+                .handle_add_approval(&request, id)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposal", id, "assemble"]) => self
+                .handle_assemble_proposal(&request, id)
+                .await
+                .map_err(anyhow::Error::from),
+            (ZhtpMethod::Post, ["api", "v1", "dao", "proposal", id, "submit"]) => self
+                .handle_submit_proposal(&request, id)
                 .await
                 .map_err(anyhow::Error::from),
 

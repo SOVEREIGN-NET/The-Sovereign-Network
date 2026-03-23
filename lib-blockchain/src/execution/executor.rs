@@ -2143,6 +2143,15 @@ impl BlockExecutor {
             // This separation is necessary because oracle_state is in-memory (not in storage).
             TransactionType::OracleAttestation => Ok(TxOutcome::LegacySystem),
 
+            // RecordOnRampTrade (#1897): executor arm is a no-op.
+            // The actual OnRampState mutation happens in Blockchain.process_on_ramp_trade_transactions()
+            // called from finish_block_processing().
+            TransactionType::RecordOnRampTrade => Ok(TxOutcome::LegacySystem),
+
+            // TreasuryAllocation (#1896): executor arm is a no-op.
+            // TODO(#1896): wire actual SOV ledger movement in block-processing.
+            TransactionType::TreasuryAllocation => Ok(TxOutcome::LegacySystem),
+
             // Coinbase is routed through apply_coinbase_with_fees, never here.
             // (Handled above; this duplicate arm was removed — see the Coinbase arm near the top of this match.)
             _ => Err(TxApplyError::UnsupportedType(format!(

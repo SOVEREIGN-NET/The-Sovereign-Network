@@ -386,6 +386,8 @@ impl TransactionValidator {
         // - If a system transaction carries a non-empty signature anyway, validate it.
         //   This prevents malformed signatures (wrong size, invalid bytes) from passing
         //   mempool intake and poisoning block proposals on other validators.
+        // - RecordOnRampTrade and TreasuryAllocation use threshold approvals; the
+        //   transaction-level signature may be empty/dummy on these types.
         let require_signature = !is_system_transaction
             || matches!(
                 transaction.transaction_type,
@@ -396,7 +398,12 @@ impl TransactionValidator {
                     | TransactionType::InitCbeToken
             );
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
-        if require_signature || has_nonempty_sig {
+        // Skip tx-level sig validation for threshold-approval-only types
+        let is_threshold_only = matches!(
+            transaction.transaction_type,
+            TransactionType::RecordOnRampTrade | TransactionType::TreasuryAllocation
+        );
+        if !is_threshold_only && (require_signature || has_nonempty_sig) {
             self.validate_signature(transaction)?;
         }
 
@@ -607,6 +614,7 @@ impl TransactionValidator {
         // - If a system transaction carries a non-empty signature anyway, validate it.
         //   This prevents malformed signatures (wrong size, invalid bytes) from passing
         //   mempool intake and poisoning block proposals on other validators.
+        // - RecordOnRampTrade and TreasuryAllocation use threshold approvals.
         let require_signature = !is_system_transaction
             || matches!(
                 transaction.transaction_type,
@@ -617,7 +625,11 @@ impl TransactionValidator {
                     | TransactionType::InitCbeToken
             );
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
-        if require_signature || has_nonempty_sig {
+        let is_threshold_only_sflag = matches!(
+            transaction.transaction_type,
+            TransactionType::RecordOnRampTrade | TransactionType::TreasuryAllocation
+        );
+        if !is_threshold_only_sflag && (require_signature || has_nonempty_sig) {
             self.validate_signature(transaction)?;
         }
 
@@ -1765,7 +1777,14 @@ impl<'a> StatefulTransactionValidator<'a> {
         // Token operations are authorized by signature verification alone - the canonical sender
         // is derived from tx.signature.public_key, and balances are keyed by PublicKey.
         // Identity is an optional overlay, not a precondition for token operations.
+        // RecordOnRampTrade and TreasuryAllocation are authorized by threshold approval sets,
+        // not by a transaction-level single identity, so skip identity existence check.
+        let is_threshold_type = matches!(
+            transaction.transaction_type,
+            TransactionType::RecordOnRampTrade | TransactionType::TreasuryAllocation
+        );
         if !is_system_transaction
+            && !is_threshold_type
             && transaction.transaction_type != TransactionType::IdentityRegistration
             && transaction.transaction_type != TransactionType::TokenTransfer
             && transaction.transaction_type != TransactionType::TokenMint
@@ -1779,11 +1798,16 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         // Signature validation (always required except for system transactions)
         // TokenMint and InitEntityRegistry are system for fee purposes but MUST still be signed.
+        // RecordOnRampTrade and TreasuryAllocation use threshold approvals — skip tx-level sig.
         let mut skip_signature = is_system_transaction
             && !matches!(
                 transaction.transaction_type,
                 TransactionType::TokenMint | TransactionType::InitEntityRegistry
             );
+        // Always skip tx-level signature for threshold-approval-only types
+        if is_threshold_type {
+            skip_signature = true;
+        }
         if transaction.transaction_type == TransactionType::TokenMint {
             if let Some(blockchain) = self.blockchain {
                 if blockchain.height == 0
@@ -1824,7 +1848,13 @@ impl<'a> StatefulTransactionValidator<'a> {
     }
 
     fn validate_init_entity_registry(&self, transaction: &Transaction) -> ValidationResult {
+        use crate::transaction::threshold_approval::{
+            compute_approval_preimage, validate_threshold_approvals, ApprovalDomain,
+        };
+
         const MIN_TREASURY_DILITHIUM_PK_LEN: usize = 1312;
+        // tx_type byte for InitEntityRegistry = 38
+        const TX_TYPE_BYTE: u8 = 38;
 
         let data = transaction
             .init_entity_registry_data()
@@ -1865,16 +1895,66 @@ impl<'a> StatefulTransactionValidator<'a> {
             return Err(ValidationError::AlreadyInitialized);
         }
 
-        let signer_pk = &transaction.signature.public_key.dilithium_pk;
-        if signer_pk.is_empty() {
-            return Err(ValidationError::InvalidPublicKey);
+        // --- Threshold approval validation ---
+        // Compute the canonical payload bytes (bincode of the four core fields)
+        #[derive(serde::Serialize)]
+        struct CanonicalPayload<'a> {
+            cbe_treasury: &'a crate::integration::crypto_integration::PublicKey,
+            nonprofit_treasury: &'a crate::integration::crypto_integration::PublicKey,
+            initialized_at: u64,
+            initialized_at_height: u64,
         }
+        let payload = CanonicalPayload {
+            cbe_treasury: &data.cbe_treasury,
+            nonprofit_treasury: &data.nonprofit_treasury,
+            initialized_at: data.initialized_at,
+            initialized_at_height: data.initialized_at_height,
+        };
+        let payload_bytes = bincode::serialize(&payload).map_err(|_| ValidationError::InvalidTransaction)?;
+        let preimage = compute_approval_preimage(TX_TYPE_BYTE, &ApprovalDomain::BootstrapCouncil, &payload_bytes);
 
-        let signer_identity = blockchain
-            .get_identity_by_public_key(signer_pk)
-            .ok_or(ValidationError::Unauthorized)?;
-        if !blockchain.is_council_member(&signer_identity.did) {
-            return Err(ValidationError::Unauthorized);
+        // Only perform threshold validation when there are approvals in the set.
+        // If the approval set is empty this falls back to the legacy single-signer check below.
+        let has_approvals = !data.approvals.approvals.is_empty();
+        if has_approvals {
+            validate_threshold_approvals(
+                &data.approvals,
+                &preimage,
+                |pk_bytes| {
+                    blockchain
+                        .get_identity_by_public_key(pk_bytes)
+                        .map(|id| blockchain.is_council_member(&id.did))
+                        .unwrap_or(false)
+                },
+                blockchain.council_threshold as usize,
+            )
+            .map_err(|e| match e {
+                crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
+                    ValidationError::DuplicateSigner
+                }
+                crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
+                    ValidationError::InvalidApproval
+                }
+                crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
+                    ValidationError::Unauthorized
+                }
+                crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
+                    ValidationError::ThresholdNotMet
+                }
+            })?;
+        } else {
+            // Legacy path: validate the single transaction-level signature belongs to a council member
+            let signer_pk = &transaction.signature.public_key.dilithium_pk;
+            if signer_pk.is_empty() {
+                return Err(ValidationError::InvalidPublicKey);
+            }
+
+            let signer_identity = blockchain
+                .get_identity_by_public_key(signer_pk)
+                .ok_or(ValidationError::Unauthorized)?;
+            if !blockchain.is_council_member(&signer_identity.did) {
+                return Err(ValidationError::Unauthorized);
+            }
         }
 
         Ok(())
@@ -2712,6 +2792,16 @@ pub mod utils {
             }
             TransactionType::ProcessPayroll => {
                 transaction.process_payroll_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::RecordOnRampTrade => {
+                transaction.record_on_ramp_trade_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::TreasuryAllocation => {
+                transaction.treasury_allocation_data().is_some()
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
             }
@@ -3621,5 +3711,527 @@ mod tests {
 
         let result = validator.validate_transaction(&tx);
         assert!(matches!(result, Err(ValidationError::InvalidTransaction)));
+    }
+
+    // =========================================================================
+    // validate_record_on_ramp_trade tests (#1894)
+    // =========================================================================
+
+    /// Build a minimal RecordOnRampTrade transaction skeleton with no approvals.
+    fn make_record_on_ramp_trade_tx(
+        cbe_amount: u128,
+        usdc_amount: u128,
+        domain: crate::transaction::threshold_approval::ApprovalDomain,
+    ) -> Transaction {
+        use crate::transaction::threshold_approval::ThresholdApprovalSet;
+        use crate::transaction::core::{RecordOnRampTradeData, TX_VERSION_V8};
+
+        let sender = test_public_key(1);
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03,
+            transaction_type: TransactionType::RecordOnRampTrade,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(&sender),
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
+            record_on_ramp_trade_data: Some(RecordOnRampTradeData {
+                epoch_id: 1,
+                cbe_amount,
+                usdc_amount,
+                traded_at: 1_000_000,
+                approvals: ThresholdApprovalSet::new(domain),
+            }),
+            treasury_allocation_data: None,
+        }
+    }
+
+    #[test]
+    fn test_record_on_ramp_trade_rejects_missing_data() {
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let sender = test_public_key(1);
+        // Transaction with RecordOnRampTrade type but no data set
+        let tx = Transaction {
+            version: 8,
+            chain_id: 0x03,
+            transaction_type: TransactionType::RecordOnRampTrade,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(&sender),
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
+            record_on_ramp_trade_data: None, // intentionally absent
+            treasury_allocation_data: None,
+        };
+
+        let result = validator.validate_record_on_ramp_trade(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::MissingRequiredData)),
+            "expected MissingRequiredData, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_record_on_ramp_trade_rejects_nonzero_fee() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let mut tx = make_record_on_ramp_trade_tx(100, 200, ApprovalDomain::OracleCommittee);
+        tx.fee = 1; // must be 0
+
+        let result = validator.validate_record_on_ramp_trade(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidFee)),
+            "expected InvalidFee, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_record_on_ramp_trade_rejects_zero_cbe_amount() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let tx = make_record_on_ramp_trade_tx(0, 200, ApprovalDomain::OracleCommittee);
+        let result = validator.validate_record_on_ramp_trade(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidAmount)),
+            "expected InvalidAmount for zero cbe_amount, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_record_on_ramp_trade_rejects_zero_usdc_amount() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let tx = make_record_on_ramp_trade_tx(100, 0, ApprovalDomain::OracleCommittee);
+        let result = validator.validate_record_on_ramp_trade(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidAmount)),
+            "expected InvalidAmount for zero usdc_amount, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_record_on_ramp_trade_rejects_wrong_domain() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        // BootstrapCouncil domain instead of OracleCommittee
+        let tx = make_record_on_ramp_trade_tx(100, 200, ApprovalDomain::BootstrapCouncil);
+        let result = validator.validate_record_on_ramp_trade(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidApproval)),
+            "expected InvalidApproval for wrong domain, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_record_on_ramp_trade_rejects_with_inputs() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let mut tx = make_record_on_ramp_trade_tx(100, 200, ApprovalDomain::OracleCommittee);
+        tx.inputs = vec![TransactionInput {
+            previous_output: Hash::default(),
+            output_index: 0,
+            nullifier: [1u8; 32].into(),
+            zk_proof: crate::integration::zk_integration::ZkTransactionProof::default(),
+        }];
+
+        let result = validator.validate_record_on_ramp_trade(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidInputs)),
+            "expected InvalidInputs, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_record_on_ramp_trade_rejects_with_outputs() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let key = test_public_key(5);
+        let mut tx = make_record_on_ramp_trade_tx(100, 200, ApprovalDomain::OracleCommittee);
+        tx.outputs = vec![TransactionOutput {
+            commitment: Hash::from([1u8; 32]),
+            note: Hash::from([2u8; 32]),
+            recipient: key,
+        }];
+
+        let result = validator.validate_record_on_ramp_trade(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidOutputs)),
+            "expected InvalidOutputs, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_record_on_ramp_trade_correct_domain_proceeds_to_threshold_check() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        // Valid domain and amounts but zero approvals → ThresholdNotMet (threshold > 0)
+        let tx = make_record_on_ramp_trade_tx(100, 200, ApprovalDomain::OracleCommittee);
+        let result = validator.validate_record_on_ramp_trade(&tx);
+
+        // With council_threshold defaulting to 4 and 0 approvals we expect ThresholdNotMet
+        assert!(
+            matches!(result, Err(ValidationError::ThresholdNotMet)),
+            "expected ThresholdNotMet with empty approvals, got: {result:?}"
+        );
+    }
+
+    // =========================================================================
+    // validate_treasury_allocation tests (#1896)
+    // =========================================================================
+
+    /// Build a minimal TreasuryAllocation transaction skeleton with no approvals.
+    fn make_treasury_allocation_tx(
+        source_treasury_key_id: [u8; 32],
+        destination_key_id: [u8; 32],
+        amount: u64,
+        domain: crate::transaction::threshold_approval::ApprovalDomain,
+    ) -> Transaction {
+        use crate::transaction::threshold_approval::ThresholdApprovalSet;
+        use crate::transaction::core::{TreasuryAllocationData, TX_VERSION_V9};
+
+        let sender = test_public_key(1);
+        Transaction {
+            version: TX_VERSION_V9,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TreasuryAllocation,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(&sender),
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
+            record_on_ramp_trade_data: None,
+            treasury_allocation_data: Some(TreasuryAllocationData {
+                source_treasury_key_id,
+                destination_key_id,
+                amount,
+                spending_category: "infrastructure".to_string(),
+                proposal_id: [0xAA; 32],
+                approvals: ThresholdApprovalSet::new(domain),
+            }),
+        }
+    }
+
+    #[test]
+    fn test_treasury_allocation_rejects_missing_data() {
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let sender = test_public_key(1);
+        let tx = Transaction {
+            version: 9,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TreasuryAllocation,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: test_signature(&sender),
+            memo: vec![],
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
+            record_on_ramp_trade_data: None,
+            treasury_allocation_data: None, // intentionally absent
+        };
+
+        let result = validator.validate_treasury_allocation(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::MissingRequiredData)),
+            "expected MissingRequiredData, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_treasury_allocation_rejects_nonzero_fee() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let mut tx = make_treasury_allocation_tx(
+            [0x01; 32],
+            [0x02; 32],
+            1000,
+            ApprovalDomain::BootstrapCouncil,
+        );
+        tx.fee = 1;
+
+        let result = validator.validate_treasury_allocation(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidFee)),
+            "expected InvalidFee, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_treasury_allocation_rejects_zero_amount() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let tx = make_treasury_allocation_tx(
+            [0x01; 32],
+            [0x02; 32],
+            0, // zero amount
+            ApprovalDomain::BootstrapCouncil,
+        );
+        let result = validator.validate_treasury_allocation(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidAmount)),
+            "expected InvalidAmount, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_treasury_allocation_rejects_same_source_and_destination() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let key_id = [0x01; 32];
+        let tx = make_treasury_allocation_tx(
+            key_id,
+            key_id, // same as source
+            1000,
+            ApprovalDomain::BootstrapCouncil,
+        );
+        let result = validator.validate_treasury_allocation(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidTransaction)),
+            "expected InvalidTransaction for identical source/dest, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_treasury_allocation_rejects_wrong_domain() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let blockchain = crate::blockchain::Blockchain::default();
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        // OracleCommittee domain instead of BootstrapCouncil
+        let tx = make_treasury_allocation_tx(
+            [0x01; 32],
+            [0x02; 32],
+            1000,
+            ApprovalDomain::OracleCommittee,
+        );
+        let result = validator.validate_treasury_allocation(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidApproval)),
+            "expected InvalidApproval for wrong domain, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_treasury_allocation_rejects_without_entity_registry() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        // Blockchain with no entity_registry set
+        let blockchain = crate::blockchain::Blockchain::default();
+        assert!(blockchain.entity_registry.is_none());
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let tx = make_treasury_allocation_tx(
+            [0x01; 32],
+            [0x02; 32],
+            1000,
+            ApprovalDomain::BootstrapCouncil,
+        );
+        let result = validator.validate_treasury_allocation(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidTransaction)),
+            "expected InvalidTransaction without entity registry, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_treasury_allocation_rejects_with_uninitialized_entity_registry() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+        use crate::contracts::governance::EntityRegistry;
+
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        // Set an uninitialized registry
+        blockchain.entity_registry = Some(EntityRegistry::new());
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let tx = make_treasury_allocation_tx(
+            [0x01; 32],
+            [0x02; 32],
+            1000,
+            ApprovalDomain::BootstrapCouncil,
+        );
+        let result = validator.validate_treasury_allocation(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::InvalidTransaction)),
+            "expected InvalidTransaction with uninitialized registry, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_treasury_allocation_rejects_wrong_source_key_id() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+        use crate::contracts::governance::EntityRegistry;
+
+        // Initialize registry with a known CBE treasury public key
+        let cbe_pk = PublicKey::new(vec![0xCBu8; 2592]);
+        let nonprofit_pk = PublicKey::new(vec![0x11u8; 2592]);
+
+        let mut registry = EntityRegistry::new();
+        registry.init(cbe_pk.clone(), nonprofit_pk).unwrap();
+
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        blockchain.entity_registry = Some(registry);
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        // Source key does NOT match the CBE treasury key_id
+        let wrong_source = [0xFF; 32];
+        let destination = [0x02; 32];
+        let tx = make_treasury_allocation_tx(
+            wrong_source,
+            destination,
+            1000,
+            ApprovalDomain::BootstrapCouncil,
+        );
+        let result = validator.validate_treasury_allocation(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::Unauthorized)),
+            "expected Unauthorized when source_treasury_key_id does not match CBE treasury, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_treasury_allocation_correct_source_proceeds_to_threshold_check() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+        use crate::contracts::governance::EntityRegistry;
+
+        // Initialize registry with a known CBE treasury public key
+        let cbe_pk = PublicKey::new(vec![0xCBu8; 2592]);
+        let nonprofit_pk = PublicKey::new(vec![0x11u8; 2592]);
+        let cbe_key_id = cbe_pk.key_id;
+
+        let mut registry = EntityRegistry::new();
+        registry.init(cbe_pk.clone(), nonprofit_pk).unwrap();
+
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        blockchain.entity_registry = Some(registry);
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        // Source matches the CBE treasury key_id; destination is different
+        let tx = make_treasury_allocation_tx(
+            cbe_key_id,
+            [0x02; 32],
+            1000,
+            ApprovalDomain::BootstrapCouncil,
+        );
+        let result = validator.validate_treasury_allocation(&tx);
+
+        // With council_threshold defaulting to 4 and 0 approvals we expect ThresholdNotMet
+        assert!(
+            matches!(result, Err(ValidationError::ThresholdNotMet)),
+            "expected ThresholdNotMet with empty approvals after passing source check, got: {result:?}"
+        );
     }
 }
