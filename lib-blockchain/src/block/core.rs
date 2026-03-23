@@ -344,16 +344,17 @@ pub struct BlockHeader {
 
     /// Legacy proof-of-work difficulty target.
     ///
-    /// Retained in-memory for compatibility helpers only. BFT serialization
-    /// drops this field and restores `Difficulty::default()` on decode.
-    #[serde(skip, default)]
+    /// Retained for wire-format backward compatibility with blocks committed
+    /// before the BFT migration. Must remain in the serialized layout so that
+    /// nodes can read sled-stored blocks produced by earlier binaries.
+    #[serde(default)]
     pub difficulty: Difficulty,
 
     /// Legacy proof-of-work nonce.
     ///
-    /// Retained in-memory for compatibility helpers only. BFT serialization
-    /// drops this field and restores `0` on decode.
-    #[serde(skip, default)]
+    /// Retained for wire-format backward compatibility. Must remain in the
+    /// serialized layout to match blocks stored by earlier binaries.
+    #[serde(default)]
     pub nonce: u64,
 
     /// Zero-based block height in the canonical chain.
@@ -385,8 +386,9 @@ pub struct BlockHeader {
 
     /// Legacy cumulative proof-of-work difficulty.
     ///
-    /// This field is informational only and is omitted from BFT serialization.
-    #[serde(skip, default)]
+    /// Retained for wire-format backward compatibility with blocks committed
+    /// before the BFT migration.
+    #[serde(default)]
     pub cumulative_difficulty: Difficulty,
 
     /// Fee model version active at this block height (Phase 3B).

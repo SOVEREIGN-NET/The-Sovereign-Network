@@ -1704,6 +1704,13 @@ impl RuntimeOrchestrator {
                     try_restore_oracle_from_dat(&mut bc, &dat_path);
                 }
 
+                // If validator_registry is empty after Sled load (validators were seeded via
+                // bootstrap config and never committed as on-chain ValidatorData transactions),
+                // restore from blockchain.dat which persists validator_registry via BlockchainStorageV7+.
+                if bc.get_active_validators().is_empty() {
+                    try_restore_validators_from_dat(&mut bc, &dat_path);
+                }
+
                 (bc, true)
             }
             None => {
@@ -4563,6 +4570,38 @@ pub(super) fn try_restore_oracle_from_dat(
         }
         Err(e) => {
             warn!("⚠️ Failed to read blockchain.dat for oracle_state fallback: {}", e);
+            false
+        }
+    }
+}
+
+pub(super) fn try_restore_validators_from_dat(
+    bc: &mut lib_blockchain::Blockchain,
+    dat_path: &std::path::Path,
+) -> bool {
+    if !dat_path.exists() {
+        return false;
+    }
+    #[allow(deprecated)]
+    match lib_blockchain::Blockchain::load_from_file(dat_path) {
+        Ok(dat_bc) if !dat_bc.get_active_validators().is_empty() => {
+            let count = dat_bc.get_active_validators().len();
+            bc.validator_registry = dat_bc.validator_registry;
+            info!(
+                "✅ Restored validator_registry from blockchain.dat ({} validators)",
+                count
+            );
+            true
+        }
+        Ok(_) => {
+            info!("validator_registry in blockchain.dat is also empty — validators not yet on-chain");
+            false
+        }
+        Err(e) => {
+            warn!(
+                "⚠️ Failed to read blockchain.dat for validator_registry fallback: {}",
+                e
+            );
             false
         }
     }
