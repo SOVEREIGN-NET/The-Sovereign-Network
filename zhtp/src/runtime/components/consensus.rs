@@ -929,6 +929,32 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
             .into());
         }
 
+        // Invariant BFT-A-1951: Verify the committed block_data matches the proposal ID
+        // that 2f+1 validators actually signed. The proposal ID is blake3(height || prev_hash
+        // || block_data || proposer_id). This prevents a tampered artifact from being
+        // committed even if it passes the height/prev_hash checks above.
+        {
+            let expected_id = lib_crypto::hash_blake3(
+                &[
+                    proposal.height.to_le_bytes().as_slice(),
+                    proposal.previous_hash.0.as_slice(),
+                    proposal.block_data.as_slice(),
+                    proposal.proposer.as_bytes(),
+                ]
+                .concat(),
+            );
+            if expected_id != proposal.id.0 {
+                return Err(anyhow::anyhow!(
+                    "BFT commit rejected: block_data hash does not match proposal ID at height {}. \
+                     Expected {:?}, got {:?}. Possible tampered artifact.",
+                    proposal.height,
+                    &expected_id[..8],
+                    &proposal.id.0[..8],
+                )
+                .into());
+            }
+        }
+
         info!(
             "🔨 BFT consensus committing canonical block artifact at height {} with {} transactions",
             proposal.height,
@@ -1187,9 +1213,6 @@ pub struct ConsensusComponent {
     /// This is IMMUTABLE and set at construction time based on configuration
     /// The role cannot change after the component is created
     node_role: Arc<NodeRole>,
-    /// Bootstrap validators pre-seeded from config for initial proposer rotation.
-    /// These are replaced by on-chain ValidatorInfo once blocks are mined.
-    bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
     /// Mock SOV/USD price for oracle attestations (testnet/bootstrap).
     /// `None` means attempt real exchange price feeds.
     oracle_mock_sov_usd_price: Option<u64>,
@@ -1210,15 +1233,6 @@ impl std::fmt::Debug for ConsensusComponent {
     }
 }
 
-/// Derive a deterministic 32-byte key from a validator identity ID and a domain tag.
-/// Used to pre-seed ValidatorManager before on-chain ValidatorRegistration txs are mined.
-fn derive_key_from_identity(identity_id: &str, domain: &[u8]) -> Vec<u8> {
-    let mut input = Vec::with_capacity(identity_id.len() + domain.len());
-    input.extend_from_slice(identity_id.as_bytes());
-    input.extend_from_slice(domain);
-    lib_crypto::hash_blake3(&input).to_vec()
-}
-
 /// Decode bootstrap consensus key from hex string (accepts 0x prefix or plain hex).
 pub fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<Vec<u8>> {
     let trimmed = consensus_key_hex.trim();
@@ -1232,60 +1246,6 @@ pub fn decode_bootstrap_consensus_key(consensus_key_hex: &str) -> Option<Vec<u8>
         .unwrap_or(trimmed);
 
     hex::decode(normalized).ok().filter(|k| !k.is_empty())
-}
-
-/// Adapter that implements lib-consensus ValidatorInfo for bootstrap config entries.
-/// For the local validator, `actual_consensus_key` carries the real Dilithium2 public key
-/// loaded from the keystore so that `ConsensusEngine::set_validator_keypair()` can match it.
-/// For remote validators, `actual_consensus_key` carries the decoded `consensus_key` from
-/// bootstrap TOML when present; otherwise it falls back to deterministic derivation.
-struct BootstrapValidatorAdapter {
-    identity_id: String,
-    stake: u64,
-    storage_provided: u64,
-    commission_rate: u8,
-    /// Real consensus public key, either local keystore key or decoded bootstrap TOML key.
-    actual_consensus_key: Option<Vec<u8>>,
-}
-
-impl lib_consensus::validators::ValidatorInfo for BootstrapValidatorAdapter {
-    fn identity_id(&self) -> lib_crypto::Hash {
-        let identity_hex = self
-            .identity_id
-            .strip_prefix("did:zhtp:")
-            .unwrap_or(&self.identity_id);
-        if let Ok(bytes) = hex::decode(identity_hex) {
-            if bytes.len() >= 32 {
-                return lib_crypto::Hash::from_bytes(&bytes[..32]);
-            }
-        }
-        lib_crypto::Hash(lib_crypto::hash_blake3(self.identity_id.as_bytes()))
-    }
-
-    fn stake(&self) -> u64 {
-        self.stake
-    }
-    fn storage_provided(&self) -> u64 {
-        self.storage_provided
-    }
-
-    fn consensus_key(&self) -> Vec<u8> {
-        // Use the real Dilithium2 public key when available (local validator).
-        // For remote peers we fall back to the deterministic placeholder so the
-        // validator set stays populated until their signed announcements arrive.
-        self.actual_consensus_key
-            .clone()
-            .unwrap_or_else(|| derive_key_from_identity(&self.identity_id, b"consensus"))
-    }
-    fn networking_key(&self) -> Vec<u8> {
-        derive_key_from_identity(&self.identity_id, b"networking")
-    }
-    fn rewards_key(&self) -> Vec<u8> {
-        derive_key_from_identity(&self.identity_id, b"rewards")
-    }
-    fn commission_rate(&self) -> u8 {
-        self.commission_rate
-    }
 }
 
 impl ConsensusComponent {
@@ -1307,12 +1267,19 @@ impl ConsensusComponent {
         )
     }
 
-    /// Create a new ConsensusComponent with bootstrap validators pre-seeded.
+    /// Create a new ConsensusComponent with configurable timeouts.
+    ///
+    /// # Issue BFT-A-1954
+    ///
+    /// The `bootstrap_validators` config field is no longer pre-seeded into the ValidatorManager
+    /// here. Validators are loaded exclusively from canonical genesis state via
+    /// `sync_validators_from_blockchain()`. The bootstrap config entries are only used during
+    /// the genesis block construction path in `mod.rs`.
     pub fn new_with_bootstrap_validators(
         environment: crate::config::Environment,
         node_role: NodeRole,
         min_stake: u64,
-        bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
+        _bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
         propose_timeout_ms: u64,
         prevote_timeout_ms: u64,
         precommit_timeout_ms: u64,
@@ -1321,7 +1288,7 @@ impl ConsensusComponent {
             environment,
             node_role,
             min_stake,
-            bootstrap_validators,
+            _bootstrap_validators,
             None,
             propose_timeout_ms,
             prevote_timeout_ms,
@@ -1333,7 +1300,7 @@ impl ConsensusComponent {
         environment: crate::config::Environment,
         node_role: NodeRole,
         min_stake: u64,
-        bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
+        _bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
         oracle_mock_sov_usd_price: Option<u64>,
         propose_timeout_ms: u64,
         prevote_timeout_ms: u64,
@@ -1358,7 +1325,6 @@ impl ConsensusComponent {
             local_validator_identity: Arc::new(RwLock::new(None)),
             local_validator_keypair: Arc::new(RwLock::new(None)),
             node_role: Arc::new(node_role),
-            bootstrap_validators,
             oracle_mock_sov_usd_price,
         }
     }
@@ -1459,49 +1425,6 @@ impl ConsensusComponent {
         self.validator_manager.clone()
     }
 
-    /// Pre-seed the ValidatorManager from `bootstrap_validators` config entries.
-    ///
-    /// This runs before on-chain ValidatorRegistration transactions are mined, giving
-    /// each node knowledge of all expected validators so proposer rotation can begin
-    /// immediately (preventing forks from simultaneous mining).
-    ///
-    /// Keys are derived deterministically from identity_id — no keys stored in config.
-    /// When `sync_validators_from_blockchain()` runs after blocks are mined, real on-chain
-    /// keys will replace these bootstrap entries.
-    async fn seed_from_bootstrap_validators(&self) {
-        if self.bootstrap_validators.is_empty() {
-            return;
-        }
-
-        let adapters: Vec<BootstrapValidatorAdapter> = self
-            .bootstrap_validators
-            .iter()
-            .map(|bv| BootstrapValidatorAdapter {
-                identity_id: bv.identity_id.clone(),
-                stake: bv.stake.max(1), // ensure non-zero for admission
-                storage_provided: bv.storage_provided,
-                commission_rate: (bv.commission_rate.min(100)) as u8,
-                actual_consensus_key: decode_bootstrap_consensus_key(&bv.consensus_key),
-            })
-            .collect();
-
-        let count = adapters.len();
-        let mut vm = self.validator_manager.write().await;
-        match vm.sync_from_validator_list(adapters) {
-            Ok((added, skipped)) => {
-                info!(
-                    "🌱 Pre-seeded ValidatorManager with {} bootstrap validator(s) ({} added, {} already present)",
-                    count, added, skipped
-                );
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to seed ValidatorManager from bootstrap config: {}",
-                    e
-                );
-            }
-        }
-    }
 }
 
 async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto::KeyPair)> {
@@ -1741,13 +1664,15 @@ impl Component for ConsensusComponent {
         );
         // Storage is optional for validators in zhtp; do not block consensus on storage capacity.
         config.min_storage = 0;
-        // Allow non-mainnet to run with <4 validators while still enforcing real signatures.
-        config.development_mode = !matches!(self.environment, crate::config::Environment::Mainnet);
+        // Invariant BFT-A-1953: Only the Development environment relaxes the 4-validator BFT
+        // quorum. Testnet and Mainnet must have ≥ 4 active validators or startup fails.
+        let is_development = matches!(self.environment, crate::config::Environment::Development);
+        config.development_mode = is_development;
         if config.development_mode {
-            info!("🔧 Development mode enabled - single validator consensus allowed for testing");
-            info!("   Production deployment requires minimum 4 validators for BFT");
+            info!("🔧 Development mode enabled — single-validator consensus allowed for local testing");
+            info!("   Testnet and Mainnet require minimum 4 validators for BFT");
         } else {
-            info!("🛡️ Production mode: Full consensus validation required (minimum 4 validators for BFT)");
+            info!("🛡️ BFT-only mode: Full consensus validation required (minimum 4 validators)");
         }
 
         // Create broadcaster - use ConsensusMeshBroadcaster if mesh router is available,
@@ -1869,11 +1794,13 @@ impl Component for ConsensusComponent {
             validator_manager
                 .sync_from_validator_list(validator_adapters.clone())
                 .context("Failed to sync validator manager from blockchain state")?;
-            if matches!(self.environment, crate::config::Environment::Mainnet)
-                && !validator_manager.has_sufficient_validators()
-            {
+            // Invariant BFT-A-1953: Non-development environments must have ≥ 4 validators.
+            // A node that cannot form a BFT quorum must not start participating in consensus.
+            if !is_development && !validator_manager.has_sufficient_validators() {
                 return Err(anyhow::anyhow!(
-                    "Mainnet validator startup requires at least 4 active validators in canonical blockchain state"
+                    "BFT startup requires at least 4 active validators in canonical state \
+                     (environment: {}). Start with Development environment for single-node testing.",
+                    self.environment
                 ));
             }
         }

@@ -2734,6 +2734,14 @@ impl Blockchain {
 
     /// Add a block received from the network. Skips mesh broadcast to prevent
     /// broadcast loops (block was already propagated by the sender).
+    ///
+    /// # Invariant BFT-A-1952
+    ///
+    /// This function is a **sync-only / observer path**. It MUST NOT be called from the
+    /// live validator block-reception path. In a running validator node, blocks arrive as
+    /// BFT proposals and are committed exclusively via `BlockCommitCallback::commit_finalized_block`
+    /// after 2f+1 quorum. Calling this function from a live validator message handler would
+    /// allow a Byzantine peer to inject canonical state without BFT agreement.
     pub async fn add_block_from_network(&mut self, block: Block) -> Result<()> {
         self.process_and_commit_block(block).await
     }
@@ -2742,6 +2750,12 @@ impl Blockchain {
     ///
     /// These blocks were already committed by a quorum of peers.  We must
     /// replay them exactly as-is regardless of the current fee schedule.
+    ///
+    /// # Invariant BFT-A-1952
+    ///
+    /// This function is a **catch-up sync path only**. It MUST NOT be called from the live
+    /// validator block-reception path. It is permissible only when a validator has fallen
+    /// significantly behind peers and needs to replay previously-committed blocks to re-sync.
     pub async fn apply_block_trusted_for_sync(&mut self, block: Block) -> Result<()> {
         if let Some(ref exec_arc) = self.executor {
             // Build a temporary fee-skipping executor sharing the same store.
