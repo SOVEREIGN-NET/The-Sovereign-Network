@@ -452,12 +452,15 @@ async fn handle_dao_command_impl(
                 recovery_entropy: loaded.keypair.private_key.master_seed.clone(),
                 created_at: loaded.identity.created_at,
             };
+            // TODO(#1934): Full multi-sig flow — collect T-of-N Bootstrap Council approvals.
+            // The CLI currently submits an unsigned skeleton; validators reject it until
+            // a proper multi-sig tooling flow is implemented.
             let signed_tx = zhtp_client::build_init_entity_registry_tx(
-                &client_identity,
                 cbe_treasury_bytes,
                 nonprofit_treasury_bytes,
                 1,
                 0,
+                vec![], // approvals collected externally via multi-sig tooling
             )
             .map_err(CliError::ConfigError)?;
 

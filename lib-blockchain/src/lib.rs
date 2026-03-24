@@ -61,11 +61,17 @@ pub use transaction::{
     generate_nullifier, hash_for_signature, hash_transaction, hash_transaction_for_signing,
     hash_transaction_input, hash_transaction_output, sign_transaction,
     verify_transaction_signature, ContractDeploymentPayloadV1, DaoExecutionData, DaoProposalData,
-    DaoVoteData, IdentityTransactionData, ProfitDeclarationData, RevenueSource, SigningError,
-    StatefulTransactionValidator, Transaction, TransactionBuilder, TransactionCreateError,
-    TransactionInput, TransactionOutput, TransactionValidator, UbiClaimData, ValidationError,
-    ValidationResult, ValidatorOperation, ValidatorTransactionData, WalletPrivateData,
-    WalletReference, WalletTransactionData, CONTRACT_DEPLOYMENT_MEMO_PREFIX,
+    DaoVoteData, IdentityTransactionData, ProfitDeclarationData, RecordOnRampTradeData,
+    RevenueSource, SigningError, StatefulTransactionValidator, Transaction, TransactionBuilder,
+    TransactionCreateError, TransactionInput, TransactionOutput, TransactionValidator,
+    TreasuryAllocationTxData, UbiClaimData, ValidationError, ValidationResult, ValidatorOperation,
+    ValidatorTransactionData, WalletPrivateData, WalletReference, WalletTransactionData,
+    CONTRACT_DEPLOYMENT_MEMO_PREFIX,
+};
+
+// Threshold approval types
+pub use transaction::threshold_approval::{
+    ApprovalDomain, ThresholdApproval, ThresholdApprovals, ThresholdError,
 };
 
 // Block module (core types and functions)

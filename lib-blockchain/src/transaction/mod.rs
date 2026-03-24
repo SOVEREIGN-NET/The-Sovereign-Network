@@ -23,15 +23,17 @@ pub use core::{
     GovernanceConfigUpdateData, GovernanceConfigOperation, IdentityTransactionData,
     InitCbeTokenData, InitEntityRegistryData, ProfitDeclarationData, ProcessPayrollData,
     RecordOnRampTradeData, RevenueSource, TokenMintData, TokenTransferData, Transaction,
-    TransactionInput, TransactionOutput, TransactionPayload, TreasuryAllocationData, UbiClaimData,
-    ValidatorOperation, ValidatorTransactionData, WalletPrivateData, WalletReference,
-    WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7, TX_VERSION_V8,
+    TransactionInput, TransactionOutput, TransactionPayload, TreasuryAllocationData,
+    TreasuryAllocationTxData, UbiClaimData, ValidatorOperation, ValidatorTransactionData,
+    WalletPrivateData, WalletReference, WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7,
+    TX_VERSION_V8,
 };
 
 // Re-exports from threshold_approval module
 pub use threshold_approval::{
-    compute_approval_preimage, validate_threshold_approvals, Approval, ApprovalDomain,
-    ThresholdApprovalSet, ThresholdError, THRESHOLD_APPROVAL_DOMAIN_TAG,
+    compute_approval_preimage, validate_legacy_threshold_approvals,
+    validate_threshold_approvals, Approval, ApprovalDomain, ThresholdApproval,
+    ThresholdApprovalSet, ThresholdApprovals, ThresholdError, THRESHOLD_APPROVAL_DOMAIN_TAG,
 };
 
 pub use bonding_curve_codec::{
