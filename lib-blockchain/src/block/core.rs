@@ -344,17 +344,22 @@ pub struct BlockHeader {
 
     /// Legacy proof-of-work difficulty target.
     ///
-    /// Retained for wire-format backward compatibility with blocks committed
-    /// before the BFT migration. Must remain in the serialized layout so that
-    /// nodes can read sled-stored blocks produced by earlier binaries.
-    #[serde(default)]
+    /// Retained in-memory for compatibility helpers only. BFT serialization
+    /// drops this field and restores `Difficulty::default()` on decode.
+    ///
+    /// IMPORTANT: Must stay `#[serde(skip)]`. Existing Sled data was written
+    /// without this field in the binary layout; changing to `#[serde(default)]`
+    /// would shift field offsets and break deserialization on upgrade.
+    #[serde(skip, default)]
     pub difficulty: Difficulty,
 
     /// Legacy proof-of-work nonce.
     ///
-    /// Retained for wire-format backward compatibility. Must remain in the
-    /// serialized layout to match blocks stored by earlier binaries.
-    #[serde(default)]
+    /// Retained in-memory for compatibility helpers only. BFT serialization
+    /// drops this field and restores `0` on decode.
+    ///
+    /// IMPORTANT: Must stay `#[serde(skip)]` — same reason as `difficulty`.
+    #[serde(skip, default)]
     pub nonce: u64,
 
     /// Zero-based block height in the canonical chain.
@@ -386,9 +391,11 @@ pub struct BlockHeader {
 
     /// Legacy cumulative proof-of-work difficulty.
     ///
-    /// Retained for wire-format backward compatibility with blocks committed
-    /// before the BFT migration.
-    #[serde(default)]
+    /// Retained in-memory for compatibility helpers only. BFT serialization
+    /// drops this field and restores `Difficulty::default()` on decode.
+    ///
+    /// IMPORTANT: Must stay `#[serde(skip)]` — same reason as `difficulty`.
+    #[serde(skip, default)]
     pub cumulative_difficulty: Difficulty,
 
     /// Fee model version active at this block height (Phase 3B).

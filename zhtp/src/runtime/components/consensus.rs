@@ -1804,14 +1804,18 @@ impl Component for ConsensusComponent {
                     .collect::<Vec<_>>()
             };
 
-            // Migration path: validators were historically seeded from bootstrap config into
-            // ValidatorManager only (not written as on-chain ValidatorData transactions).
-            // When the validator_registry is empty after chain replay, seed it from the
-            // bootstrap config so consensus can start. This is a one-time migration that
-            // bridges the gap until proper on-chain validator registration is deployed.
+            // Migration/compatibility path: validators were historically seeded from bootstrap
+            // config into ValidatorManager only (not written as on-chain ValidatorData
+            // transactions and not persisted to Sled). When the validator_registry is empty
+            // after chain replay, we seed it from the bootstrap config so consensus can start.
+            //
+            // NOTE: This seeding is in-memory only and may run on every node startup while the
+            // chain has no active validators. Different nodes with different bootstrap configs
+            // can therefore observe different in-memory validator sets until proper on-chain
+            // validator registration is deployed and used instead of this path.
             if initial.is_empty() && !self.bootstrap_validators.is_empty() {
                 info!(
-                    "validator_registry empty after chain load — seeding {} validator(s) from bootstrap config",
+                    "validator_registry empty after chain load — non-persistent bootstrap seeding of {} validator(s) from config",
                     self.bootstrap_validators.len()
                 );
                 let mut bc = blockchain.write().await;

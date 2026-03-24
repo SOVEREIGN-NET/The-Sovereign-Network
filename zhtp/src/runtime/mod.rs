@@ -4829,6 +4829,88 @@ mod oracle_startup_tests {
     }
 }
 
+#[cfg(test)]
+mod validator_startup_tests {
+    use super::try_restore_validators_from_dat;
+    use lib_blockchain::{Blockchain, ValidatorInfo};
+    use tempfile::tempdir;
+
+    fn make_validator(id: &str) -> ValidatorInfo {
+        ValidatorInfo {
+            identity_id: id.to_string(),
+            stake: 1,
+            storage_provided: 0,
+            consensus_key: vec![0u8; 32],
+            networking_key: vec![0u8; 32],
+            rewards_key: vec![0u8; 32],
+            network_address: String::new(),
+            commission_rate: 0,
+            status: "active".to_string(),
+            registered_at: 0,
+            last_activity: 0,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: lib_blockchain::ADMISSION_SOURCE_BOOTSTRAP_GENESIS.to_string(),
+            governance_proposal_id: None,
+            oracle_key_id: None,
+        }
+    }
+
+    #[test]
+    fn restore_succeeds_when_dat_has_validators() {
+        let dir = tempdir().unwrap();
+        let dat_path = dir.path().join("blockchain.dat");
+
+        let mut src = Blockchain::new().expect("Blockchain::new");
+        src.validator_registry
+            .insert("validator-1".to_string(), make_validator("validator-1"));
+        src.validator_registry
+            .insert("validator-2".to_string(), make_validator("validator-2"));
+        #[allow(deprecated)]
+        src.save_to_file(&dat_path).expect("save_to_file");
+
+        let mut target = Blockchain::new().expect("Blockchain::new");
+        assert!(target.get_active_validators().is_empty());
+
+        let restored = try_restore_validators_from_dat(&mut target, &dat_path);
+
+        assert!(restored, "expected restoration to succeed");
+        assert_eq!(
+            target.get_active_validators().len(),
+            2,
+            "validator_registry should have been restored from dat"
+        );
+    }
+
+    #[test]
+    fn restore_is_noop_when_dat_validator_registry_is_empty() {
+        let dir = tempdir().unwrap();
+        let dat_path = dir.path().join("blockchain.dat");
+
+        let empty_src = Blockchain::new().expect("Blockchain::new");
+        #[allow(deprecated)]
+        empty_src.save_to_file(&dat_path).expect("save_to_file");
+
+        let mut target = Blockchain::new().expect("Blockchain::new");
+        let restored = try_restore_validators_from_dat(&mut target, &dat_path);
+
+        assert!(!restored, "should not restore when dat also has empty registry");
+        assert!(target.get_active_validators().is_empty());
+    }
+
+    #[test]
+    fn restore_is_noop_when_dat_file_absent() {
+        let dir = tempdir().unwrap();
+        let nonexistent = dir.path().join("does_not_exist.dat");
+
+        let mut target = Blockchain::new().expect("Blockchain::new");
+        let restored = try_restore_validators_from_dat(&mut target, &nonexistent);
+
+        assert!(!restored, "should not restore when dat file does not exist");
+        assert!(target.get_active_validators().is_empty());
+    }
+}
+
 /// Create or load persistent node identity
 ///
 /// Uses the standard keystore path (~/.zhtp/keystore/) for identity persistence.
