@@ -85,7 +85,9 @@ pub fn action_to_operation(action: &DaoAction) -> Option<DaoOperation> {
         DaoAction::RegistryRegister { .. }
         | DaoAction::FactoryCreate { .. }
         | DaoAction::EntityRegistryInit { .. }
-        | DaoAction::EntityRegistryStatus => None,
+        | DaoAction::EntityRegistryStatus
+        | DaoAction::RecordOnRampTrade { .. }
+        | DaoAction::TreasuryAllocation { .. } => None,
     }
 }
 
@@ -201,6 +203,26 @@ pub fn get_operation_message(
         DaoOperation::RegistryList => "Listing DAO registry entries...".to_string(),
         DaoOperation::RegistryGet => "Fetching DAO registry entry...".to_string(),
     }
+}
+
+/// Parse `--approval PK_HEX:SIG_HEX` pairs into `(dilithium_pk, signature)` byte vecs.
+fn parse_approval_pairs(raw: &[String]) -> CliResult<Vec<(Vec<u8>, Vec<u8>)>> {
+    raw.iter()
+        .map(|s| {
+            let (pk_hex, sig_hex) = s.split_once(':').ok_or_else(|| {
+                CliError::ConfigError(format!(
+                    "--approval must be <pk_hex>:<sig_hex>, got: {s}"
+                ))
+            })?;
+            let pk = hex::decode(pk_hex).map_err(|_| {
+                CliError::ConfigError(format!("Invalid hex in approval pk: {pk_hex}"))
+            })?;
+            let sig = hex::decode(sig_hex).map_err(|_| {
+                CliError::ConfigError(format!("Invalid hex in approval sig: {sig_hex}"))
+            })?;
+            Ok((pk, sig))
+        })
+        .collect()
 }
 
 fn public_key_from_key_id(key_id: [u8; 32]) -> PublicKey {
@@ -481,6 +503,85 @@ async fn handle_dao_command_impl(
                     reason: format!("Failed to parse response: {e}"),
                 })?;
             output.header("Entity Registry Init")?;
+            output.print(&format_output(&result, &cli.format)?)?;
+            Ok(())
+        }
+        DaoAction::RecordOnRampTrade {
+            epoch_id,
+            cbe_amount,
+            usdc_amount,
+            traded_at,
+            approvals,
+        } => {
+            let parsed_approvals = parse_approval_pairs(&approvals)?;
+            let signed_tx = zhtp_client::build_record_on_ramp_trade_tx(
+                1,
+                epoch_id,
+                cbe_amount,
+                usdc_amount,
+                traded_at,
+                parsed_approvals,
+            )
+            .map_err(CliError::ConfigError)?;
+            let payload = serde_json::json!({ "signed_tx": signed_tx });
+            let endpoint = "/api/v1/dao/on-ramp-trade/record";
+            output.info("Recording on-ramp trade...")?;
+            let response = client.post_json(endpoint, &payload).await.map_err(|e| {
+                CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                }
+            })?;
+            let result: Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {e}"),
+                })?;
+            output.header("On-Ramp Trade Recorded")?;
+            output.print(&format_output(&result, &cli.format)?)?;
+            Ok(())
+        }
+        DaoAction::TreasuryAllocation {
+            source_key_id,
+            destination_key_id,
+            amount,
+            spending_category,
+            proposal_id,
+            approvals,
+        } => {
+            let source = parse_hex_32("source_key_id", &source_key_id)?;
+            let dest = parse_hex_32("destination_key_id", &destination_key_id)?;
+            let proposal = parse_hex_32("proposal_id", &proposal_id)?;
+            let parsed_approvals = parse_approval_pairs(&approvals)?;
+            let signed_tx = zhtp_client::build_treasury_allocation_tx(
+                1,
+                source,
+                dest,
+                amount,
+                spending_category,
+                proposal,
+                parsed_approvals,
+            )
+            .map_err(CliError::ConfigError)?;
+            let payload = serde_json::json!({ "signed_tx": signed_tx });
+            let endpoint = "/api/v1/dao/treasury/allocate";
+            output.info("Submitting treasury allocation...")?;
+            let response = client.post_json(endpoint, &payload).await.map_err(|e| {
+                CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: e.to_string(),
+                }
+            })?;
+            let result: Value =
+                ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
+                    endpoint: endpoint.to_string(),
+                    status: 0,
+                    reason: format!("Failed to parse response: {e}"),
+                })?;
+            output.header("Treasury Allocation Submitted")?;
             output.print(&format_output(&result, &cli.format)?)?;
             Ok(())
         }

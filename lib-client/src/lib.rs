@@ -59,7 +59,9 @@ pub use crypto::{Blake3, Dilithium5, Kyber1024};
 pub use cbe_tx::{
     build_create_employment_contract_tx, build_init_cbe_token_tx, build_process_payroll_tx,
 };
-pub use dao_tx::build_init_entity_registry_tx;
+pub use dao_tx::{
+    build_init_entity_registry_tx, build_record_on_ramp_trade_tx, build_treasury_allocation_tx,
+};
 pub use error::{ClientError, Result};
 pub use handshake::{HandshakeResult, HandshakeState};
 pub use identity::{
