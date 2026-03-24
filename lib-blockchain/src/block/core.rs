@@ -346,6 +346,10 @@ pub struct BlockHeader {
     ///
     /// Retained in-memory for compatibility helpers only. BFT serialization
     /// drops this field and restores `Difficulty::default()` on decode.
+    ///
+    /// IMPORTANT: Must stay `#[serde(skip)]`. Existing Sled data was written
+    /// without this field in the binary layout; changing to `#[serde(default)]`
+    /// would shift field offsets and break deserialization on upgrade.
     #[serde(skip, default)]
     pub difficulty: Difficulty,
 
@@ -353,6 +357,8 @@ pub struct BlockHeader {
     ///
     /// Retained in-memory for compatibility helpers only. BFT serialization
     /// drops this field and restores `0` on decode.
+    ///
+    /// IMPORTANT: Must stay `#[serde(skip)]` — same reason as `difficulty`.
     #[serde(skip, default)]
     pub nonce: u64,
 
@@ -385,7 +391,10 @@ pub struct BlockHeader {
 
     /// Legacy cumulative proof-of-work difficulty.
     ///
-    /// This field is informational only and is omitted from BFT serialization.
+    /// Retained in-memory for compatibility helpers only. BFT serialization
+    /// drops this field and restores `Difficulty::default()` on decode.
+    ///
+    /// IMPORTANT: Must stay `#[serde(skip)]` — same reason as `difficulty`.
     #[serde(skip, default)]
     pub cumulative_difficulty: Difficulty,
 

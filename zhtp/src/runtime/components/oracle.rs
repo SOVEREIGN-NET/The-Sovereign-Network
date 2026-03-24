@@ -613,46 +613,6 @@ fn format_price_8dec(value: u128) -> String {
     format!("{whole}.{frac:08}")
 }
 
-fn parse_decimal_to_8dec(input: &str) -> Option<u128> {
-    let trimmed = input.trim().trim_matches('"');
-    if trimmed.is_empty() || trimmed.starts_with('-') {
-        return None;
-    }
-
-    let mut parts = trimmed.split('.');
-    let whole = parts.next()?;
-    let frac = parts.next().unwrap_or("");
-    if parts.next().is_some() {
-        return None;
-    }
-
-    let whole_value: u128 = whole.parse().ok()?;
-    let mut frac_digits = frac.to_string();
-    if frac_digits.len() > 8 {
-        frac_digits.truncate(8);
-    }
-    while frac_digits.len() < 8 {
-        frac_digits.push('0');
-    }
-    let frac_value: u128 = if frac_digits.is_empty() {
-        0
-    } else {
-        frac_digits.parse().ok()?
-    };
-
-    whole_value
-        .checked_mul(ORACLE_PRICE_SCALE as u128)?
-        .checked_add(frac_value)
-}
-
-#[allow(dead_code)]
-fn exchange_http_client() -> Option<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .ok()
-}
-
 fn slash_reason_for_validation_error(
     err: &lib_blockchain::oracle::OracleAttestationValidationError,
 ) -> Option<lib_blockchain::oracle::OracleSlashReason> {
@@ -669,38 +629,6 @@ fn slash_reason_for_validation_error(
         | lib_blockchain::oracle::OracleAttestationValidationError::DuplicateSigner(_)
         | lib_blockchain::oracle::OracleAttestationValidationError::EncodeError(_) => None,
     }
-}
-
-/// Fetch SOV/USD from CoinGecko (scaffolding — SOV not yet listed).
-#[allow(dead_code)]
-async fn fetch_coingecko_sov_usd(now: u64) -> Option<OracleFetchedPrice> {
-    // CoinGecko simple price API.  Replace `sov-token` with the actual CoinGecko ID once listed.
-    let url = "https://api.coingecko.com/api/v3/simple/price?ids=sov-token&vs_currencies=usd";
-    let client = exchange_http_client()?;
-    let resp = client.get(url).send().await.ok()?.error_for_status().ok()?;
-    let json: serde_json::Value = resp.json().await.ok()?;
-    let price_atomic = parse_decimal_to_8dec(&json["sov-token"]["usd"].to_string())?;
-    Some(OracleFetchedPrice {
-        source_id: "coingecko".into(),
-        sov_usd_price: price_atomic,
-        timestamp: now,
-    })
-}
-
-/// Fetch SOV/USDT from Binance (scaffolding — SOV not yet listed).
-#[allow(dead_code)]
-async fn fetch_binance_sov_usdt(now: u64) -> Option<OracleFetchedPrice> {
-    let url = "https://api.binance.com/api/v3/ticker/price?symbol=SOVUSDT";
-    let client = exchange_http_client()?;
-    let resp = client.get(url).send().await.ok()?.error_for_status().ok()?;
-    let json: serde_json::Value = resp.json().await.ok()?;
-    let price_str = json["price"].as_str()?;
-    let price_atomic = parse_decimal_to_8dec(price_str)?;
-    Some(OracleFetchedPrice {
-        source_id: "binance".into(),
-        sov_usd_price: price_atomic,
-        timestamp: now,
-    })
 }
 
 #[cfg(test)]

@@ -1796,11 +1796,61 @@ impl Component for ConsensusComponent {
                 .clone();
             drop(blockchain_opt);
 
-            let bc = blockchain.read().await;
-            bc.get_active_validators()
-                .into_iter()
-                .map(|v| v.clone())
-                .collect()
+            let initial = {
+                let bc = blockchain.read().await;
+                bc.get_active_validators()
+                    .into_iter()
+                    .map(|v| v.clone())
+                    .collect::<Vec<_>>()
+            };
+
+            // Migration/compatibility path: validators were historically seeded from bootstrap
+            // config into ValidatorManager only (not written as on-chain ValidatorData
+            // transactions and not persisted to Sled). When the validator_registry is empty
+            // after chain replay, we seed it from the bootstrap config so consensus can start.
+            //
+            // NOTE: This seeding is in-memory only and may run on every node startup while the
+            // chain has no active validators. Different nodes with different bootstrap configs
+            // can therefore observe different in-memory validator sets until proper on-chain
+            // validator registration is deployed and used instead of this path.
+            if initial.is_empty() && !self.bootstrap_validators.is_empty() {
+                info!(
+                    "validator_registry empty after chain load — non-persistent bootstrap seeding of {} validator(s) from config",
+                    self.bootstrap_validators.len()
+                );
+                let mut bc = blockchain.write().await;
+                for bv in &self.bootstrap_validators {
+                    let consensus_key = decode_bootstrap_consensus_key(&bv.consensus_key)
+                        .unwrap_or_else(|| derive_key_from_identity(&bv.identity_id, b"consensus"));
+                    let vi = lib_blockchain::ValidatorInfo {
+                        identity_id: bv.identity_id.clone(),
+                        stake: bv.stake.max(1),
+                        storage_provided: bv.storage_provided,
+                        consensus_key,
+                        networking_key: derive_key_from_identity(&bv.identity_id, b"networking"),
+                        rewards_key: derive_key_from_identity(&bv.identity_id, b"rewards"),
+                        network_address: bv.endpoints.first().cloned().unwrap_or_default(),
+                        commission_rate: (bv.commission_rate.min(100)) as u8,
+                        status: "active".to_string(),
+                        registered_at: 0,
+                        last_activity: 0,
+                        blocks_validated: 0,
+                        slash_count: 0,
+                        admission_source: lib_blockchain::ADMISSION_SOURCE_BOOTSTRAP_GENESIS
+                            .to_string(),
+                        governance_proposal_id: None,
+                        oracle_key_id: None,
+                    };
+                    bc.validator_registry
+                        .insert(bv.identity_id.clone(), vi);
+                }
+                bc.get_active_validators()
+                    .into_iter()
+                    .map(|v| v.clone())
+                    .collect()
+            } else {
+                initial
+            }
         };
 
         if active_validators.is_empty() {
@@ -2302,13 +2352,14 @@ mod tests {
         use lib_blockchain::block::creation::{create_block, mine_block};
         
         // Create a block with the same API used by get_pending_transactions
-        let tx = lib_blockchain::Transaction::new(
-            lib_blockchain::TransactionType::Transfer,
-            vec![],
-            0,
-            0,
-            vec![],
-        );
+        use lib_blockchain::integration::crypto_integration::{PublicKey as BcPublicKey, Signature as BcSignature, SignatureAlgorithm};
+        let sig = BcSignature {
+            signature: vec![0u8; 64],
+            public_key: BcPublicKey::new(vec![0u8; 2592]),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        };
+        let tx = lib_blockchain::Transaction::new(vec![], vec![], 0, sig, vec![]);
         
         let previous_hash = lib_blockchain::Hash::zero();
         let height = 42;

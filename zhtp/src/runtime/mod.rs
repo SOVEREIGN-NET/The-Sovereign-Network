@@ -1704,6 +1704,13 @@ impl RuntimeOrchestrator {
                     try_restore_oracle_from_dat(&mut bc, &dat_path);
                 }
 
+                // If validator_registry is empty after Sled load (validators were seeded via
+                // bootstrap config and never committed as on-chain ValidatorData transactions),
+                // restore from blockchain.dat which persists validator_registry via BlockchainStorageV7+.
+                if bc.get_active_validators().is_empty() {
+                    try_restore_validators_from_dat(&mut bc, &dat_path);
+                }
+
                 (bc, true)
             }
             None => {
@@ -4568,6 +4575,38 @@ pub(super) fn try_restore_oracle_from_dat(
     }
 }
 
+pub(super) fn try_restore_validators_from_dat(
+    bc: &mut lib_blockchain::Blockchain,
+    dat_path: &std::path::Path,
+) -> bool {
+    if !dat_path.exists() {
+        return false;
+    }
+    #[allow(deprecated)]
+    match lib_blockchain::Blockchain::load_from_file(dat_path) {
+        Ok(dat_bc) if !dat_bc.get_active_validators().is_empty() => {
+            let count = dat_bc.get_active_validators().len();
+            bc.validator_registry = dat_bc.validator_registry;
+            info!(
+                "✅ Restored validator_registry from blockchain.dat ({} validators)",
+                count
+            );
+            true
+        }
+        Ok(_) => {
+            info!("validator_registry in blockchain.dat is also empty — validators not yet on-chain");
+            false
+        }
+        Err(e) => {
+            warn!(
+                "⚠️ Failed to read blockchain.dat for validator_registry fallback: {}",
+                e
+            );
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod runtime_orchestrator_tests {
     use super::RuntimeOrchestrator;
@@ -4787,6 +4826,88 @@ mod oracle_startup_tests {
         // No valid keys — bootstrap should not be called, committee stays empty.
         assert!(committee_members.is_empty(), "bad key lengths should be filtered out");
         assert!(bc.oracle_state.committee.members().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod validator_startup_tests {
+    use super::try_restore_validators_from_dat;
+    use lib_blockchain::{Blockchain, ValidatorInfo};
+    use tempfile::tempdir;
+
+    fn make_validator(id: &str) -> ValidatorInfo {
+        ValidatorInfo {
+            identity_id: id.to_string(),
+            stake: 1,
+            storage_provided: 0,
+            consensus_key: vec![0u8; 32],
+            networking_key: vec![0u8; 32],
+            rewards_key: vec![0u8; 32],
+            network_address: String::new(),
+            commission_rate: 0,
+            status: "active".to_string(),
+            registered_at: 0,
+            last_activity: 0,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: lib_blockchain::ADMISSION_SOURCE_BOOTSTRAP_GENESIS.to_string(),
+            governance_proposal_id: None,
+            oracle_key_id: None,
+        }
+    }
+
+    #[test]
+    fn restore_succeeds_when_dat_has_validators() {
+        let dir = tempdir().unwrap();
+        let dat_path = dir.path().join("blockchain.dat");
+
+        let mut src = Blockchain::new().expect("Blockchain::new");
+        src.validator_registry
+            .insert("validator-1".to_string(), make_validator("validator-1"));
+        src.validator_registry
+            .insert("validator-2".to_string(), make_validator("validator-2"));
+        #[allow(deprecated)]
+        src.save_to_file(&dat_path).expect("save_to_file");
+
+        let mut target = Blockchain::new().expect("Blockchain::new");
+        assert!(target.get_active_validators().is_empty());
+
+        let restored = try_restore_validators_from_dat(&mut target, &dat_path);
+
+        assert!(restored, "expected restoration to succeed");
+        assert_eq!(
+            target.get_active_validators().len(),
+            2,
+            "validator_registry should have been restored from dat"
+        );
+    }
+
+    #[test]
+    fn restore_is_noop_when_dat_validator_registry_is_empty() {
+        let dir = tempdir().unwrap();
+        let dat_path = dir.path().join("blockchain.dat");
+
+        let empty_src = Blockchain::new().expect("Blockchain::new");
+        #[allow(deprecated)]
+        empty_src.save_to_file(&dat_path).expect("save_to_file");
+
+        let mut target = Blockchain::new().expect("Blockchain::new");
+        let restored = try_restore_validators_from_dat(&mut target, &dat_path);
+
+        assert!(!restored, "should not restore when dat also has empty registry");
+        assert!(target.get_active_validators().is_empty());
+    }
+
+    #[test]
+    fn restore_is_noop_when_dat_file_absent() {
+        let dir = tempdir().unwrap();
+        let nonexistent = dir.path().join("does_not_exist.dat");
+
+        let mut target = Blockchain::new().expect("Blockchain::new");
+        let restored = try_restore_validators_from_dat(&mut target, &nonexistent);
+
+        assert!(!restored, "should not restore when dat file does not exist");
+        assert!(target.get_active_validators().is_empty());
     }
 }
 
