@@ -2352,13 +2352,14 @@ mod tests {
         use lib_blockchain::block::creation::{create_block, mine_block};
         
         // Create a block with the same API used by get_pending_transactions
-        let tx = lib_blockchain::Transaction::new(
-            lib_blockchain::TransactionType::Transfer,
-            vec![],
-            0,
-            0,
-            vec![],
-        );
+        use lib_blockchain::integration::crypto_integration::{PublicKey as BcPublicKey, Signature as BcSignature, SignatureAlgorithm};
+        let sig = BcSignature {
+            signature: vec![0u8; 64],
+            public_key: BcPublicKey::new(vec![0u8; 2592]),
+            algorithm: SignatureAlgorithm::Dilithium5,
+            timestamp: 0,
+        };
+        let tx = lib_blockchain::Transaction::new(vec![], vec![], 0, sig, vec![]);
         
         let previous_hash = lib_blockchain::Hash::zero();
         let height = 42;

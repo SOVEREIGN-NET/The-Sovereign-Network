@@ -546,7 +546,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod tests {
+mod handler_tests {
     use super::*;
     use lib_protocols::types::{ZhtpHeaders, ZHTP_VERSION};
 
