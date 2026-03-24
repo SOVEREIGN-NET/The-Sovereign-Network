@@ -916,6 +916,9 @@ impl BlockExecutor {
             | TransactionType::CancelOracleUpdate
             // Entity registry init - handled by process_entity_registry_transactions
             | TransactionType::InitEntityRegistry
+            // Treasury threshold-approval transactions - handled by block processors
+            | TransactionType::RecordOnRampTrade
+            | TransactionType::TreasuryAllocation
             | TransactionType::InitCbeToken
             | TransactionType::CreateEmploymentContract
             | TransactionType::ProcessPayroll => {

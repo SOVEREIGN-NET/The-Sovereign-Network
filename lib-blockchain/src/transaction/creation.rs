@@ -699,10 +699,12 @@ pub mod utils {
                     return Err(TransactionCreateError::InvalidOutputs);
                 }
             }
-            TransactionType::InitCbeToken
+            TransactionType::RecordOnRampTrade
+            | TransactionType::TreasuryAllocation
+            | TransactionType::InitCbeToken
             | TransactionType::CreateEmploymentContract
             | TransactionType::ProcessPayroll => {
-                // CBE transactions - must have no inputs/outputs
+                // Threshold-approval and CBE transactions - must have no inputs/outputs
                 if !inputs.is_empty() {
                     return Err(TransactionCreateError::InvalidInputs);
                 }

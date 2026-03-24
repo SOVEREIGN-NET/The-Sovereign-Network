@@ -120,19 +120,27 @@ pub enum TransactionType {
     ///
     /// Must be signed by a Bootstrap Council member. Locks EntityRegistry permanently after execution.
     InitEntityRegistry = 38,
+    /// Record an oracle committee-attested fiat→CBE on-ramp trade.
+    ///
+    /// Requires OracleCommittee threshold approvals. Updates `OnRampState` for VWAP derivation.
+    RecordOnRampTrade = 39,
+    /// Execute a governance-approved treasury allocation (SOV treasury → DAO wallet).
+    ///
+    /// Requires Bootstrap Council threshold approvals.
+    TreasuryAllocation = 40,
     /// Initialize the CBE token contract (one-time, irreversible)
     ///
     /// Sets the CBE token's initial parameters (name, symbol, total supply, vesting schedules).
     /// Must be signed by a Bootstrap Council member. Locks CbeToken permanently after execution.
-    InitCbeToken = 39,
+    InitCbeToken = 41,
     /// Create an employment contract between an employer entity and an employee wallet
     ///
     /// Records the contract terms (salary, payment schedule, profit-share %) on-chain via EmploymentRegistry.
-    CreateEmploymentContract = 40,
+    CreateEmploymentContract = 42,
     /// Process payroll disbursement for an active employment contract
     ///
     /// Disburses CBE salary and optional profit-share from employer treasury to employee wallet.
-    ProcessPayroll = 41,
+    ProcessPayroll = 43,
 }
 
 impl TransactionType {
@@ -198,6 +206,7 @@ impl TransactionType {
                 | TransactionType::UpdateOracleCommittee
                 | TransactionType::UpdateOracleConfig
                 | TransactionType::InitEntityRegistry
+                | TransactionType::TreasuryAllocation
         )
     }
 
@@ -273,6 +282,12 @@ impl TransactionType {
             TransactionType::InitEntityRegistry => {
                 "Initialize entity registry with CBE and Nonprofit treasury addresses (one-time)"
             }
+            TransactionType::RecordOnRampTrade => {
+                "Record oracle committee-attested fiat→CBE on-ramp trade"
+            }
+            TransactionType::TreasuryAllocation => {
+                "Execute governance-approved treasury allocation (CBE treasury → DAO wallet)"
+            }
             TransactionType::InitCbeToken => {
                 "Initialize CBE token contract (one-time)"
             }
@@ -327,6 +342,8 @@ impl TransactionType {
             TransactionType::OracleAttestation => "oracle_attestation",
             TransactionType::CancelOracleUpdate => "cancel_oracle_update",
             TransactionType::InitEntityRegistry => "init_entity_registry",
+            TransactionType::RecordOnRampTrade => "record_on_ramp_trade",
+            TransactionType::TreasuryAllocation => "treasury_allocation",
             TransactionType::InitCbeToken => "init_cbe_token",
             TransactionType::CreateEmploymentContract => "create_employment_contract",
             TransactionType::ProcessPayroll => "process_payroll",
@@ -375,6 +392,8 @@ impl TransactionType {
             "oracle_attestation" => Some(TransactionType::OracleAttestation),
             "cancel_oracle_update" => Some(TransactionType::CancelOracleUpdate),
             "init_entity_registry" => Some(TransactionType::InitEntityRegistry),
+            "record_on_ramp_trade" => Some(TransactionType::RecordOnRampTrade),
+            "treasury_allocation" => Some(TransactionType::TreasuryAllocation),
             "init_cbe_token" => Some(TransactionType::InitCbeToken),
             "create_employment_contract" => Some(TransactionType::CreateEmploymentContract),
             "process_payroll" => Some(TransactionType::ProcessPayroll),

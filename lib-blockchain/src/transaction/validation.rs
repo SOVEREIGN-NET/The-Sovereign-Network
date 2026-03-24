@@ -39,6 +39,12 @@ pub enum ValidationError {
     InvalidSeedCommitment,
     InvalidWalletType,
     InvalidValidatorData,
+    /// A threshold approval signature is invalid or the approval domain is wrong.
+    InvalidApproval,
+    /// A signer appears more than once in a threshold approval set.
+    DuplicateSigner,
+    /// Threshold approval count is below the required quorum.
+    ThresholdNotMet,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -68,6 +74,9 @@ impl std::fmt::Display for ValidationError {
             ValidationError::InvalidSeedCommitment => write!(f, "Invalid seed commitment"),
             ValidationError::InvalidWalletType => write!(f, "Invalid wallet type"),
             ValidationError::InvalidValidatorData => write!(f, "Invalid or missing validator data"),
+            ValidationError::InvalidApproval => write!(f, "Invalid threshold approval"),
+            ValidationError::DuplicateSigner => write!(f, "Duplicate signer in approval set"),
+            ValidationError::ThresholdNotMet => write!(f, "Approval threshold not met"),
         }
     }
 }
@@ -354,6 +363,12 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidOutputs);
                 }
             }
+            TransactionType::RecordOnRampTrade => {
+                // Threshold approval; full validation deferred to stateful validator
+            }
+            TransactionType::TreasuryAllocation => {
+                // Threshold approval; full validation deferred to stateful validator
+            }
             TransactionType::InitCbeToken => {
                 // Full validation deferred to stateful validator
             }
@@ -568,6 +583,12 @@ impl TransactionValidator {
                 if !transaction.outputs.is_empty() {
                     return Err(ValidationError::InvalidOutputs);
                 }
+            }
+            TransactionType::RecordOnRampTrade => {
+                // Threshold approval; full validation deferred to stateful validator
+            }
+            TransactionType::TreasuryAllocation => {
+                // Threshold approval; full validation deferred to stateful validator
             }
             TransactionType::InitCbeToken => {
                 // Full validation deferred to stateful validator
@@ -1717,6 +1738,12 @@ impl<'a> StatefulTransactionValidator<'a> {
             TransactionType::InitEntityRegistry => {
                 self.validate_init_entity_registry(transaction)?;
             }
+            TransactionType::RecordOnRampTrade => {
+                self.validate_record_on_ramp_trade(transaction)?;
+            }
+            TransactionType::TreasuryAllocation => {
+                self.validate_treasury_allocation(transaction)?;
+            }
             TransactionType::InitCbeToken => {
                 self.validate_init_cbe_token(transaction)?;
             }
@@ -1849,6 +1876,196 @@ impl<'a> StatefulTransactionValidator<'a> {
         if !blockchain.is_council_member(&signer_identity.did) {
             return Err(ValidationError::Unauthorized);
         }
+
+        Ok(())
+    }
+
+    fn validate_record_on_ramp_trade(&self, transaction: &Transaction) -> ValidationResult {
+        use crate::transaction::threshold_approval::{
+            compute_approval_preimage, validate_threshold_approvals, ApprovalDomain,
+        };
+
+        // tx_type byte for RecordOnRampTrade = 39
+        const TX_TYPE_BYTE: u8 = 39;
+
+        let data = transaction
+            .record_on_ramp_trade_data()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        if !transaction.inputs.is_empty() {
+            return Err(ValidationError::InvalidInputs);
+        }
+        if !transaction.outputs.is_empty() {
+            return Err(ValidationError::InvalidOutputs);
+        }
+        if transaction.fee != 0 {
+            return Err(ValidationError::InvalidFee);
+        }
+        if data.cbe_amount == 0 {
+            return Err(ValidationError::InvalidAmount);
+        }
+        if data.usdc_amount == 0 {
+            return Err(ValidationError::InvalidAmount);
+        }
+
+        // Verify the domain is OracleCommittee
+        if data.approvals.domain != ApprovalDomain::OracleCommittee {
+            return Err(ValidationError::InvalidApproval);
+        }
+
+        // Compute canonical preimage over the trade fields
+        #[derive(serde::Serialize)]
+        struct TradePayload {
+            epoch_id: u64,
+            cbe_amount: u128,
+            usdc_amount: u128,
+            traded_at: u64,
+        }
+        let payload = TradePayload {
+            epoch_id: data.epoch_id,
+            cbe_amount: data.cbe_amount,
+            usdc_amount: data.usdc_amount,
+            traded_at: data.traded_at,
+        };
+        let payload_bytes = bincode::serialize(&payload)
+            .map_err(|_| ValidationError::InvalidTransaction)?;
+        let preimage =
+            compute_approval_preimage(TX_TYPE_BYTE, &ApprovalDomain::OracleCommittee, &payload_bytes);
+
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+
+        // Use the oracle committee directly — members are stored as key_ids (blake3 of dilithium pk).
+        let oracle_threshold = blockchain.oracle_state.committee.threshold() as usize;
+        validate_threshold_approvals(
+            &data.approvals,
+            &preimage,
+            |pk_bytes| {
+                let key_id = crate::types::blake3_hash(pk_bytes).as_array();
+                blockchain.oracle_state.committee.members().contains(&key_id)
+            },
+            oracle_threshold,
+        )
+        .map_err(|e| match e {
+            crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
+                ValidationError::DuplicateSigner
+            }
+            crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
+                ValidationError::InvalidApproval
+            }
+            crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
+                ValidationError::Unauthorized
+            }
+            crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
+                ValidationError::ThresholdNotMet
+            }
+        })?;
+
+        Ok(())
+    }
+
+    /// Validate a TreasuryAllocation transaction.
+    fn validate_treasury_allocation(&self, transaction: &Transaction) -> ValidationResult {
+        use crate::transaction::threshold_approval::{
+            compute_approval_preimage, validate_threshold_approvals, ApprovalDomain,
+        };
+
+        // tx_type byte for TreasuryAllocation = 40
+        const TX_TYPE_BYTE: u8 = 40;
+
+        let data = transaction
+            .treasury_allocation_data()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        if !transaction.inputs.is_empty() {
+            return Err(ValidationError::InvalidInputs);
+        }
+        if !transaction.outputs.is_empty() {
+            return Err(ValidationError::InvalidOutputs);
+        }
+        if transaction.fee != 0 {
+            return Err(ValidationError::InvalidFee);
+        }
+        if data.amount == 0 {
+            return Err(ValidationError::InvalidAmount);
+        }
+        if data.source_treasury_key_id == data.destination_key_id {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Verify the domain is BootstrapCouncil
+        if data.approvals.domain != ApprovalDomain::BootstrapCouncil {
+            return Err(ValidationError::InvalidApproval);
+        }
+
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+
+        // Verify entity registry is initialized and source matches cbe_treasury
+        if let Some(registry) = blockchain.entity_registry.as_ref() {
+            if registry.is_initialized() {
+                match registry.cbe_treasury() {
+                    Ok(cbe_treasury) => {
+                        if cbe_treasury.key_id != data.source_treasury_key_id {
+                            return Err(ValidationError::Unauthorized);
+                        }
+                    }
+                    Err(_) => return Err(ValidationError::Unauthorized),
+                }
+            } else {
+                return Err(ValidationError::InvalidTransaction);
+            }
+        } else {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Compute canonical preimage over treasury allocation fields
+        #[derive(serde::Serialize)]
+        struct AllocationPayload<'a> {
+            source_treasury_key_id: [u8; 32],
+            destination_key_id: [u8; 32],
+            amount: u64,
+            spending_category: &'a str,
+            proposal_id: [u8; 32],
+        }
+        let payload = AllocationPayload {
+            source_treasury_key_id: data.source_treasury_key_id,
+            destination_key_id: data.destination_key_id,
+            amount: data.amount,
+            spending_category: &data.spending_category,
+            proposal_id: data.proposal_id,
+        };
+        let payload_bytes = bincode::serialize(&payload)
+            .map_err(|_| ValidationError::InvalidTransaction)?;
+        let preimage = compute_approval_preimage(
+            TX_TYPE_BYTE,
+            &ApprovalDomain::BootstrapCouncil,
+            &payload_bytes,
+        );
+
+        validate_threshold_approvals(
+            &data.approvals,
+            &preimage,
+            |pk_bytes| {
+                blockchain
+                    .get_identity_by_public_key(pk_bytes)
+                    .map(|id| blockchain.is_council_member(&id.did))
+                    .unwrap_or(false)
+            },
+            blockchain.council_threshold as usize,
+        )
+        .map_err(|e| match e {
+            crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
+                ValidationError::DuplicateSigner
+            }
+            crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
+                ValidationError::InvalidApproval
+            }
+            crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
+                ValidationError::Unauthorized
+            }
+            crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
+                ValidationError::ThresholdNotMet
+            }
+        })?;
 
         Ok(())
     }
@@ -2470,6 +2687,16 @@ pub mod utils {
             }
             TransactionType::InitEntityRegistry => {
                 transaction.init_entity_registry_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::RecordOnRampTrade => {
+                transaction.record_on_ramp_trade_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::TreasuryAllocation => {
+                transaction.treasury_allocation_data().is_some()
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
             }

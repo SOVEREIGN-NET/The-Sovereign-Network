@@ -1173,6 +1173,12 @@ impl Transaction {
     pub fn init_entity_registry_data(&self) -> Option<&InitEntityRegistryData> {
         match &self.payload { TransactionPayload::InitEntityRegistry(d) => Some(d), _ => None }
     }
+    pub fn record_on_ramp_trade_data(&self) -> Option<&RecordOnRampTradeData> {
+        match &self.payload { TransactionPayload::RecordOnRampTrade(d) => Some(d), _ => None }
+    }
+    pub fn treasury_allocation_data(&self) -> Option<&TreasuryAllocationData> {
+        match &self.payload { TransactionPayload::TreasuryAllocation(d) => Some(d), _ => None }
+    }
     pub fn init_cbe_token_data(&self) -> Option<&InitCbeTokenData> {
         match &self.payload { TransactionPayload::InitCbeToken(d) => Some(d), _ => None }
     }
@@ -1926,6 +1932,48 @@ pub struct ProcessPayrollData {
     pub contract_id: [u8; 32],
 }
 
+// ---------------------------------------------------------------------------
+// #1897 — RecordOnRampTrade transaction data
+// ---------------------------------------------------------------------------
+
+/// Oracle committee-attested fiat→CBE on-ramp trade record (type 39).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordOnRampTradeData {
+    /// Oracle epoch when this trade occurred.
+    pub epoch_id: u64,
+    /// CBE received by the user (18-decimal atomic units).
+    pub cbe_amount: u128,
+    /// USDC paid by the user (6-decimal atomic units).
+    pub usdc_amount: u128,
+    /// Unix timestamp of the trade.
+    pub traded_at: u64,
+    /// Oracle committee threshold approvals over the canonical preimage.
+    /// Domain must be `ApprovalDomain::OracleCommittee`.
+    pub approvals: crate::transaction::threshold_approval::ThresholdApprovalSet,
+}
+
+// ---------------------------------------------------------------------------
+// #1896 — TreasuryAllocation transaction data
+// ---------------------------------------------------------------------------
+
+/// Governance-approved treasury allocation from CBE treasury → DAO wallet (type 40).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreasuryAllocationData {
+    /// Source: CBE treasury wallet key_id (must match EntityRegistry.cbe_treasury.key_id).
+    pub source_treasury_key_id: [u8; 32],
+    /// Destination: DAO treasury wallet key_id.
+    pub destination_key_id: [u8; 32],
+    /// Amount of SOV to transfer (atomic units).
+    pub amount: u64,
+    /// Human-readable spending category (e.g. "operations", "grants").
+    pub spending_category: String,
+    /// DAO proposal ID that authorized this allocation (for audit trail).
+    pub proposal_id: [u8; 32],
+    /// Bootstrap Council threshold approvals.
+    /// Domain must be `ApprovalDomain::BootstrapCouncil`.
+    pub approvals: crate::transaction::threshold_approval::ThresholdApprovalSet,
+}
+
 // ============================================================================
 // TransactionPayload enum
 // ============================================================================
@@ -1960,6 +2008,8 @@ pub enum TransactionPayload {
     OracleAttestation(OracleAttestationData),
     CancelOracleUpdate(CancelOracleUpdateData),
     InitEntityRegistry(InitEntityRegistryData),
+    RecordOnRampTrade(RecordOnRampTradeData),
+    TreasuryAllocation(TreasuryAllocationData),
     InitCbeToken(InitCbeTokenData),
     CreateEmploymentContract(CreateEmploymentContractData),
     ProcessPayroll(ProcessPayrollData),
