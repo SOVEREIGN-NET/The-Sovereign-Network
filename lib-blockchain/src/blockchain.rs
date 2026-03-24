@@ -3054,15 +3054,23 @@ impl Blockchain {
 
         // When the BlockExecutor is active it has already called begin_block/commit_block
         // inside apply_block(). Starting a second begin_block() for the same height would
-        // fail with an InvalidBlockHeight error. Only open a new SledStore transaction on
-        // the legacy path (no executor).
+        // fail with an InvalidBlockHeight error.
+        //
+        // On the executor path: open a metadata-only write batch that does not advance
+        // latest_height, allowing identity/wallet/entity index writes to be committed
+        // after the executor has already closed its block transaction.
+        // On the legacy path: open a normal block transaction as before.
         let using_executor = self.executor.is_some();
-        if !using_executor {
+        if using_executor {
             if let Some(ref store) = self.store {
                 store
-                    .begin_block(block.header.height)
-                    .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
+                    .begin_metadata_write()
+                    .map_err(|e| anyhow::anyhow!("Failed to begin metadata write: {}", e))?;
             }
+        } else if let Some(ref store) = self.store {
+            store
+                .begin_block(block.header.height)
+                .map_err(|e| anyhow::anyhow!("Failed to begin Sled transaction: {}", e))?;
         }
 
         // Process identity transactions
@@ -3140,25 +3148,33 @@ impl Blockchain {
 
         // Persist block to SledStore — skip when using the BlockExecutor because
         // apply_block() already committed the block (begin_block → append_block →
-        // commit_block). Calling persist_to_sled_store() again would open a second
-        // store transaction for the same block height, causing an InvalidBlockHeight error.
-        if !using_executor {
+        // commit_block). On the executor path we commit the metadata-only batch opened
+        // above; on the legacy path we call persist_to_sled_store which handles its own
+        // transaction via the normal block transaction opened earlier.
+        if using_executor {
             if let Some(ref store) = self.store {
-                if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
+                if let Err(e) = store.commit_metadata_write() {
                     error!(
-                        "Failed to persist block {} to SledStore: {}",
+                        "Failed to commit identity/wallet metadata for block {}: {}",
                         block.height(),
                         e
                     );
-                } else {
-                    debug!("Block {} persisted to SledStore", block.height());
                 }
             }
-        } else {
             debug!(
-                "Block {} already persisted by BlockExecutor",
+                "Block {} block data already persisted by BlockExecutor; metadata committed",
                 block.height()
             );
+        } else if let Some(ref store) = self.store {
+            if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
+                error!(
+                    "Failed to persist block {} to SledStore: {}",
+                    block.height(),
+                    e
+                );
+            } else {
+                debug!("Block {} persisted to SledStore", block.height());
+            }
         }
 
         self.blocks_since_last_persist += 1;
