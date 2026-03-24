@@ -4,10 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-use crate::config::aggregation::BootstrapValidator;
-use crate::runtime::dht_indexing::index_block_in_dht;
 use crate::runtime::node_runtime::NodeRole;
 use crate::runtime::services::{GenesisFundingService, GenesisValidator, TransactionBuilder};
 use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, ComponentStatus};
@@ -25,7 +23,6 @@ pub struct BlockchainComponent {
     mining_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
     user_wallet: Arc<RwLock<Option<crate::runtime::did_startup::WalletStartupResult>>>,
     environment: crate::config::Environment,
-    _bootstrap_validators: Arc<RwLock<Vec<BootstrapValidator>>>,
     /// QUIC peer addresses (e.g. "77.42.37.161:9334") used by observer sync loop
     bootstrap_peers: Vec<String>,
     joined_existing_network: bool,
@@ -50,7 +47,6 @@ impl BlockchainComponent {
             mining_handle: Arc::new(RwLock::new(None)),
             user_wallet: Arc::new(RwLock::new(None)),
             environment: crate::config::Environment::Development,
-            _bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
             bootstrap_peers: Vec::new(),
             joined_existing_network: false,
             validator_manager: Arc::new(RwLock::new(None)),
@@ -77,7 +73,6 @@ impl BlockchainComponent {
             mining_handle: Arc::new(RwLock::new(None)),
             user_wallet: Arc::new(RwLock::new(user_wallet)),
             environment: crate::config::Environment::Development,
-            _bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
             bootstrap_peers: Vec::new(),
             joined_existing_network: false,
             validator_manager: Arc::new(RwLock::new(None)),
@@ -100,7 +95,6 @@ impl BlockchainComponent {
             mining_handle: Arc::new(RwLock::new(None)),
             user_wallet: Arc::new(RwLock::new(user_wallet)),
             environment,
-            _bootstrap_validators: Arc::new(RwLock::new(Vec::new())),
             bootstrap_peers: Vec::new(),
             joined_existing_network: false,
             validator_manager: Arc::new(RwLock::new(None)),
@@ -110,11 +104,14 @@ impl BlockchainComponent {
         }
     }
 
+    /// Invariant BFT-A-1954: Validator set is loaded exclusively from genesis/canonical state.
+    /// The `bootstrap_validators` config list is accepted here for API compatibility but is
+    /// NOT used for live validator-set resolution. Genesis block data is the sole source of truth.
     pub fn new_with_full_config(
         node_role: NodeRole,
         user_wallet: Option<crate::runtime::did_startup::WalletStartupResult>,
         environment: crate::config::Environment,
-        bootstrap_validators: Vec<BootstrapValidator>,
+        _bootstrap_validators: Vec<crate::config::aggregation::BootstrapValidator>,
         bootstrap_peers: Vec<String>,
         joined_existing_network: bool,
     ) -> Self {
@@ -126,7 +123,6 @@ impl BlockchainComponent {
             mining_handle: Arc::new(RwLock::new(None)),
             user_wallet: Arc::new(RwLock::new(user_wallet)),
             environment,
-            _bootstrap_validators: Arc::new(RwLock::new(bootstrap_validators)),
             bootstrap_peers,
             joined_existing_network,
             validator_manager: Arc::new(RwLock::new(None)),
@@ -139,42 +135,6 @@ impl BlockchainComponent {
     /// Get the current node role (immutable)
     pub fn get_node_role(&self) -> NodeRole {
         (*self.node_role).clone()
-    }
-
-    fn normalize_did(did: &str) -> &str {
-        did.strip_prefix("did:zhtp:").unwrap_or(did)
-    }
-
-    fn local_did_is_bootstrap_validator(
-        local_did: &str,
-        bootstrap_validators: &[BootstrapValidator],
-    ) -> bool {
-        let bootstrap_validator_dids: std::collections::HashSet<String> = bootstrap_validators
-            .iter()
-            .map(|validator| Self::normalize_did(&validator.identity_id).to_ascii_lowercase())
-            .collect();
-        bootstrap_validator_dids.contains(&Self::normalize_did(local_did).to_ascii_lowercase())
-    }
-
-    async fn is_bootstrap_mining_authority(&self) -> bool {
-        // No explicit bootstrap validator list: allow local mining behavior.
-        let bootstrap_validators_guard = self._bootstrap_validators.read().await;
-        if bootstrap_validators_guard.is_empty() {
-            return true;
-        }
-        let bootstrap_validators = bootstrap_validators_guard.clone();
-        drop(bootstrap_validators_guard);
-
-        let wallet_guard = self.user_wallet.read().await;
-        let Some(wallet) = wallet_guard.as_ref() else {
-            warn!("Bootstrap mining authority check failed: wallet identity not available");
-            return false;
-        };
-        Self::local_did_is_bootstrap_validator(&wallet.user_identity.did, &bootstrap_validators)
-            || Self::local_did_is_bootstrap_validator(
-                &wallet.node_identity.did,
-                &bootstrap_validators,
-            )
     }
 
     pub async fn set_validator_manager(&self, validator_manager: Arc<RwLock<ValidatorManager>>) {
@@ -288,192 +248,6 @@ impl BlockchainComponent {
         environment: &crate::config::Environment,
     ) -> Result<Transaction> {
         TransactionBuilder::create_reward_transaction(node_id, reward_amount, environment).await
-    }
-
-    /// Mine a block using actual blockchain methods
-    async fn mine_real_block(blockchain: &mut Blockchain) -> Result<()> {
-        let next_height = blockchain.height + 1;
-
-        // Phase 2 invariant: TokenTransfer and TokenMint must have fee == 0.
-        // The BlockExecutor enforces this at execution time; enforce the same rule here
-        // so that any bad transaction (admitted before the rule existed, or persisted
-        // across a restart) is evicted from the pool before it can block block production.
-        blockchain.evict_phase2_invalid_transactions("mine_real_block");
-
-        let mut ubi_txs: Vec<lib_blockchain::Transaction> = Vec::new();
-        for entry in blockchain.collect_ubi_mint_entries(next_height) {
-            let memo = format!(
-                "UBI_DISTRIBUTION_V1:{}:{}",
-                entry.identity_id, entry.wallet_id
-            )
-            .into_bytes();
-            match crate::runtime::token_utils::build_sov_mint_tx(
-                &entry.recipient_wallet_id,
-                entry.payout,
-                memo,
-            )
-            .await
-            {
-                Ok(tx) => ubi_txs.push(tx),
-                Err(e) => warn!("Failed to build UBI TokenMint tx: {}", e),
-            }
-        }
-
-        // Allow mining empty blocks so the chain never stalls waiting for transactions.
-
-        info!(
-            "Mining block with {} pending txs + {} UBI mints",
-            blockchain.pending_transactions.len(),
-            ubi_txs.len()
-        );
-
-        let mut transactions_for_block: Vec<lib_blockchain::Transaction> = Vec::new();
-        transactions_for_block.extend(ubi_txs);
-        let remaining = 10usize.saturating_sub(transactions_for_block.len());
-        if remaining > 0 {
-            transactions_for_block.extend(
-                blockchain
-                    .pending_transactions
-                    .iter()
-                    .take(remaining)
-                    .cloned(),
-            );
-        }
-
-        // Empty transaction list is allowed — heartbeat/empty blocks keep the chain advancing.
-
-        let has_system_transactions = transactions_for_block.iter().any(|tx| tx.inputs.is_empty());
-
-        let previous_hash = blockchain
-            .latest_block()
-            .map(|b| b.hash())
-            .unwrap_or_default();
-
-        // Get mining config from environment - this determines the difficulty to use
-        let mining_config = lib_blockchain::types::get_mining_config_from_env();
-        let block_difficulty = mining_config.difficulty.clone();
-
-        if has_system_transactions {
-            info!(
-                "Mining system transaction block with difficulty: {:#x}",
-                block_difficulty.bits()
-            );
-        } else {
-            info!(
-                "Mining normal transaction block with difficulty: {:#x}",
-                block_difficulty.bits()
-            );
-        }
-
-        let block = lib_blockchain::block::creation::create_block(
-            transactions_for_block,
-            previous_hash,
-            blockchain.height + 1,
-            block_difficulty,
-        )?;
-
-        info!(
-            "⛏️ Mining block with {} profile (difficulty: {:#x}, max_iter: {})...",
-            if mining_config.allow_instant_mining {
-                "Bootstrap"
-            } else {
-                "Standard"
-            },
-            block_difficulty.bits(),
-            mining_config.max_iterations
-        );
-        let new_block =
-            lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)?;
-        info!("✓ Block mined with nonce: {}", new_block.header.nonce);
-
-        match blockchain.add_block_with_proof(new_block.clone()).await {
-            Ok(()) => {
-                info!("BLOCK MINED SUCCESSFULLY!");
-                info!("Block Hash: {:?}", new_block.hash());
-                info!("Block Height: {}", blockchain.height);
-                info!("Transactions in Block: {}", new_block.transactions.len());
-                info!("Total UTXOs: {}", blockchain.utxo_set.len());
-                info!(
-                    "Identity Registry: {} entries",
-                    blockchain.identity_registry.len()
-                );
-
-                if !blockchain.economics_transactions.is_empty() {
-                    info!(
-                        "Economics Transactions: {}",
-                        blockchain.economics_transactions.len()
-                    );
-                }
-                if let Err(e) = index_block_in_dht(&new_block).await {
-                    warn!("DHT indexing failed (mining): {}", e);
-                }
-            }
-            Err(e) => {
-                warn!("Failed to add block to blockchain: {}", e);
-                // Evict the block's transactions from the mempool so a permanently
-                // invalid transaction (e.g. bad nonce) cannot block all future blocks.
-                // Uses the shared helper to keep eviction semantics consistent.
-                // Note: if the block failure was caused by a store/consensus error
-                // unrelated to any specific tx, valid transactions may be evicted and
-                // clients must resubmit them.
-                let evicted = new_block.transactions.len();
-                blockchain.remove_pending_transactions(&new_block.transactions);
-                if evicted > 0 {
-                    warn!(
-                        "Evicted {} transaction(s) from mempool after block failure",
-                        evicted
-                    );
-                }
-                return Err(e);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Minimum validators required for BFT consensus mode.
-    /// Keep at 4 so bootstrap mining is available while the validator set is forming.
-    /// Matches MIN_BFT_VALIDATORS in lib-types and lib-consensus.
-    const MIN_BFT_VALIDATORS: usize = 4;
-
-    /// Real mining loop with consensus coordination
-    ///
-    /// Operating Modes:
-    /// - Bootstrap Mode (< 4 validators): Direct mining allowed for network bootstrapping
-    /// - BFT Mode (>= 4 validators): Mining loop is disabled, BFT consensus drives blocks
-    ///
-    /// When BFT mode is active, the mining loop only checks for pending transactions
-    /// and logs status - actual block production is handled by the BFT consensus engine.
-    async fn real_mining_loop(
-        blockchain: Arc<RwLock<Option<Blockchain>>>,
-        validator_manager_arc: Arc<RwLock<Option<Arc<RwLock<ValidatorManager>>>>>,
-        node_identity_arc: Arc<RwLock<Option<IdentityId>>>,
-        env_for_persist: crate::config::Environment,
-        node_role: Arc<NodeRole>,
-        bootstrap_mining_authority: bool,
-    ) {
-        if !node_role.can_mine() {
-            error!(
-                "CRITICAL BUG: Non-mining node {:?} entered mining loop - config/component initialization bug",
-                *node_role
-            );
-            return;
-        }
-        let _ = (
-            blockchain,
-            validator_manager_arc,
-            node_identity_arc,
-            env_for_persist,
-            bootstrap_mining_authority,
-        );
-        info!(
-            "⛏️ Direct runtime mining disabled; validator block production must come from BFT finalization only"
-        );
-        let mut interval = tokio::time::interval(Duration::from_secs(120));
-        loop {
-            interval.tick().await;
-            debug!("⛏️ Mining loop heartbeat: direct mining remains disabled");
-        }
     }
 
     /// Periodic catch-up loop for Observer nodes.
@@ -801,47 +575,17 @@ impl Component for BlockchainComponent {
             return Ok(());
         }
 
+        // Invariant BFT-A-1955: Validator block production is driven exclusively by BFT
+        // finalization. There is no local mining loop — block proposals are created by
+        // the consensus engine (ConsensusComponent) and committed only after 2f+1 votes.
         info!(
-            "✓ Node role {:?} can mine - starting mining service",
+            "✓ Validator node {:?} started — block production via BFT only",
             *self.node_role
         );
-
-        let bootstrap_mining_authority = self.is_bootstrap_mining_authority().await;
-        if !bootstrap_mining_authority {
-            info!("⛏️ Bootstrap mining disabled for this validator (non-bootstrap authority node)");
-        }
-
-        // Start mining loop
-        // CRITICAL FIX: Pass None for local blockchain to force using global provider
-        // This ensures the mining loop always sees the latest state from Genesis/Sync
-        let validator_manager_arc = self.validator_manager.clone();
-        let node_identity_arc = self.node_identity.clone();
-        let env_for_persist = self.environment.clone();
-        let node_role_for_loop = self.node_role.clone();
-
-        // We pass a new empty Arc for the local fallback, effectively disabling it
-        // The mining loop prefers the global provider anyway
-        let dummy_local_blockchain = Arc::new(RwLock::new(None));
-
-        let mining_handle = tokio::spawn(async move {
-            info!("⛏️ Mining task spawned, starting mining loop...");
-            Self::real_mining_loop(
-                dummy_local_blockchain,
-                validator_manager_arc,
-                node_identity_arc,
-                env_for_persist,
-                node_role_for_loop,
-                bootstrap_mining_authority,
-            )
-            .await;
-        });
-
-        *self.mining_handle.write().await = Some(mining_handle);
 
         *self.start_time.write().await = Some(Instant::now());
         *self.status.write().await = ComponentStatus::Running;
 
-        info!("✓ Blockchain component started with mining enabled");
         Ok(())
     }
 
@@ -1111,7 +855,6 @@ pub use crate::runtime::components::consensus::BlockchainValidatorAdapter;
 #[cfg(test)]
 mod tests {
     use super::BlockchainComponent;
-    use crate::config::aggregation::BootstrapValidator;
 
     #[test]
     fn should_run_peer_sync_loop_for_joining_validator() {
@@ -1134,72 +877,4 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn normalize_did_supports_prefixed_and_raw_forms() {
-        let raw = "abc123";
-        let prefixed = "did:zhtp:abc123";
-        assert_eq!(BlockchainComponent::normalize_did(raw), "abc123");
-        assert_eq!(BlockchainComponent::normalize_did(prefixed), "abc123");
-    }
-
-    #[test]
-    fn bootstrap_authority_allows_any_listed_validator() {
-        let validators = vec![
-            BootstrapValidator {
-                identity_id: "did:zhtp:leader01".to_string(),
-                consensus_key: String::new(),
-                stake: 1000,
-                storage_provided: 0,
-                commission_rate: 0,
-                endpoints: Vec::new(),
-            },
-            BootstrapValidator {
-                identity_id: "did:zhtp:validator02".to_string(),
-                consensus_key: String::new(),
-                stake: 1000,
-                storage_provided: 0,
-                commission_rate: 0,
-                endpoints: Vec::new(),
-            },
-        ];
-
-        assert!(BlockchainComponent::local_did_is_bootstrap_validator(
-            "did:zhtp:validator02",
-            &validators
-        ));
-    }
-
-    #[test]
-    fn bootstrap_authority_check_is_case_insensitive() {
-        let validators = vec![BootstrapValidator {
-            identity_id: "did:zhtp:ABCDEF1234".to_string(),
-            consensus_key: String::new(),
-            stake: 1000,
-            storage_provided: 0,
-            commission_rate: 0,
-            endpoints: Vec::new(),
-        }];
-
-        assert!(BlockchainComponent::local_did_is_bootstrap_validator(
-            "did:zhtp:abcdef1234",
-            &validators
-        ));
-    }
-
-    #[test]
-    fn bootstrap_authority_rejects_unlisted_validator() {
-        let validators = vec![BootstrapValidator {
-            identity_id: "did:zhtp:leader01".to_string(),
-            consensus_key: String::new(),
-            stake: 1000,
-            storage_provided: 0,
-            commission_rate: 0,
-            endpoints: Vec::new(),
-        }];
-
-        assert!(!BlockchainComponent::local_did_is_bootstrap_validator(
-            "did:zhtp:outsider99",
-            &validators
-        ));
-    }
 }
