@@ -3736,34 +3736,13 @@ mod tests {
             fee: 0,
             signature: test_signature(&sender),
             memo: vec![],
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
-            record_on_ramp_trade_data: Some(RecordOnRampTradeData {
+            payload: crate::transaction::TransactionPayload::RecordOnRampTrade(RecordOnRampTradeData {
                 epoch_id: 1,
                 cbe_amount,
                 usdc_amount,
                 traded_at: 1_000_000,
                 approvals: ThresholdApprovalSet::new(domain),
             }),
-            treasury_allocation_data: None,
         }
     }
 
@@ -3783,28 +3762,7 @@ mod tests {
             fee: 0,
             signature: test_signature(&sender),
             memo: vec![],
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
-            record_on_ramp_trade_data: None, // intentionally absent
-            treasury_allocation_data: None,
+            payload: crate::transaction::TransactionPayload::None, // intentionally absent
         };
 
         let result = validator.validate_record_on_ramp_trade(&tx);
@@ -3951,11 +3909,11 @@ mod tests {
         domain: crate::transaction::threshold_approval::ApprovalDomain,
     ) -> Transaction {
         use crate::transaction::threshold_approval::ThresholdApprovalSet;
-        use crate::transaction::core::{TreasuryAllocationData, TX_VERSION_V9};
+        use crate::transaction::core::{TreasuryAllocationData, TX_VERSION_V8};
 
         let sender = test_public_key(1);
         Transaction {
-            version: TX_VERSION_V9,
+            version: TX_VERSION_V8,
             chain_id: 0x03,
             transaction_type: TransactionType::TreasuryAllocation,
             inputs: vec![],
@@ -3963,28 +3921,7 @@ mod tests {
             fee: 0,
             signature: test_signature(&sender),
             memo: vec![],
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
-            record_on_ramp_trade_data: None,
-            treasury_allocation_data: Some(TreasuryAllocationData {
+            payload: crate::transaction::TransactionPayload::TreasuryAllocation(TreasuryAllocationData {
                 source_treasury_key_id,
                 destination_key_id,
                 amount,
@@ -4002,7 +3939,7 @@ mod tests {
 
         let sender = test_public_key(1);
         let tx = Transaction {
-            version: 9,
+            version: 8,
             chain_id: 0x03,
             transaction_type: TransactionType::TreasuryAllocation,
             inputs: vec![],
@@ -4010,28 +3947,7 @@ mod tests {
             fee: 0,
             signature: test_signature(&sender),
             memo: vec![],
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
-            record_on_ramp_trade_data: None,
-            treasury_allocation_data: None, // intentionally absent
+            payload: crate::transaction::TransactionPayload::None, // intentionally absent
         };
 
         let result = validator.validate_treasury_allocation(&tx);
