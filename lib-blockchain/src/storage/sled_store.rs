@@ -89,7 +89,6 @@ struct PendingBatch {
     bonding_curve_symbols: Batch,
     cbe_accounts: Batch,
     meta: Batch,
-    block_data: Option<(u64, BlockHash, Vec<u8>)>, // (height, hash, serialized block)
 }
 
 impl PendingBatch {
@@ -112,7 +111,6 @@ impl PendingBatch {
             bonding_curve_symbols: Batch::default(),
             cbe_accounts: Batch::default(),
             meta: Batch::default(),
-            block_data: None,
         }
     }
 }
@@ -130,82 +128,7 @@ impl SledStore {
     /// Open or create a SledStore at the given path
     pub fn open<P: AsRef<Path>>(path: P) -> StorageResult<Self> {
         let db = sled::open(path).map_err(|e| StorageError::Database(e.to_string()))?;
-
-        let blocks_by_height = db
-            .open_tree(TREE_BLOCKS_BY_HEIGHT)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let blocks_by_hash = db
-            .open_tree(TREE_BLOCKS_BY_HASH)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let utxos = db
-            .open_tree(TREE_UTXOS)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let accounts = db
-            .open_tree(TREE_ACCOUNTS)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let token_balances = db
-            .open_tree(TREE_TOKEN_BALANCES)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let token_contracts = db
-            .open_tree(TREE_TOKEN_CONTRACTS)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let identities = db
-            .open_tree(TREE_IDENTITIES)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let identity_metadata = db
-            .open_tree(TREE_IDENTITY_METADATA)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let identity_by_owner = db
-            .open_tree(TREE_IDENTITY_BY_OWNER)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let bonding_curves = db
-            .open_tree(TREE_BONDING_CURVES)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let bonding_curve_symbols = db
-            .open_tree(TREE_BONDING_CURVE_SYMBOLS)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let cbe_accounts = db
-            .open_tree(TREE_CBE_ACCOUNTS)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let meta = db
-            .open_tree(TREE_META)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let token_nonces = db
-            .open_tree(TREE_TOKEN_NONCES)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let token_supply = db
-            .open_tree(TREE_TOKEN_SUPPLY)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let contract_code = db
-            .open_tree(TREE_CONTRACT_CODE)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-        let contract_storage = db
-            .open_tree(TREE_CONTRACT_STORAGE)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        Ok(Self {
-            db,
-            blocks_by_height,
-            blocks_by_hash,
-            utxos,
-            accounts,
-            token_balances,
-            token_nonces,
-            token_contracts,
-            token_supply,
-            contract_code,
-            contract_storage,
-            identities,
-            identity_metadata,
-            identity_by_owner,
-            bonding_curves,
-            bonding_curve_symbols,
-            cbe_accounts,
-            meta,
-            tx_active: AtomicBool::new(false),
-            tx_height: AtomicU64::new(0),
-            tx_batch: Mutex::new(None),
-        })
+        Self::from_db(db)
     }
 
     /// Open a temporary in-memory store (for testing)
@@ -215,7 +138,15 @@ impl SledStore {
             .temporary(true)
             .open()
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        Self::from_db(db)
+    }
 
+    /// Initialize a SledStore from an already-opened sled database.
+    ///
+    /// Single source of truth for tree names and struct initialization.
+    /// Both `open` and `open_temporary` delegate here so a new tree added
+    /// in one place is automatically present in both.
+    fn from_db(db: sled::Db) -> StorageResult<Self> {
         let blocks_by_height = db
             .open_tree(TREE_BLOCKS_BY_HEIGHT)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -414,10 +345,18 @@ impl BlockchainStore for SledStore {
         // Serialize block
         let block_bytes = Self::serialize(block)?;
 
-        // Store in batch
+        // Stage block index writes in the batch alongside all other state writes.
+        // This ensures block index entries commit at the same point as utxos/accounts/etc.
+        // rather than ahead of them via direct Tree::insert.
+        let height_key = keys::block_height_key(height);
+        let hash_key = *keys::block_hash_key(&block_hash);
+
         let mut batch_guard = self.tx_batch.lock().unwrap();
         if let Some(ref mut batch) = *batch_guard {
-            batch.block_data = Some((height, block_hash, block_bytes));
+            // Batch::insert requires Into<IVec> for both K and V (unlike Tree::insert
+            // which accepts AsRef<[u8]> for K), so convert fixed-size arrays to slices.
+            batch.blocks_by_height.insert(height_key.as_ref(), block_hash.as_bytes().as_ref());
+            batch.blocks_by_hash.insert(hash_key.as_ref(), block_bytes);
         }
 
         Ok(())
@@ -783,6 +722,10 @@ impl BlockchainStore for SledStore {
         token_id: &TokenId,
         entries: &[([u8; 32], u64)],
     ) -> StorageResult<usize> {
+        // Must only be called during startup, before block processing begins.
+        if self.tx_active.load(Ordering::SeqCst) {
+            return Err(StorageError::TransactionAlreadyActive);
+        }
         let mut batch = sled::Batch::default();
         let mut written = 0usize;
         for (addr_bytes, balance) in entries {
@@ -813,6 +756,10 @@ impl BlockchainStore for SledStore {
         &self,
         entries: &[(TokenId, Address, u128)],
     ) -> StorageResult<usize> {
+        // Must only be called during startup migrations, before block processing begins.
+        if self.tx_active.load(Ordering::SeqCst) {
+            return Err(StorageError::TransactionAlreadyActive);
+        }
         let mut batch = sled::Batch::default();
         for (token_id, addr, balance) in entries {
             let key = keys::token_balance_key(token_id, addr);
@@ -1064,6 +1011,17 @@ impl BlockchainStore for SledStore {
 
         let height = self.tx_height.load(Ordering::SeqCst);
 
+        // Drop guard: always clear tx_active when this function returns, whether
+        // Ok or Err. Without this, any apply_batch failure permanently deadlocks
+        // the node — begin_block would return TransactionAlreadyActive forever.
+        struct TxGuard<'a>(&'a AtomicBool);
+        impl Drop for TxGuard<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::SeqCst);
+            }
+        }
+        let _guard = TxGuard(&self.tx_active);
+
         // Take the batch
         let batch = {
             let mut batch_guard = self.tx_batch.lock().unwrap();
@@ -1072,26 +1030,19 @@ impl BlockchainStore for SledStore {
                 .ok_or(StorageError::NoActiveTransaction)?
         };
 
-        // Apply all batches
-        // Note: sled doesn't have true multi-tree transactions, but batches
-        // are applied atomically per-tree. For full atomicity, we'd need
-        // a different approach, but this is acceptable for Phase 1.
+        // Apply all batches.
+        // Note: sled doesn't have true multi-tree transactions — batches are
+        // applied atomically per-tree but not across trees. A crash mid-commit
+        // can leave partial state. latest_height is updated last so a restart
+        // after partial commit will re-apply the block, overwriting partial state.
+        self.blocks_by_height
+            .apply_batch(batch.blocks_by_height)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
-        // Apply block data first (if present)
-        if let Some((block_height, block_hash, block_bytes)) = batch.block_data {
-            let height_key = keys::block_height_key(block_height);
-            let hash_key = keys::block_hash_key(&block_hash);
+        self.blocks_by_hash
+            .apply_batch(batch.blocks_by_hash)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
-            self.blocks_by_height
-                .insert(height_key, block_hash.as_bytes().as_ref())
-                .map_err(|e| StorageError::Database(e.to_string()))?;
-
-            self.blocks_by_hash
-                .insert(hash_key, block_bytes)
-                .map_err(|e| StorageError::Database(e.to_string()))?;
-        }
-
-        // Apply other batches
         self.utxos
             .apply_batch(batch.utxos)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -1144,7 +1095,9 @@ impl BlockchainStore for SledStore {
             .apply_batch(batch.cbe_accounts)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
-        // Update latest height
+        // Commit point: update latest_height last. If any batch above failed,
+        // latest_height stays at the previous value and the node will re-apply
+        // this block on next restart.
         self.meta
             .insert(keys::meta::LATEST_HEIGHT, &height.to_be_bytes())
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -1153,9 +1106,6 @@ impl BlockchainStore for SledStore {
         self.db
             .flush()
             .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        // Clear transaction state
-        self.tx_active.store(false, Ordering::SeqCst);
 
         Ok(())
     }
@@ -1186,6 +1136,15 @@ impl BlockchainStore for SledStore {
     fn commit_metadata_write(&self) -> StorageResult<()> {
         self.require_transaction()?;
 
+        // Same drop guard as commit_block — always clear tx_active on exit.
+        struct TxGuard<'a>(&'a AtomicBool);
+        impl Drop for TxGuard<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::SeqCst);
+            }
+        }
+        let _guard = TxGuard(&self.tx_active);
+
         let batch = {
             let mut batch_guard = self.tx_batch.lock().unwrap();
             batch_guard
@@ -1207,7 +1166,11 @@ impl BlockchainStore for SledStore {
             .apply_batch(batch.accounts)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
-        self.tx_active.store(false, Ordering::SeqCst);
+        // Flush to ensure identity writes are durable before the next block commit.
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
         Ok(())
     }
 
