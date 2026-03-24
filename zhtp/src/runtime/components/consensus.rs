@@ -1428,7 +1428,7 @@ impl ConsensusComponent {
 }
 
 async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto::KeyPair)> {
-    use crate::keystore_names::{
+    use crate::keyfile_names::{
         KeystorePrivateKey, NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME,
     };
     use std::path::PathBuf;

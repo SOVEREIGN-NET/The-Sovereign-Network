@@ -5,7 +5,7 @@
 //! and can be linked to wallets later for citizen services like UBI and DAO participation.
 
 use crate::api::handlers::constants::SOV_WELCOME_BONUS;
-use crate::keystore_names::{
+use crate::keyfile_names::{
     KeystorePrivateKey, NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME, USER_IDENTITY_FILENAME,
     USER_PRIVATE_KEY_FILENAME, WALLET_DATA_FILENAME,
 };

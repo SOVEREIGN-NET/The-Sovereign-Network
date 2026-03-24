@@ -8,9 +8,29 @@
 //! - RecordOnRampTrade    (Oracle Committee attested fiat→CBE trades)
 //! - TreasuryAllocation   (Bootstrap Council approved SOV transfers)
 
-use lib_blockchain::integration::crypto_integration::PublicKey;
 use lib_blockchain::transaction::{RecordOnRampTradeData, TreasuryAllocationTxData};
-use lib_blockchain::{ApprovalDomain, ThresholdApproval, ThresholdApprovals, Transaction};
+use lib_blockchain::{
+    Approval, ApprovalDomain, ThresholdApproval, ThresholdApprovalSet, ThresholdApprovals,
+    Transaction,
+};
+use lib_crypto::types::signatures::SignatureAlgorithm;
+
+fn build_approval_set(
+    domain: ApprovalDomain,
+    approvals: Vec<(Vec<u8>, Vec<u8>)>,
+) -> ThresholdApprovalSet {
+    ThresholdApprovalSet {
+        domain,
+        approvals: approvals
+            .into_iter()
+            .map(|(dilithium_pk, signature)| Approval {
+                public_key: crate::token_tx::create_public_key(dilithium_pk),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                signature,
+            })
+            .collect(),
+    }
+}
 
 /// Build an InitEntityRegistry transaction with Bootstrap Council threshold approvals.
 ///
@@ -85,16 +105,7 @@ pub fn build_record_on_ramp_trade_tx(
     traded_at: u64,
     oracle_approvals: Vec<(Vec<u8>, Vec<u8>)>,
 ) -> Result<String, String> {
-    let approvals = ThresholdApprovals {
-        domain: ApprovalDomain::OracleCommittee,
-        approvals: oracle_approvals
-            .into_iter()
-            .map(|(dilithium_pk, signature)| ThresholdApproval {
-                dilithium_pk,
-                signature,
-            })
-            .collect(),
-    };
+    let approvals = build_approval_set(ApprovalDomain::OracleCommittee, oracle_approvals);
 
     let data = RecordOnRampTradeData {
         epoch_id,
@@ -132,16 +143,7 @@ pub fn build_treasury_allocation_tx(
     proposal_id: [u8; 32],
     council_approvals: Vec<(Vec<u8>, Vec<u8>)>,
 ) -> Result<String, String> {
-    let approvals = ThresholdApprovals {
-        domain: ApprovalDomain::BootstrapCouncil,
-        approvals: council_approvals
-            .into_iter()
-            .map(|(dilithium_pk, signature)| ThresholdApproval {
-                dilithium_pk,
-                signature,
-            })
-            .collect(),
-    };
+    let approvals = build_approval_set(ApprovalDomain::BootstrapCouncil, council_approvals);
 
     let data = TreasuryAllocationTxData {
         source_treasury_key_id,
@@ -200,7 +202,7 @@ mod tests {
         let tx: lib_blockchain::Transaction = bincode::deserialize(&tx_bytes).unwrap();
 
         assert_eq!(tx.transaction_type, TransactionType::RecordOnRampTrade);
-        let data = tx.record_on_ramp_trade_data.expect("payload");
+        let data = tx.record_on_ramp_trade_data().expect("payload");
         assert_eq!(data.epoch_id, 7);
         assert_eq!(data.cbe_amount, 1_000_000_000_000_000_000);
         assert_eq!(data.usdc_amount, 500_000_000);
@@ -228,7 +230,7 @@ mod tests {
         let tx: lib_blockchain::Transaction = bincode::deserialize(&tx_bytes).unwrap();
 
         assert_eq!(tx.transaction_type, TransactionType::TreasuryAllocation);
-        let data = tx.treasury_allocation_data.expect("payload");
+        let data = tx.treasury_allocation_data().expect("payload");
         assert_eq!(data.source_treasury_key_id, source);
         assert_eq!(data.destination_key_id, dest);
         assert_eq!(data.amount, 5_000_000);

@@ -2739,7 +2739,7 @@ impl RuntimeOrchestrator {
     /// All nodes that see this block will then add this node to their
     /// `validator_registry` via `process_and_commit_block`.
     async fn submit_self_validator_registration(&self) -> Result<()> {
-        use crate::keystore_names::{
+        use crate::keyfile_names::{
             KeystorePrivateKey, NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME,
         };
         use std::path::PathBuf;

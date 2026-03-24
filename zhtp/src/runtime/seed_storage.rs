@@ -10,7 +10,7 @@ use std::io::Write;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::config::SeedStorageConfig;
-use crate::keystore_names::SEED_STORAGE_DIRNAME;
+use crate::keyfile_names::SEED_STORAGE_DIRNAME;
 use lib_crypto::symmetric::chacha20::{decrypt_data, encrypt_data};
 use lib_crypto::Hash;
 

@@ -71,7 +71,8 @@ pub use transaction::{
 
 // Threshold approval types
 pub use transaction::threshold_approval::{
-    ApprovalDomain, ThresholdApproval, ThresholdApprovals, ThresholdError,
+    Approval, ApprovalDomain, ThresholdApproval, ThresholdApprovalSet, ThresholdApprovals,
+    ThresholdError,
 };
 
 // Block module (core types and functions)

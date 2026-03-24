@@ -46,7 +46,7 @@ use lib_network::web4::DomainRegistry;
 use crate::monitoring::MonitoringSystem;
 
 // Import keystore filename constants
-use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
+use crate::keyfile_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
 
 /// Default QUIC port for mesh networking (UDP)
 const QUIC_PORT: u16 = 9334;

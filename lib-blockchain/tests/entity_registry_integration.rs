@@ -18,7 +18,20 @@ fn test_signature(signer: &PublicKey) -> Signature {
 }
 
 fn create_init_tx(signer: &PublicKey, cbe: PublicKey, nonprofit: PublicKey) -> Transaction {
-    Transaction::new_init_entity_registry(1, cbe, nonprofit, 123, 0, test_signature(signer))
+    Transaction::new_init_entity_registry(
+        1,
+        cbe,
+        nonprofit,
+        123,
+        0,
+        lib_blockchain::ThresholdApprovals {
+            domain: lib_blockchain::ApprovalDomain::BootstrapCouncil,
+            approvals: vec![lib_blockchain::ThresholdApproval {
+                dilithium_pk: signer.dilithium_pk.clone(),
+                signature: test_signature(signer).signature,
+            }],
+        },
+    )
 }
 
 fn create_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -> Block {
