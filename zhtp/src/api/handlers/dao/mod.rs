@@ -480,7 +480,7 @@ impl DaoHandler {
         {
             return;
         }
-        let Some(exec) = tx.dao_execution_data.as_ref() else {
+        let Some(exec) = tx.dao_execution_data() else {
             return;
         };
         if exec.execution_type != Self::DAO_REGISTRY_REGISTER_EXEC
@@ -1413,8 +1413,7 @@ impl DaoHandler {
         let already_voted_pending = blockchain.pending_transactions.iter().any(|tx| {
             tx.transaction_type == lib_blockchain::TransactionType::DaoVote
                 && tx
-                    .dao_vote_data
-                    .as_ref()
+                    .dao_vote_data()
                     .map(|v| v.proposal_id == proposal_id && v.voter == voter_identity.did)
                     .unwrap_or(false)
         });

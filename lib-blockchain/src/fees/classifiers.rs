@@ -349,13 +349,15 @@ mod tests {
             vec![],
         );
         tx.transaction_type = TransactionType::TokenTransfer;
-        tx.token_transfer_data = Some(crate::transaction::TokenTransferData {
-            token_id: [0u8; 32],
-            from: [1u8; 32],
-            to: [2u8; 32],
-            amount: 1000,
-            nonce: 0,
-        });
+        tx.payload = crate::transaction::TransactionPayload::TokenTransfer(
+            crate::transaction::TokenTransferData {
+                token_id: [0u8; 32],
+                from: [1u8; 32],
+                to: [2u8; 32],
+                amount: 1000,
+                nonce: 0,
+            },
+        );
         tx
     }
 

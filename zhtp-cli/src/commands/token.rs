@@ -722,7 +722,7 @@ mod tests {
         let tx = build_signed_token_mint_tx(&keypair, token_id, to, amount).expect("build mint tx");
 
         assert_eq!(tx.transaction_type, TransactionType::TokenMint);
-        let mint_data = tx.token_mint_data.expect("must have mint data");
+        let mint_data = tx.token_mint_data().cloned().expect("must have mint data");
         assert_eq!(mint_data.token_id, token_id);
         assert_eq!(mint_data.to, to);
         assert_eq!(mint_data.amount, amount as u128);
@@ -741,7 +741,7 @@ mod tests {
             .expect("build transfer tx");
 
         assert_eq!(tx.transaction_type, TransactionType::TokenTransfer);
-        let transfer_data = tx.token_transfer_data.expect("must have transfer data");
+        let transfer_data = tx.token_transfer_data().cloned().expect("must have transfer data");
         assert_eq!(transfer_data.token_id, token_id);
         assert_eq!(transfer_data.from, keypair.public_key.key_id);
         assert_eq!(transfer_data.to, to);

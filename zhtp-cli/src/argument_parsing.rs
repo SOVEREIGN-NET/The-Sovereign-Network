@@ -132,6 +132,9 @@ pub enum ZhtpCommand {
 
     /// Genesis configuration and state migration (GENESIS-1, #1909)
     Genesis(GenesisArgs),
+
+    /// CBE token operations (init pools, employment, payroll)
+    Cbe(CbeArgs),
 }
 
 /// Node management commands
@@ -1255,6 +1258,69 @@ pub struct TokenArgs {
     pub action: TokenAction,
 }
 
+/// CBE token operation commands
+#[derive(Args, Debug, Clone)]
+pub struct CbeArgs {
+    #[command(subcommand)]
+    pub action: CbeAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum CbeAction {
+    /// Initialize CBE token: assign 4 pool wallets and distribute the full supply.
+    /// One-time Bootstrap Council operation.
+    InitPools {
+        /// 32-byte hex key_id for the compensation (40%) pool wallet
+        #[arg(long)]
+        compensation: String,
+        /// 32-byte hex key_id for the operational (30%) pool wallet
+        #[arg(long)]
+        operational: String,
+        /// 32-byte hex key_id for the performance (20%) pool wallet
+        #[arg(long)]
+        performance: String,
+        /// 32-byte hex key_id for the strategic (10%) pool wallet
+        #[arg(long)]
+        strategic: String,
+        /// Current block height (used in the tx payload)
+        #[arg(long, default_value = "0")]
+        height: u64,
+    },
+    /// Create an on-chain employment contract
+    CreateContract {
+        /// 32-byte hex DAO ID
+        #[arg(long)]
+        dao_id: String,
+        /// 32-byte hex key_id of the employee's wallet
+        #[arg(long)]
+        employee: String,
+        /// Contract type: 0 = PublicAccess, 1 = Employment
+        #[arg(long, default_value = "1")]
+        contract_type: u8,
+        /// Per-period compensation in base units
+        #[arg(long)]
+        compensation: u64,
+        /// Payment period: 0 = Monthly, 1 = Quarterly, 2 = Annually
+        #[arg(long, default_value = "0")]
+        period: u8,
+        /// Tax rate in basis points (0–5000)
+        #[arg(long, default_value = "0")]
+        tax_bp: u16,
+        /// Tax jurisdiction (ISO country code, e.g. "US")
+        #[arg(long, default_value = "")]
+        jurisdiction: String,
+        /// Profit share in basis points (0–2000)
+        #[arg(long, default_value = "0")]
+        profit_share_bp: u16,
+    },
+    /// Process a payroll period for an employment contract
+    Payroll {
+        /// 32-byte hex employment contract ID
+        #[arg(long)]
+        contract_id: String,
+    },
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum TokenAction {
     /// Create a new custom token
@@ -1582,6 +1648,9 @@ pub async fn run_cli() -> Result<()> {
                 .await
                 .map_err(anyhow::Error::msg)
         }
+        ZhtpCommand::Cbe(args) => commands::cbe::handle_cbe_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
     }
 }
 

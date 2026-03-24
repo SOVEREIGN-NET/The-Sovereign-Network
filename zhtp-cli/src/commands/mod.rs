@@ -2,6 +2,7 @@
 
 pub mod backup;
 pub mod blockchain;
+pub mod cbe;
 pub mod citizen;
 pub mod common;
 pub mod completion;

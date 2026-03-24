@@ -8,6 +8,7 @@ pub mod contract_deployment;
 pub mod contract_execution;
 pub mod core;
 pub mod creation;
+pub mod threshold_approval;
 pub mod fee;
 pub mod hashing;
 pub mod oracle_governance;
@@ -18,11 +19,19 @@ pub mod validation;
 // Explicit re-exports from core module
 pub use core::{
     BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData, BondingCurveSellData,
-    DaoExecutionData, DaoProposalData, DaoVoteData, IdentityTransactionData,
-    InitEntityRegistryData, ProfitDeclarationData, RevenueSource, TokenMintData, TokenTransferData,
-    Transaction, TransactionInput, TransactionOutput, UbiClaimData, ValidatorOperation,
-    ValidatorTransactionData, WalletPrivateData, WalletReference, WalletTransactionData,
-    TX_VERSION_V3, TX_VERSION_V7,
+    CreateEmploymentContractData, DaoExecutionData, DaoProposalData, DaoVoteData,
+    GovernanceConfigUpdateData, GovernanceConfigOperation, IdentityTransactionData,
+    InitCbeTokenData, InitEntityRegistryData, ProfitDeclarationData, ProcessPayrollData,
+    RecordOnRampTradeData, RevenueSource, TokenMintData, TokenTransferData, Transaction,
+    TransactionInput, TransactionOutput, TransactionPayload, TreasuryAllocationData, UbiClaimData,
+    ValidatorOperation, ValidatorTransactionData, WalletPrivateData, WalletReference,
+    WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7, TX_VERSION_V8,
+};
+
+// Re-exports from threshold_approval module
+pub use threshold_approval::{
+    compute_approval_preimage, validate_threshold_approvals, Approval, ApprovalDomain,
+    ThresholdApprovalSet, ThresholdError, THRESHOLD_APPROVAL_DOMAIN_TAG,
 };
 
 pub use bonding_curve_codec::{

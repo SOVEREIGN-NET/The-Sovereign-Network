@@ -39,6 +39,12 @@ pub enum ValidationError {
     InvalidSeedCommitment,
     InvalidWalletType,
     InvalidValidatorData,
+    /// A threshold approval signature is invalid or the approval domain is wrong.
+    InvalidApproval,
+    /// A signer appears more than once in a threshold approval set.
+    DuplicateSigner,
+    /// Threshold approval count is below the required quorum.
+    ThresholdNotMet,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -68,6 +74,9 @@ impl std::fmt::Display for ValidationError {
             ValidationError::InvalidSeedCommitment => write!(f, "Invalid seed commitment"),
             ValidationError::InvalidWalletType => write!(f, "Invalid wallet type"),
             ValidationError::InvalidValidatorData => write!(f, "Invalid or missing validator data"),
+            ValidationError::InvalidApproval => write!(f, "Invalid threshold approval"),
+            ValidationError::DuplicateSigner => write!(f, "Duplicate signer in approval set"),
+            ValidationError::ThresholdNotMet => write!(f, "Approval threshold not met"),
         }
     }
 }
@@ -216,19 +225,19 @@ impl TransactionValidator {
             }
             TransactionType::ValidatorRegistration => {
                 // Validator registration - validate validator data exists
-                if transaction.validator_data.is_none() {
+                if transaction.validator_data().is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
             }
             TransactionType::ValidatorUpdate => {
                 // Validator update - validate validator data exists
-                if transaction.validator_data.is_none() {
+                if transaction.validator_data().is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
             }
             TransactionType::ValidatorUnregister => {
                 // Validator unregister - validate validator data exists
-                if transaction.validator_data.is_none() {
+                if transaction.validator_data().is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
             }
@@ -263,7 +272,7 @@ impl TransactionValidator {
             }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates - validate governance_config_data exists
-                if transaction.governance_config_data.is_none() {
+                if transaction.governance_config_data().is_none() {
                     return Err(ValidationError::InvalidInputs);
                 }
             }
@@ -283,8 +292,7 @@ impl TransactionValidator {
             }
             TransactionType::BondingCurveDeploy => {
                 let data = transaction
-                    .bonding_curve_deploy_data
-                    .as_ref()
+                    .bonding_curve_deploy_data()
                     .ok_or(ValidationError::InvalidInputs)?;
                 // Signer must be the declared creator
                 if transaction.signature.public_key.key_id != data.creator {
@@ -292,7 +300,7 @@ impl TransactionValidator {
                 }
             }
             TransactionType::BondingCurveBuy => {
-                if let Some(data) = transaction.bonding_curve_buy_data.as_ref() {
+                if let Some(data) = transaction.bonding_curve_buy_data() {
                     // Signer must be the declared buyer
                     if transaction.signature.public_key.key_id != data.buyer {
                         return Err(ValidationError::InvalidSignature);
@@ -305,7 +313,7 @@ impl TransactionValidator {
                 }
             }
             TransactionType::BondingCurveSell => {
-                if let Some(data) = transaction.bonding_curve_sell_data.as_ref() {
+                if let Some(data) = transaction.bonding_curve_sell_data() {
                     // Signer must be the declared seller
                     if transaction.signature.public_key.key_id != data.seller {
                         return Err(ValidationError::InvalidSignature);
@@ -319,8 +327,7 @@ impl TransactionValidator {
             }
             TransactionType::BondingCurveGraduate => {
                 let data = transaction
-                    .bonding_curve_graduate_data
-                    .as_ref()
+                    .bonding_curve_graduate_data()
                     .ok_or(ValidationError::InvalidInputs)?;
                 // Signer must be the declared graduator
                 if transaction.signature.public_key.key_id != data.graduator {
@@ -346,7 +353,7 @@ impl TransactionValidator {
             }
             TransactionType::InitEntityRegistry => {
                 // Payload must be present; no inputs/outputs allowed
-                if transaction.init_entity_registry_data.is_none() {
+                if transaction.init_entity_registry_data().is_none() {
                     return Err(ValidationError::MissingRequiredData);
                 }
                 if !transaction.inputs.is_empty() {
@@ -355,6 +362,21 @@ impl TransactionValidator {
                 if !transaction.outputs.is_empty() {
                     return Err(ValidationError::InvalidOutputs);
                 }
+            }
+            TransactionType::RecordOnRampTrade => {
+                // Threshold approval; full validation deferred to stateful validator
+            }
+            TransactionType::TreasuryAllocation => {
+                // Threshold approval; full validation deferred to stateful validator
+            }
+            TransactionType::InitCbeToken => {
+                // Full validation deferred to stateful validator
+            }
+            TransactionType::CreateEmploymentContract => {
+                // Full validation deferred to stateful validator
+            }
+            TransactionType::ProcessPayroll => {
+                // Full validation deferred to stateful validator
             }
         }
 
@@ -371,6 +393,7 @@ impl TransactionValidator {
                     | TransactionType::TokenMint
                     | TransactionType::TokenCreation
                     | TransactionType::InitEntityRegistry
+                    | TransactionType::InitCbeToken
             );
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         if require_signature || has_nonempty_sig {
@@ -445,19 +468,19 @@ impl TransactionValidator {
             }
             TransactionType::ValidatorRegistration => {
                 // Validator registration - validate validator data exists
-                if transaction.validator_data.is_none() {
+                if transaction.validator_data().is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
             }
             TransactionType::ValidatorUpdate => {
                 // Validator update - validate validator data exists
-                if transaction.validator_data.is_none() {
+                if transaction.validator_data().is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
             }
             TransactionType::ValidatorUnregister => {
                 // Validator unregister - validate validator data exists
-                if transaction.validator_data.is_none() {
+                if transaction.validator_data().is_none() {
                     return Err(ValidationError::InvalidValidatorData);
                 }
             }
@@ -483,8 +506,7 @@ impl TransactionValidator {
             }
             TransactionType::TokenTransfer => {
                 let data = transaction
-                    .token_transfer_data
-                    .as_ref()
+                    .token_transfer_data()
                     .ok_or(ValidationError::MissingRequiredData)?;
                 if data.amount == 0 {
                     return Err(ValidationError::InvalidAmount);
@@ -501,8 +523,7 @@ impl TransactionValidator {
                     return Err(ValidationError::InvalidTransaction);
                 }
                 let data = transaction
-                    .token_mint_data
-                    .as_ref()
+                    .token_mint_data()
                     .ok_or(ValidationError::MissingRequiredData)?;
                 if data.amount == 0 {
                     return Err(ValidationError::InvalidAmount);
@@ -516,7 +537,7 @@ impl TransactionValidator {
             }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates - validate governance_config_data exists
-                if transaction.governance_config_data.is_none() {
+                if transaction.governance_config_data().is_none() {
                     return Err(ValidationError::InvalidInputs);
                 }
             }
@@ -553,7 +574,7 @@ impl TransactionValidator {
                 // Cancel oracle update - validation in stateful validator
             }
             TransactionType::InitEntityRegistry => {
-                if transaction.init_entity_registry_data.is_none() {
+                if transaction.init_entity_registry_data().is_none() {
                     return Err(ValidationError::MissingRequiredData);
                 }
                 if !transaction.inputs.is_empty() {
@@ -562,6 +583,21 @@ impl TransactionValidator {
                 if !transaction.outputs.is_empty() {
                     return Err(ValidationError::InvalidOutputs);
                 }
+            }
+            TransactionType::RecordOnRampTrade => {
+                // Threshold approval; full validation deferred to stateful validator
+            }
+            TransactionType::TreasuryAllocation => {
+                // Threshold approval; full validation deferred to stateful validator
+            }
+            TransactionType::InitCbeToken => {
+                // Full validation deferred to stateful validator
+            }
+            TransactionType::CreateEmploymentContract => {
+                // Full validation deferred to stateful validator
+            }
+            TransactionType::ProcessPayroll => {
+                // Full validation deferred to stateful validator
             }
         }
 
@@ -578,6 +614,7 @@ impl TransactionValidator {
                     | TransactionType::TokenMint
                     | TransactionType::TokenCreation
                     | TransactionType::InitEntityRegistry
+                    | TransactionType::InitCbeToken
             );
         let has_nonempty_sig = !transaction.signature.signature.is_empty();
         if require_signature || has_nonempty_sig {
@@ -673,8 +710,7 @@ impl TransactionValidator {
     /// Validate identity transaction
     fn validate_identity_transaction(&self, transaction: &Transaction) -> ValidationResult {
         let identity_data = transaction
-            .identity_data
-            .as_ref()
+            .identity_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
         // Check if this is a system transaction (empty inputs), except for token contract calls
@@ -696,8 +732,7 @@ impl TransactionValidator {
     fn validate_token_mint(&self, transaction: &Transaction) -> ValidationResult {
         // Extract TokenMintData
         let mint_data = transaction
-            .token_mint_data
-            .as_ref()
+            .token_mint_data()
             .ok_or_else(|| ValidationError::InvalidInputs)?;
 
         // For now, we validate that:
@@ -733,8 +768,7 @@ impl TransactionValidator {
     ) -> ValidationResult {
         // Extract TokenTransferData from memo
         let transfer_data = transaction
-            .token_transfer_data
-            .as_ref()
+            .token_transfer_data()
             .ok_or_else(|| ValidationError::InvalidMemo)?;
 
         // Get the signer's public key (from signature)
@@ -1265,8 +1299,7 @@ impl TransactionValidator {
     ) -> ValidationResult {
         // Check that wallet_data exists
         let wallet_data = transaction
-            .wallet_data
-            .as_ref()
+            .wallet_data()
             .ok_or(ValidationError::MissingWalletData)?;
 
         // Validate wallet ID is not default/empty
@@ -1351,8 +1384,7 @@ impl TransactionValidator {
     fn validate_ubi_claim_transaction(&self, transaction: &Transaction) -> ValidationResult {
         // Check that ubi_claim_data exists
         let claim_data = transaction
-            .ubi_claim_data
-            .as_ref()
+            .ubi_claim_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
         // Validate claim data structure
@@ -1387,8 +1419,7 @@ impl TransactionValidator {
     ) -> ValidationResult {
         // Check that profit_declaration_data exists
         let decl_data = transaction
-            .profit_declaration_data
-            .as_ref()
+            .profit_declaration_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
         // Validate declaration data structure
@@ -1633,8 +1664,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                     return Err(ValidationError::InvalidOutputs);
                 }
                 let data = transaction
-                    .token_transfer_data
-                    .as_ref()
+                    .token_transfer_data()
                     .ok_or(ValidationError::InvalidInputs)?;
                 if data.amount == 0 {
                     return Err(ValidationError::InvalidAmount);
@@ -1661,8 +1691,7 @@ impl<'a> StatefulTransactionValidator<'a> {
                     return Err(ValidationError::InvalidTransaction);
                 }
                 let data = transaction
-                    .token_mint_data
-                    .as_ref()
+                    .token_mint_data()
                     .ok_or(ValidationError::MissingRequiredData)?;
                 if data.amount == 0 {
                     return Err(ValidationError::InvalidAmount);
@@ -1678,7 +1707,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates - validate governance_config_data exists
-                if transaction.governance_config_data.is_none() {
+                if transaction.governance_config_data().is_none() {
                     return Err(ValidationError::InvalidInputs);
                 }
             }
@@ -1708,6 +1737,21 @@ impl<'a> StatefulTransactionValidator<'a> {
             }
             TransactionType::InitEntityRegistry => {
                 self.validate_init_entity_registry(transaction)?;
+            }
+            TransactionType::RecordOnRampTrade => {
+                self.validate_record_on_ramp_trade(transaction)?;
+            }
+            TransactionType::TreasuryAllocation => {
+                self.validate_treasury_allocation(transaction)?;
+            }
+            TransactionType::InitCbeToken => {
+                self.validate_init_cbe_token(transaction)?;
+            }
+            TransactionType::CreateEmploymentContract => {
+                self.validate_create_employment_contract(transaction)?;
+            }
+            TransactionType::ProcessPayroll => {
+                self.validate_process_payroll(transaction)?;
             }
         }
 
@@ -1783,8 +1827,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         const MIN_TREASURY_DILITHIUM_PK_LEN: usize = 1312;
 
         let data = transaction
-            .init_entity_registry_data
-            .as_ref()
+            .init_entity_registry_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
         if !transaction.inputs.is_empty() {
@@ -1832,6 +1875,300 @@ impl<'a> StatefulTransactionValidator<'a> {
             .ok_or(ValidationError::Unauthorized)?;
         if !blockchain.is_council_member(&signer_identity.did) {
             return Err(ValidationError::Unauthorized);
+        }
+
+        Ok(())
+    }
+
+    fn validate_record_on_ramp_trade(&self, transaction: &Transaction) -> ValidationResult {
+        use crate::transaction::threshold_approval::{
+            compute_approval_preimage, validate_threshold_approvals, ApprovalDomain,
+        };
+
+        // tx_type byte for RecordOnRampTrade = 39
+        const TX_TYPE_BYTE: u8 = 39;
+
+        let data = transaction
+            .record_on_ramp_trade_data()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        if !transaction.inputs.is_empty() {
+            return Err(ValidationError::InvalidInputs);
+        }
+        if !transaction.outputs.is_empty() {
+            return Err(ValidationError::InvalidOutputs);
+        }
+        if transaction.fee != 0 {
+            return Err(ValidationError::InvalidFee);
+        }
+        if data.cbe_amount == 0 {
+            return Err(ValidationError::InvalidAmount);
+        }
+        if data.usdc_amount == 0 {
+            return Err(ValidationError::InvalidAmount);
+        }
+
+        // Verify the domain is OracleCommittee
+        if data.approvals.domain != ApprovalDomain::OracleCommittee {
+            return Err(ValidationError::InvalidApproval);
+        }
+
+        // Compute canonical preimage over the trade fields
+        #[derive(serde::Serialize)]
+        struct TradePayload {
+            epoch_id: u64,
+            cbe_amount: u128,
+            usdc_amount: u128,
+            traded_at: u64,
+        }
+        let payload = TradePayload {
+            epoch_id: data.epoch_id,
+            cbe_amount: data.cbe_amount,
+            usdc_amount: data.usdc_amount,
+            traded_at: data.traded_at,
+        };
+        let payload_bytes = bincode::serialize(&payload)
+            .map_err(|_| ValidationError::InvalidTransaction)?;
+        let preimage =
+            compute_approval_preimage(TX_TYPE_BYTE, &ApprovalDomain::OracleCommittee, &payload_bytes);
+
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+
+        // Use the oracle committee directly — members are stored as key_ids (blake3 of dilithium pk).
+        let oracle_threshold = blockchain.oracle_state.committee.threshold() as usize;
+        validate_threshold_approvals(
+            &data.approvals,
+            &preimage,
+            |pk_bytes| {
+                let key_id = crate::types::blake3_hash(pk_bytes).as_array();
+                blockchain.oracle_state.committee.members().contains(&key_id)
+            },
+            oracle_threshold,
+        )
+        .map_err(|e| match e {
+            crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
+                ValidationError::DuplicateSigner
+            }
+            crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
+                ValidationError::InvalidApproval
+            }
+            crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
+                ValidationError::Unauthorized
+            }
+            crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
+                ValidationError::ThresholdNotMet
+            }
+        })?;
+
+        Ok(())
+    }
+
+    /// Validate a TreasuryAllocation transaction.
+    fn validate_treasury_allocation(&self, transaction: &Transaction) -> ValidationResult {
+        use crate::transaction::threshold_approval::{
+            compute_approval_preimage, validate_threshold_approvals, ApprovalDomain,
+        };
+
+        // tx_type byte for TreasuryAllocation = 40
+        const TX_TYPE_BYTE: u8 = 40;
+
+        let data = transaction
+            .treasury_allocation_data()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        if !transaction.inputs.is_empty() {
+            return Err(ValidationError::InvalidInputs);
+        }
+        if !transaction.outputs.is_empty() {
+            return Err(ValidationError::InvalidOutputs);
+        }
+        if transaction.fee != 0 {
+            return Err(ValidationError::InvalidFee);
+        }
+        if data.amount == 0 {
+            return Err(ValidationError::InvalidAmount);
+        }
+        if data.source_treasury_key_id == data.destination_key_id {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Verify the domain is BootstrapCouncil
+        if data.approvals.domain != ApprovalDomain::BootstrapCouncil {
+            return Err(ValidationError::InvalidApproval);
+        }
+
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+
+        // Verify entity registry is initialized and source matches cbe_treasury
+        if let Some(registry) = blockchain.entity_registry.as_ref() {
+            if registry.is_initialized() {
+                match registry.cbe_treasury() {
+                    Ok(cbe_treasury) => {
+                        if cbe_treasury.key_id != data.source_treasury_key_id {
+                            return Err(ValidationError::Unauthorized);
+                        }
+                    }
+                    Err(_) => return Err(ValidationError::Unauthorized),
+                }
+            } else {
+                return Err(ValidationError::InvalidTransaction);
+            }
+        } else {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Compute canonical preimage over treasury allocation fields
+        #[derive(serde::Serialize)]
+        struct AllocationPayload<'a> {
+            source_treasury_key_id: [u8; 32],
+            destination_key_id: [u8; 32],
+            amount: u64,
+            spending_category: &'a str,
+            proposal_id: [u8; 32],
+        }
+        let payload = AllocationPayload {
+            source_treasury_key_id: data.source_treasury_key_id,
+            destination_key_id: data.destination_key_id,
+            amount: data.amount,
+            spending_category: &data.spending_category,
+            proposal_id: data.proposal_id,
+        };
+        let payload_bytes = bincode::serialize(&payload)
+            .map_err(|_| ValidationError::InvalidTransaction)?;
+        let preimage = compute_approval_preimage(
+            TX_TYPE_BYTE,
+            &ApprovalDomain::BootstrapCouncil,
+            &payload_bytes,
+        );
+
+        validate_threshold_approvals(
+            &data.approvals,
+            &preimage,
+            |pk_bytes| {
+                blockchain
+                    .get_identity_by_public_key(pk_bytes)
+                    .map(|id| blockchain.is_council_member(&id.did))
+                    .unwrap_or(false)
+            },
+            blockchain.council_threshold as usize,
+        )
+        .map_err(|e| match e {
+            crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
+                ValidationError::DuplicateSigner
+            }
+            crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
+                ValidationError::InvalidApproval
+            }
+            crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
+                ValidationError::Unauthorized
+            }
+            crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
+                ValidationError::ThresholdNotMet
+            }
+        })?;
+
+        Ok(())
+    }
+
+    fn validate_init_cbe_token(&self, transaction: &Transaction) -> ValidationResult {
+        let data = transaction
+            .init_cbe_token_data()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        if !transaction.inputs.is_empty() {
+            return Err(ValidationError::InvalidInputs);
+        }
+        if !transaction.outputs.is_empty() {
+            return Err(ValidationError::InvalidOutputs);
+        }
+        if transaction.fee != 0 {
+            return Err(ValidationError::InvalidFee);
+        }
+
+        // All 4 pool key_ids must be non-zero and mutually distinct
+        let keys = [
+            data.compensation_key_id,
+            data.operational_key_id,
+            data.performance_key_id,
+            data.strategic_key_id,
+        ];
+        if keys.iter().any(|k| k == &[0u8; 32]) {
+            return Err(ValidationError::InvalidPublicKey);
+        }
+        // Check all 4 keys are distinct
+        for i in 0..keys.len() {
+            for j in (i + 1)..keys.len() {
+                if keys[i] == keys[j] {
+                    return Err(ValidationError::InvalidPublicKey);
+                }
+            }
+        }
+
+        // One-time init: reject if CBE token is already initialized
+        let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+        if blockchain.cbe_token.is_initialized() {
+            return Err(ValidationError::AlreadyInitialized);
+        }
+
+        Ok(())
+    }
+
+    fn validate_create_employment_contract(&self, transaction: &Transaction) -> ValidationResult {
+        let data = transaction
+            .create_employment_contract_data()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        if !transaction.inputs.is_empty() {
+            return Err(ValidationError::InvalidInputs);
+        }
+        if !transaction.outputs.is_empty() {
+            return Err(ValidationError::InvalidOutputs);
+        }
+
+        // dao_id and employee_key_id must be non-zero
+        if data.dao_id == [0u8; 32] || data.employee_key_id == [0u8; 32] {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // contract_type and payment_period must be known variants
+        if data.contract_type > 1 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+        if data.payment_period > 2 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Tax rate ≤ 50% (5000 bp), profit share ≤ 20% (2000 bp)
+        if data.tax_rate_basis_points > 5000 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+        if data.profit_share_percentage > 2000 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        // Employment contracts require positive compensation
+        if data.contract_type == 1 && data.compensation_amount == 0 {
+            return Err(ValidationError::InvalidTransaction);
+        }
+
+        Ok(())
+    }
+
+    fn validate_process_payroll(&self, transaction: &Transaction) -> ValidationResult {
+        let data = transaction
+            .process_payroll_data()
+            .ok_or(ValidationError::MissingRequiredData)?;
+
+        if !transaction.inputs.is_empty() {
+            return Err(ValidationError::InvalidInputs);
+        }
+        if !transaction.outputs.is_empty() {
+            return Err(ValidationError::InvalidOutputs);
+        }
+
+        // contract_id must be non-zero
+        if data.contract_id == [0u8; 32] {
+            return Err(ValidationError::InvalidTransaction);
         }
 
         Ok(())
@@ -2075,8 +2412,7 @@ impl<'a> StatefulTransactionValidator<'a> {
         match transaction.transaction_type {
             TransactionType::UpdateOracleCommittee => {
                 let data = transaction
-                    .oracle_committee_update_data
-                    .as_ref()
+                    .oracle_committee_update_data()
                     .ok_or(ValidationError::MissingRequiredData)?;
 
                 let current_epoch = self.current_oracle_epoch(blockchain);
@@ -2104,8 +2440,7 @@ impl<'a> StatefulTransactionValidator<'a> {
             }
             TransactionType::UpdateOracleConfig => {
                 let data = transaction
-                    .oracle_config_update_data
-                    .as_ref()
+                    .oracle_config_update_data()
                     .ok_or(ValidationError::MissingRequiredData)?;
 
                 let current_epoch = self.current_oracle_epoch(blockchain);
@@ -2128,8 +2463,7 @@ impl<'a> StatefulTransactionValidator<'a> {
     ) -> ValidationResult {
         let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
         let mint_data = transaction
-            .token_mint_data
-            .as_ref()
+            .token_mint_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
         // SOV mints currently use dedicated consensus paths and are handled separately.
@@ -2176,8 +2510,7 @@ impl<'a> StatefulTransactionValidator<'a> {
     ) -> ValidationResult {
         // Get attestation data
         let data = transaction
-            .oracle_attestation_data
-            .as_ref()
+            .oracle_attestation_data()
             .ok_or(ValidationError::MissingRequiredData)?;
 
         // Get blockchain state
@@ -2265,7 +2598,7 @@ pub mod utils {
         match transaction.transaction_type {
             TransactionType::IdentityRegistration
             | TransactionType::IdentityUpdate
-            | TransactionType::IdentityRevocation => transaction.identity_data.is_some(),
+            | TransactionType::IdentityRevocation => transaction.identity_data().is_some(),
             TransactionType::Transfer
             | TransactionType::ContractDeployment
             | TransactionType::ContractExecution => {
@@ -2280,21 +2613,21 @@ pub mod utils {
             }
             TransactionType::WalletRegistration => {
                 // Wallet registration should have wallet_data
-                transaction.wallet_data.is_some()
+                transaction.wallet_data().is_some()
             }
             TransactionType::WalletUpdate => {
                 // Wallet update should have wallet_data
-                transaction.wallet_data.is_some()
+                transaction.wallet_data().is_some()
             }
             TransactionType::ValidatorRegistration
             | TransactionType::ValidatorUpdate
             | TransactionType::ValidatorUnregister => {
                 // Validator transactions should have validator_data
-                transaction.validator_data.is_some()
+                transaction.validator_data().is_some()
             }
-            TransactionType::DaoProposal => transaction.dao_proposal_data.is_some(),
-            TransactionType::DaoVote => transaction.dao_vote_data.is_some(),
-            TransactionType::DaoExecution => transaction.dao_execution_data.is_some(),
+            TransactionType::DaoProposal => transaction.dao_proposal_data().is_some(),
+            TransactionType::DaoVote => transaction.dao_vote_data().is_some(),
+            TransactionType::DaoExecution => transaction.dao_execution_data().is_some(),
             TransactionType::DifficultyUpdate => {
                 // Difficulty update validation - requires memo with parameters
                 // Full validation happens at consensus layer
@@ -2302,28 +2635,28 @@ pub mod utils {
             }
             TransactionType::UBIClaim => {
                 // UBI claim transactions should have ubi_claim_data (Week 7)
-                transaction.ubi_claim_data.is_some()
+                transaction.ubi_claim_data().is_some()
             }
             TransactionType::ProfitDeclaration => {
                 // Profit declaration transactions should have profit_declaration_data (Week 7)
-                transaction.profit_declaration_data.is_some()
+                transaction.profit_declaration_data().is_some()
             }
             TransactionType::Coinbase => {
                 // Coinbase must have no inputs but have outputs
                 transaction.inputs.is_empty() && !transaction.outputs.is_empty()
             }
             TransactionType::TokenTransfer => {
-                transaction.token_transfer_data.is_some() && transaction.outputs.is_empty()
+                transaction.token_transfer_data().is_some() && transaction.outputs.is_empty()
             }
             TransactionType::TokenMint => {
                 transaction.version >= 2
-                    && transaction.token_mint_data.is_some()
+                    && transaction.token_mint_data().is_some()
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
             }
             TransactionType::GovernanceConfigUpdate => {
                 // Governance config updates should have governance_config_data
-                transaction.governance_config_data.is_some()
+                transaction.governance_config_data().is_some()
             }
             TransactionType::TokenCreation
             | TransactionType::BondingCurveDeploy
@@ -2353,7 +2686,32 @@ pub mod utils {
                 true
             }
             TransactionType::InitEntityRegistry => {
-                transaction.init_entity_registry_data.is_some()
+                transaction.init_entity_registry_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::RecordOnRampTrade => {
+                transaction.record_on_ramp_trade_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::TreasuryAllocation => {
+                transaction.treasury_allocation_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::InitCbeToken => {
+                transaction.init_cbe_token_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::CreateEmploymentContract => {
+                transaction.create_employment_contract_data().is_some()
+                    && transaction.inputs.is_empty()
+                    && transaction.outputs.is_empty()
+            }
+            TransactionType::ProcessPayroll => {
+                transaction.process_payroll_data().is_some()
                     && transaction.inputs.is_empty()
                     && transaction.outputs.is_empty()
             }
@@ -2438,26 +2796,7 @@ mod tests {
             fee: 1000,
             signature: test_signature(sender_key),
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         }
     }
 
@@ -2479,26 +2818,7 @@ mod tests {
             fee: 0,
             signature: test_signature(sender_key),
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         }
     }
 
@@ -2523,30 +2843,7 @@ mod tests {
                 timestamp: 0,
             },
             memo: vec![],
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: Some(crate::transaction::TokenMintData {
-                token_id,
-                to,
-                amount,
-            }),
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::TokenMint(crate::transaction::TokenMintData { token_id, to, amount, }),
         }
     }
 
@@ -2641,26 +2938,7 @@ mod tests {
             fee: 1000,
             signature: test_signature(&sender),
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         };
 
         assert!(!is_token_contract_execution(&mint_tx));
@@ -2746,26 +3024,7 @@ mod tests {
                 fee: 1000,
                 signature: test_signature(&sender),
                 memo,
-                identity_data: None,
-                wallet_data: None,
-                validator_data: None,
-                dao_proposal_data: None,
-                dao_vote_data: None,
-                dao_execution_data: None,
-                ubi_claim_data: None,
-                profit_declaration_data: None,
-                token_transfer_data: None,
-                token_mint_data: None,
-                governance_config_data: None,
-                bonding_curve_deploy_data: None,
-                bonding_curve_buy_data: None,
-                bonding_curve_sell_data: None,
-                bonding_curve_graduate_data: None,
-                oracle_committee_update_data: None,
-                oracle_config_update_data: None,
-                oracle_attestation_data: None,
-                cancel_oracle_update_data: None,
-                init_entity_registry_data: None,
+                payload: crate::transaction::TransactionPayload::None,
             };
 
             assert!(
@@ -2791,26 +3050,7 @@ mod tests {
                 fee: 1000,
                 signature: test_signature(&sender),
                 memo,
-                identity_data: None,
-                wallet_data: None,
-                validator_data: None,
-                dao_proposal_data: None,
-                dao_vote_data: None,
-                dao_execution_data: None,
-                ubi_claim_data: None,
-                profit_declaration_data: None,
-                token_transfer_data: None,
-                token_mint_data: None,
-                governance_config_data: None,
-                bonding_curve_deploy_data: None,
-                bonding_curve_buy_data: None,
-                bonding_curve_sell_data: None,
-                bonding_curve_graduate_data: None,
-                oracle_committee_update_data: None,
-                oracle_config_update_data: None,
-                oracle_attestation_data: None,
-                cancel_oracle_update_data: None,
-                init_entity_registry_data: None,
+                payload: crate::transaction::TransactionPayload::None,
             };
 
             assert!(
@@ -2836,26 +3076,7 @@ mod tests {
             fee: 1000,
             signature: test_signature(&sender),
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         };
 
         assert!(
@@ -2882,26 +3103,7 @@ mod tests {
             fee: 1000,
             signature: test_signature(&sender),
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         };
 
         let validator = TransactionValidator::new();
@@ -3228,32 +3430,7 @@ mod tests {
                 timestamp: 0,
             },
             memo: vec![],
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: Some(crate::transaction::TokenTransferData {
-                token_id: [0u8; 32],
-                from: from_id,
-                to: to_id,
-                amount: 1_000,
-                nonce: 0,
-            }),
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::TokenTransfer(crate::transaction::TokenTransferData { token_id: [0u8; 32], from: from_id, to: to_id, amount: 1_000, nonce: 0, }),
         }
     }
 
@@ -3277,26 +3454,7 @@ mod tests {
             fee,
             signature: test_signature(&sender_key),
             memo: payload.encode_memo().unwrap(),
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         }
     }
 
@@ -3432,26 +3590,7 @@ mod tests {
                 timestamp: 0,
             },
             memo: payload.to_vec(),
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         };
 
         // Sign the canonical message used by validate_signature().

@@ -13,6 +13,7 @@ use lib_blockchain::{
     blake3_hash, CallPermissions, ContractCall, ContractDeploymentPayloadV1,
     ContractTransactionBuilder, ContractType, Transaction, TransactionOutput, TransactionType,
 };
+use lib_blockchain::transaction::TransactionPayload;
 use lib_crypto::keypair::KeyPair;
 use lib_network::client::ZhtpClient;
 use serde_json::json;
@@ -159,26 +160,7 @@ fn build_signed_contract_deploy_tx(
         fee: 0,
         signature: placeholder_signature,
         memo,
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::None,
     };
     tx.fee = lib_blockchain::transaction::creation::utils::calculate_minimum_fee(tx.size());
     tx.signature = keypair

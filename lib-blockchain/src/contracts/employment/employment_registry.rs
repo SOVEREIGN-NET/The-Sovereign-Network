@@ -124,7 +124,7 @@ pub struct ProfitShareResult {
 }
 
 /// Employment Registry main contract
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmploymentRegistry {
     pub contracts: Vec<EmploymentContract>,
     pub contract_by_sid: HashMap<[u8; 32], Vec<[u8; 32]>>,  // SID → contract IDs

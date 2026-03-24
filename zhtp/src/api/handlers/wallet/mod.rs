@@ -915,13 +915,13 @@ impl WalletHandler {
     }
 
     fn infer_transaction_amount(tx: &lib_blockchain::transaction::Transaction) -> u64 {
-        if let Some(data) = &tx.token_transfer_data {
+        if let Some(data) = tx.token_transfer_data() {
             return Self::u128_to_u64_saturating(data.amount);
         }
-        if let Some(data) = &tx.token_mint_data {
+        if let Some(data) = tx.token_mint_data() {
             return Self::u128_to_u64_saturating(data.amount);
         }
-        if let Some(data) = &tx.dao_execution_data {
+        if let Some(data) = tx.dao_execution_data() {
             return data.amount.unwrap_or(tx.outputs.len() as u64);
         }
         tx.outputs.len() as u64
@@ -961,7 +961,7 @@ impl WalletHandler {
             return true;
         }
 
-        if let Some(data) = &tx.identity_data {
+        if let Some(data) = tx.identity_data() {
             if data.did == identity_did {
                 return true;
             }
@@ -979,7 +979,7 @@ impl WalletHandler {
             }
         }
 
-        if let Some(data) = &tx.wallet_data {
+        if let Some(data) = tx.wallet_data() {
             if data
                 .owner_identity_id
                 .as_ref()
@@ -997,19 +997,19 @@ impl WalletHandler {
             }
         }
 
-        if let Some(data) = &tx.dao_proposal_data {
+        if let Some(data) = tx.dao_proposal_data() {
             if data.proposer == identity_did || data.proposer == identity_id_hex {
                 return true;
             }
         }
 
-        if let Some(data) = &tx.dao_vote_data {
+        if let Some(data) = tx.dao_vote_data() {
             if data.voter == identity_did || data.voter == identity_id_hex {
                 return true;
             }
         }
 
-        if let Some(data) = &tx.dao_execution_data {
+        if let Some(data) = tx.dao_execution_data() {
             if data.executor == identity_did || data.executor == identity_id_hex {
                 return true;
             }
@@ -1020,7 +1020,7 @@ impl WalletHandler {
             }
         }
 
-        if let Some(data) = &tx.ubi_claim_data {
+        if let Some(data) = tx.ubi_claim_data() {
             if data.claimant_identity == identity_did || data.claimant_identity == identity_id_hex {
                 return true;
             }
@@ -1029,7 +1029,7 @@ impl WalletHandler {
             }
         }
 
-        if let Some(data) = &tx.profit_declaration_data {
+        if let Some(data) = tx.profit_declaration_data() {
             if data.declarant_identity == identity_did || data.declarant_identity == identity_id_hex
             {
                 return true;
@@ -1041,43 +1041,43 @@ impl WalletHandler {
             }
         }
 
-        if let Some(data) = &tx.token_transfer_data {
+        if let Some(data) = tx.token_transfer_data() {
             if tracked_key_ids.contains(&data.from) || tracked_key_ids.contains(&data.to) {
                 return true;
             }
         }
 
-        if let Some(data) = &tx.token_mint_data {
+        if let Some(data) = tx.token_mint_data() {
             if tracked_key_ids.contains(&data.to) {
                 return true;
             }
         }
 
-        if let Some(data) = &tx.governance_config_data {
+        if let Some(data) = tx.governance_config_data() {
             if tracked_key_ids.contains(&data.caller) {
                 return true;
             }
         }
 
-        if let Some(data) = &tx.bonding_curve_deploy_data {
+        if let Some(data) = tx.bonding_curve_deploy_data() {
             if tracked_key_ids.contains(&data.creator) {
                 return true;
             }
         }
 
-        if let Some(data) = &tx.bonding_curve_buy_data {
+        if let Some(data) = tx.bonding_curve_buy_data() {
             if tracked_key_ids.contains(&data.buyer) {
                 return true;
             }
         }
 
-        if let Some(data) = &tx.bonding_curve_sell_data {
+        if let Some(data) = tx.bonding_curve_sell_data() {
             if tracked_key_ids.contains(&data.seller) {
                 return true;
             }
         }
 
-        if let Some(data) = &tx.bonding_curve_graduate_data {
+        if let Some(data) = tx.bonding_curve_graduate_data() {
             if tracked_key_ids.contains(&data.graduator) {
                 return true;
             }
@@ -1094,12 +1094,11 @@ impl WalletHandler {
     ) -> TransactionRecord {
         let tx_hash = tx.hash();
         let amount = Self::infer_transaction_amount(tx);
-        let from_wallet = tx.token_transfer_data.as_ref().map(|d| hex::encode(d.from));
+        let from_wallet = tx.token_transfer_data().map(|d| hex::encode(d.from));
         let to_address = tx
-            .token_transfer_data
-            .as_ref()
+            .token_transfer_data()
             .map(|d| hex::encode(d.to))
-            .or_else(|| tx.token_mint_data.as_ref().map(|d| hex::encode(d.to)));
+            .or_else(|| tx.token_mint_data().map(|d| hex::encode(d.to)));
 
         TransactionRecord {
             tx_hash: hex::encode(tx_hash.as_bytes()),

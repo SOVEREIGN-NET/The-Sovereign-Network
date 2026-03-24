@@ -1,7 +1,7 @@
 use anyhow::Result;
 use lib_blockchain::transaction::{
     ContractDeploymentPayloadV1, DaoExecutionData, DaoProposalData, DaoVoteData, Transaction,
-    TransactionOutput, CONTRACT_DEPLOYMENT_MEMO_PREFIX,
+    TransactionOutput, TransactionPayload, CONTRACT_DEPLOYMENT_MEMO_PREFIX,
 };
 use lib_blockchain::types::mining::get_mining_config_from_env;
 use lib_blockchain::types::{ContractCall, ContractType, Hash};
@@ -48,26 +48,7 @@ fn mk_contract_deploy_tx() -> Transaction {
         fee: 0,
         signature: test_signature(1),
         memo: payload.encode_memo().expect("valid deployment payload"),
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::None,
     }
 }
 
@@ -91,26 +72,7 @@ fn mk_contract_call_tx() -> Transaction {
         fee: 0,
         signature: test_signature(2),
         memo,
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::None,
     }
 }
 
@@ -278,26 +240,7 @@ fn test_contract_deployment_rejection_path_invalid_memo_payload() -> Result<()> 
         fee: 0,
         signature: test_signature(42),
         memo: bad_memo,
-        identity_data: None,
-        wallet_data: None,
-        validator_data: None,
-        dao_proposal_data: None,
-        dao_vote_data: None,
-        dao_execution_data: None,
-        ubi_claim_data: None,
-        profit_declaration_data: None,
-        token_transfer_data: None,
-        token_mint_data: None,
-        governance_config_data: None,
-        bonding_curve_deploy_data: None,
-        bonding_curve_buy_data: None,
-        bonding_curve_sell_data: None,
-        bonding_curve_graduate_data: None,
-        oracle_committee_update_data: None,
-        oracle_config_update_data: None,
-        oracle_attestation_data: None,
-        cancel_oracle_update_data: None,
-        init_entity_registry_data: None,
+        payload: TransactionPayload::None,
     };
 
     assert!(

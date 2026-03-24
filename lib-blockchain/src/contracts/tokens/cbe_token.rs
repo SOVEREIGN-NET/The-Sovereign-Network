@@ -441,6 +441,11 @@ impl CbeToken {
         &self.distribution
     }
 
+    /// Get the compensation pool key_id (set after `init()`).
+    pub fn compensation_pool_key_id(&self) -> Option<[u8; 32]> {
+        self.pool_addresses.compensation
+    }
+
     /// Get total balance of an account (including unvested)
     pub fn balance_of(&self, account: &PublicKey) -> u64 {
         self.balances.get(&account.key_id).copied().unwrap_or(0)
