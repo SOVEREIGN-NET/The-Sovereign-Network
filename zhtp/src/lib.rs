@@ -11,6 +11,7 @@ pub mod runtime; // Proof-of-Useful-Work (Phase 1: Challenge Generation)
 pub mod api;
 pub mod discovery_coordinator;
 pub mod keyfile_names;
+pub use keyfile_names as keystore_names;
 pub mod network_output_dispatcher;
 pub mod security;
 pub mod server;

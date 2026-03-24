@@ -5,7 +5,7 @@
 use crate::argument_parsing::{format_output, DaoAction, DaoArgs, ZhtpCli};
 use crate::commands::transaction_utils::{broadcast_signed_tx, parse_hex_32};
 use crate::commands::web4_utils::{
-    connect_default, default_keystore_path, load_identity_from_keystore, resolve_keystore_path,
+    connect_default, default_keystore_path, load_identity_from_keystore,
 };
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
@@ -448,7 +448,7 @@ async fn handle_dao_command_impl(
         DaoAction::EntityRegistryInit {
             cbe_treasury,
             nonprofit_treasury,
-            keystore,
+            keystore: _,
         } => {
             if cbe_treasury.is_empty() || nonprofit_treasury.is_empty() {
                 return Err(CliError::ConfigError(
@@ -461,19 +461,6 @@ async fn handle_dao_command_impl(
             let nonprofit_treasury_bytes = hex::decode(&nonprofit_treasury).map_err(|_| {
                 CliError::ConfigError("--nonprofit-treasury must be hex-encoded".to_string())
             })?;
-            let keystore_path = resolve_keystore_path(keystore.as_deref())?;
-            let loaded = load_identity_from_keystore(&keystore_path)?;
-            let client_identity = zhtp_client::Identity {
-                did: loaded.identity.did.clone(),
-                public_key: loaded.identity.public_key.dilithium_pk.clone(),
-                private_key: loaded.keypair.private_key.dilithium_sk.clone(),
-                kyber_public_key: loaded.identity.public_key.kyber_pk.clone(),
-                kyber_secret_key: loaded.keypair.private_key.kyber_sk.clone(),
-                node_id: loaded.identity.node_id.as_bytes().to_vec(),
-                device_id: loaded.identity.primary_device.clone(),
-                recovery_entropy: loaded.keypair.private_key.master_seed.clone(),
-                created_at: loaded.identity.created_at,
-            };
             // TODO(#1934): Full multi-sig flow — collect T-of-N Bootstrap Council approvals.
             // The CLI currently submits an unsigned skeleton; validators reject it until
             // a proper multi-sig tooling flow is implemented.

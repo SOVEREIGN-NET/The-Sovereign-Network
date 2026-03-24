@@ -54,7 +54,6 @@ const QUIC_PORT: u16 = 9334;
 // Import our comprehensive API handlers
 use crate::api::handlers::{
     DhtHandler,
-    MobileAuthHandler,
     ProtocolHandler,
     BlockchainHandler,
     IdentityHandler,
@@ -65,8 +64,6 @@ use crate::api::handlers::{
     DnsHandler,
     TokenHandler,
     CbeHandler,
-    MonitorHandler,
-    ObserverHandler,
 };
 use crate::session_manager::SessionManager;
 

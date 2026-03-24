@@ -1728,7 +1728,6 @@ impl Component for ConsensusComponent {
                     .map(|v| v.clone())
                     .collect::<Vec<_>>()
             };
-
             initial
         };
 

@@ -537,7 +537,7 @@ impl CurveHandler {
             .map_err(|_| anyhow::anyhow!("Invalid request body"))?;
 
         // Parse and validate signed transaction
-        let tx_bytes = hex::decode(&req.signed_tx)
+        let _tx_bytes = hex::decode(&req.signed_tx)
             .map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
         
         // For now, return success - actual implementation would:
