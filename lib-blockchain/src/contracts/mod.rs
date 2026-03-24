@@ -25,6 +25,8 @@ pub mod dev_grants;
 #[cfg(feature = "contracts")]
 pub mod economics;
 #[cfg(feature = "contracts")]
+pub mod employment;
+#[cfg(feature = "contracts")]
 pub mod emergency_reserve;
 #[cfg(feature = "contracts")]
 pub mod executor;
@@ -100,6 +102,11 @@ pub use economics::{
     DaoDistribution, FeeDistribution, FeeRouter, FeeRouterError, DAO_ALLOCATION_PERCENT,
     DEV_ALLOCATION_PERCENT, EMERGENCY_ALLOCATION_PERCENT, FEE_RATE_BASIS_POINTS,
     UBI_ALLOCATION_PERCENT,
+};
+#[cfg(feature = "contracts")]
+pub use employment::{
+    ContractAccessType, EconomicPeriod, EmploymentContract, EmploymentRegistry, EmploymentStatus,
+    PaymentDetails, ProfitShareResult, TerminationReason,
 };
 #[cfg(feature = "contracts")]
 pub use emergency_reserve::EmergencyReserve;

@@ -1578,7 +1578,7 @@ impl BlockchainConsensusCoordinator {
                 };
 
                 let reward_tx = Transaction {
-                    version: 1,
+                    version: crate::transaction::TX_VERSION_V8,
                     chain_id: 0x03, // Default to development network
                     inputs: vec![], // System transaction, no inputs
                     outputs: vec![output],
@@ -1590,26 +1590,7 @@ impl BlockchainConsensusCoordinator {
                     .into_bytes(),
                     signature,
                     transaction_type: TransactionType::Transfer,
-                    identity_data: None,
-                    validator_data: None,
-                    wallet_data: None,
-                    dao_proposal_data: None,
-                    dao_vote_data: None,
-                    dao_execution_data: None,
-                    ubi_claim_data: None,
-                    profit_declaration_data: None,
-                    token_transfer_data: None,
-                    token_mint_data: None,
-                    governance_config_data: None,
-                    bonding_curve_deploy_data: None,
-                    bonding_curve_buy_data: None,
-                    bonding_curve_sell_data: None,
-                    bonding_curve_graduate_data: None,
-                    oracle_committee_update_data: None,
-                    oracle_config_update_data: None,
-                    oracle_attestation_data: None,
-                    cancel_oracle_update_data: None,
-                    init_entity_registry_data: None,
+                    payload: crate::transaction::TransactionPayload::None,
                 };
 
                 reward_transactions.push(reward_tx);

@@ -734,7 +734,7 @@ mod tests {
             lib_blockchain::TransactionType::DaoExecution
         );
         assert_eq!(
-            tx.dao_execution_data.as_ref().unwrap().execution_type,
+            tx.dao_execution_data().as_ref().unwrap().execution_type,
             "dao_registry_register_v1"
         );
         assert!(!tx.signature.signature.is_empty());
@@ -758,7 +758,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            tx.dao_execution_data.as_ref().unwrap().execution_type,
+            tx.dao_execution_data().as_ref().unwrap().execution_type,
             "dao_factory_create_v1"
         );
         assert!(!tx.signature.signature.is_empty());

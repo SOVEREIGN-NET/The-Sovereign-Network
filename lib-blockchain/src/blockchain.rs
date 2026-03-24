@@ -286,6 +286,17 @@ pub struct Blockchain {
     pub entity_registry: Option<crate::contracts::governance::EntityRegistry>,
 
     // =========================================================================
+    // CBE Employment & DAO (CBE epic)
+    // =========================================================================
+    /// On-chain employment contract registry — populated by CreateEmploymentContract txs.
+    #[serde(default)]
+    pub employment_registry: crate::contracts::employment::EmploymentRegistry,
+    /// DAO ID of the CBE DAO (DAOType::FP). Set when a FP DAO registers with the CBE token_id.
+    /// None until CBE DAO is created via factory.
+    #[serde(default)]
+    pub cbe_dao_id: Option<[u8; 32]>,
+
+    // =========================================================================
     // DAO Treasury Execution (dao-2)
     // =========================================================================
     /// SOV spent per epoch: epoch_number → cumulative_amount
@@ -555,6 +566,7 @@ struct TransactionV1 {
 }
 
 impl TransactionV1 {
+    #[allow(dead_code)]
     fn migrate_to_current(self) -> Transaction {
         Transaction {
             version: self.version,
@@ -565,26 +577,23 @@ impl TransactionV1 {
             fee: self.fee,
             signature: self.signature,
             memo: self.memo,
-            identity_data: self.identity_data,
-            wallet_data: self.wallet_data,
-            validator_data: self.validator_data,
-            dao_proposal_data: self.dao_proposal_data,
-            dao_vote_data: self.dao_vote_data,
-            dao_execution_data: self.dao_execution_data,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            // Map the old flat fields to the new payload enum.
+            // Identity takes priority, then wallet, then validator, then DAO types.
+            payload: if let Some(d) = self.identity_data {
+                crate::transaction::TransactionPayload::Identity(d)
+            } else if let Some(d) = self.wallet_data {
+                crate::transaction::TransactionPayload::Wallet(d)
+            } else if let Some(d) = self.validator_data {
+                crate::transaction::TransactionPayload::Validator(d)
+            } else if let Some(d) = self.dao_proposal_data {
+                crate::transaction::TransactionPayload::DaoProposal(d)
+            } else if let Some(d) = self.dao_vote_data {
+                crate::transaction::TransactionPayload::DaoVote(d)
+            } else if let Some(d) = self.dao_execution_data {
+                crate::transaction::TransactionPayload::DaoExecution(d)
+            } else {
+                crate::transaction::TransactionPayload::None
+            },
         }
     }
 }
@@ -728,6 +737,8 @@ impl BlockchainV1 {
             council_members: Vec::new(),
             council_threshold: default_council_threshold(),
             entity_registry: None,
+            employment_registry: crate::contracts::employment::EmploymentRegistry::new(),
+            cbe_dao_id: None,
             treasury_epoch_spend: HashMap::new(),
             treasury_epoch_length_blocks: default_treasury_epoch_length(),
             emergency_state: false,
@@ -1192,6 +1203,8 @@ impl BlockchainStorageV3 {
             council_members: self.council_members,
             council_threshold: self.council_threshold,
             entity_registry: None, // Not stored in V3; populated when InitEntityRegistry tx is processed
+            employment_registry: crate::contracts::employment::EmploymentRegistry::new(),
+            cbe_dao_id: None,
 
             // DAO Treasury Execution
             treasury_epoch_spend: self.treasury_epoch_spend,
@@ -1363,6 +1376,36 @@ impl BlockchainStorageV7 {
     }
 }
 
+/// Stable storage format V8 for blockchain serialization.
+///
+/// V8 extends V7 with persisted `employment_registry` and `cbe_dao_id` state (CBE epic).
+/// Future on-disk changes must continue to use explicit version bumps because bincode is positional.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BlockchainStorageV8 {
+    pub v7: BlockchainStorageV7,
+    #[serde(default)]
+    pub employment_registry: crate::contracts::employment::EmploymentRegistry,
+    #[serde(default)]
+    pub cbe_dao_id: Option<[u8; 32]>,
+}
+
+impl BlockchainStorageV8 {
+    fn from_blockchain(bc: &Blockchain) -> Self {
+        Self {
+            v7: BlockchainStorageV7::from_blockchain(bc),
+            employment_registry: bc.employment_registry.clone(),
+            cbe_dao_id: bc.cbe_dao_id,
+        }
+    }
+
+    fn to_blockchain(self) -> Blockchain {
+        let mut blockchain = self.v7.to_blockchain();
+        blockchain.employment_registry = self.employment_registry;
+        blockchain.cbe_dao_id = self.cbe_dao_id;
+        blockchain
+    }
+}
+
 /// Blockchain import structure for deserializing received chains
 #[derive(Serialize, Deserialize)]
 pub struct BlockchainImport {
@@ -1448,6 +1491,8 @@ impl Blockchain {
             council_members: Vec::new(),
             council_threshold: default_council_threshold(),
             entity_registry: None,
+            employment_registry: crate::contracts::employment::EmploymentRegistry::new(),
+            cbe_dao_id: None,
             treasury_epoch_spend: HashMap::new(),
             treasury_epoch_length_blocks: default_treasury_epoch_length(),
             emergency_state: false,
@@ -1975,7 +2020,7 @@ impl Blockchain {
                         }
 
                         // Process identity registrations
-                        if let Some(identity_data) = &tx.identity_data {
+                        if let Some(identity_data) = tx.identity_data() {
                             blockchain
                                 .identity_registry
                                 .insert(identity_data.did.clone(), identity_data.clone());
@@ -1985,7 +2030,7 @@ impl Blockchain {
                         }
 
                         // Process wallet registrations
-                        if let Some(wallet_data) = &tx.wallet_data {
+                        if let Some(wallet_data) = tx.wallet_data() {
                             let wallet_id = hex::encode(wallet_data.wallet_id.as_bytes());
                             blockchain
                                 .wallet_registry
@@ -2011,7 +2056,7 @@ impl Blockchain {
                         }
 
                         // Process validator registrations
-                        if let Some(validator_data) = &tx.validator_data {
+                        if let Some(validator_data) = tx.validator_data() {
                             let status = match validator_data.operation {
                                 crate::transaction::ValidatorOperation::Register => "active",
                                 crate::transaction::ValidatorOperation::Update => "active",
@@ -2383,7 +2428,7 @@ impl Blockchain {
 
         // Create genesis funding transaction
         let genesis_tx = crate::Transaction {
-            version: 1,
+            version: crate::transaction::TX_VERSION_V8,
             chain_id: chain_id as u8,
             transaction_type: crate::types::TransactionType::Transfer,
             inputs: vec![], // Genesis transaction has no inputs
@@ -2391,26 +2436,7 @@ impl Blockchain {
             fee: 0,
             signature: genesis_signature,
             memo: b"Genesis funding transaction".to_vec(),
-            wallet_data: None,
-            identity_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         };
 
         // Add genesis transaction to genesis block
@@ -2784,13 +2810,13 @@ impl Blockchain {
                         for tx in &block.transactions {
                             match tx.transaction_type {
                                 TransactionType::TokenTransfer => {
-                                    if let Some(d) = &tx.token_transfer_data {
+                                    if let Some(d) = tx.token_transfer_data() {
                                         addrs_to_sync.push(d.from);
                                         addrs_to_sync.push(d.to);
                                     }
                                 }
                                 TransactionType::TokenMint => {
-                                    if let Some(d) = &tx.token_mint_data {
+                                    if let Some(d) = tx.token_mint_data() {
                                         addrs_to_sync.push(d.to);
                                     }
                                 }
@@ -2816,7 +2842,7 @@ impl Blockchain {
                         self.index_dao_registry_entry_from_tx(tx, block.header.height);
                         // Executor returns LegacySystem for ValidatorRegistration — update registry here
                         if tx.transaction_type == TransactionType::ValidatorRegistration {
-                            if let Some(vd) = &tx.validator_data {
+                            if let Some(vd) = tx.validator_data() {
                                 let status = match vd.operation {
                                     crate::transaction::ValidatorOperation::Register => "active",
                                     crate::transaction::ValidatorOperation::Update => "active",
@@ -2941,6 +2967,9 @@ impl Blockchain {
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
         self.process_entity_registry_transactions(&block)?;
+        self.process_init_cbe_token_transactions(&block)?;
+        self.process_employment_contract_transactions(&block)?;
+        self.process_payroll_transactions(&block)?;
         self.process_contract_transactions(&block)?;
         self.process_token_transactions(&block)?;
         self.process_validator_registration_transactions(&block);
@@ -3069,6 +3098,9 @@ impl Blockchain {
         self.process_identity_transactions(&block)?;
         self.process_wallet_transactions(&block)?;
         self.process_entity_registry_transactions(&block)?;
+        self.process_init_cbe_token_transactions(&block)?;
+        self.process_employment_contract_transactions(&block)?;
+        self.process_payroll_transactions(&block)?;
 
         // Skip token/contract processing when using BlockExecutor - it handles these
         if !self.has_executor() {
@@ -4298,7 +4330,7 @@ impl Blockchain {
     pub fn process_identity_transactions(&mut self, block: &Block) -> Result<()> {
         for transaction in &block.transactions {
             if transaction.transaction_type.is_identity_transaction() {
-                if let Some(ref identity_data) = transaction.identity_data {
+                if let Some(identity_data) = transaction.identity_data() {
                     match transaction.transaction_type {
                         TransactionType::IdentityRegistration => {
                             // CRITICAL: Preserve controlled_nodes if identity already exists
@@ -5379,7 +5411,7 @@ impl Blockchain {
                 if !is_backfill {
                     continue;
                 }
-                if let Some(mint_data) = tx.token_mint_data.as_ref() {
+                if let Some(mint_data) = tx.token_mint_data() {
                     mint_history
                         .entry(mint_data.to)
                         .or_default()
@@ -5621,7 +5653,7 @@ impl Blockchain {
                 transaction.transaction_type,
                 TransactionType::WalletRegistration | TransactionType::WalletUpdate
             ) {
-                if let Some(ref wallet_data) = transaction.wallet_data {
+                if let Some(wallet_data) = transaction.wallet_data() {
                     let wallet_id_str = hex::encode(wallet_data.wallet_id.as_bytes());
                     self.wallet_registry
                         .insert(wallet_id_str.clone(), wallet_data.clone());
@@ -5689,7 +5721,7 @@ impl Blockchain {
                 continue;
             }
             let tx_hash_hex = hex::encode(tx.hash().as_bytes());
-            let data = tx.init_entity_registry_data.as_ref().ok_or_else(|| {
+            let data = tx.init_entity_registry_data().ok_or_else(|| {
                 anyhow::anyhow!("InitEntityRegistry tx {} is missing payload", tx_hash_hex)
             })?;
 
@@ -5714,6 +5746,245 @@ impl Blockchain {
             info!(
                 "EntityRegistry initialized at height {} (tx {})",
                 block.header.height, tx_hash_hex
+            );
+        }
+        Ok(())
+    }
+
+    /// Process InitCbeToken transactions in a block.
+    ///
+    /// Enforces one-time initialization: once the CBE token is initialized, any subsequent
+    /// InitCbeToken transaction is a block-level error.
+    pub fn process_init_cbe_token_transactions(&mut self, block: &Block) -> Result<()> {
+        for tx in &block.transactions {
+            if tx.transaction_type
+                != crate::types::transaction_type::TransactionType::InitCbeToken
+            {
+                continue;
+            }
+            let tx_hash_hex = hex::encode(tx.hash().as_bytes());
+            let data = tx.init_cbe_token_data().ok_or_else(|| {
+                anyhow::anyhow!("InitCbeToken tx {} is missing payload", tx_hash_hex)
+            })?;
+
+            if self.cbe_token.is_initialized() {
+                return Err(anyhow::anyhow!(
+                    "InitCbeToken tx {} rejected: CBE token already initialized",
+                    tx_hash_hex
+                ));
+            }
+
+            let compensation_pk = PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: data.compensation_key_id,
+            };
+            let operational_pk = PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: data.operational_key_id,
+            };
+            let performance_pk = PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: data.performance_key_id,
+            };
+            let strategic_pk = PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: data.strategic_key_id,
+            };
+
+            self.cbe_token
+                .init(
+                    &compensation_pk,
+                    &operational_pk,
+                    &performance_pk,
+                    &strategic_pk,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!("InitCbeToken tx {} failed: {:?}", tx_hash_hex, e)
+                })?;
+
+            info!(
+                "CBE token initialized at height {} (tx {})",
+                block.header.height, tx_hash_hex
+            );
+        }
+        Ok(())
+    }
+
+    /// Process CreateEmploymentContract transactions in a block.
+    pub fn process_employment_contract_transactions(&mut self, block: &Block) -> Result<()> {
+        use crate::contracts::employment::{ContractAccessType, EconomicPeriod};
+
+        for tx in &block.transactions {
+            if tx.transaction_type
+                != crate::types::transaction_type::TransactionType::CreateEmploymentContract
+            {
+                continue;
+            }
+            let tx_hash_hex = hex::encode(tx.hash().as_bytes());
+            let data = tx.create_employment_contract_data().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "CreateEmploymentContract tx {} is missing payload",
+                    tx_hash_hex
+                )
+            })?;
+
+            let contract_type = match data.contract_type {
+                0 => ContractAccessType::PublicAccess,
+                1 => ContractAccessType::Employment,
+                other => {
+                    return Err(anyhow::anyhow!(
+                        "CreateEmploymentContract tx {} has unknown contract_type {}",
+                        tx_hash_hex,
+                        other
+                    ));
+                }
+            };
+
+            let payment_period = match data.payment_period {
+                0 => EconomicPeriod::Monthly,
+                1 => EconomicPeriod::Quarterly,
+                2 => EconomicPeriod::Annually,
+                other => {
+                    return Err(anyhow::anyhow!(
+                        "CreateEmploymentContract tx {} has unknown payment_period {}",
+                        tx_hash_hex,
+                        other
+                    ));
+                }
+            };
+
+            let employee_pk = PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: data.employee_key_id,
+            };
+            let caller_pk = tx.signature.public_key.clone();
+
+            let contract_id = self
+                .employment_registry
+                .create_employment_contract(
+                    data.dao_id,
+                    employee_pk,
+                    contract_type,
+                    data.compensation_amount,
+                    payment_period,
+                    data.tax_rate_basis_points,
+                    data.tax_jurisdiction.clone(),
+                    data.profit_share_percentage,
+                    &caller_pk,
+                    block.header.height,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "CreateEmploymentContract tx {} failed: {}",
+                        tx_hash_hex,
+                        e
+                    )
+                })?;
+
+            info!(
+                "Employment contract {:?} created at height {} (tx {})",
+                hex::encode(contract_id),
+                block.header.height,
+                tx_hash_hex
+            );
+        }
+        Ok(())
+    }
+
+    /// Process ProcessPayroll transactions in a block.
+    pub fn process_payroll_transactions(&mut self, block: &Block) -> Result<()> {
+        use crate::contracts::executor::ExecutionContext;
+
+        for tx in &block.transactions {
+            if tx.transaction_type
+                != crate::types::transaction_type::TransactionType::ProcessPayroll
+            {
+                continue;
+            }
+            let tx_hash_hex = hex::encode(tx.hash().as_bytes());
+            let data = tx.process_payroll_data().ok_or_else(|| {
+                anyhow::anyhow!("ProcessPayroll tx {} is missing payload", tx_hash_hex)
+            })?;
+            let contract_id = data.contract_id;
+
+            // Look up the employee's PublicKey before mutably borrowing employment_registry
+            let employee_pk = self
+                .employment_registry
+                .get_contract(&contract_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ProcessPayroll tx {}: contract {:?} not found",
+                        tx_hash_hex,
+                        hex::encode(contract_id)
+                    )
+                })?
+                .employee_sid
+                .clone();
+
+            // Compute payroll amounts and update contract state
+            let payment = self
+                .employment_registry
+                .process_payroll(contract_id, block.header.height)
+                .map_err(|e| {
+                    anyhow::anyhow!("ProcessPayroll tx {} failed: {}", tx_hash_hex, e)
+                })?;
+
+            // Skip zero-net payments (nothing to transfer)
+            if payment.net_amount == 0 {
+                info!(
+                    "Payroll tx {}: net=0, no CBE transfer (height {})",
+                    tx_hash_hex, block.header.height
+                );
+                continue;
+            }
+
+            // Transfer net_amount CBE from compensation pool → employee
+            let comp_key_id = self
+                .cbe_token
+                .compensation_pool_key_id()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ProcessPayroll tx {}: CBE token not initialized (no compensation pool)",
+                        tx_hash_hex
+                    )
+                })?;
+
+            let comp_caller = PublicKey {
+                dilithium_pk: vec![],
+                kyber_pk: vec![],
+                key_id: comp_key_id,
+            };
+            let ctx = ExecutionContext::new(
+                comp_caller,
+                block.header.height,
+                block.header.timestamp,
+                0,
+                tx.hash().into(),
+            );
+
+            self.cbe_token
+                .transfer(&ctx, &employee_pk, payment.net_amount, block.header.height)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "ProcessPayroll tx {}: CBE transfer failed: {:?}",
+                        tx_hash_hex,
+                        e
+                    )
+                })?;
+
+            info!(
+                "Payroll executed at height {}: gross={}, tax={}, net={} CBE → {:?} (tx {})",
+                block.header.height,
+                payment.gross_amount,
+                payment.tax_amount,
+                payment.net_amount,
+                hex::encode(employee_pk.key_id),
+                tx_hash_hex
             );
         }
         Ok(())
@@ -6067,7 +6338,7 @@ impl Blockchain {
     pub fn process_validator_registration_transactions(&mut self, block: &Block) {
         let height = block.height();
         for tx in &block.transactions {
-            if let Some(validator_data) = &tx.validator_data {
+            if let Some(validator_data) = tx.validator_data() {
                 let status = match validator_data.operation {
                     crate::transaction::ValidatorOperation::Register => "active",
                     crate::transaction::ValidatorOperation::Update => "active",
@@ -6107,7 +6378,7 @@ impl Blockchain {
     /// Process validator transactions in a block
     pub fn process_validator_transactions(&mut self, block: &Block) -> Result<()> {
         for transaction in &block.transactions {
-            if let Some(ref identity_data) = transaction.identity_data {
+            if let Some(identity_data) = transaction.identity_data() {
                 if identity_data.identity_type == "validator" {
                     // Extract validator info from identity transaction
                     // This is a simplified version - in production, you'd have a dedicated ValidatorTransactionData
@@ -6226,8 +6497,7 @@ impl Blockchain {
             match transaction.transaction_type {
                 TransactionType::TokenTransfer => {
                     let transfer = transaction
-                        .token_transfer_data
-                        .as_ref()
+                        .token_transfer_data()
                         .ok_or_else(|| anyhow::anyhow!("TokenTransfer missing data"))?;
 
                     if transfer.amount == 0 {
@@ -6236,6 +6506,7 @@ impl Blockchain {
 
                     // Replay protection: validate and increment nonce
                     let is_sov = Self::is_sov_token_id(&transfer.token_id);
+                    let is_cbe = transfer.token_id == self.cbe_token.token_id();
                     let token_id = if is_sov {
                         sov_token_id
                     } else {
@@ -6346,6 +6617,28 @@ impl Blockchain {
                             &treasury_pk_opt,
                             block.height(),
                         )?;
+                    } else if is_cbe {
+                        // CBE token transfer — routed to CbeToken contract (vesting-aware)
+                        if sender_pk.key_id != transfer.from {
+                            return Err(anyhow::anyhow!("TokenTransfer CBE sender key_id mismatch"));
+                        }
+
+                        let recipient_pk_bytes = self
+                            .resolve_public_key_by_key_id(&transfer.to)
+                            .ok_or_else(|| anyhow::anyhow!("TokenTransfer CBE recipient not found"))?;
+                        let recipient_pk = PublicKey::new(recipient_pk_bytes);
+
+                        let ctx = crate::contracts::executor::ExecutionContext::new(
+                            sender_pk.clone(),
+                            block.height(),
+                            block.header.timestamp,
+                            0,
+                            tx_hash,
+                        );
+
+                        self.cbe_token
+                            .transfer(&ctx, &recipient_pk, amount_u64, block.height())
+                            .map_err(|e| anyhow::anyhow!("CBE TokenTransfer failed: {}", e))?;
                     } else {
                         if sender_pk.key_id != transfer.from {
                             return Err(anyhow::anyhow!("TokenTransfer sender key_id mismatch"));
@@ -6411,8 +6704,7 @@ impl Blockchain {
                     }
 
                     let mint = transaction
-                        .token_mint_data
-                        .as_ref()
+                        .token_mint_data()
                         .ok_or_else(|| anyhow::anyhow!("TokenMint missing data"))?;
 
                     if mint.amount == 0 {
@@ -7416,7 +7708,7 @@ impl Blockchain {
             .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoProposal)
-            .filter_map(|tx| tx.dao_proposal_data.as_ref())
+            .filter_map(|tx| tx.dao_proposal_data())
             .cloned()
             .collect()
     }
@@ -7430,7 +7722,7 @@ impl Blockchain {
             .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoProposal)
-            .filter_map(|tx| tx.dao_proposal_data.as_ref())
+            .filter_map(|tx| tx.dao_proposal_data())
             .find(|proposal| &proposal.proposal_id == proposal_id)
             .cloned()
     }
@@ -7444,7 +7736,7 @@ impl Blockchain {
             .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoVote)
-            .filter_map(|tx| tx.dao_vote_data.as_ref())
+            .filter_map(|tx| tx.dao_vote_data())
             .filter(|vote| &vote.proposal_id == proposal_id)
             .cloned()
             .collect()
@@ -7456,7 +7748,7 @@ impl Blockchain {
             .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoVote)
-            .filter_map(|tx| tx.dao_vote_data.as_ref())
+            .filter_map(|tx| tx.dao_vote_data())
             .cloned()
             .collect()
     }
@@ -7467,7 +7759,7 @@ impl Blockchain {
             .iter()
             .flat_map(|block| &block.transactions)
             .filter(|tx| tx.transaction_type == TransactionType::DaoExecution)
-            .filter_map(|tx| tx.dao_execution_data.as_ref())
+            .filter_map(|tx| tx.dao_execution_data())
             .cloned()
             .collect()
     }
@@ -7497,7 +7789,7 @@ impl Blockchain {
         if tx.transaction_type != TransactionType::DaoExecution {
             return None;
         }
-        let exec = tx.dao_execution_data.as_ref()?;
+        let exec = tx.dao_execution_data()?;
         if exec.execution_type != Self::DAO_REGISTRY_REGISTER_EXEC
             && exec.execution_type != Self::DAO_FACTORY_CREATE_EXEC
         {
@@ -7546,6 +7838,18 @@ impl Blockchain {
 
     fn index_dao_registry_entry_from_tx(&mut self, tx: &Transaction, block_height: u64) {
         if let Some(entry) = Self::dao_registry_entry_from_tx(tx, block_height) {
+            // Detect CBE DAO: first FP DAO whose token_key_id matches the CBE token.
+            if self.cbe_dao_id.is_none()
+                && entry.class == "fp"
+                && entry.token_key_id == self.cbe_token.token_id()
+            {
+                self.cbe_dao_id = Some(entry.dao_id);
+                info!(
+                    "CBE DAO registered at height {}: dao_id={}",
+                    block_height,
+                    hex::encode(entry.dao_id)
+                );
+            }
             self.dao_registry_index.entry(entry.dao_id).or_insert(entry);
         }
     }
@@ -7835,7 +8139,7 @@ impl Blockchain {
         }
         if self.pending_transactions.iter().any(|tx| {
             tx.transaction_type == TransactionType::DaoExecution
-                && tx.dao_execution_data.as_ref().map(|d| d.proposal_id) == Some(proposal_id)
+                && tx.dao_execution_data().map(|d| d.proposal_id) == Some(proposal_id)
         }) {
             return Err(anyhow::anyhow!(
                 "Proposal execution already pending in mempool"
@@ -9886,7 +10190,7 @@ impl Blockchain {
             .filter(|tx| tx.transaction_type == TransactionType::DaoVote)
             .filter(|tx| {
                 // Check if vote is from this user
-                if let Some(ref vote_data) = tx.dao_vote_data {
+                if let Some(vote_data) = tx.dao_vote_data() {
                     vote_data.voter == user_id_str
                 } else {
                     false
@@ -9904,7 +10208,7 @@ impl Blockchain {
             .filter(|tx| tx.transaction_type == TransactionType::DaoProposal)
             .filter(|tx| {
                 // Check if proposal is from this user
-                if let Some(ref proposal_data) = tx.dao_proposal_data {
+                if let Some(proposal_data) = tx.dao_proposal_data() {
                     proposal_data.proposer == user_id_str
                 } else {
                     false
@@ -11711,7 +12015,7 @@ impl Blockchain {
     /// File format magic bytes - "ZHTP"
     const FILE_MAGIC: [u8; 4] = [0x5A, 0x48, 0x54, 0x50];
     /// Current file format version
-    const FILE_VERSION: u16 = 7;
+    const FILE_VERSION: u16 = 8;
 
     #[deprecated(
         since = "0.2.0",
@@ -11736,8 +12040,8 @@ impl Blockchain {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Convert to stable storage format (V7)
-        let storage = BlockchainStorageV7::from_blockchain(self);
+        // Convert to stable storage format (V8)
+        let storage = BlockchainStorageV8::from_blockchain(self);
 
         // Serialize to bincode
         let serialized = bincode::serialize(&storage)
@@ -11812,6 +12116,19 @@ impl Blockchain {
             info!("📂 Detected versioned format v{}", version);
 
             match version {
+                8 => match bincode::deserialize::<BlockchainStorageV8>(data) {
+                    Ok(storage) => {
+                        info!("📂 Loaded blockchain storage v8 (employment registry + CBE DAO format)");
+                        storage.to_blockchain()
+                    }
+                    Err(storage_err) => {
+                        error!("❌ Failed to deserialize v8 blockchain: {}", storage_err);
+                        return Err(anyhow::anyhow!(
+                            "Failed to deserialize v8 blockchain: {}",
+                            storage_err
+                        ));
+                    }
+                },
                 7 => match bincode::deserialize::<BlockchainStorageV7>(data) {
                     Ok(storage) => {
                         info!("📂 Loaded blockchain storage v7 (cbe-token persistence format)");
@@ -12742,7 +13059,7 @@ impl Blockchain {
     /// This is a simplified implementation tracking claims on-chain.
     pub fn process_ubi_claim_transactions(&mut self, block: &Block) -> Result<()> {
         for tx in &block.transactions {
-            if let Some(ubi_data) = &tx.ubi_claim_data {
+            if let Some(ubi_data) = tx.ubi_claim_data() {
                 // Create claim tracking key: (identity, month_index)
                 let claim_key = format!(
                     "ubi_claim:{}:{}",
@@ -12965,7 +13282,7 @@ impl Blockchain {
     /// Enforces mandatory profit-to-nonprofit redistribution.
     pub fn process_profit_declarations(&mut self, block: &Block) -> Result<()> {
         for tx in &block.transactions {
-            if let Some(profit_data) = &tx.profit_declaration_data {
+            if let Some(profit_data) = tx.profit_declaration_data() {
                 // Validate tribute calculation (must be exactly 20%)
                 let expected_tribute = profit_data.profit_amount * 20 / 100;
 
@@ -13087,26 +13404,7 @@ mod replay_contract_execution_tests {
             fee: 0,
             signature: test_signature(signer),
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         }
     }
 
@@ -13270,26 +13568,7 @@ mod replay_contract_execution_tests {
             fee: 0,
             signature: test_signature(&test_pubkey(0x70)),
             memo: vec![],
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: Some(dao_execution),
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::DaoExecution(dao_execution),
         }
     }
 
@@ -13320,26 +13599,7 @@ mod replay_contract_execution_tests {
             memo: payload
                 .encode_memo()
                 .expect("token creation payload should encode"),
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
-            token_transfer_data: None,
-            token_mint_data: None,
-            governance_config_data: None,
-            bonding_curve_deploy_data: None,
-            bonding_curve_buy_data: None,
-            bonding_curve_sell_data: None,
-            bonding_curve_graduate_data: None,
-            oracle_committee_update_data: None,
-            oracle_config_update_data: None,
-            oracle_attestation_data: None,
-            cancel_oracle_update_data: None,
-            init_entity_registry_data: None,
+            payload: crate::transaction::TransactionPayload::None,
         }
     }
 
@@ -13765,7 +14025,7 @@ impl Blockchain {
     fn process_oracle_attestation_transactions(&mut self, block: &Block, block_timestamp: u64) {
         for tx in &block.transactions {
             if tx.transaction_type == TransactionType::OracleAttestation {
-                if let Some(data) = &tx.oracle_attestation_data {
+                if let Some(data) = tx.oracle_attestation_data() {
                     // Build the attestation from transaction data
                     let attestation = crate::oracle::OraclePriceAttestation {
                         epoch_id: data.epoch_id,
@@ -14204,8 +14464,7 @@ impl Blockchain {
                 continue;
             }
             let data = tx
-                .bonding_curve_graduate_data
-                .as_ref()
+                .bonding_curve_graduate_data()
                 .ok_or_else(|| anyhow::anyhow!("BondingCurveGraduate missing data"))?;
             self.validate_cbe_graduation_oracle_gate(data.token_id, block.header.timestamp)?;
         }

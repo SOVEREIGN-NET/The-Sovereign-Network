@@ -261,7 +261,7 @@ impl TokenHandler {
             ));
         }
 
-        let mint = match tx.token_mint_data.as_ref() {
+        let mint = match tx.token_mint_data() {
             Some(m) => m,
             None => {
                 return Ok(create_error_response(
@@ -341,7 +341,7 @@ impl TokenHandler {
         let (recipient_hex, token_id_hex, amount) =
             if tx.transaction_type == lib_blockchain::TransactionType::TokenTransfer {
                 // Native TokenTransfer path
-                match tx.token_transfer_data.as_ref() {
+                match tx.token_transfer_data() {
                     Some(d) => (hex::encode(d.to), hex::encode(d.token_id), d.amount),
                     None => {
                         tracing::error!(

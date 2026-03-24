@@ -864,7 +864,7 @@ pub fn apply_oracle_attestation<F>(
 where
     F: Fn([u8; 32]) -> Option<Vec<u8>>,
 {
-    let data = tx.oracle_attestation_data.as_ref().ok_or_else(|| {
+    let data = tx.oracle_attestation_data().ok_or_else(|| {
         TxApplyError::InvalidType("OracleAttestation requires oracle_attestation_data".to_string())
     })?;
 
