@@ -1210,6 +1210,45 @@ impl RuntimeOrchestrator {
         local_is_bootstrap_leader && has_local_chain_data
     }
 
+    /// Standalone observers must join an existing network unless they already have
+    /// local chain state. They are not allowed to create a fresh genesis on an
+    /// empty store.
+    fn observer_requires_existing_network(config: &NodeConfig, has_local_chain_data: bool) -> bool {
+        matches!(config.node_type, Some(crate::config::NodeType::FullNode)) && !has_local_chain_data
+    }
+
+    fn validate_observer_join_policy(
+        config: &NodeConfig,
+        has_local_chain_data: bool,
+        network_info: Option<&ExistingNetworkInfo>,
+    ) -> Result<()> {
+        if !Self::observer_requires_existing_network(config, has_local_chain_data) {
+            return Ok(());
+        }
+
+        if network_info
+            .map(|info| info.blockchain_height > 0)
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
+        let configured_bootstrap_peers = config.network_config.bootstrap_peers.len();
+        let discovered_peer_count = network_info.map(|info| info.peer_count).unwrap_or(0);
+        let discovered_height = network_info
+            .map(|info| info.blockchain_height)
+            .unwrap_or_default();
+
+        Err(anyhow::anyhow!(
+            "Observer/full-node startup requires an existing network with committed blocks. \
+             Local chain state is empty, discovered peers={}, discovered_height={}, \
+             configured_bootstrap_peers={}. Refusing to create genesis in observer mode.",
+            discovered_peer_count,
+            discovered_height,
+            configured_bootstrap_peers
+        ))
+    }
+
     fn validate_validator_endpoint(network_address: &str) -> Result<()> {
         if network_address.trim().is_empty() {
             return Err(anyhow::anyhow!("Validator endpoint is empty"));
@@ -1889,6 +1928,12 @@ impl RuntimeOrchestrator {
                 // process is killed.  This prevents every node from spawning its
                 // own incompatible genesis when all nodes start simultaneously.
                 // ─────────────────────────────────────────────────────────────
+                Self::validate_observer_join_policy(
+                    &self.config,
+                    self.has_local_chain_data(),
+                    network_info.as_ref(),
+                )?;
+
                 if synced_blockchain.is_none() && !local_is_bootstrap_leader {
                     let retry_peers: Vec<_> = network_info
                         .as_ref()
@@ -4319,7 +4364,7 @@ impl RuntimeOrchestrator {
         if leader_has_local_data {
             orchestrator.set_joined_existing_network(false).await?;
             info!("🌱 Bootstrap leader with local chain data detected - skipping startup sync");
-        } else if let Some(ref net_info) = network_info.filter(|_| peers_have_blocks) {
+        } else if let Some(net_info) = network_info.as_ref().filter(|_| peers_have_blocks) {
             // Joining existing network
             orchestrator.set_joined_existing_network(true).await?;
             orchestrator.start_blockchain_sync(net_info).await?;
@@ -4342,6 +4387,12 @@ impl RuntimeOrchestrator {
                 }
             }
         } else {
+            Self::validate_observer_join_policy(
+                &orchestrator.config,
+                orchestrator.has_local_chain_data(),
+                network_info.as_ref(),
+            )?;
+
             // Creating genesis network
             if is_edge_node {
                 return Err(anyhow::anyhow!("Edge nodes must find an existing network"));
@@ -4782,6 +4833,54 @@ mod runtime_orchestrator_tests {
             err.to_string().contains("NodeRole::Observer") || err.to_string().contains("Observer"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn observer_join_policy_requires_existing_network_when_local_state_is_empty() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        let err = RuntimeOrchestrator::validate_observer_join_policy(&config, false, None)
+            .expect_err("observer with empty local state must not create genesis");
+        assert!(
+            err.to_string().contains("requires an existing network"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn observer_join_policy_allows_restart_from_local_chain_data() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(RuntimeOrchestrator::validate_observer_join_policy(&config, true, None).is_ok());
+    }
+
+    #[test]
+    fn observer_join_policy_allows_joining_network_with_committed_blocks() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        let network_info = crate::runtime::ExistingNetworkInfo {
+            peer_count: 3,
+            blockchain_height: 42,
+            network_id: "testnet".to_string(),
+            bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
+            environment: crate::config::Environment::Development,
+        };
+
+        assert!(RuntimeOrchestrator::validate_observer_join_policy(
+            &config,
+            false,
+            Some(&network_info)
+        )
+        .is_ok());
     }
 }
 
