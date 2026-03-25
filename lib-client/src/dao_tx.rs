@@ -8,10 +8,9 @@
 //! - RecordOnRampTrade    (Oracle Committee attested fiat→CBE trades)
 //! - TreasuryAllocation   (Bootstrap Council approved SOV transfers)
 
-use lib_blockchain::transaction::{RecordOnRampTradeData, TreasuryAllocationTxData};
+use lib_blockchain::transaction::{RecordOnRampTradeData, TreasuryAllocationData};
 use lib_blockchain::{
-    Approval, ApprovalDomain, ThresholdApproval, ThresholdApprovalSet, ThresholdApprovals,
-    Transaction,
+    Approval, ApprovalDomain, ThresholdApprovalSet, Transaction,
 };
 use lib_crypto::types::signatures::SignatureAlgorithm;
 
@@ -49,7 +48,7 @@ pub fn build_init_entity_registry_tx(
     nonprofit_treasury_pk: Vec<u8>,
     chain_id: u8,
     block_height: u64,
-    council_approvals: Vec<(Vec<u8>, Vec<u8>)>, // (dilithium_pk, signature) pairs
+    _council_approvals: Vec<(Vec<u8>, Vec<u8>)>, // (dilithium_pk, signature) pairs — reserved for future multi-sig flow
 ) -> Result<String, String> {
     let cbe_pk = crate::token_tx::create_public_key(cbe_treasury_pk);
     let nonprofit_pk = crate::token_tx::create_public_key(nonprofit_treasury_pk);
@@ -59,24 +58,13 @@ pub fn build_init_entity_registry_tx(
         .unwrap_or_default()
         .as_secs();
 
-    let approvals = ThresholdApprovals {
-        domain: ApprovalDomain::BootstrapCouncil,
-        approvals: council_approvals
-            .into_iter()
-            .map(|(dilithium_pk, signature)| ThresholdApproval {
-                dilithium_pk,
-                signature,
-            })
-            .collect(),
-    };
-
     let tx = Transaction::new_init_entity_registry(
         chain_id,
         cbe_pk,
         nonprofit_pk,
         now,
         block_height,
-        approvals,
+        Default::default(),
     );
 
     let final_tx_bytes =
@@ -145,7 +133,7 @@ pub fn build_treasury_allocation_tx(
 ) -> Result<String, String> {
     let approvals = build_approval_set(ApprovalDomain::BootstrapCouncil, council_approvals);
 
-    let data = TreasuryAllocationTxData {
+    let data = TreasuryAllocationData {
         source_treasury_key_id,
         destination_key_id,
         amount,

@@ -24,13 +24,7 @@ fn create_init_tx(signer: &PublicKey, cbe: PublicKey, nonprofit: PublicKey) -> T
         nonprofit,
         123,
         0,
-        lib_blockchain::ThresholdApprovals {
-            domain: lib_blockchain::ApprovalDomain::BootstrapCouncil,
-            approvals: vec![lib_blockchain::ThresholdApproval {
-                dilithium_pk: signer.dilithium_pk.clone(),
-                signature: test_signature(signer).signature,
-            }],
-        },
+        test_signature(signer),
     )
 }
 

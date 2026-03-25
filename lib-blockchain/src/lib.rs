@@ -64,15 +64,14 @@ pub use transaction::{
     DaoVoteData, IdentityTransactionData, ProfitDeclarationData, RecordOnRampTradeData,
     RevenueSource, SigningError, StatefulTransactionValidator, Transaction, TransactionBuilder,
     TransactionCreateError, TransactionInput, TransactionOutput, TransactionValidator,
-    TreasuryAllocationTxData, UbiClaimData, ValidationError, ValidationResult, ValidatorOperation,
+    TreasuryAllocationData, UbiClaimData, ValidationError, ValidationResult, ValidatorOperation,
     ValidatorTransactionData, WalletPrivateData, WalletReference, WalletTransactionData,
     CONTRACT_DEPLOYMENT_MEMO_PREFIX,
 };
 
 // Threshold approval types
 pub use transaction::threshold_approval::{
-    Approval, ApprovalDomain, ThresholdApproval, ThresholdApprovalSet, ThresholdApprovals,
-    ThresholdError,
+    Approval, ApprovalDomain, ThresholdApprovalSet, ThresholdError,
 };
 
 // Block module (core types and functions)
