@@ -1035,19 +1035,19 @@ impl RuntimeOrchestrator {
                 info!(" Development mode: Set blockchain difficulty to 0x1fffffff (easy mining)");
             }
 
-            let genesis_validators = if !self.config.network_config.bootstrap_validators.is_empty() {
+            let genesis_validators = if !self.config.network_config.bootstrap_validators.is_empty()
+            {
                 let mut validators = Vec::new();
                 for bootstrap in &self.config.network_config.bootstrap_validators {
-                    let identity_id = lib_identity::did::parse_did_to_identity_id(
-                        &bootstrap.identity_id,
-                    )
-                    .map_err(|e| {
-                        anyhow::anyhow!(
-                            "Invalid bootstrap validator DID {}: {}",
-                            bootstrap.identity_id,
-                            e
-                        )
-                    })?;
+                    let identity_id =
+                        lib_identity::did::parse_did_to_identity_id(&bootstrap.identity_id)
+                            .map_err(|e| {
+                                anyhow::anyhow!(
+                                    "Invalid bootstrap validator DID {}: {}",
+                                    bootstrap.identity_id,
+                                    e
+                                )
+                            })?;
                     // Handle 0x prefix for consensus key (Copilot fix)
                     let consensus_key = crate::runtime::components::consensus::decode_bootstrap_consensus_key(&bootstrap.consensus_key)
                         .ok_or_else(|| {
@@ -1056,15 +1056,16 @@ impl RuntimeOrchestrator {
                                 bootstrap.identity_id
                             )
                         })?;
-                    
+
                     // Validate network address (Copilot fix)
-                    let network_address = bootstrap.endpoints.first()
-                        .ok_or_else(|| anyhow::anyhow!(
+                    let network_address = bootstrap.endpoints.first().ok_or_else(|| {
+                        anyhow::anyhow!(
                             "Bootstrap validator {} must have at least one endpoint configured",
                             bootstrap.identity_id
-                        ))?;
+                        )
+                    })?;
                     Self::validate_validator_endpoint(network_address)?;
-                    
+
                     validators.push(crate::runtime::components::GenesisValidator {
                         identity_id,
                         node_device_id: None,
@@ -2665,6 +2666,19 @@ impl RuntimeOrchestrator {
         Ok(())
     }
 
+    /// Log that validator seeding from runtime config is disabled (canonical genesis only).
+    ///
+    /// This method exists for documentation purposes only. Startup seeding from runtime config
+    /// is intentionally disabled per Issue #1862. Canonical validator membership must come
+    /// from genesis or persisted chain state, not a local bootstrap list.
+    ///
+    /// DO NOT ADD VALIDATOR SEEDING LOGIC HERE. Use canonical genesis state instead.
+    async fn log_validator_seeding_disabled(&self) -> anyhow::Result<()> {
+        info!("Canonical validator startup: runtime bootstrap validator seeding disabled (validators must come from genesis state)");
+        Ok(())
+    }
+
+
     /// Bootstrap the oracle committee from active validator consensus keys if it is still empty.
     ///
     /// Called unconditionally during startup — after Sled load and dat-restore
@@ -2718,7 +2732,10 @@ impl RuntimeOrchestrator {
                     );
                 }
                 Err(e) => {
-                    warn!("⚠️ Failed to bootstrap oracle committee from validator registry: {}", e);
+                    warn!(
+                        "⚠️ Failed to bootstrap oracle committee from validator registry: {}",
+                        e
+                    );
                 }
             }
         } else {
@@ -4551,7 +4568,10 @@ pub(super) fn try_restore_oracle_from_dat(
         Ok(dat_bc) if !dat_bc.oracle_state.committee.members().is_empty() => {
             let count = dat_bc.oracle_state.committee.members().len();
             bc.oracle_state = dat_bc.oracle_state;
-            info!("🔮 Restored oracle committee from blockchain.dat ({} members)", count);
+            info!(
+                "🔮 Restored oracle committee from blockchain.dat ({} members)",
+                count
+            );
             // Write back to Sled so future restarts don't need the .dat fallback.
             if let Some(store_ref) = bc.store.as_ref() {
                 if let Err(e) = store_ref.save_oracle_state(&bc.oracle_state) {
@@ -4565,7 +4585,10 @@ pub(super) fn try_restore_oracle_from_dat(
             false
         }
         Err(e) => {
-            warn!("⚠️ Failed to read blockchain.dat for oracle_state fallback: {}", e);
+            warn!(
+                "⚠️ Failed to read blockchain.dat for oracle_state fallback: {}",
+                e
+            );
             false
         }
     }
@@ -4608,7 +4631,7 @@ pub(super) fn seed_validators_from_bootstrap_config(
             networking_key,
             rewards_key,
             network_address: bv.endpoints.first().cloned().unwrap_or_default(),
-            commission_rate: (bv.commission_rate.min(100)) as u8,
+            commission_rate: bootstrap_commission_percent(bv.commission_rate),
             status: "active".to_string(),
             registered_at: 0,
             last_activity: 0,
@@ -4625,6 +4648,10 @@ pub(super) fn seed_validators_from_bootstrap_config(
         "validator_registry empty — seeded {} validator(s) from bootstrap config (in-memory only)",
         count
     );
+}
+
+fn bootstrap_commission_percent(commission_rate_bps: u16) -> u8 {
+    (commission_rate_bps.min(10_000) / 100) as u8
 }
 
 pub(super) fn try_restore_validators_from_dat(
@@ -4646,7 +4673,9 @@ pub(super) fn try_restore_validators_from_dat(
             true
         }
         Ok(_) => {
-            info!("validator_registry in blockchain.dat is also empty — validators not yet on-chain");
+            info!(
+                "validator_registry in blockchain.dat is also empty — validators not yet on-chain"
+            );
             false
         }
         Err(e) => {
@@ -4751,7 +4780,10 @@ mod oracle_startup_tests {
         let mut target = Blockchain::new().expect("Blockchain::new");
         let restored = try_restore_oracle_from_dat(&mut target, &dat_path);
 
-        assert!(!restored, "should not restore when dat also has empty committee");
+        assert!(
+            !restored,
+            "should not restore when dat also has empty committee"
+        );
         assert!(
             target.oracle_state.committee.members().is_empty(),
             "committee should remain empty"
@@ -4876,14 +4908,17 @@ mod oracle_startup_tests {
             .collect();
 
         // No valid keys — bootstrap should not be called, committee stays empty.
-        assert!(committee_members.is_empty(), "bad key lengths should be filtered out");
+        assert!(
+            committee_members.is_empty(),
+            "bad key lengths should be filtered out"
+        );
         assert!(bc.oracle_state.committee.members().is_empty());
     }
 }
 
 #[cfg(test)]
 mod validator_startup_tests {
-    use super::try_restore_validators_from_dat;
+    use super::{bootstrap_commission_percent, try_restore_validators_from_dat};
     use lib_blockchain::{Blockchain, ValidatorInfo};
     use tempfile::tempdir;
 
@@ -4946,8 +4981,20 @@ mod validator_startup_tests {
         let mut target = Blockchain::new().expect("Blockchain::new");
         let restored = try_restore_validators_from_dat(&mut target, &dat_path);
 
-        assert!(!restored, "should not restore when dat also has empty registry");
+        assert!(
+            !restored,
+            "should not restore when dat also has empty registry"
+        );
         assert!(target.get_active_validators().is_empty());
+    }
+
+    #[test]
+    fn bootstrap_commission_rate_converts_basis_points_to_percent() {
+        assert_eq!(bootstrap_commission_percent(0), 0);
+        assert_eq!(bootstrap_commission_percent(500), 5);
+        assert_eq!(bootstrap_commission_percent(9_999), 99);
+        assert_eq!(bootstrap_commission_percent(10_000), 100);
+        assert_eq!(bootstrap_commission_percent(20_000), 100);
     }
 
     #[test]
