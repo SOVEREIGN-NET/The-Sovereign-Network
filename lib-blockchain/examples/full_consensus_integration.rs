@@ -320,27 +320,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-
-/// Helper function to display transaction details
-fn display_transaction_info(tx: &lib_blockchain::Transaction) {
-    println!("  Transaction:");
-    println!("    Hash: {}", hex::encode(tx.hash().as_bytes()));
-    println!("    Type: {:?}", tx.transaction_type);
-    println!("    Fee: {} micro-SOV", tx.fee);
-    println!("    Inputs: {}", tx.inputs.len());
-    println!("    Outputs: {}", tx.outputs.len());
-    if !tx.memo.is_empty() {
-        println!("    Memo: {}", String::from_utf8_lossy(&tx.memo));
-    }
-}
-
-/// Helper function to display block details
-fn display_block_info(block: &lib_blockchain::Block) {
-    println!("  Block:");
-    println!("    Height: {}", block.height());
-    println!("    Hash: {}", hex::encode(block.hash().as_bytes()));
-    println!("    Transactions: {}", block.transaction_count());
-    println!("    Timestamp: {}", block.timestamp());
-    println!("    Difficulty: {:?}", block.difficulty());
-    println!("    Size: {} bytes", block.size());
-}
