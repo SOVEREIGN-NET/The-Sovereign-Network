@@ -426,7 +426,7 @@ fn resolve_keystore_path() -> Result<PathBuf> {
 
 fn load_wallet_address_from_keystore() -> Result<String> {
     let keystore_path = resolve_keystore_path()?;
-    let wallet_path = keystore_path.join(zhtp::keystore_names::WALLET_DATA_FILENAME);
+    let wallet_path = keystore_path.join(zhtp::keyfile_names::WALLET_DATA_FILENAME);
     let data = std::fs::read_to_string(&wallet_path)
         .with_context(|| format!("Failed to read wallet data from {:?}", wallet_path))?;
     let wallet_data: PersistedWalletData = serde_json::from_str(&data)
