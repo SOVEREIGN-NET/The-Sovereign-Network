@@ -146,7 +146,7 @@ impl Component for IdentityComponent {
 
         // Bootstrap identities from DHT storage
         info!("🔄 Bootstrapping identities from DHT storage...");
-        match bootstrap_identities_from_dht(&identity_manager_arc).await {
+        match bootstrap_identities_from_dht(&identity_manager_arc, self.can_mine).await {
             Ok(result) => {
                 info!(
                     "✅ Bootstrap complete: {} identities, {} wallets loaded",
@@ -369,7 +369,11 @@ async fn rebuild_index_from_backup(
 /// that are not yet on the blockchain.
 ///
 /// SAFE: Only adds missing identities, never overwrites existing ones.
-async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
+fn should_run_identity_blockchain_migration(migrate_enabled: bool, can_mine: bool) -> bool {
+    migrate_enabled && can_mine
+}
+
+async fn migrate_identities_to_blockchain(can_mine: bool) -> Result<(u32, u32)> {
     use std::io::BufReader;
 
     // Check if migration is enabled
@@ -377,7 +381,12 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false);
 
-    if !migrate_enabled {
+    if !should_run_identity_blockchain_migration(migrate_enabled, can_mine) {
+        if migrate_enabled && !can_mine {
+            info!(
+                "🔄 MIGRATION MODE requested, but this node cannot mine; skipping identity migration on observer/non-validator startup"
+            );
+        }
         return Ok((0, 0));
     }
 
@@ -606,6 +615,7 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
 /// available for API queries and peer discovery.
 async fn bootstrap_identities_from_dht(
     identity_manager: &Arc<RwLock<IdentityManager>>,
+    can_mine: bool,
 ) -> Result<DhtBootstrapResult> {
     use crate::runtime::storage_provider;
 
@@ -652,7 +662,7 @@ async fn bootstrap_identities_from_dht(
 
     // One-time migration: register identities from backup to blockchain
     // Enable with: ZHTP_MIGRATE_IDENTITIES=1
-    match migrate_identities_to_blockchain().await {
+    match migrate_identities_to_blockchain(can_mine).await {
         Ok((migrated, skipped)) if migrated > 0 => {
             info!(
                 "🔄 Blockchain migration: {} new, {} existing",
@@ -1068,4 +1078,164 @@ async fn bootstrap_identities_from_dht(
         wallets_loaded,
         errors,
     })
+}
+<<<<<<< HEAD
+=======
+
+/// After DHT bootstrap and identity migration, mint missing SOV balances via TokenMint txs.
+/// This makes token balances block-authoritative and durable across restarts.
+/// Observer nodes skip the mine_block calls — they receive these blocks from the validator.
+async fn run_post_bootstrap_sov_backfill(can_mine: bool, is_bootstrap_leader: bool) -> Result<()> {
+    let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
+
+    // Only the bootstrap leader creates SOV backfill TokenMint transactions.
+    // Non-leader nodes get their SOV balances by syncing the leader's mined blocks.
+    // Allowing all validators to create TokenMint txs floods the mempool with 4× duplicates
+    // (each node signs with its own key → unique hashes → no deduplication).
+    if !is_bootstrap_leader {
+        let bc = blockchain_arc.read().await;
+        info!("🪙 Not bootstrap leader (height {}): skipping SOV backfill — balances come from leader's blocks", bc.height);
+        return Ok(());
+    }
+
+    // First, ensure all wallets in the registry are registered on-chain before minting.
+    // This prevents TokenMint blocks from referencing wallets unknown to other nodes.
+    {
+        let mut bc = blockchain_arc.write().await;
+        let mut added_wallet_regs = 0usize;
+
+        // Enqueue WalletRegistration txs for any registry wallets missing on-chain.
+        let wallet_entries: Vec<_> = bc
+            .wallet_registry
+            .iter()
+            .map(|(id, data)| (id.clone(), data.clone()))
+            .collect();
+        for (wallet_id, wallet_data) in wallet_entries {
+            let is_on_chain = bc
+                .wallet_blocks
+                .get(&wallet_id)
+                .map(|h| *h <= bc.height)
+                .unwrap_or(false);
+            if is_on_chain {
+                continue;
+            }
+
+            let registration_tx = lib_blockchain::transaction::Transaction::new_wallet_registration(
+                wallet_data.clone(),
+                vec![],
+                lib_blockchain::integration::crypto_integration::Signature {
+                    signature: wallet_data.public_key.clone(),
+                    public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(wallet_data.public_key.clone()),
+                    algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+                    timestamp: wallet_data.created_at,
+                },
+                b"WALLET_BACKFILL_V1".to_vec(),
+            );
+            if bc.add_system_transaction(registration_tx).is_ok() {
+                added_wallet_regs += 1;
+            }
+        }
+
+        let pending_wallet_regs = added_wallet_regs > 0
+            || bc.pending_transactions.iter().any(|tx| {
+                matches!(
+                    tx.transaction_type,
+                    lib_blockchain::TransactionType::WalletRegistration
+                )
+            });
+        // Only mine startup blocks on the genesis node (height == 0).
+        // On all other nodes the chain was synced from the leader; startup transactions
+        // stay in the mempool and get mined by the leader's next block.
+        let is_genesis_node = bc.height == 0;
+        if pending_wallet_regs {
+            if can_mine && is_genesis_node {
+                if let Err(e) =
+                    crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc)
+                        .await
+                {
+                    warn!(
+                        "🪙 Failed to mine wallet registration block before backfill: {}",
+                        e
+                    );
+                } else {
+                    info!("🪙 Mined wallet registration block before SOV backfill");
+                }
+            } else if can_mine {
+                info!("🪙 Synced chain: deferring wallet registrations to leader's mining loop");
+            } else {
+                info!("🪙 Observer node: skipping startup mine for wallet registrations (validator will broadcast)");
+            }
+        }
+    }
+
+    let entries = {
+        let bc = blockchain_arc.read().await;
+        bc.collect_sov_backfill_entries()
+    };
+
+    if entries.is_empty() {
+        info!("🪙 No SOV backfill needed after DHT bootstrap");
+        return Ok(());
+    }
+
+    let mut mint_txs: Vec<lib_blockchain::Transaction> = Vec::new();
+    for (wallet_id_bytes, amount, wallet_id) in entries {
+        let memo = format!("TOKEN_BACKFILL_V1:{}", wallet_id).into_bytes();
+        match crate::runtime::token_utils::build_sov_mint_tx(&wallet_id_bytes, amount, memo).await {
+            Ok(tx) => mint_txs.push(tx),
+            Err(e) => warn!("🪙 Failed to build backfill TokenMint tx: {}", e),
+        }
+    }
+
+    if mint_txs.is_empty() {
+        info!("🪙 No SOV backfill mints queued (all failed to build)");
+        return Ok(());
+    }
+
+    let mut bc = blockchain_arc.write().await;
+    let mut queued = 0usize;
+    for tx in mint_txs {
+        if let Err(e) = bc.add_pending_transaction(tx) {
+            warn!("🪙 Failed to enqueue backfill TokenMint tx: {}", e);
+        } else {
+            queued += 1;
+        }
+    }
+
+    if queued == 0 {
+        info!("🪙 No SOV backfill transactions queued");
+        return Ok(());
+    }
+
+    let is_genesis_node = bc.height == 0;
+    if can_mine && is_genesis_node {
+        if let Err(e) =
+            crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await
+        {
+            warn!("🪙 Failed to mine SOV backfill block: {}", e);
+        } else {
+            info!("🪙 Mined SOV backfill block with {} TokenMint txs", queued);
+        }
+    } else if can_mine {
+        info!("🪙 Synced chain: deferring SOV backfill to leader's mining loop");
+    } else {
+        info!(
+            "🪙 Observer node: skipping startup mine for SOV backfill (validator will broadcast)"
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_run_identity_blockchain_migration;
+
+    #[test]
+    fn identity_blockchain_migration_requires_mining_capability() {
+        assert!(should_run_identity_blockchain_migration(true, true));
+        assert!(!should_run_identity_blockchain_migration(true, false));
+        assert!(!should_run_identity_blockchain_migration(false, true));
+        assert!(!should_run_identity_blockchain_migration(false, false));
+    }
 }
