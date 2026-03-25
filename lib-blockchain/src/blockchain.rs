@@ -5790,8 +5790,7 @@ impl Blockchain {
     /// InitCbeToken transaction is a block-level error.
     pub fn process_init_cbe_token_transactions(&mut self, block: &Block) -> Result<()> {
         for tx in &block.transactions {
-            if tx.transaction_type
-                != crate::types::transaction_type::TransactionType::InitCbeToken
+            if tx.transaction_type != crate::types::transaction_type::TransactionType::InitCbeToken
             {
                 continue;
             }
@@ -5835,9 +5834,7 @@ impl Blockchain {
                     &performance_pk,
                     &strategic_pk,
                 )
-                .map_err(|e| {
-                    anyhow::anyhow!("InitCbeToken tx {} failed: {:?}", tx_hash_hex, e)
-                })?;
+                .map_err(|e| anyhow::anyhow!("InitCbeToken tx {} failed: {:?}", tx_hash_hex, e))?;
 
             info!(
                 "CBE token initialized at height {} (tx {})",
@@ -5912,11 +5909,7 @@ impl Blockchain {
                     block.header.height,
                 )
                 .map_err(|e| {
-                    anyhow::anyhow!(
-                        "CreateEmploymentContract tx {} failed: {}",
-                        tx_hash_hex,
-                        e
-                    )
+                    anyhow::anyhow!("CreateEmploymentContract tx {} failed: {}", tx_hash_hex, e)
                 })?;
 
             info!(
@@ -5963,9 +5956,7 @@ impl Blockchain {
             let payment = self
                 .employment_registry
                 .process_payroll(contract_id, block.header.height)
-                .map_err(|e| {
-                    anyhow::anyhow!("ProcessPayroll tx {} failed: {}", tx_hash_hex, e)
-                })?;
+                .map_err(|e| anyhow::anyhow!("ProcessPayroll tx {} failed: {}", tx_hash_hex, e))?;
 
             // Skip zero-net payments (nothing to transfer)
             if payment.net_amount == 0 {
@@ -5977,15 +5968,12 @@ impl Blockchain {
             }
 
             // Transfer net_amount CBE from compensation pool → employee
-            let comp_key_id = self
-                .cbe_token
-                .compensation_pool_key_id()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "ProcessPayroll tx {}: CBE token not initialized (no compensation pool)",
-                        tx_hash_hex
-                    )
-                })?;
+            let comp_key_id = self.cbe_token.compensation_pool_key_id().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "ProcessPayroll tx {}: CBE token not initialized (no compensation pool)",
+                    tx_hash_hex
+                )
+            })?;
 
             let comp_caller = PublicKey {
                 dilithium_pk: vec![],
@@ -6038,11 +6026,24 @@ impl Blockchain {
                 continue;
             }
             if let Some(data) = tx.record_on_ramp_trade_data() {
+                if self.onramp_state.has_equivalent_trade(
+                    data.epoch_id,
+                    data.cbe_amount,
+                    data.usdc_amount,
+                    data.traded_at,
+                ) {
+                    warn!(
+                        "Ignoring duplicate OnRampTrade at height {} (epoch {}, cbe={}, usdc={}, traded_at={})",
+                        block.header.height, data.epoch_id, data.cbe_amount, data.usdc_amount, data.traded_at
+                    );
+                    continue;
+                }
                 let trade = crate::onramp::OnRampTrade {
                     block_height: block.header.height,
                     epoch_id: data.epoch_id,
                     cbe_amount: data.cbe_amount,
                     usdc_amount: data.usdc_amount,
+                    traded_at: data.traded_at,
                 };
                 self.onramp_state.record_trade(trade);
                 info!(
@@ -6683,12 +6684,16 @@ impl Blockchain {
                     } else if is_cbe {
                         // CBE token transfer — routed to CbeToken contract (vesting-aware)
                         if sender_pk.key_id != transfer.from {
-                            return Err(anyhow::anyhow!("TokenTransfer CBE sender key_id mismatch"));
+                            return Err(anyhow::anyhow!(
+                                "TokenTransfer CBE sender key_id mismatch"
+                            ));
                         }
 
                         let recipient_pk_bytes = self
                             .resolve_public_key_by_key_id(&transfer.to)
-                            .ok_or_else(|| anyhow::anyhow!("TokenTransfer CBE recipient not found"))?;
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("TokenTransfer CBE recipient not found")
+                            })?;
                         let recipient_pk = PublicKey::new(recipient_pk_bytes);
 
                         let ctx = crate::contracts::executor::ExecutionContext::new(
@@ -13984,7 +13989,10 @@ mod oracle_storage_migration_tests {
         let loaded = Blockchain::load_from_file(&path).expect("load legacy v5 file");
         assert_eq!(loaded.onramp_state, bc.onramp_state);
         assert!(loaded.entity_registry.is_none());
-        assert!(loaded.cbe_token.is_initialized(), "legacy v5 loads must backfill CBE state");
+        assert!(
+            loaded.cbe_token.is_initialized(),
+            "legacy v5 loads must backfill CBE state"
+        );
     }
 
     #[test]
@@ -14018,7 +14026,10 @@ mod oracle_storage_migration_tests {
 
         #[allow(deprecated)]
         let loaded = Blockchain::load_from_file(&path).expect("load legacy v6 file");
-        assert!(loaded.cbe_token.is_initialized(), "legacy v6 loads must backfill CBE state");
+        assert!(
+            loaded.cbe_token.is_initialized(),
+            "legacy v6 loads must backfill CBE state"
+        );
     }
 
     #[test]
@@ -15114,7 +15125,10 @@ mod cbe_genesis_allocation_tests {
             .get_vesting_schedules(&operational_addr);
         assert_eq!(operational_schedules.len(), 1);
         assert_eq!(operational_schedules[0].pool, VestingPool::Operational);
-        assert_eq!(operational_schedules[0].total_amount, CBE_OPERATIONAL_TREASURY);
+        assert_eq!(
+            operational_schedules[0].total_amount,
+            CBE_OPERATIONAL_TREASURY
+        );
 
         // Performance should have vesting
         let performance_addr = PublicKey {
@@ -15127,7 +15141,10 @@ mod cbe_genesis_allocation_tests {
             .get_vesting_schedules(&performance_addr);
         assert_eq!(performance_schedules.len(), 1);
         assert_eq!(performance_schedules[0].pool, VestingPool::Performance);
-        assert_eq!(performance_schedules[0].total_amount, CBE_PERFORMANCE_INCENTIVES);
+        assert_eq!(
+            performance_schedules[0].total_amount,
+            CBE_PERFORMANCE_INCENTIVES
+        );
 
         // Strategic should have vesting
         let strategic_addr = PublicKey {
@@ -15227,11 +15244,18 @@ mod cbe_genesis_allocation_tests {
 
         // Create a fresh blockchain — cbe_token gets initialized via genesis path
         let blockchain = Blockchain::new().expect("create blockchain");
-        assert!(blockchain.cbe_token.is_initialized(), "must be initialized before save");
+        assert!(
+            blockchain.cbe_token.is_initialized(),
+            "must be initialized before save"
+        );
         let supply_before = blockchain.cbe_token.total_supply();
 
         // Compensation pool balance before save
-        let comp_addr = PublicKey { dilithium_pk: vec![], kyber_pk: vec![], key_id: [0x01; 32] };
+        let comp_addr = PublicKey {
+            dilithium_pk: vec![],
+            kyber_pk: vec![],
+            key_id: [0x01; 32],
+        };
         let comp_balance_before = blockchain.cbe_token.balance_of(&comp_addr);
 
         // Save to disk

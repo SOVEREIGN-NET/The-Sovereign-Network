@@ -1114,79 +1114,154 @@ impl Transaction {
     // -------------------------------------------------------------------------
 
     pub fn identity_data(&self) -> Option<&IdentityTransactionData> {
-        match &self.payload { TransactionPayload::Identity(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::Identity(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn wallet_data(&self) -> Option<&WalletTransactionData> {
-        match &self.payload { TransactionPayload::Wallet(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::Wallet(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn validator_data(&self) -> Option<&ValidatorTransactionData> {
-        match &self.payload { TransactionPayload::Validator(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::Validator(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn dao_proposal_data(&self) -> Option<&DaoProposalData> {
-        match &self.payload { TransactionPayload::DaoProposal(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::DaoProposal(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn dao_vote_data(&self) -> Option<&DaoVoteData> {
-        match &self.payload { TransactionPayload::DaoVote(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::DaoVote(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn dao_execution_data(&self) -> Option<&DaoExecutionData> {
-        match &self.payload { TransactionPayload::DaoExecution(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::DaoExecution(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn ubi_claim_data(&self) -> Option<&UbiClaimData> {
-        match &self.payload { TransactionPayload::UbiClaim(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::UbiClaim(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn profit_declaration_data(&self) -> Option<&ProfitDeclarationData> {
-        match &self.payload { TransactionPayload::ProfitDeclaration(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::ProfitDeclaration(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn token_transfer_data(&self) -> Option<&TokenTransferData> {
-        match &self.payload { TransactionPayload::TokenTransfer(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::TokenTransfer(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn token_mint_data(&self) -> Option<&TokenMintData> {
-        match &self.payload { TransactionPayload::TokenMint(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::TokenMint(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn governance_config_data(&self) -> Option<&GovernanceConfigUpdateData> {
-        match &self.payload { TransactionPayload::GovernanceConfigUpdate(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::GovernanceConfigUpdate(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn bonding_curve_deploy_data(&self) -> Option<&BondingCurveDeployData> {
-        match &self.payload { TransactionPayload::BondingCurveDeploy(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::BondingCurveDeploy(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn bonding_curve_buy_data(&self) -> Option<&BondingCurveBuyData> {
-        match &self.payload { TransactionPayload::BondingCurveBuy(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::BondingCurveBuy(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn bonding_curve_sell_data(&self) -> Option<&BondingCurveSellData> {
-        match &self.payload { TransactionPayload::BondingCurveSell(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::BondingCurveSell(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn bonding_curve_graduate_data(&self) -> Option<&BondingCurveGraduateData> {
-        match &self.payload { TransactionPayload::BondingCurveGraduate(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::BondingCurveGraduate(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn oracle_committee_update_data(&self) -> Option<&OracleCommitteeUpdateData> {
-        match &self.payload { TransactionPayload::OracleCommitteeUpdate(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::OracleCommitteeUpdate(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn oracle_config_update_data(&self) -> Option<&OracleConfigUpdateData> {
-        match &self.payload { TransactionPayload::OracleConfigUpdate(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::OracleConfigUpdate(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn oracle_attestation_data(&self) -> Option<&OracleAttestationData> {
-        match &self.payload { TransactionPayload::OracleAttestation(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::OracleAttestation(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn cancel_oracle_update_data(&self) -> Option<&CancelOracleUpdateData> {
-        match &self.payload { TransactionPayload::CancelOracleUpdate(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::CancelOracleUpdate(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn init_entity_registry_data(&self) -> Option<&InitEntityRegistryData> {
-        match &self.payload { TransactionPayload::InitEntityRegistry(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::InitEntityRegistry(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn record_on_ramp_trade_data(&self) -> Option<&RecordOnRampTradeData> {
-        match &self.payload { TransactionPayload::RecordOnRampTrade(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::RecordOnRampTrade(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn treasury_allocation_data(&self) -> Option<&TreasuryAllocationData> {
-        match &self.payload { TransactionPayload::TreasuryAllocation(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::TreasuryAllocation(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn init_cbe_token_data(&self) -> Option<&InitCbeTokenData> {
-        match &self.payload { TransactionPayload::InitCbeToken(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::InitCbeToken(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn create_employment_contract_data(&self) -> Option<&CreateEmploymentContractData> {
-        match &self.payload { TransactionPayload::CreateEmploymentContract(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::CreateEmploymentContract(d) => Some(d),
+            _ => None,
+        }
     }
     pub fn process_payroll_data(&self) -> Option<&ProcessPayrollData> {
-        match &self.payload { TransactionPayload::ProcessPayroll(d) => Some(d), _ => None }
+        match &self.payload {
+            TransactionPayload::ProcessPayroll(d) => Some(d),
+            _ => None,
+        }
     }
 
     /// Get the size of the transaction in bytes
@@ -1423,11 +1498,7 @@ impl Transaction {
         }
     }
 
-    pub fn new_process_payroll(
-        chain_id: u8,
-        contract_id: [u8; 32],
-        signature: Signature,
-    ) -> Self {
+    pub fn new_process_payroll(chain_id: u8, contract_id: [u8; 32], signature: Signature) -> Self {
         let data = ProcessPayrollData { contract_id };
         Transaction {
             version: TX_VERSION_V8,
@@ -1880,6 +1951,7 @@ pub struct InitEntityRegistryData {
     /// Bootstrap Council threshold approvals. Each signer has signed
     /// `compute_approval_preimage(38, ApprovalDomain::BootstrapCouncil, canonical_payload_bytes)`
     /// where `canonical_payload_bytes` is bincode of the four fields above.
+    #[serde(default)]
     pub approvals: crate::transaction::threshold_approval::ThresholdApprovalSet,
 }
 

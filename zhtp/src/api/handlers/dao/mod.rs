@@ -2720,7 +2720,7 @@ fn dao_entry_json(entry: DAOEntry, dao_id: [u8; 32]) -> serde_json::Value {
 // #1895 — Async Proposal API (threshold-approval multi-signer flow)
 // =============================================================================
 
-use lib_blockchain::transaction::{Approval, ThresholdApprovalSet};
+use lib_blockchain::transaction::{Approval, ApprovalDomain, ThresholdApprovalSet};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
@@ -2733,6 +2733,8 @@ pub struct PendingProposal {
     pub payload_bytes: Vec<u8>,
     /// The `u8` discriminant of the target `TransactionType`.
     pub tx_type: u8,
+    /// The approval domain implied by the target threshold transaction type.
+    pub domain: ApprovalDomain,
     /// Accumulated approvals (each validated before insertion).
     pub approvals: Vec<Approval>,
     /// Unix timestamp when this proposal was created.
@@ -2773,6 +2775,33 @@ fn current_unix_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
+fn approval_domain_for_tx_type(tx_type: u8) -> Result<ApprovalDomain> {
+    match tx_type {
+        x if x
+            == lib_blockchain::types::transaction_type::TransactionType::InitEntityRegistry
+                as u8 =>
+        {
+            Ok(ApprovalDomain::BootstrapCouncil)
+        }
+        x if x
+            == lib_blockchain::types::transaction_type::TransactionType::RecordOnRampTrade
+                as u8 =>
+        {
+            Ok(ApprovalDomain::OracleCommittee)
+        }
+        x if x
+            == lib_blockchain::types::transaction_type::TransactionType::TreasuryAllocation
+                as u8 =>
+        {
+            Ok(ApprovalDomain::BootstrapCouncil)
+        }
+        _ => Err(anyhow::anyhow!(
+            "Unsupported threshold-approval tx_type: {}",
+            tx_type
+        )),
+    }
+}
+
 impl DaoHandler {
     /// `POST /api/v1/dao/proposal/payload`
     ///
@@ -2781,13 +2810,12 @@ impl DaoHandler {
         &self,
         request: &lib_protocols::types::ZhtpRequest,
     ) -> Result<lib_protocols::types::ZhtpResponse> {
-        let req: CreateProposalPayloadRequest =
-            serde_json::from_slice(&request.body).map_err(|e| {
-                anyhow::anyhow!("Invalid request body: {}", e)
-            })?;
+        let req: CreateProposalPayloadRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
         let payload_bytes = hex::decode(&req.payload_hex)
             .map_err(|e| anyhow::anyhow!("Invalid payload_hex: {}", e))?;
+        let domain = approval_domain_for_tx_type(req.tx_type)?;
 
         // Derive a stable proposal_id = blake3(tx_type || payload)
         let id: [u8; 32] = {
@@ -2801,6 +2829,7 @@ impl DaoHandler {
             id,
             payload_bytes,
             tx_type: req.tx_type,
+            domain,
             approvals: Vec::new(),
             created_at: current_unix_timestamp(),
         };
@@ -2823,7 +2852,7 @@ impl DaoHandler {
         request: &lib_protocols::types::ZhtpRequest,
         proposal_id_hex: &str,
     ) -> Result<lib_protocols::types::ZhtpResponse> {
-        use lib_blockchain::transaction::{compute_approval_preimage, ApprovalDomain};
+        use lib_blockchain::transaction::compute_approval_preimage;
         use lib_crypto::verification::verify_signature;
 
         let id_bytes = hex::decode(proposal_id_hex)
@@ -2834,10 +2863,8 @@ impl DaoHandler {
         let mut id = [0u8; 32];
         id.copy_from_slice(&id_bytes);
 
-        let req: AddApprovalRequest =
-            serde_json::from_slice(&request.body).map_err(|e| {
-                anyhow::anyhow!("Invalid request body: {}", e)
-            })?;
+        let req: AddApprovalRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
         let pk_bytes = hex::decode(&req.public_key_hex)
             .map_err(|e| anyhow::anyhow!("Invalid public_key_hex: {}", e))?;
@@ -2845,23 +2872,19 @@ impl DaoHandler {
             .map_err(|e| anyhow::anyhow!("Invalid signature_hex: {}", e))?;
 
         let algorithm = match req.algorithm.as_deref().unwrap_or("Dilithium5") {
-            "Dilithium2" => lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
+            "Dilithium2" => {
+                lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium2
+            }
             _ => lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium5,
         };
 
         let mut store = PENDING_PROPOSALS.write().await;
-        let proposal = store.get_mut(&id).ok_or_else(|| {
-            anyhow::anyhow!("Proposal not found: {}", proposal_id_hex)
-        })?;
+        let proposal = store
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("Proposal not found: {}", proposal_id_hex))?;
 
-        // Compute preimage for this proposal
-        // We use BootstrapCouncil as a default; callers that need OracleCommittee
-        // should pass the domain in the approval request body (future enhancement).
-        let preimage = compute_approval_preimage(
-            proposal.tx_type,
-            &ApprovalDomain::BootstrapCouncil,
-            &proposal.payload_bytes,
-        );
+        let preimage =
+            compute_approval_preimage(proposal.tx_type, &proposal.domain, &proposal.payload_bytes);
 
         // Verify the signature
         match verify_signature(&preimage, &sig_bytes, &pk_bytes) {
@@ -2874,8 +2897,15 @@ impl DaoHandler {
         let key_id = lib_crypto::hashing::hash_blake3(&pk_bytes);
 
         // Check for duplicate
-        if proposal.approvals.iter().any(|a| a.public_key.key_id == key_id) {
-            return Err(anyhow::anyhow!("Duplicate approval from key_id {}", hex::encode(key_id)));
+        if proposal
+            .approvals
+            .iter()
+            .any(|a| a.public_key.key_id == key_id)
+        {
+            return Err(anyhow::anyhow!(
+                "Duplicate approval from key_id {}",
+                hex::encode(key_id)
+            ));
         }
 
         let approval = Approval {
@@ -2905,7 +2935,7 @@ impl DaoHandler {
         _request: &lib_protocols::types::ZhtpRequest,
         proposal_id_hex: &str,
     ) -> Result<lib_protocols::types::ZhtpResponse> {
-        use lib_blockchain::transaction::{ApprovalDomain, ThresholdApprovalSet};
+        use lib_blockchain::transaction::ThresholdApprovalSet;
 
         let id_bytes = hex::decode(proposal_id_hex)
             .map_err(|e| anyhow::anyhow!("Invalid proposal_id: {}", e))?;
@@ -2916,12 +2946,12 @@ impl DaoHandler {
         id.copy_from_slice(&id_bytes);
 
         let store = PENDING_PROPOSALS.read().await;
-        let proposal = store.get(&id).ok_or_else(|| {
-            anyhow::anyhow!("Proposal not found: {}", proposal_id_hex)
-        })?;
+        let proposal = store
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("Proposal not found: {}", proposal_id_hex))?;
 
         let approval_set = ThresholdApprovalSet {
-            domain: ApprovalDomain::BootstrapCouncil,
+            domain: proposal.domain.clone(),
             approvals: proposal.approvals.clone(),
         };
 
@@ -2952,10 +2982,8 @@ impl DaoHandler {
             signed_tx: String,
         }
 
-        let req: SubmitRequest =
-            serde_json::from_slice(&request.body).map_err(|e| {
-                anyhow::anyhow!("Invalid request body: {}", e)
-            })?;
+        let req: SubmitRequest = serde_json::from_slice(&request.body)
+            .map_err(|e| anyhow::anyhow!("Invalid request body: {}", e))?;
 
         let tx = self.decode_signed_tx_raw(&req.signed_tx)?;
 
@@ -3190,13 +3218,16 @@ impl ZhtpRequestHandler for DaoHandler {
 
 #[cfg(test)]
 mod tests {
-    use super::{CastVoteRequest, CreateProposalRequest, DAOType, DaoHandler};
+    use super::{
+        approval_domain_for_tx_type, CastVoteRequest, CreateProposalRequest, DAOType, DaoHandler,
+    };
     use lib_blockchain::contracts::{derive_dao_id, DAORegistry, TokenContract};
     use lib_blockchain::integration::crypto_integration::{
         PublicKey, Signature, SignatureAlgorithm,
     };
     use lib_blockchain::transaction::{
-        DaoExecutionData, OracleCommitteeUpdateData, OracleConfigUpdateData, Transaction,
+        ApprovalDomain, DaoExecutionData, OracleCommitteeUpdateData, OracleConfigUpdateData,
+        Transaction,
     };
     use lib_blockchain::types::Hash as BcHash;
     use lib_blockchain::{Blockchain, ValidatorInfo};
@@ -3576,5 +3607,35 @@ mod tests {
         assert_eq!(entry_factory.class, DAOType::FP);
         assert_eq!(entry_factory.owner.key_id, [6u8; 32]);
         assert_eq!(entry_factory.created_at, 123);
+    }
+
+    #[test]
+    fn approval_domain_helper_maps_supported_threshold_tx_types() {
+        assert!(matches!(
+            approval_domain_for_tx_type(
+                lib_blockchain::types::transaction_type::TransactionType::InitEntityRegistry as u8
+            )
+            .unwrap(),
+            ApprovalDomain::BootstrapCouncil
+        ));
+        assert!(matches!(
+            approval_domain_for_tx_type(
+                lib_blockchain::types::transaction_type::TransactionType::RecordOnRampTrade as u8
+            )
+            .unwrap(),
+            ApprovalDomain::OracleCommittee
+        ));
+        assert!(matches!(
+            approval_domain_for_tx_type(
+                lib_blockchain::types::transaction_type::TransactionType::TreasuryAllocation as u8
+            )
+            .unwrap(),
+            ApprovalDomain::BootstrapCouncil
+        ));
+    }
+
+    #[test]
+    fn approval_domain_helper_rejects_unsupported_tx_type() {
+        assert!(approval_domain_for_tx_type(0).is_err());
     }
 }

@@ -4,14 +4,14 @@
 
 use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use crate::integration::zk_integration::is_valid_proof_structure;
-use crate::transaction::{
-    decode_bonding_curve_buy, decode_bonding_curve_sell, BONDING_CURVE_TX_PAYLOAD_LEN,
-};
 use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
 use crate::transaction::core::{
     IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
 };
 use crate::transaction::token_creation::TokenCreationPayloadV1;
+use crate::transaction::{
+    decode_bonding_curve_buy, decode_bonding_curve_sell, BONDING_CURVE_TX_PAYLOAD_LEN,
+};
 use crate::types::{transaction_type::TransactionType, ContractCall, ContractType, Hash};
 
 /// Transaction validation error types
@@ -1910,52 +1910,46 @@ impl<'a> StatefulTransactionValidator<'a> {
             initialized_at: data.initialized_at,
             initialized_at_height: data.initialized_at_height,
         };
-        let payload_bytes = bincode::serialize(&payload).map_err(|_| ValidationError::InvalidTransaction)?;
-        let preimage = compute_approval_preimage(TX_TYPE_BYTE, &ApprovalDomain::BootstrapCouncil, &payload_bytes);
+        let payload_bytes =
+            bincode::serialize(&payload).map_err(|_| ValidationError::InvalidTransaction)?;
+        let preimage = compute_approval_preimage(
+            TX_TYPE_BYTE,
+            &ApprovalDomain::BootstrapCouncil,
+            &payload_bytes,
+        );
 
-        // Only perform threshold validation when there are approvals in the set.
-        // If the approval set is empty this falls back to the legacy single-signer check below.
-        let has_approvals = !data.approvals.approvals.is_empty();
-        if has_approvals {
-            validate_threshold_approvals(
-                &data.approvals,
-                &preimage,
-                |pk_bytes| {
-                    blockchain
-                        .get_identity_by_public_key(pk_bytes)
-                        .map(|id| blockchain.is_council_member(&id.did))
-                        .unwrap_or(false)
-                },
-                blockchain.council_threshold as usize,
-            )
-            .map_err(|e| match e {
-                crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
-                    ValidationError::DuplicateSigner
-                }
-                crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
-                    ValidationError::InvalidApproval
-                }
-                crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
-                    ValidationError::Unauthorized
-                }
-                crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
-                    ValidationError::ThresholdNotMet
-                }
-            })?;
-        } else {
-            // Legacy path: validate the single transaction-level signature belongs to a council member
-            let signer_pk = &transaction.signature.public_key.dilithium_pk;
-            if signer_pk.is_empty() {
-                return Err(ValidationError::InvalidPublicKey);
-            }
-
-            let signer_identity = blockchain
-                .get_identity_by_public_key(signer_pk)
-                .ok_or(ValidationError::Unauthorized)?;
-            if !blockchain.is_council_member(&signer_identity.did) {
-                return Err(ValidationError::Unauthorized);
-            }
+        if data.approvals.domain != ApprovalDomain::BootstrapCouncil {
+            return Err(ValidationError::InvalidApproval);
         }
+        if data.approvals.approvals.is_empty() {
+            return Err(ValidationError::ThresholdNotMet);
+        }
+
+        validate_threshold_approvals(
+            &data.approvals,
+            &preimage,
+            |pk_bytes| {
+                blockchain
+                    .get_identity_by_public_key(pk_bytes)
+                    .map(|id| blockchain.is_council_member(&id.did))
+                    .unwrap_or(false)
+            },
+            blockchain.council_threshold as usize,
+        )
+        .map_err(|e| match e {
+            crate::transaction::threshold_approval::ThresholdError::DuplicateSigner(_) => {
+                ValidationError::DuplicateSigner
+            }
+            crate::transaction::threshold_approval::ThresholdError::InvalidSignature(_) => {
+                ValidationError::InvalidApproval
+            }
+            crate::transaction::threshold_approval::ThresholdError::UnauthorizedSigner(_) => {
+                ValidationError::Unauthorized
+            }
+            crate::transaction::threshold_approval::ThresholdError::ThresholdNotMet { .. } => {
+                ValidationError::ThresholdNotMet
+            }
+        })?;
 
         Ok(())
     }
@@ -2007,12 +2001,23 @@ impl<'a> StatefulTransactionValidator<'a> {
             usdc_amount: data.usdc_amount,
             traded_at: data.traded_at,
         };
-        let payload_bytes = bincode::serialize(&payload)
-            .map_err(|_| ValidationError::InvalidTransaction)?;
-        let preimage =
-            compute_approval_preimage(TX_TYPE_BYTE, &ApprovalDomain::OracleCommittee, &payload_bytes);
+        let payload_bytes =
+            bincode::serialize(&payload).map_err(|_| ValidationError::InvalidTransaction)?;
+        let preimage = compute_approval_preimage(
+            TX_TYPE_BYTE,
+            &ApprovalDomain::OracleCommittee,
+            &payload_bytes,
+        );
 
         let blockchain = self.blockchain.ok_or(ValidationError::InvalidTransaction)?;
+        if blockchain.onramp_state.has_equivalent_trade(
+            data.epoch_id,
+            data.cbe_amount,
+            data.usdc_amount,
+            data.traded_at,
+        ) {
+            return Err(ValidationError::DoubleSpend);
+        }
 
         // Use the oracle committee directly — members are stored as key_ids (blake3 of dilithium pk).
         let oracle_threshold = blockchain.oracle_state.committee.threshold() as usize;
@@ -2021,7 +2026,11 @@ impl<'a> StatefulTransactionValidator<'a> {
             &preimage,
             |pk_bytes| {
                 let key_id = crate::types::blake3_hash(pk_bytes).as_array();
-                blockchain.oracle_state.committee.members().contains(&key_id)
+                blockchain
+                    .oracle_state
+                    .committee
+                    .members()
+                    .contains(&key_id)
             },
             oracle_threshold,
         )
@@ -2113,8 +2122,8 @@ impl<'a> StatefulTransactionValidator<'a> {
             spending_category: &data.spending_category,
             proposal_id: data.proposal_id,
         };
-        let payload_bytes = bincode::serialize(&payload)
-            .map_err(|_| ValidationError::InvalidTransaction)?;
+        let payload_bytes =
+            bincode::serialize(&payload).map_err(|_| ValidationError::InvalidTransaction)?;
         let preimage = compute_approval_preimage(
             TX_TYPE_BYTE,
             &ApprovalDomain::BootstrapCouncil,
@@ -2933,7 +2942,13 @@ mod tests {
                 timestamp: 0,
             },
             memo: vec![],
-            payload: crate::transaction::TransactionPayload::TokenMint(crate::transaction::TokenMintData { token_id, to, amount, }),
+            payload: crate::transaction::TransactionPayload::TokenMint(
+                crate::transaction::TokenMintData {
+                    token_id,
+                    to,
+                    amount,
+                },
+            ),
         }
     }
 
@@ -2950,6 +2965,58 @@ mod tests {
             0,
             test_signature(signer),
         )
+    }
+
+    fn create_init_entity_registry_threshold_transaction_for_test(
+        signers: &[lib_crypto::KeyPair],
+        cbe_treasury: PublicKey,
+        nonprofit_treasury: PublicKey,
+    ) -> Transaction {
+        use crate::transaction::threshold_approval::{
+            compute_approval_preimage, Approval, ApprovalDomain, ThresholdApprovalSet,
+        };
+
+        #[derive(serde::Serialize)]
+        struct CanonicalPayload<'a> {
+            cbe_treasury: &'a PublicKey,
+            nonprofit_treasury: &'a PublicKey,
+            initialized_at: u64,
+            initialized_at_height: u64,
+        }
+
+        let payload = CanonicalPayload {
+            cbe_treasury: &cbe_treasury,
+            nonprofit_treasury: &nonprofit_treasury,
+            initialized_at: 123,
+            initialized_at_height: 0,
+        };
+        let payload_bytes = bincode::serialize(&payload).unwrap();
+        let preimage =
+            compute_approval_preimage(38, &ApprovalDomain::BootstrapCouncil, &payload_bytes);
+        let approvals = signers
+            .iter()
+            .map(|signer| {
+                let signature = signer.sign(&preimage).unwrap();
+                Approval {
+                    public_key: signer.public_key.clone(),
+                    algorithm: signature.algorithm,
+                    signature: signature.signature,
+                }
+            })
+            .collect();
+
+        let mut tx = create_init_entity_registry_transaction_for_test(
+            &signers[0].public_key,
+            cbe_treasury,
+            nonprofit_treasury,
+        );
+        if let crate::transaction::TransactionPayload::InitEntityRegistry(data) = &mut tx.payload {
+            data.approvals = ThresholdApprovalSet {
+                domain: ApprovalDomain::BootstrapCouncil,
+                approvals,
+            };
+        }
+        tx
     }
 
     fn register_council_identity(
@@ -3346,35 +3413,21 @@ mod tests {
     }
 
     #[test]
-    fn test_init_entity_registry_rejects_non_council_signer() {
+    fn test_init_entity_registry_rejects_empty_approval_set() {
         let mut blockchain = crate::blockchain::Blockchain::default();
         let council_signer = test_public_key(46);
         register_council_identity(&mut blockchain, "did:zhtp:council", &council_signer);
-
-        let attacker = test_public_key(47);
-        blockchain.identity_registry.insert(
-            "did:zhtp:attacker".to_string(),
-            IdentityTransactionData::new(
-                "did:zhtp:attacker".to_string(),
-                "Attacker".to_string(),
-                attacker.dilithium_pk.clone(),
-                vec![4, 5, 6],
-                "human".to_string(),
-                Hash::from([8u8; 32]),
-                0,
-                0,
-            ),
-        );
+        blockchain.council_threshold = 1;
 
         let tx = create_init_entity_registry_transaction_for_test(
-            &attacker,
+            &council_signer,
             test_public_key(48),
             test_public_key(49),
         );
         let validator = StatefulTransactionValidator::new(&blockchain);
         assert!(matches!(
             validator.validate_init_entity_registry(&tx),
-            Err(ValidationError::Unauthorized)
+            Err(ValidationError::ThresholdNotMet)
         ));
     }
 
@@ -3406,16 +3459,41 @@ mod tests {
     #[test]
     fn test_init_entity_registry_accepts_council_member_with_valid_payload() {
         let mut blockchain = crate::blockchain::Blockchain::default();
-        let signer = test_public_key(55);
-        register_council_identity(&mut blockchain, "did:zhtp:council", &signer);
+        blockchain.council_threshold = 1;
+        let signer = lib_crypto::KeyPair::generate().unwrap();
+        register_council_identity(&mut blockchain, "did:zhtp:council", &signer.public_key);
 
-        let tx = create_init_entity_registry_transaction_for_test(
-            &signer,
+        let tx = create_init_entity_registry_threshold_transaction_for_test(
+            &[signer],
             test_public_key(56),
             test_public_key(57),
         );
         let validator = StatefulTransactionValidator::new(&blockchain);
         assert!(validator.validate_init_entity_registry(&tx).is_ok());
+    }
+
+    #[test]
+    fn test_record_on_ramp_trade_rejects_duplicate_trade_payload() {
+        use crate::transaction::threshold_approval::ApprovalDomain;
+
+        let mut blockchain = crate::blockchain::Blockchain::default();
+        blockchain
+            .onramp_state
+            .record_trade(crate::onramp::OnRampTrade {
+                block_height: 10,
+                epoch_id: 1,
+                cbe_amount: 100,
+                usdc_amount: 200,
+                traded_at: 1_000_000,
+            });
+        let validator = StatefulTransactionValidator::new(&blockchain);
+
+        let tx = make_record_on_ramp_trade_tx(100, 200, ApprovalDomain::OracleCommittee);
+        let result = validator.validate_record_on_ramp_trade(&tx);
+        assert!(
+            matches!(result, Err(ValidationError::DoubleSpend)),
+            "expected DoubleSpend for duplicate trade payload, got: {result:?}"
+        );
     }
 
     #[test]
@@ -3520,7 +3598,15 @@ mod tests {
                 timestamp: 0,
             },
             memo: vec![],
-            payload: crate::transaction::TransactionPayload::TokenTransfer(crate::transaction::TokenTransferData { token_id: [0u8; 32], from: from_id, to: to_id, amount: 1_000, nonce: 0, }),
+            payload: crate::transaction::TransactionPayload::TokenTransfer(
+                crate::transaction::TokenTransferData {
+                    token_id: [0u8; 32],
+                    from: from_id,
+                    to: to_id,
+                    amount: 1_000,
+                    nonce: 0,
+                },
+            ),
         }
     }
 
@@ -3723,8 +3809,8 @@ mod tests {
         usdc_amount: u128,
         domain: crate::transaction::threshold_approval::ApprovalDomain,
     ) -> Transaction {
-        use crate::transaction::threshold_approval::ThresholdApprovalSet;
         use crate::transaction::core::{RecordOnRampTradeData, TX_VERSION_V8};
+        use crate::transaction::threshold_approval::ThresholdApprovalSet;
 
         let sender = test_public_key(1);
         Transaction {
@@ -3736,13 +3822,15 @@ mod tests {
             fee: 0,
             signature: test_signature(&sender),
             memo: vec![],
-            payload: crate::transaction::TransactionPayload::RecordOnRampTrade(RecordOnRampTradeData {
-                epoch_id: 1,
-                cbe_amount,
-                usdc_amount,
-                traded_at: 1_000_000,
-                approvals: ThresholdApprovalSet::new(domain),
-            }),
+            payload: crate::transaction::TransactionPayload::RecordOnRampTrade(
+                RecordOnRampTradeData {
+                    epoch_id: 1,
+                    cbe_amount,
+                    usdc_amount,
+                    traded_at: 1_000_000,
+                    approvals: ThresholdApprovalSet::new(domain),
+                },
+            ),
         }
     }
 
@@ -3908,8 +3996,8 @@ mod tests {
         amount: u64,
         domain: crate::transaction::threshold_approval::ApprovalDomain,
     ) -> Transaction {
-        use crate::transaction::threshold_approval::ThresholdApprovalSet;
         use crate::transaction::core::{TreasuryAllocationData, TX_VERSION_V8};
+        use crate::transaction::threshold_approval::ThresholdApprovalSet;
 
         let sender = test_public_key(1);
         Transaction {
@@ -3921,14 +4009,16 @@ mod tests {
             fee: 0,
             signature: test_signature(&sender),
             memo: vec![],
-            payload: crate::transaction::TransactionPayload::TreasuryAllocation(TreasuryAllocationData {
-                source_treasury_key_id,
-                destination_key_id,
-                amount,
-                spending_category: "infrastructure".to_string(),
-                proposal_id: [0xAA; 32],
-                approvals: ThresholdApprovalSet::new(domain),
-            }),
+            payload: crate::transaction::TransactionPayload::TreasuryAllocation(
+                TreasuryAllocationData {
+                    source_treasury_key_id,
+                    destination_key_id,
+                    amount,
+                    spending_category: "infrastructure".to_string(),
+                    proposal_id: [0xAA; 32],
+                    approvals: ThresholdApprovalSet::new(domain),
+                },
+            ),
         }
     }
 
@@ -4065,8 +4155,8 @@ mod tests {
 
     #[test]
     fn test_treasury_allocation_rejects_with_uninitialized_entity_registry() {
-        use crate::transaction::threshold_approval::ApprovalDomain;
         use crate::contracts::governance::EntityRegistry;
+        use crate::transaction::threshold_approval::ApprovalDomain;
 
         let mut blockchain = crate::blockchain::Blockchain::default();
         // Set an uninitialized registry
@@ -4088,8 +4178,8 @@ mod tests {
 
     #[test]
     fn test_treasury_allocation_rejects_wrong_source_key_id() {
-        use crate::transaction::threshold_approval::ApprovalDomain;
         use crate::contracts::governance::EntityRegistry;
+        use crate::transaction::threshold_approval::ApprovalDomain;
 
         // Initialize registry with a known CBE treasury public key
         let cbe_pk = PublicKey::new(vec![0xCBu8; 2592]);
@@ -4120,8 +4210,8 @@ mod tests {
 
     #[test]
     fn test_treasury_allocation_correct_source_proceeds_to_threshold_check() {
-        use crate::transaction::threshold_approval::ApprovalDomain;
         use crate::contracts::governance::EntityRegistry;
+        use crate::transaction::threshold_approval::ApprovalDomain;
 
         // Initialize registry with a known CBE treasury public key
         let cbe_pk = PublicKey::new(vec![0xCBu8; 2592]);
