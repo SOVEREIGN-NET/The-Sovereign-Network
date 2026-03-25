@@ -250,6 +250,24 @@ impl BlockchainComponent {
         TransactionBuilder::create_reward_transaction(node_id, reward_amount, environment).await
     }
 
+    fn sync_peers_for_round(
+        configured_bootstrap_peers: &[String],
+        discovered_peers: &[String],
+    ) -> Vec<String> {
+        let mut peers = Vec::new();
+
+        for peer in configured_bootstrap_peers
+            .iter()
+            .chain(discovered_peers.iter())
+        {
+            if !peer.trim().is_empty() && !peers.contains(peer) {
+                peers.push(peer.clone());
+            }
+        }
+
+        peers
+    }
+
     /// Periodic catch-up loop for Observer nodes.
     ///
     /// Runs every 30 seconds. For each bootstrap peer, opens a QUIC connection,
@@ -273,8 +291,18 @@ impl BlockchainComponent {
 
             let local_height = bc_arc.read().await.height;
 
+            let discovered_peers = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers()
+                .await
+                .unwrap_or_default();
+            let sync_peers = Self::sync_peers_for_round(&bootstrap_peers, &discovered_peers);
+
+            if sync_peers.is_empty() {
+                debug!("observer_sync: no bootstrap peers available for this round");
+                continue;
+            }
+
             // Try each bootstrap peer until one succeeds.
-            'peers: for peer_quic_addr in &bootstrap_peers {
+            'peers: for peer_quic_addr in &sync_peers {
                 // Create a throwaway identity for the QUIC handshake.
                 let ts = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -877,4 +905,24 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn sync_peers_for_round_merges_and_deduplicates_sources() {
+        let peers = BlockchainComponent::sync_peers_for_round(
+            &["127.0.0.1:9334".to_string(), "127.0.0.1:9335".to_string()],
+            &[
+                "127.0.0.1:9335".to_string(),
+                "127.0.0.1:9336".to_string(),
+                "".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            peers,
+            vec![
+                "127.0.0.1:9334".to_string(),
+                "127.0.0.1:9335".to_string(),
+                "127.0.0.1:9336".to_string()
+            ]
+        );
+    }
 }
