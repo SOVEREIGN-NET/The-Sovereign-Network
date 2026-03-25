@@ -908,7 +908,9 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
         }
 
         let committed_block: lib_blockchain::Block = bincode::deserialize(&proposal.block_data)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize finalized block artifact: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to deserialize finalized block artifact: {}", e)
+            })?;
 
         if committed_block.header.height != proposal.height {
             return Err(anyhow::anyhow!(
@@ -919,9 +921,7 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
             .into());
         }
 
-        if committed_block.header.previous_block_hash.as_array()
-            != proposal.previous_hash.0
-        {
+        if committed_block.header.previous_block_hash.as_array() != proposal.previous_hash.0 {
             return Err(anyhow::anyhow!(
                 "Finalized block artifact previous_hash mismatch at height {}",
                 proposal.height
@@ -1153,8 +1153,9 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
         )
         .map_err(|e| format!("Block creation failed: {}", e))?;
 
-        let mined_block = lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)
-            .map_err(|e| format!("Block mining failed: {}", e))?;
+        let mined_block =
+            lib_blockchain::block::creation::mine_block_with_config(block, &mining_config)
+                .map_err(|e| format!("Block mining failed: {}", e))?;
 
         let tx_data = bincode::serialize(&mined_block)
             .map_err(|e| format!("Block serialization failed: {}", e))?;
@@ -1424,7 +1425,6 @@ impl ConsensusComponent {
     pub async fn get_validator_manager(&self) -> Arc<RwLock<ValidatorManager>> {
         self.validator_manager.clone()
     }
-
 }
 
 async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto::KeyPair)> {
@@ -1729,53 +1729,7 @@ impl Component for ConsensusComponent {
                     .collect::<Vec<_>>()
             };
 
-            // Migration/compatibility path: validators were historically seeded from bootstrap
-            // config into ValidatorManager only (not written as on-chain ValidatorData
-            // transactions and not persisted to Sled). When the validator_registry is empty
-            // after chain replay, we seed it from the bootstrap config so consensus can start.
-            //
-            // NOTE: This seeding is in-memory only and may run on every node startup while the
-            // chain has no active validators. Different nodes with different bootstrap configs
-            // can therefore observe different in-memory validator sets until proper on-chain
-            // validator registration is deployed and used instead of this path.
-            if initial.is_empty() && !self.bootstrap_validators.is_empty() {
-                info!(
-                    "validator_registry empty after chain load — non-persistent bootstrap seeding of {} validator(s) from config",
-                    self.bootstrap_validators.len()
-                );
-                let mut bc = blockchain.write().await;
-                for bv in &self.bootstrap_validators {
-                    let consensus_key = decode_bootstrap_consensus_key(&bv.consensus_key)
-                        .unwrap_or_else(|| derive_key_from_identity(&bv.identity_id, b"consensus"));
-                    let vi = lib_blockchain::ValidatorInfo {
-                        identity_id: bv.identity_id.clone(),
-                        stake: bv.stake.max(1),
-                        storage_provided: bv.storage_provided,
-                        consensus_key,
-                        networking_key: derive_key_from_identity(&bv.identity_id, b"networking"),
-                        rewards_key: derive_key_from_identity(&bv.identity_id, b"rewards"),
-                        network_address: bv.endpoints.first().cloned().unwrap_or_default(),
-                        commission_rate: (bv.commission_rate.min(100)) as u8,
-                        status: "active".to_string(),
-                        registered_at: 0,
-                        last_activity: 0,
-                        blocks_validated: 0,
-                        slash_count: 0,
-                        admission_source: lib_blockchain::ADMISSION_SOURCE_BOOTSTRAP_GENESIS
-                            .to_string(),
-                        governance_proposal_id: None,
-                        oracle_key_id: None,
-                    };
-                    bc.validator_registry
-                        .insert(bv.identity_id.clone(), vi);
-                }
-                bc.get_active_validators()
-                    .into_iter()
-                    .map(|v| v.clone())
-                    .collect()
-            } else {
-                initial
-            }
+            initial
         };
 
         if active_validators.is_empty() {
@@ -2277,9 +2231,11 @@ mod tests {
     #[test]
     fn test_block_serialization_contract_for_bft_consensus() {
         use lib_blockchain::block::creation::{create_block, mine_block};
-        
+
         // Create a block with the same API used by get_pending_transactions
-        use lib_blockchain::integration::crypto_integration::{PublicKey as BcPublicKey, Signature as BcSignature, SignatureAlgorithm};
+        use lib_blockchain::integration::crypto_integration::{
+            PublicKey as BcPublicKey, Signature as BcSignature, SignatureAlgorithm,
+        };
         let sig = BcSignature {
             signature: vec![0u8; 64],
             public_key: BcPublicKey::new(vec![0u8; 2592]),
@@ -2287,35 +2243,33 @@ mod tests {
             timestamp: 0,
         };
         let tx = lib_blockchain::Transaction::new(vec![], vec![], 0, sig, vec![]);
-        
+
         let previous_hash = lib_blockchain::Hash::zero();
         let height = 42;
         let difficulty = lib_blockchain::Difficulty::minimum(); // Use minimum difficulty for testing
-        
-        let block = create_block(
-            vec![tx],
-            previous_hash,
-            height,
-            difficulty,
-        ).expect("Block should be created");
-        
+
+        let block = create_block(vec![tx], previous_hash, height, difficulty)
+            .expect("Block should be created");
+
         // Mine the block (as done before BFT proposal)
-        let mined_block = mine_block(block, u64::MAX)
-            .expect("Block should be mined");
-        
+        let mined_block = mine_block(block, u64::MAX).expect("Block should be mined");
+
         // Serialize (as get_pending_transactions does for BFT proposal)
-        let block_data = bincode::serialize(&mined_block)
-            .expect("Block should serialize for BFT proposal");
-        
+        let block_data =
+            bincode::serialize(&mined_block).expect("Block should serialize for BFT proposal");
+
         // Deserialize (as commit_finalized_block does)
-        let committed_block: lib_blockchain::Block = bincode::deserialize(&block_data)
-            .expect("Block should deserialize for BFT commit");
-        
+        let committed_block: lib_blockchain::Block =
+            bincode::deserialize(&block_data).expect("Block should deserialize for BFT commit");
+
         // Verify the block data is preserved
         assert_eq!(committed_block.header.height, 42);
         assert_eq!(committed_block.transactions.len(), 1);
-        
+
         // Verify the mined block has valid PoW
-        assert!(committed_block.header.nonce > 0, "Mined block should have non-zero nonce");
+        assert!(
+            committed_block.header.nonce > 0,
+            "Mined block should have non-zero nonce"
+        );
     }
 }

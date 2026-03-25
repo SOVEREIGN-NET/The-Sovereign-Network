@@ -51,6 +51,12 @@ pub struct ThresholdApprovalSet {
     pub approvals: Vec<Approval>,
 }
 
+impl Default for ThresholdApprovalSet {
+    fn default() -> Self {
+        Self::new(ApprovalDomain::BootstrapCouncil)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Error type
 // ---------------------------------------------------------------------------
@@ -161,20 +167,23 @@ impl ThresholdApprovalSet {
         let mut seen: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
 
         for approval in &self.approvals {
-            let key_id = approval.public_key.key_id;
+            let pk_bytes = approval.public_key.as_bytes();
+            let signer_id = lib_crypto::hashing::hash_blake3(&pk_bytes);
 
             // Duplicate check
-            if !seen.insert(key_id) {
-                return Err(ThresholdError::DuplicateSigner(key_id));
+            if !seen.insert(signer_id) {
+                return Err(ThresholdError::DuplicateSigner(signer_id));
             }
 
-            let pk_bytes = approval.public_key.as_bytes();
+            if pk_bytes.is_empty() || approval.signature.len() == pk_bytes.len() {
+                return Err(ThresholdError::InvalidSignature(signer_id));
+            }
 
             // Cryptographic verification
             match verify_signature(preimage, &approval.signature, &pk_bytes) {
                 Ok(true) => {}
-                Ok(false) => return Err(ThresholdError::InvalidSignature(key_id)),
-                Err(_) => return Err(ThresholdError::InvalidSignature(key_id)),
+                Ok(false) => return Err(ThresholdError::InvalidSignature(signer_id)),
+                Err(_) => return Err(ThresholdError::InvalidSignature(signer_id)),
             }
         }
 
@@ -237,6 +246,7 @@ pub fn validate_threshold_approvals(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_crypto::KeyPair;
 
     fn make_domain() -> ApprovalDomain {
         ApprovalDomain::BootstrapCouncil
@@ -280,8 +290,7 @@ mod tests {
     fn test_empty_approval_set_threshold_not_met() {
         let set = ThresholdApprovalSet::new(make_domain());
         let preimage = compute_approval_preimage(38, &make_domain(), b"test");
-        let result =
-            validate_threshold_approvals(&set, &preimage, |_| true, 1);
+        let result = validate_threshold_approvals(&set, &preimage, |_| true, 1);
         assert_eq!(
             result,
             Err(ThresholdError::ThresholdNotMet { have: 0, need: 1 })
@@ -292,8 +301,7 @@ mod tests {
     fn test_threshold_zero_always_passes() {
         let set = ThresholdApprovalSet::new(make_domain());
         let preimage = compute_approval_preimage(38, &make_domain(), b"test");
-        let result =
-            validate_threshold_approvals(&set, &preimage, |_| true, 0);
+        let result = validate_threshold_approvals(&set, &preimage, |_| true, 0);
         assert!(result.is_ok());
     }
 
@@ -328,5 +336,58 @@ mod tests {
         let bytes = bincode::serialize(&domain).unwrap();
         let restored: ApprovalDomain = bincode::deserialize(&bytes).unwrap();
         assert_eq!(domain, restored);
+    }
+
+    #[test]
+    fn test_verify_all_rejects_duplicate_public_key_with_forged_key_ids() {
+        let signer = KeyPair::generate().unwrap();
+        let preimage = compute_approval_preimage(38, &make_domain(), b"duplicate-test");
+        let signature = signer.sign(&preimage).unwrap();
+        let algorithm = signature.algorithm.clone();
+
+        let mut forged_public_key = signer.public_key.clone();
+        forged_public_key.key_id = [0xAB; 32];
+
+        let set = ThresholdApprovalSet {
+            domain: make_domain(),
+            approvals: vec![
+                Approval {
+                    public_key: signer.public_key.clone(),
+                    algorithm: algorithm.clone(),
+                    signature: signature.signature.clone(),
+                },
+                Approval {
+                    public_key: forged_public_key,
+                    algorithm,
+                    signature: signature.signature,
+                },
+            ],
+        };
+
+        assert!(matches!(
+            set.verify_all(&preimage),
+            Err(ThresholdError::DuplicateSigner(_))
+        ));
+    }
+
+    #[test]
+    fn test_verify_all_rejects_placeholder_signature_shape() {
+        let signer = KeyPair::generate().unwrap();
+        let preimage =
+            compute_approval_preimage(39, &ApprovalDomain::OracleCommittee, b"shape-test");
+        let pk_len = signer.public_key.dilithium_pk.len();
+        let set = ThresholdApprovalSet {
+            domain: ApprovalDomain::OracleCommittee,
+            approvals: vec![Approval {
+                public_key: signer.public_key,
+                algorithm: SignatureAlgorithm::Dilithium5,
+                signature: vec![0u8; pk_len],
+            }],
+        };
+
+        assert!(matches!(
+            set.verify_all(&preimage),
+            Err(ThresholdError::InvalidSignature(_))
+        ));
     }
 }
