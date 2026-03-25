@@ -72,8 +72,6 @@ pub struct SledStore {
 
 /// Buffered changes for atomic commit
 struct PendingBatch {
-    blocks_by_height: Batch,
-    blocks_by_hash: Batch,
     utxos: Batch,
     accounts: Batch,
     token_balances: Batch,
@@ -94,8 +92,6 @@ struct PendingBatch {
 impl PendingBatch {
     fn new() -> Self {
         Self {
-            blocks_by_height: Batch::default(),
-            blocks_by_hash: Batch::default(),
             utxos: Batch::default(),
             accounts: Batch::default(),
             token_balances: Batch::default(),

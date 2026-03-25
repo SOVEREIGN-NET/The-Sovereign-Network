@@ -3,6 +3,7 @@
 //! Clean, minimal storage operations using lib-storage patterns
 
 use anyhow::Result;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -185,7 +186,8 @@ impl StorageHandler {
         let req_data: StoreRequest = serde_json::from_slice(&request.body)?;
 
         // Decode base64 data
-        let content = base64::decode(&req_data.data)
+        let content = base64::engine::general_purpose::STANDARD
+            .decode(&req_data.data)
             .map_err(|e| anyhow::anyhow!("Invalid base64 data: {}", e))?;
 
         // Validate content size (10MB limit)

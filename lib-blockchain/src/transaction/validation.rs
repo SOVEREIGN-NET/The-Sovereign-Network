@@ -3103,7 +3103,7 @@ mod tests {
         let tx = create_token_contract_transaction(&sender);
 
         // Signature validation is handled by stateless validator
-        let validator = TransactionValidator::new();
+        let _validator = TransactionValidator::new();
 
         // The validate_signature method will fail because we have a placeholder signature
         // This proves signature validation is still enforced for tokens

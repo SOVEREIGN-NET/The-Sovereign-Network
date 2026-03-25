@@ -660,14 +660,6 @@ impl ZhtpUnifiedServer {
             }
         }
 
-        // Legacy unsafe-bootstrap mode (deprecated - use PinnedCertVerifier instead)
-        #[cfg(feature = "unsafe-bootstrap")]
-        {
-            use lib_network::protocols::quic_mesh::QuicTrustMode;
-            quic_mesh.set_trust_mode(QuicTrustMode::MeshTrustUhp);
-            warn!(" [QUIC] ⚠️  unsafe-bootstrap mode enabled (deprecated - use bootstrap_peers for TOFU)");
-        }
-
         // Create MeshMessageHandler for routing blockchain sync messages
         // Note: These will be populated properly when mesh_router is initialized
         info!(" [QUIC] Creating message handler components");
