@@ -522,21 +522,10 @@ impl OracleHandler {
 
                 let body = if let Some(token) = bonding_token {
                     let current_price_atomic = token.current_price() as u128;
-                    let base_price_atomic = match &token.curve_type {
-                        lib_blockchain::contracts::bonding_curve::types::CurveType::PiecewiseLinear(curve) => {
-                            curve.price_at(0) as u128
-                        }
-                        _ => {
-                            warn!(
-                                "Oracle variation API: CBE token {} has non-canonical curve type",
-                                hex::encode(token.token_id)
-                            );
-                            return Ok(ZhtpResponse::error(
-                                ZhtpStatus::InternalServerError,
-                                "CBE token has non-canonical bonding curve".to_string(),
-                            ));
-                        }
-                    };
+                    let lib_blockchain::contracts::bonding_curve::types::CurveType::PiecewiseLinear(
+                        curve,
+                    ) = &token.curve_type;
+                    let base_price_atomic = curve.price_at(0) as u128;
                     let current_price = Self::price_f64_from_atomic(current_price_atomic);
                     let base_price = Self::price_f64_from_atomic(base_price_atomic);
                     let abs_change = current_price - base_price;

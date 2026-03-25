@@ -618,7 +618,6 @@ impl std::error::Error for HashMismatchError {}
 #[derive(Debug, Clone)]
 struct CatchUpPeer {
     node_id: Vec<u8>,
-    did: String,
     addr: String,
 }
 
@@ -634,7 +633,6 @@ async fn catchup_get_connected_peers() -> Vec<CatchUpPeer> {
             .into_iter()
             .map(|peer| CatchUpPeer {
                 node_id: peer.node_id,
-                did: peer.did,
                 addr: peer.peer_addr.to_string(),
             })
             .collect(),

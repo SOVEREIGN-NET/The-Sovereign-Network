@@ -2443,8 +2443,6 @@ impl<'a> StatefulTransactionValidator<'a> {
             }
         }
 
-        // All match arms above return — reaching here is a logic error.
-        unreachable!("validate_sender_registration: unhandled transaction type")
     }
 
     /// Validate UBI claim transaction with state context (Week 7)
