@@ -239,20 +239,6 @@ pub fn hash_for_signature(transaction: &Transaction) -> Hash {
     Hash::new(hash_bytes)
 }
 
-/// Helper to hash optional fields with presence marker
-fn hash_optional_field<T: serde::Serialize>(hasher: &mut blake3::Hasher, field: &Option<T>) {
-    match field {
-        Some(data) => {
-            hasher.update(&[0x01]); // Present marker
-            let bytes =
-                bincode::serialize(data).expect("Optional field serialization should never fail");
-            hasher.update(&bytes);
-        }
-        None => {
-            hasher.update(&[0x00]); // Absent marker
-        }
-    }
-}
 
 /// Implement Hash trait for Transaction
 impl crate::types::hash::Hashable for Transaction {

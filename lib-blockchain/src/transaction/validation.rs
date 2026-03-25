@@ -2660,12 +2660,6 @@ impl<'a> StatefulTransactionValidator<'a> {
     }
 }
 
-/// Calculate minimum fee based on transaction size
-fn calculate_minimum_fee(transaction_size: usize) -> u64 {
-    // Base fee + size-based fee (from creation module)
-    crate::transaction::creation::utils::calculate_minimum_fee(transaction_size)
-}
-
 /// Constants for validation
 const MAX_TRANSACTION_SIZE: usize = 1_048_576; // 1 MB
 const MAX_MEMO_SIZE: usize = 16384; // 16 KB - increased for contract calls with post-quantum signatures (Dilithium signatures ~2.7KB each)
