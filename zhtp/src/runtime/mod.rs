@@ -1249,6 +1249,14 @@ impl RuntimeOrchestrator {
         ))
     }
 
+    fn should_retry_network_discovery_continuously(
+        config: &NodeConfig,
+        is_edge_node: bool,
+        has_local_chain_data: bool,
+    ) -> bool {
+        is_edge_node || Self::observer_requires_existing_network(config, has_local_chain_data)
+    }
+
     fn validate_validator_endpoint(network_address: &str) -> Result<()> {
         if network_address.trim().is_empty() {
             return Err(anyhow::anyhow!("Validator endpoint is empty"));
@@ -4494,15 +4502,37 @@ impl RuntimeOrchestrator {
         let discovery = DiscoveryCoordinator::new(config);
         discovery.start_event_listener().await;
 
-        if is_edge_node {
-            info!("🔍 Edge node: Continuously searching for ZHTP network...");
-            info!("   Will retry every 35 seconds until a full node is found");
+        let retry_continuously = Self::should_retry_network_discovery_continuously(
+            &self.config,
+            is_edge_node,
+            self.has_local_chain_data(),
+        );
+
+        if retry_continuously {
+            if is_edge_node {
+                info!("🔍 Edge node: Continuously searching for ZHTP network...");
+                info!("   Will retry every 5 seconds until a full node is found");
+            } else {
+                info!("🔍 Observer/full node: waiting for an existing ZHTP network...");
+                info!("   Will retry every 5 seconds until committed blocks are discoverable");
+            }
 
             let mut attempt = 1;
             loop {
                 info!("📡 Discovery attempt #{}", attempt);
                 match discovery.discover_network(&self.config.environment).await {
                     Ok(network_info) => {
+                        if !is_edge_node && network_info.blockchain_height == 0 {
+                            info!(
+                                "   ⏳ Found peers on attempt #{} but chain height is 0; \
+                                 observer startup will keep waiting for committed blocks",
+                                attempt
+                            );
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            attempt += 1;
+                            continue;
+                        }
+
                         info!("✓ Found network on attempt #{}", attempt);
                         return Ok(Some(network_info));
                     }
@@ -4881,6 +4911,39 @@ mod runtime_orchestrator_tests {
             Some(&network_info)
         )
         .is_ok());
+    }
+
+    #[test]
+    fn observer_without_local_chain_retries_discovery_continuously() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, false, false)
+        );
+    }
+
+    #[test]
+    fn observer_with_local_chain_does_not_force_continuous_discovery() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(
+            !RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, false, true)
+        );
+    }
+
+    #[test]
+    fn edge_nodes_always_retry_discovery_continuously() {
+        let config = crate::config::NodeConfig::default();
+
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, true, true)
+        );
     }
 }
 
