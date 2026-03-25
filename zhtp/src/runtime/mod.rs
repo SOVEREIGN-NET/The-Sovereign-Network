@@ -1412,6 +1412,33 @@ impl RuntimeOrchestrator {
         }
     }
 
+    /// Enforce the standalone observer startup contract for `NodeType::FullNode`.
+    ///
+    /// Full-node dispatch is the canonical observer startup path in this runtime.
+    /// A config that explicitly requests `FullNode` but still enables validator behavior
+    /// is internally contradictory and must be rejected at startup.
+    fn validate_observer_startup_config(config: &NodeConfig) -> Result<()> {
+        if config.consensus_config.validator_enabled {
+            return Err(anyhow::anyhow!(
+                "Invalid observer/full-node config: `node_type = full` requires \
+                 `consensus_config.validator_enabled = false`."
+            ));
+        }
+
+        if !matches!(
+            config.node_role,
+            crate::runtime::node_runtime::NodeRole::Observer
+        ) {
+            return Err(anyhow::anyhow!(
+                "Invalid observer/full-node config: `node_type = full` must resolve to \
+                 `NodeRole::Observer`, got {:?}.",
+                config.node_role
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Start a full node - THE canonical way
     ///
     /// Full nodes (FullNode type) store the complete blockchain and verify all blocks,
@@ -1421,6 +1448,7 @@ impl RuntimeOrchestrator {
     /// Returns an error if config.node_type is not FullNode.
     pub async fn start_full_node(config: NodeConfig) -> Result<Self> {
         Self::validate_node_type(&config, crate::config::NodeType::FullNode)?;
+        Self::validate_observer_startup_config(&config)?;
         let orchestrator = Self::new(config).await?;
         orchestrator.start_node().await?;
         Ok(orchestrator)
@@ -4690,6 +4718,8 @@ pub(super) fn try_restore_validators_from_dat(
 #[cfg(test)]
 mod runtime_orchestrator_tests {
     use super::RuntimeOrchestrator;
+    use crate::config::NodeType;
+    use crate::runtime::node_runtime::NodeRole;
 
     #[test]
     fn should_skip_startup_sync_only_for_leader_with_local_data() {
@@ -4711,6 +4741,46 @@ mod runtime_orchestrator_tests {
         assert!(
             RuntimeOrchestrator::validate_validator_endpoint("validator-g2.example.net:9334")
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn full_node_startup_contract_accepts_observer_config() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
+    }
+
+    #[test]
+    fn full_node_startup_contract_rejects_validator_enabled() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::FullValidator;
+        config.consensus_config.validator_enabled = true;
+
+        let err = RuntimeOrchestrator::validate_observer_startup_config(&config)
+            .expect_err("full-node observer contract should reject validator-enabled config");
+        assert!(
+            err.to_string().contains("validator_enabled = false"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn full_node_startup_contract_rejects_non_observer_role() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::LightNode;
+        config.consensus_config.validator_enabled = false;
+
+        let err = RuntimeOrchestrator::validate_observer_startup_config(&config)
+            .expect_err("full-node observer contract should reject non-observer role");
+        assert!(
+            err.to_string().contains("NodeRole::Observer") || err.to_string().contains("Observer"),
+            "unexpected error: {err}"
         );
     }
 }
