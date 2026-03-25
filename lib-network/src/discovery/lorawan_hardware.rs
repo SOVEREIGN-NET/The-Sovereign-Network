@@ -661,13 +661,13 @@ async fn test_macos_usb_lorawan(device_path: &str) -> Result<LoRaWANHardware> {
 
 // Hardware testing functions
 async fn test_spi_lorawan_hardware(hardware: &LoRaWANHardware) -> Result<bool> {
-    if let Some(device_path) = &hardware.device_path {
+    if let Some(_device_path) = &hardware.device_path {
         #[cfg(target_os = "linux")]
         {
             use std::fs::OpenOptions;
             use std::io::{Read, Write};
 
-            if let Ok(mut file) = OpenOptions::new().read(true).write(true).open(device_path) {
+            if let Ok(mut file) = OpenOptions::new().read(true).write(true).open(_device_path) {
                 // Try to read version register
                 let version_cmd = [0x42, 0x00];
                 let mut response = [0u8; 2];
