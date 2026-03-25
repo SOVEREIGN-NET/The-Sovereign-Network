@@ -62,7 +62,9 @@ fn latest_fresh_price_none_when_no_finalized() {
 /// Test CBE graduation blocked with stale price.
 #[test]
 fn cbe_graduation_blocked_with_stale_price() {
-    use lib_blockchain::contracts::bonding_curve::{BondingCurveToken, CurveType, Phase};
+    use lib_blockchain::contracts::bonding_curve::{
+        BondingCurveToken, CurveType, Phase, PiecewiseLinearCurve,
+    };
     use lib_blockchain::contracts::tokens::CBE_SYMBOL;
     use lib_crypto::PublicKey;
 
@@ -77,10 +79,7 @@ fn cbe_graduation_blocked_with_stale_price() {
         phase: Phase::Curve,
         total_supply: 1_000_000_000,
         reserve_balance: 300_000_000_000, // $300K micro-USD
-        curve_type: CurveType::Linear {
-            base_price: 1,
-            slope: 1,
-        },
+        curve_type: CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
         threshold: lib_blockchain::contracts::bonding_curve::Threshold::ReserveAmount(1_000_000),
         sell_enabled: true,
         amm_pool_id: None,
@@ -125,7 +124,9 @@ fn cbe_graduation_blocked_with_stale_price() {
 /// Test CBE graduation proceeds with fresh price.
 #[test]
 fn cbe_graduation_proceeds_with_fresh_price() {
-    use lib_blockchain::contracts::bonding_curve::{BondingCurveToken, CurveType, Phase};
+    use lib_blockchain::contracts::bonding_curve::{
+        BondingCurveToken, CurveType, Phase, PiecewiseLinearCurve,
+    };
     use lib_blockchain::contracts::tokens::CBE_SYMBOL;
     use lib_crypto::PublicKey;
 
@@ -139,10 +140,7 @@ fn cbe_graduation_proceeds_with_fresh_price() {
         phase: Phase::Curve,
         total_supply: 1_000_000_000,
         reserve_balance: 300_000_000_000, // $300K micro-USD
-        curve_type: CurveType::Linear {
-            base_price: 1,
-            slope: 1,
-        },
+        curve_type: CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
         threshold: lib_blockchain::contracts::bonding_curve::Threshold::ReserveAmount(1_000_000),
         sell_enabled: true,
         amm_pool_id: None,

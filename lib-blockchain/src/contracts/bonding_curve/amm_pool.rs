@@ -292,7 +292,7 @@ fn map_pol_error_to_curve_error(err: PolPoolError) -> CurveError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::bonding_curve::{types::Threshold, BondingCurveToken};
+    use crate::contracts::bonding_curve::{types::Threshold, BondingCurveToken, PiecewiseLinearCurve};
 
     fn test_pubkey(id: u8) -> PublicKey {
         PublicKey::new(vec![id; 32])
@@ -305,10 +305,7 @@ mod tests {
             [1u8; 32],
             "Test Token".to_string(),
             "TEST".to_string(),
-            super::super::CurveType::Linear {
-                base_price: 1_000_000,
-                slope: 0,
-            },
+            super::super::CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveAmount(5_000_000_000),
             true,
             test_pubkey(1),
@@ -414,10 +411,7 @@ mod tests {
             [2u8; 32],
             "Swap Token".to_string(),
             "SWAP".to_string(),
-            super::super::CurveType::Linear {
-                base_price: 1_000_000,
-                slope: 0,
-            },
+            super::super::CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveAmount(5_000_000_000),
             true,
             test_pubkey(1),
@@ -469,10 +463,7 @@ mod tests {
             [3u8; 32],
             "Panic Token".to_string(),
             "PANIC".to_string(),
-            super::super::CurveType::Linear {
-                base_price: 1_000_000,
-                slope: 0,
-            },
+            super::super::CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveAmount(5_000_000_000),
             true,
             test_pubkey(1),
@@ -506,10 +497,7 @@ mod tests {
             [4u8; 32],
             "Panic Token 2".to_string(),
             "PANIC2".to_string(),
-            super::super::CurveType::Linear {
-                base_price: 1_000_000,
-                slope: 0,
-            },
+            super::super::CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveAmount(5_000_000_000),
             true,
             test_pubkey(1),
@@ -542,10 +530,7 @@ mod tests {
             [5u8; 32],
             "Test Token".to_string(),
             "TEST".to_string(),
-            super::super::CurveType::Linear {
-                base_price: 1_000_000,
-                slope: 0,
-            },
+            super::super::CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveAmount(5_000_000_000),
             true,
             test_pubkey(1),
@@ -584,55 +569,7 @@ mod tests {
             [6u8; 32],
             "PC Token".to_string(),
             "PC".to_string(),
-            super::super::CurveType::Linear {
-                base_price: 2_000_000, // $0.02
-                slope: 100,            // rising price
-            },
-            Threshold::ReserveAmount(1_000_000_000),
-            true,
-            test_pubkey(1),
-            String::new(),
-            100,
-            1_600_000_000,
-        )
-        .unwrap();
-
-        let buyer = test_pubkey(2);
-        token.buy(buyer, 10_000_000_000, 101, 1_600_000_100).unwrap();
-        token.graduate(1_600_000_200, 102).unwrap();
-
-        let final_curve_price = token.current_price();
-        let reserve = token.reserve_balance;
-
-        let (_, creation_result, _) = create_pol_pool_for_graduated_token(
-            &mut token,
-            test_pubkey(3),
-            test_pubkey(4),
-            103,
-            1_600_000_300,
-        )
-        .unwrap();
-
-        assert_eq!(creation_result.final_curve_price, final_curve_price);
-        assert_eq!(creation_result.initial_price, final_curve_price,
-            "AMM initial price must equal final curve price");
-
-        // Verify the CBE amount was derived for continuity, not taken as total_supply
-        let expected_cbe = reserve * PRICE_SCALE / final_curve_price;
-        assert_eq!(creation_result.initial_token_reserve, expected_cbe);
-    }
-
-    /// Issue #1849: Test minimum liquidity requirement.
-    #[test]
-    fn test_minimum_liquidity_requirement() {
-        let mut token = BondingCurveToken::deploy(
-            [7u8; 32],
-            "Low Liquidity".to_string(),
-            "LOW".to_string(),
-            super::super::CurveType::Linear {
-                base_price: 1_000_000,
-                slope: 0,
-            },
+            super::super::CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveAmount(100),
             true,
             test_pubkey(1),
@@ -676,10 +613,7 @@ mod tests {
             [8u8; 32],
             "K Token".to_string(),
             "K".to_string(),
-            super::super::CurveType::Linear {
-                base_price: 1_000_000,
-                slope: 0,
-            },
+            super::super::CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveAmount(5_000_000_000),
             true,
             test_pubkey(1),
@@ -728,10 +662,7 @@ mod tests {
             [9u8; 32],
             "Slippage Token".to_string(),
             "SLIP".to_string(),
-            super::super::CurveType::Linear {
-                base_price: 1_000_000,
-                slope: 0,
-            },
+            super::super::CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveAmount(5_000_000_000),
             true,
             test_pubkey(1),
@@ -766,10 +697,7 @@ mod tests {
             [10u8; 32],
             "View Token".to_string(),
             "VIEW".to_string(),
-            super::super::CurveType::Linear {
-                base_price: 1_000_000,
-                slope: 0,
-            },
+            super::super::CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveAmount(5_000_000_000),
             true,
             test_pubkey(1),

@@ -6,7 +6,7 @@
 //! - CBE graduation accepted with fresh oracle price
 
 use lib_blockchain::{
-    contracts::bonding_curve::{BondingCurveToken, Phase, Threshold},
+    contracts::bonding_curve::{BondingCurveToken, Phase, PiecewiseLinearCurve, Threshold},
     contracts::tokens::CBE_SYMBOL,
 };
 use lib_crypto::PublicKey;
@@ -24,10 +24,9 @@ fn create_test_cbe_token(token_id: [u8; 32], reserve_micro_usd: u128) -> Bonding
         phase: Phase::Curve,
         total_supply: 1_000_000_000u128,
         reserve_balance: reserve_micro_usd,
-        curve_type: lib_blockchain::contracts::bonding_curve::CurveType::Linear {
-            base_price: 1u128,
-            slope: 1u128,
-        },
+        curve_type: lib_blockchain::contracts::bonding_curve::CurveType::PiecewiseLinear(
+            PiecewiseLinearCurve::cbe_default(),
+        ),
         threshold: Threshold::ReserveAmount(269_000_000_000u128), // $269K
         sell_enabled: true,
         amm_pool_id: None,

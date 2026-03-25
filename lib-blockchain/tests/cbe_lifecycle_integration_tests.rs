@@ -121,10 +121,7 @@ fn test_genesis_allocation_cbe_token() {
     assert_eq!(token.phase, Phase::Curve);
 
     // Verify curve type is PiecewiseLinear
-    match token.curve_type {
-        CurveType::PiecewiseLinear(_) => {}
-        _ => panic!("CBE must use PiecewiseLinear curve"),
-    }
+    let CurveType::PiecewiseLinear(_) = token.curve_type;
 
     println!("✓ CBE token genesis verified");
     println!("  Name: {}", token.name);
@@ -144,10 +141,7 @@ fn test_piecewise_linear_pricing_4_bands() {
     let token = create_cbe_token(creator, 1, 1_600_000_000);
 
     // Get the piecewise linear curve
-    let curve = match &token.curve_type {
-        CurveType::PiecewiseLinear(c) => c,
-        _ => panic!("Expected PiecewiseLinear curve"),
-    };
+    let CurveType::PiecewiseLinear(curve) = &token.curve_type;
 
     // Verify 4 bands exist
     assert_eq!(curve.bands.len(), 4, "CBE curve must have 4 bands");
@@ -508,18 +502,12 @@ fn test_phase_transition_atomicity() {
 /// Issue #1851: Test 7 - Verify constant product pool creation
 #[test]
 fn test_amm_pool_creation_constant_product() {
-    // Use a constant-price (slope=0) Linear curve so that the AMM price continuity
-    // check (initial_sov * PRICE_SCALE / initial_cbe == curve_price) holds exactly
-    // under integer arithmetic — the same approach used by amm_pool.rs unit tests.
     let creator = test_pubkey(0x03);
     let mut token = BondingCurveToken::deploy(
         [0xCB; 32],
         CBE_NAME.to_string(),
         CBE_SYMBOL.to_string(),
-        CurveType::Linear {
-            base_price: 1_000_000,
-            slope: 0,
-        },
+        CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
         Threshold::ReserveAmount(1_000_000),
         true,
         creator,
