@@ -30,7 +30,6 @@ pub mod web4;
 pub mod zkp;
 
 pub use blockchain::BlockchainHandler;
-pub use bonding_curve::{CurveHandler, SwapHandler, ValuationHandler};
 pub use cbe::CbeHandler;
 pub use crypto::CryptoHandler;
 pub use dao::DaoHandler;

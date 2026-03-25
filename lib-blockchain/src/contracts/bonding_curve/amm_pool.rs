@@ -321,27 +321,6 @@ pub fn create_pol_pool_for_graduated_token(
     Ok((pool, result, event))
 }
 
-/// Legacy alias retained during the rename to `create_pol_pool_for_graduated_token`.
-///
-/// # Deprecated
-/// Use `create_pol_pool_for_graduated_token` instead.
-#[deprecated(since = "Issue #1849", note = "Use create_pol_pool_for_graduated_token")]
-pub fn create_amm_pool_for_graduated_token(
-    token: &mut BondingCurveToken,
-    governance_addr: PublicKey,
-    treasury_addr: PublicKey,
-    block_height: u64,
-    timestamp: u64,
-) -> Result<(PolPool, AmmPoolCreationResult, BondingCurveEvent), CurveError> {
-    create_pol_pool_for_graduated_token(
-        token,
-        governance_addr,
-        treasury_addr,
-        block_height,
-        timestamp,
-    )
-}
-
 // ============================================================================
 // Helper Functions
 // ============================================================================

@@ -31,7 +31,6 @@ pub mod types;
 // Re-export core types
 pub use amm_pool::{
     AmmPool,
-    create_amm_pool_for_graduated_token,
     create_pol_pool_for_graduated_token,
     AmmPoolCreationResult,
     // Issue #1848: AMM pool creation constants
