@@ -1707,8 +1707,16 @@ impl RuntimeOrchestrator {
                 // If validator_registry is empty after Sled load (validators were seeded via
                 // bootstrap config and never committed as on-chain ValidatorData transactions),
                 // restore from blockchain.dat which persists validator_registry via BlockchainStorageV7+.
+                // If .dat also has none, fall back to bootstrap config so consensus can start on nodes
+                // where validators have never been written as on-chain transactions.
                 if bc.get_active_validators().is_empty() {
-                    try_restore_validators_from_dat(&mut bc, &dat_path);
+                    let restored = try_restore_validators_from_dat(&mut bc, &dat_path);
+                    if !restored {
+                        seed_validators_from_bootstrap_config(
+                            &mut bc,
+                            &self.config.network_config.bootstrap_validators,
+                        );
+                    }
                 }
 
                 (bc, true)
@@ -4561,6 +4569,62 @@ pub(super) fn try_restore_oracle_from_dat(
             false
         }
     }
+}
+
+/// Seed validator_registry from bootstrap config when neither sled nor blockchain.dat
+/// contains any validators (i.e. validators were never committed as on-chain transactions).
+///
+/// Uses blake3 domain separation to derive distinct placeholder keys for the networking and
+/// rewards roles from the identity ID — these only need to be non-empty and mutually distinct
+/// for the in-memory registry; they are not used for actual signing.
+pub(super) fn seed_validators_from_bootstrap_config(
+    bc: &mut lib_blockchain::Blockchain,
+    bootstrap_validators: &[crate::config::aggregation::BootstrapValidator],
+) {
+    if bootstrap_validators.is_empty() {
+        return;
+    }
+    let mut count = 0usize;
+    for bv in bootstrap_validators {
+        let consensus_key = crate::runtime::components::consensus::decode_bootstrap_consensus_key(
+            &bv.consensus_key,
+        )
+        .unwrap_or_else(|| {
+            blake3::hash(format!("{}::consensus", bv.identity_id).as_bytes())
+                .as_bytes()
+                .to_vec()
+        });
+        let networking_key = blake3::hash(format!("{}::networking", bv.identity_id).as_bytes())
+            .as_bytes()
+            .to_vec();
+        let rewards_key = blake3::hash(format!("{}::rewards", bv.identity_id).as_bytes())
+            .as_bytes()
+            .to_vec();
+        let vi = lib_blockchain::ValidatorInfo {
+            identity_id: bv.identity_id.clone(),
+            stake: bv.stake.max(1),
+            storage_provided: bv.storage_provided,
+            consensus_key,
+            networking_key,
+            rewards_key,
+            network_address: bv.endpoints.first().cloned().unwrap_or_default(),
+            commission_rate: (bv.commission_rate.min(100)) as u8,
+            status: "active".to_string(),
+            registered_at: 0,
+            last_activity: 0,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: lib_blockchain::ADMISSION_SOURCE_BOOTSTRAP_GENESIS.to_string(),
+            governance_proposal_id: None,
+            oracle_key_id: None,
+        };
+        bc.validator_registry.insert(bv.identity_id.clone(), vi);
+        count += 1;
+    }
+    info!(
+        "validator_registry empty — seeded {} validator(s) from bootstrap config (in-memory only)",
+        count
+    );
 }
 
 pub(super) fn try_restore_validators_from_dat(
