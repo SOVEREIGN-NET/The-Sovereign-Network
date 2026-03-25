@@ -21,6 +21,9 @@ pub struct OnRampTrade {
     pub cbe_amount: u128,
     /// USDC paid by the user (atomic units, 6 decimals).
     pub usdc_amount: u128,
+    /// Gateway/oracle timestamp included in the attested payload.
+    #[serde(default)]
+    pub traded_at: u64,
 }
 
 /// Target block time in seconds used for deriving the VWAP window length.
@@ -84,6 +87,21 @@ impl OnRampState {
         if self.trades.len() > MAX_TRADE_HISTORY {
             self.trades.drain(..self.trades.len() - MAX_TRADE_HISTORY);
         }
+    }
+
+    pub fn has_equivalent_trade(
+        &self,
+        epoch_id: u64,
+        cbe_amount: u128,
+        usdc_amount: u128,
+        traded_at: u64,
+    ) -> bool {
+        self.trades.iter().any(|trade| {
+            trade.epoch_id == epoch_id
+                && trade.cbe_amount == cbe_amount
+                && trade.usdc_amount == usdc_amount
+                && trade.traded_at == traded_at
+        })
     }
 
     /// Returns the CBE/USD VWAP in ORACLE_PRICE_SCALE (1e8) atomic units,
@@ -161,6 +179,7 @@ mod tests {
             epoch_id: 1,
             cbe_amount,
             usdc_amount,
+            traded_at: block_height,
         }
     }
 
@@ -177,7 +196,11 @@ mod tests {
         // 4 trades, each $300 USDC for some CBE — below MIN_TRADES=5
         for i in 0..4 {
             // 300 USDC = 300_000_000 units (6-dec); 750_000 CBE = 750_000 * 10^18 units
-            state.record_trade(make_trade(1000 + i, 300_000_000, 750_000 * 1_000_000_000_000_000_000));
+            state.record_trade(make_trade(
+                1000 + i,
+                300_000_000,
+                750_000 * 1_000_000_000_000_000_000,
+            ));
         }
         assert_eq!(state.oracle_mode(2000), OraclePricingMode::GenesisReference);
     }
@@ -187,7 +210,11 @@ mod tests {
         let mut state = OnRampState::new();
         // 5 trades but only $100 USDC each = $500 total < $1000 MIN_VOLUME
         for i in 0..5 {
-            state.record_trade(make_trade(1000 + i, 100_000_000, 250_000 * 1_000_000_000_000_000_000));
+            state.record_trade(make_trade(
+                1000 + i,
+                100_000_000,
+                250_000 * 1_000_000_000_000_000_000,
+            ));
         }
         assert_eq!(state.oracle_mode(2000), OraclePricingMode::GenesisReference);
     }
@@ -225,9 +252,39 @@ mod tests {
         let mut state = OnRampState::new();
         // 5 trades outside the window (block 0..4, current block 200_000)
         for i in 0..5 {
-            state.record_trade(make_trade(i, 250_000_000, 625_000 * 1_000_000_000_000_000_000));
+            state.record_trade(make_trade(
+                i,
+                250_000_000,
+                625_000 * 1_000_000_000_000_000_000,
+            ));
         }
         // window_start = 200_000 - 100_800 = 99_200, all trades at block < 5 → excluded
-        assert_eq!(state.oracle_mode(200_000), OraclePricingMode::GenesisReference);
+        assert_eq!(
+            state.oracle_mode(200_000),
+            OraclePricingMode::GenesisReference
+        );
+    }
+
+    #[test]
+    fn equivalent_trade_detection_matches_same_payload() {
+        let mut state = OnRampState::new();
+        state.record_trade(make_trade(
+            1000,
+            250_000_000,
+            625_000 * 1_000_000_000_000_000_000,
+        ));
+
+        assert!(state.has_equivalent_trade(
+            1,
+            625_000 * 1_000_000_000_000_000_000,
+            250_000_000,
+            1000,
+        ));
+        assert!(!state.has_equivalent_trade(
+            1,
+            625_000 * 1_000_000_000_000_000_000,
+            250_000_000,
+            1001,
+        ));
     }
 }
