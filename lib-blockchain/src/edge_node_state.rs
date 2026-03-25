@@ -307,11 +307,6 @@ impl EdgeNodeState {
         Hash::from_slice(&blake3::hash(&combined).as_bytes()[..32])
     }
 
-    /// Hash data using BLAKE3
-    fn hash_data(&self, data: &[u8]) -> Hash {
-        Hash::from_slice(&blake3::hash(&data).as_bytes()[..32])
-    }
-
     /// Get total UTXO count
     pub fn utxo_count(&self) -> usize {
         self.my_utxos.len()
@@ -729,7 +724,7 @@ mod tests {
         assert!(!edge_node.needs_bootstrap_proof(50));
 
         // After first sync at height 50, network at 70 blocks (20 blocks behind)
-        edge_node.add_header(create_dummy_header(50));
+        let _ = edge_node.add_header(create_dummy_header(50));
         assert!(!edge_node.needs_bootstrap_proof(70));
     }
 

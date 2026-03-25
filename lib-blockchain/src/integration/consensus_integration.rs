@@ -2123,11 +2123,3 @@ fn validate_consensus_timestamp(timestamp: u64) -> Result<()> {
 
     Ok(())
 }
-
-/// Convert SystemTime to consensus timestamp
-fn system_time_to_consensus_timestamp(time: SystemTime) -> Result<u64> {
-    let duration = time
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| anyhow!("Time conversion error: {}", e))?;
-    Ok(duration.as_secs())
-}

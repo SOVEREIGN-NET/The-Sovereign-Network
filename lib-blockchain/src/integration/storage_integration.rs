@@ -20,8 +20,8 @@ use tracing::{debug, error, info, warn};
 // Import from lib-storage - use their types, not our own
 use lib_identity::{IdentityId, ZhtpIdentity};
 use lib_storage::types::{
-    AccessPattern, BudgetConstraints, ContentHash, DhtStats, EconomicStats, EncryptionLevel,
-    PaymentSchedule, QualityRequirements, StorageStats, StorageTier,
+    BudgetConstraints, ContentHash, DhtStats, EconomicStats, EncryptionLevel, PaymentSchedule,
+    QualityRequirements, StorageStats, StorageTier,
 };
 use lib_storage::{
     AccessControlSettings, ContentStorageRequirements, DownloadRequest, SearchQuery,
@@ -1135,17 +1135,6 @@ impl BlockchainStorageManager {
             "utxo" => EncryptionLevel::Standard,         // UTXO set needs medium encryption
             "mempool" => EncryptionLevel::None,          // Mempool can use basic encryption
             _ => EncryptionLevel::Standard,              // Default to medium encryption
-        }
-    }
-
-    fn get_access_pattern_for_data_type(&self, data_type: &str) -> AccessPattern {
-        match data_type {
-            "blockchain" => AccessPattern::Frequent, // Blockchain accessed frequently
-            "mempool" => AccessPattern::Frequent,    // Mempool accessed frequently
-            "utxo" => AccessPattern::Frequent,       // UTXO lookups are frequent
-            "identity" => AccessPattern::Rare,       // Identity data accessed infrequently
-            "transaction" => AccessPattern::Occasional, // Transactions accessed occasionally
-            _ => AccessPattern::Occasional,          // Default to occasional access
         }
     }
 

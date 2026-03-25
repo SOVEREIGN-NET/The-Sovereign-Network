@@ -74,7 +74,10 @@ pub fn generate_contract_id(domain: &str) -> String {
 
     let mut hasher = DefaultHasher::new();
     domain.hash(&mut hasher);
-    chrono::Utc::now().timestamp_nanos().hash(&mut hasher);
+    chrono::Utc::now()
+        .timestamp_nanos_opt()
+        .unwrap_or_default()
+        .hash(&mut hasher);
 
     format!("web4_{}_{:x}", domain.replace('.', "_"), hasher.finish())
 }

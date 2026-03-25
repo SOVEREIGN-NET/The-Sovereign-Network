@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! OracleTestHarness - Integration test infrastructure for ORACLE-16
 //!
 //! Provides a test harness for end-to-end oracle testing including:
@@ -134,7 +136,6 @@ impl OracleTestHarness {
     /// Mine blocks until we advance to the next oracle epoch
     pub fn advance_oracle_epoch(&mut self) {
         let current_epoch = self.current_epoch();
-        let epoch_duration = self.epoch_duration();
 
         // Mine blocks until we enter the next epoch
         while self.current_epoch() <= current_epoch {

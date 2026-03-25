@@ -474,7 +474,7 @@ mod tests {
             .expect("Registry init should succeed");
 
         // Collect all resolved addresses
-        let mut addresses = vec![
+        let addresses = vec![
             registry.get_treasury(&SectorDao::Healthcare),
             registry.get_treasury(&SectorDao::Education),
             registry.get_treasury(&SectorDao::Energy),

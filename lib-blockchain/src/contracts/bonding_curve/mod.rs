@@ -20,7 +20,6 @@
 
 pub mod amm_pool;
 pub mod canonical;
-pub mod event_indexer;
 pub mod events;
 pub mod pol_pool;
 pub mod pricing;
@@ -31,7 +30,6 @@ pub mod types;
 // Re-export core types
 pub use amm_pool::{
     AmmPool,
-    create_amm_pool_for_graduated_token,
     create_pol_pool_for_graduated_token,
     AmmPoolCreationResult,
     // Issue #1848: AMM pool creation constants
@@ -49,7 +47,6 @@ pub use pol_pool::{
     PolPool, PolPoolError, BASIS_POINTS_DENOMINATOR, POL_FEE_BPS,
     POL_MINIMUM_INITIAL_LIQUIDITY,
 };
-pub use event_indexer::SledEventIndexer;
 pub use events::{BondingCurveEvent, EventIndexer, InMemoryEventIndexer, ReserveUpdateReason};
 pub use pricing::PiecewiseLinearCurve;
 pub use registry::{BondingCurveRegistry, RegistryStats};

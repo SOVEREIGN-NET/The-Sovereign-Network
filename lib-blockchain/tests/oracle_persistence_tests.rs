@@ -5,7 +5,7 @@
 //! - BlockchainImport round-trip (export → import) - requires ORACLE-10 completion
 
 use lib_blockchain::{
-    oracle::{FinalizedOraclePrice, OracleConfig},
+    oracle::OracleConfig,
     Blockchain,
 };
 use tempfile::tempdir;

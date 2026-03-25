@@ -482,9 +482,6 @@ impl BluetoothRouter {
                         info!("🧩 GATT: Fragment header received (multi-part message)");
                         // Handled by fragment reassembler in BluetoothMeshProtocol
                     }
-                    _ => {
-                        info!("❓ GATT: Unknown message type");
-                    }
                 }
             }
             info!("GATT message handler stopped");

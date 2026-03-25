@@ -53,7 +53,7 @@ fn current_timestamp() -> u64 {
 }
 
 pub(crate) async fn load_validator_keypair_from_keystore() -> Result<lib_crypto::KeyPair> {
-    use crate::keystore_names::{KeystorePrivateKey, NODE_PRIVATE_KEY_FILENAME};
+    use crate::keyfile_names::{KeystorePrivateKey, NODE_PRIVATE_KEY_FILENAME};
     use std::path::PathBuf;
 
     let keystore_dir = std::env::var("ZHTP_KEYSTORE_DIR")

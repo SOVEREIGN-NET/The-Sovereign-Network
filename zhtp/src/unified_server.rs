@@ -46,7 +46,7 @@ use lib_network::web4::DomainRegistry;
 use crate::monitoring::MonitoringSystem;
 
 // Import keystore filename constants
-use crate::keystore_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
+use crate::keyfile_names::{NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME};
 
 /// Default QUIC port for mesh networking (UDP)
 const QUIC_PORT: u16 = 9334;
@@ -54,7 +54,6 @@ const QUIC_PORT: u16 = 9334;
 // Import our comprehensive API handlers
 use crate::api::handlers::{
     DhtHandler,
-    MobileAuthHandler,
     ProtocolHandler,
     BlockchainHandler,
     IdentityHandler,
@@ -65,8 +64,6 @@ use crate::api::handlers::{
     DnsHandler,
     TokenHandler,
     CbeHandler,
-    MonitorHandler,
-    ObserverHandler,
 };
 use crate::session_manager::SessionManager;
 
@@ -663,14 +660,6 @@ impl ZhtpUnifiedServer {
             }
         }
 
-        // Legacy unsafe-bootstrap mode (deprecated - use PinnedCertVerifier instead)
-        #[cfg(feature = "unsafe-bootstrap")]
-        {
-            use lib_network::protocols::quic_mesh::QuicTrustMode;
-            quic_mesh.set_trust_mode(QuicTrustMode::MeshTrustUhp);
-            warn!(" [QUIC] ⚠️  unsafe-bootstrap mode enabled (deprecated - use bootstrap_peers for TOFU)");
-        }
-
         // Create MeshMessageHandler for routing blockchain sync messages
         // Note: These will be populated properly when mesh_router is initialized
         info!(" [QUIC] Creating message handler components");
@@ -818,26 +807,7 @@ impl ZhtpUnifiedServer {
         let cbe_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(CbeHandler::new());
         zhtp_router.register_handler("/api/v1/cbe".to_string(), cbe_handler);
 
-        // Bonding curve operations (CurveHandler - deploy, buy, sell, graduation)
-        let curve_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::CurveHandler::new()
-        );
-        zhtp_router.register_handler("/api/v1/curve".to_string(), curve_handler);
-
-        // AMM swap operations (SwapHandler - post-graduation swaps, liquidity)
-        let swap_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::SwapHandler::new()
-        );
-        zhtp_router.register_handler("/api/v1/swap".to_string(), swap_handler);
-
-        // Valuation operations (ValuationHandler - read-only price queries)
-        let valuation_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
-            crate::api::handlers::ValuationHandler::new()
-        );
-        zhtp_router.register_handler("/api/v1/price".to_string(), valuation_handler.clone());
-        zhtp_router.register_handler("/api/v1/valuation".to_string(), valuation_handler);
-
-        // Issue #1850: Bonding Curve REST API endpoints
+        // Canonical bonding-curve REST API endpoints
         let bonding_curve_api_handler: Arc<dyn ZhtpRequestHandler> = Arc::new(
             crate::api::handlers::bonding_curve::api_v1::BondingCurveApiHandler::new()
         );

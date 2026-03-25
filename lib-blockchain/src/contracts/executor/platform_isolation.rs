@@ -256,7 +256,8 @@ impl PlatformIsolationManager {
     }
 
     /// Get resource usage for a contract
-    pub fn get_resource_usage(&self, contract_id: &str) -> Option<&ResourceUsage> {
+    #[cfg(test)]
+    fn get_resource_usage(&self, contract_id: &str) -> Option<&ResourceUsage> {
         self.isolation_contexts
             .get(contract_id)
             .map(|ctx| &ctx.resource_usage)

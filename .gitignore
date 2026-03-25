@@ -85,3 +85,13 @@ deploy-prod-1.sh
 .grok/
 docs/plans/CONTRACT_DAO_PRODUCTION_READINESS_PLAN.md
 .gitnexus/kuzu
+
+# Sensitive / local-only file patterns (issue #1934)
+tmp/
+*.b64
+.zhtp/
+keystore*
+*.key
+*.pem
+.env
+.env.*

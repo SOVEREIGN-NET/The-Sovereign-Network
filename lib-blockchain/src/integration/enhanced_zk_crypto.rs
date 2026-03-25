@@ -491,7 +491,7 @@ pub struct TransactionSpec {
 
 /// Enhanced consensus validator with ZK integration
 pub struct EnhancedConsensusValidator {
-    zk_system: ZkProofSystem,
+    _zk_system: ZkProofSystem,
 }
 
 impl EnhancedConsensusValidator {
@@ -499,7 +499,9 @@ impl EnhancedConsensusValidator {
     pub fn new() -> Result<Self> {
         let zk_system = initialize_zk_system()?;
 
-        Ok(Self { zk_system })
+        Ok(Self {
+            _zk_system: zk_system,
+        })
     }
 
     /// Validate consensus proofs using integrated ZK system

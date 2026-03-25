@@ -395,6 +395,47 @@ pub enum DaoAction {
     },
     /// Show entity registry status
     EntityRegistryStatus,
+    /// Record an oracle-committee-attested fiat→CBE on-ramp trade.
+    RecordOnRampTrade {
+        /// Oracle epoch ID
+        #[arg(long)]
+        epoch_id: u64,
+        /// CBE amount received (atomic units, 18 decimals)
+        #[arg(long)]
+        cbe_amount: u128,
+        /// USDC amount paid (atomic units, 6 decimals)
+        #[arg(long)]
+        usdc_amount: u128,
+        /// Unix timestamp of the off-chain trade
+        #[arg(long)]
+        traded_at: u64,
+        /// Oracle Committee approval pairs as `<dilithium_pk_hex>:<signature_hex>`.
+        /// Repeat this flag once per signer.
+        #[arg(long = "approval", value_name = "PK_HEX:SIG_HEX")]
+        approvals: Vec<String>,
+    },
+    /// Submit a Bootstrap-Council-approved SOV treasury allocation.
+    TreasuryAllocation {
+        /// CBE treasury key_id (32-byte hex)
+        #[arg(long)]
+        source_key_id: String,
+        /// Destination DAO treasury wallet key_id (32-byte hex)
+        #[arg(long)]
+        destination_key_id: String,
+        /// Amount of SOV to transfer (atomic units)
+        #[arg(long)]
+        amount: u64,
+        /// Governance spending category (e.g. "Operations")
+        #[arg(long)]
+        spending_category: String,
+        /// On-chain proposal ID that authorised this allocation (32-byte hex)
+        #[arg(long)]
+        proposal_id: String,
+        /// Bootstrap Council approval pairs as `<dilithium_pk_hex>:<signature_hex>`.
+        /// Repeat this flag once per signer.
+        #[arg(long = "approval", value_name = "PK_HEX:SIG_HEX")]
+        approvals: Vec<String>,
+    },
 }
 
 /// Citizen management commands

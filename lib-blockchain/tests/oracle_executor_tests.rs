@@ -6,7 +6,7 @@
 //! 3. validate_cbe_graduation_oracle_gate uses latest_fresh_price
 
 use lib_blockchain::{
-    contracts::bonding_curve::{BondingCurveToken, Phase},
+    contracts::bonding_curve::{BondingCurveToken, Phase, PiecewiseLinearCurve},
     contracts::tokens::CBE_SYMBOL,
     oracle::FinalizedOraclePrice,
     Blockchain,
@@ -28,10 +28,9 @@ fn create_test_cbe_token(reserve_micro_usd: u128) -> BondingCurveToken {
         phase: Phase::Curve,
         total_supply: 1_000_000_000u128,
         reserve_balance: reserve_micro_usd,
-        curve_type: lib_blockchain::contracts::bonding_curve::CurveType::Linear {
-            base_price: 1u128,
-            slope: 1u128,
-        },
+        curve_type: lib_blockchain::contracts::bonding_curve::CurveType::PiecewiseLinear(
+            PiecewiseLinearCurve::cbe_default(),
+        ),
         threshold: lib_blockchain::contracts::bonding_curve::Threshold::ReserveAmount(1_000_000u128),
         sell_enabled: true,
         amm_pool_id: None,

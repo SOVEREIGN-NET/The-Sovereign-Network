@@ -618,7 +618,6 @@ impl std::error::Error for HashMismatchError {}
 #[derive(Debug, Clone)]
 struct CatchUpPeer {
     node_id: Vec<u8>,
-    did: String,
     addr: String,
 }
 
@@ -634,7 +633,6 @@ async fn catchup_get_connected_peers() -> Vec<CatchUpPeer> {
             .into_iter()
             .map(|peer| CatchUpPeer {
                 node_id: peer.node_id,
-                did: peer.did,
                 addr: peer.peer_addr.to_string(),
             })
             .collect(),
@@ -1428,7 +1426,7 @@ impl ConsensusComponent {
 }
 
 async fn load_local_validator_from_keystore() -> Result<(IdentityId, lib_crypto::KeyPair)> {
-    use crate::keystore_names::{
+    use crate::keyfile_names::{
         KeystorePrivateKey, NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME,
     };
     use std::path::PathBuf;
@@ -1728,7 +1726,6 @@ impl Component for ConsensusComponent {
                     .map(|v| v.clone())
                     .collect::<Vec<_>>()
             };
-
             initial
         };
 

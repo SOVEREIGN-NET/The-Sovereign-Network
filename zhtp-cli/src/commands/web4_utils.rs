@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 // Re-export KeystorePrivateKey from zhtp for local use and external consumers
-pub use zhtp::keystore_names::KeystorePrivateKey;
+pub use zhtp::keyfile_names::KeystorePrivateKey;
 
 #[derive(Debug, Clone)]
 pub struct LoadedIdentity {
@@ -22,15 +22,15 @@ pub struct LoadedIdentity {
 pub fn load_identity_from_keystore(keystore_path: &Path) -> CliResult<LoadedIdentity> {
     // Load USER identity for domain/content operations (has wallets)
     // NODE identity is for mesh networking operations only
-    let mut identity_file = keystore_path.join(zhtp::keystore_names::USER_IDENTITY_FILENAME);
-    let mut private_key_file = keystore_path.join(zhtp::keystore_names::USER_PRIVATE_KEY_FILENAME);
+    let mut identity_file = keystore_path.join(zhtp::keyfile_names::USER_IDENTITY_FILENAME);
+    let mut private_key_file = keystore_path.join(zhtp::keyfile_names::USER_PRIVATE_KEY_FILENAME);
 
     // Fallback to NODE identity files for backwards compatibility with old keystores
     // that were created before USER/NODE identity separation
     if !identity_file.exists() || !private_key_file.exists() {
-        let node_identity_file = keystore_path.join(zhtp::keystore_names::NODE_IDENTITY_FILENAME);
+        let node_identity_file = keystore_path.join(zhtp::keyfile_names::NODE_IDENTITY_FILENAME);
         let node_private_key_file =
-            keystore_path.join(zhtp::keystore_names::NODE_PRIVATE_KEY_FILENAME);
+            keystore_path.join(zhtp::keyfile_names::NODE_PRIVATE_KEY_FILENAME);
 
         if node_identity_file.exists() && node_private_key_file.exists() {
             eprintln!(

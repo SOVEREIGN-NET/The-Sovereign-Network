@@ -94,7 +94,7 @@ fn test_try_advance_phase_bootstrap_to_hybrid_via_time() {
 }
 
 #[test]
-fn test_try_advance_phase_hybrid_to_fullDao_requires_all_conditions() {
+fn test_try_advance_phase_hybrid_to_full_dao_requires_all_conditions() {
     let mut bc = Blockchain::new().expect("genesis");
     bc.ensure_council_bootstrap(&two_member_council());
 

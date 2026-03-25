@@ -2443,8 +2443,6 @@ impl<'a> StatefulTransactionValidator<'a> {
             }
         }
 
-        // All match arms above return — reaching here is a logic error.
-        unreachable!("validate_sender_registration: unhandled transaction type")
     }
 
     /// Validate UBI claim transaction with state context (Week 7)
@@ -2660,12 +2658,6 @@ impl<'a> StatefulTransactionValidator<'a> {
 
         Ok(())
     }
-}
-
-/// Calculate minimum fee based on transaction size
-fn calculate_minimum_fee(transaction_size: usize) -> u64 {
-    // Base fee + size-based fee (from creation module)
-    crate::transaction::creation::utils::calculate_minimum_fee(transaction_size)
 }
 
 /// Constants for validation

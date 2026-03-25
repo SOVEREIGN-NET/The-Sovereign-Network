@@ -191,7 +191,7 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::bonding_curve::types::{CurveType, Threshold};
+    use crate::contracts::bonding_curve::{types::{CurveType, Threshold}, PiecewiseLinearCurve};
     use crate::integration::crypto_integration::PublicKey;
 
     fn test_token(id: u8, phase: Phase) -> BondingCurveToken {
@@ -199,10 +199,7 @@ mod tests {
             [id; 32],
             format!("Token {}", id),
             format!("TK{}", id),
-            CurveType::Linear {
-                base_price: 100,
-                slope: 1,
-            },
+            CurveType::PiecewiseLinear(PiecewiseLinearCurve::cbe_default()),
             Threshold::ReserveAmount(1000),
             true,
             PublicKey {

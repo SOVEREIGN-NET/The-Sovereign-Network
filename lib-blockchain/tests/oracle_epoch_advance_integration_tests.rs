@@ -5,7 +5,7 @@
 //! - apply_pending_updates activates config change at correct epoch
 //! - Epoch advancement through block mining
 
-use lib_blockchain::oracle::{OracleCommitteeState, OracleConfig};
+use lib_blockchain::oracle::OracleConfig;
 
 mod common;
 use common::oracle_harness::OracleTestHarness;

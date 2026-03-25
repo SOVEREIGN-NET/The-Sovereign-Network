@@ -601,7 +601,7 @@ pub struct TokenInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::executor::{CallOrigin, ExecutionContext};
+    use crate::contracts::executor::ExecutionContext;
 
     fn create_test_public_key(id: u8) -> PublicKey {
         PublicKey::new(vec![id; 32])

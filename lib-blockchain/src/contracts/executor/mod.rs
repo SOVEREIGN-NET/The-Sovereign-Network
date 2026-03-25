@@ -1956,7 +1956,7 @@ mod tests {
 
     #[test]
     fn test_memory_storage() {
-        let mut storage = MemoryStorage::default();
+        let storage = MemoryStorage::default();
 
         let key = b"test_key";
         let value = b"test_value";

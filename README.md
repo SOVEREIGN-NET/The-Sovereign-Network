@@ -129,6 +129,22 @@ Nodes will automatically discover each other via:
 
 ## 🔧 Development
 
+### First-time clone setup
+
+After cloning, activate the pre-commit hook that blocks accidental commits of sensitive files:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook prevents staging of:
+- Symlinks
+- Files inside `tmp/` or `.zhtp/`
+- Files matching `*.b64`, `*.key`, `*.pem`, `keystore*`, `.env`
+
+> **Never commit private keys, keystore files, base64-encoded archives, or local environment
+> configs.** Use environment variables or a secrets manager for sensitive material.
+
 ### Project Structure
 ```
 sovereign-mono-repo/
