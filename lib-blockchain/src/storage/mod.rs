@@ -1151,6 +1151,17 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     /// - MUST have an active transaction from begin_block
     fn rollback_block(&self) -> StorageResult<()>;
 
+    /// Open a write batch for supplementary metadata (identity/wallet/entity index data)
+    /// produced by the legacy processing path when BlockExecutor is active.
+    ///
+    /// Unlike `begin_block`, does NOT validate or advance `latest_height`. Safe to call
+    /// immediately after the executor's `commit_block` for the same block height.
+    fn begin_metadata_write(&self) -> StorageResult<()>;
+
+    /// Commit a metadata-only batch opened with `begin_metadata_write`.
+    /// Applies identity/wallet index writes without updating `latest_height`.
+    fn commit_metadata_write(&self) -> StorageResult<()>;
+
     // =========================================================================
     // Account State (Legacy - Migrating to typed sub-stores)
     // =========================================================================
