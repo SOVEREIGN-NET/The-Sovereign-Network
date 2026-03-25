@@ -1804,49 +1804,16 @@ impl Component for ConsensusComponent {
                     .collect::<Vec<_>>()
             };
 
-            // Migration path: validators were historically seeded from bootstrap config into
-            // ValidatorManager only (not written as on-chain ValidatorData transactions).
-            // When the validator_registry is empty after chain replay, seed it from the
-            // bootstrap config so consensus can start. This is a one-time migration that
-            // bridges the gap until proper on-chain validator registration is deployed.
-            if initial.is_empty() && !self.bootstrap_validators.is_empty() {
-                info!(
-                    "validator_registry empty after chain load — seeding {} validator(s) from bootstrap config",
-                    self.bootstrap_validators.len()
-                );
-                let mut bc = blockchain.write().await;
-                for bv in &self.bootstrap_validators {
-                    let consensus_key = decode_bootstrap_consensus_key(&bv.consensus_key)
-                        .unwrap_or_else(|| derive_key_from_identity(&bv.identity_id, b"consensus"));
-                    let vi = lib_blockchain::ValidatorInfo {
-                        identity_id: bv.identity_id.clone(),
-                        stake: bv.stake.max(1),
-                        storage_provided: bv.storage_provided,
-                        consensus_key,
-                        networking_key: derive_key_from_identity(&bv.identity_id, b"networking"),
-                        rewards_key: derive_key_from_identity(&bv.identity_id, b"rewards"),
-                        network_address: bv.endpoints.first().cloned().unwrap_or_default(),
-                        commission_rate: (bv.commission_rate.min(100)) as u8,
-                        status: "active".to_string(),
-                        registered_at: 0,
-                        last_activity: 0,
-                        blocks_validated: 0,
-                        slash_count: 0,
-                        admission_source: lib_blockchain::ADMISSION_SOURCE_BOOTSTRAP_GENESIS
-                            .to_string(),
-                        governance_proposal_id: None,
-                        oracle_key_id: None,
-                    };
-                    bc.validator_registry
-                        .insert(bv.identity_id.clone(), vi);
-                }
-                bc.get_active_validators()
-                    .into_iter()
-                    .map(|v| v.clone())
-                    .collect()
-            } else {
-                initial
+            // Do not mutate canonical validator state from local bootstrap configuration.
+            // If the validator registry is empty after chain replay, fail fast so that
+            // operators must provide a deterministic, on-chain validator set.
+            if initial.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Validator startup requires a canonical validator set in blockchain state"
+                ));
             }
+
+            initial
         };
 
         if active_validators.is_empty() {
