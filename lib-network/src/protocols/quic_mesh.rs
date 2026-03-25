@@ -348,8 +348,22 @@ impl QuicMeshProtocol {
 
         // Derive network epoch from genesis hash (uses environment-appropriate fallback)
         let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
-        let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 100_000, network_epoch)
-            .context("Failed to open QUIC nonce cache database")?;
+        let nonce_cache = match NonceCache::open(&nonce_db_path, 3600, 100_000, network_epoch) {
+            Ok(cache) => cache,
+            Err(e) if e.to_string().contains("Network epoch mismatch") => {
+                warn!(
+                    "QUIC nonce cache epoch mismatch — stale cache belongs to a previous network \
+                     epoch. Clearing and reinitializing: {}",
+                    e
+                );
+                if nonce_db_path.exists() {
+                    let _ = std::fs::remove_dir_all(&nonce_db_path);
+                }
+                NonceCache::open(&nonce_db_path, 3600, 100_000, network_epoch)
+                    .context("Failed to reinitialize QUIC nonce cache after epoch mismatch clear")?
+            }
+            Err(e) => return Err(e).context("Failed to open QUIC nonce cache database"),
+        };
 
         let handshake_ctx = HandshakeContext::new(nonce_cache);
 

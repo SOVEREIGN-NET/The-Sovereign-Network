@@ -168,8 +168,17 @@ impl Web4Client {
         std::fs::create_dir_all(&cache_dir)?;
         // Derive network epoch from genesis hash (uses environment-appropriate fallback)
         let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
-        let nonce_cache = NonceCache::open(&cache_dir.join("nonces"), 3600, 10_000, network_epoch)
-            .context("Failed to create nonce cache")?;
+        let nonces_path = cache_dir.join("nonces");
+        let nonce_cache = match NonceCache::open(&nonces_path, 3600, 10_000, network_epoch) {
+            Ok(c) => c,
+            Err(e) if e.to_string().contains("Network epoch mismatch") => {
+                warn!("Web4 client nonce cache epoch mismatch — clearing and retrying: {}", e);
+                let _ = std::fs::remove_dir_all(&nonces_path);
+                NonceCache::open(&nonces_path, 3600, 10_000, network_epoch)
+                    .context("Failed to create nonce cache after epoch mismatch clear")?
+            }
+            Err(e) => return Err(e).context("Failed to create nonce cache"),
+        };
         let handshake_ctx = HandshakeContext::new(nonce_cache);
 
         info!(
