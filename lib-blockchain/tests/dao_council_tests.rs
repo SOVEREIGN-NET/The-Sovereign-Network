@@ -75,7 +75,6 @@ fn test_get_council_members_returns_slice() {
 
 #[test]
 fn test_council_bootstrap_survives_dat_round_trip() -> Result<()> {
-    use std::io::Write;
     use tempfile::NamedTempFile;
 
     let mut bc = Blockchain::new()?;

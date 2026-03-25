@@ -289,7 +289,7 @@ mod tests {
         let fee_collector = create_test_public_key(2);
         let healthcare = create_test_public_key(10);
         let education = create_test_public_key(11);
-        let energy = create_test_public_key(12);
+        let _energy = create_test_public_key(12);
         let housing = create_test_public_key(13);
         let food = create_test_public_key(14);
 
@@ -474,7 +474,7 @@ mod tests {
             .expect("Registry init should succeed");
 
         // Collect all resolved addresses
-        let mut addresses = vec![
+        let addresses = vec![
             registry.get_treasury(&SectorDao::Healthcare),
             registry.get_treasury(&SectorDao::Education),
             registry.get_treasury(&SectorDao::Energy),

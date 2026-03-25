@@ -1114,7 +1114,7 @@ mod tests {
         store.append_block(&genesis).unwrap();
         store.commit_block().unwrap();
 
-        let mut snap = snapshot(&store).unwrap();
+        let snap = snapshot(&store).unwrap();
 
         // Tamper with various fields and verify rejection
 

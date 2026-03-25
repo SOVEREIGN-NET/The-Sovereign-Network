@@ -15,9 +15,9 @@ use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, Sign
 use lib_blockchain::storage::{
     AccountState, Address, BlockchainStore, OutPoint, SledStore, TokenId, TxHash, Utxo, WalletState,
 };
-use lib_blockchain::sync::{ChainSync, SnapshotId, SnapshotManager};
+use lib_blockchain::sync::{ChainSync, SnapshotManager};
 use lib_blockchain::transaction::{TokenTransferData, Transaction};
-use lib_blockchain::types::{Difficulty, Hash, TransactionType};
+use lib_blockchain::types::{Difficulty, Hash};
 
 // =============================================================================
 // Test Helpers

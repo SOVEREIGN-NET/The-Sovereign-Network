@@ -660,7 +660,7 @@ mod tests {
         let genesis = create_genesis_block();
 
         // Create block 1 with wrong previous hash (should fail)
-        let mut bad_block = create_block_at_height(1, Hash::new([99u8; 32]));
+        let bad_block = create_block_at_height(1, Hash::new([99u8; 32]));
 
         // Try to import - genesis should succeed, block 1 should fail
         let result = sync.import_blocks(vec![genesis.clone()]);

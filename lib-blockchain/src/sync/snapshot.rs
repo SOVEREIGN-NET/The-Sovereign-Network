@@ -783,7 +783,7 @@ mod tests {
 
         // Create two snapshots
         let id0 = manager.snapshot_at(0).unwrap();
-        let id1 = manager.snapshot_at(1).unwrap();
+        let _id1 = manager.snapshot_at(1).unwrap();
 
         // List should show both
         let list = manager.list_snapshots().unwrap();

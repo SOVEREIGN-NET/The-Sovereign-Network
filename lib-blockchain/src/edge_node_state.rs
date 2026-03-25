@@ -724,7 +724,7 @@ mod tests {
         assert!(!edge_node.needs_bootstrap_proof(50));
 
         // After first sync at height 50, network at 70 blocks (20 blocks behind)
-        edge_node.add_header(create_dummy_header(50));
+        let _ = edge_node.add_header(create_dummy_header(50));
         assert!(!edge_node.needs_bootstrap_proof(70));
     }
 
