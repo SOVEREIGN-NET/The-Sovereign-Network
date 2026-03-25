@@ -23,6 +23,8 @@
 //!
 //! For production use, credentials must be verified before proof generation.
 
+use base64::Engine as _;
+
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -454,7 +456,8 @@ async fn handle_verify_proof(
     }
 
     // Decode proof data
-    let proof_bytes = base64::decode(&req.proof.proof_data)
+    let proof_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&req.proof.proof_data)
         .map_err(|_| anyhow::anyhow!("Invalid proof_data encoding"))?;
 
     if proof_bytes.len() > MAX_PROOF_SIZE {

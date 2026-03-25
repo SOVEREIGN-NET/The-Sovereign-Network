@@ -13,7 +13,7 @@ use lib_blockchain::execution::{BlockExecutor, ExecutorConfig};
 use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
 use lib_blockchain::storage::{Address, BlockchainStore, SledStore, TokenId};
 use lib_blockchain::sync::{ChainSync, SyncError};
-use lib_blockchain::transaction::{TokenTransferData, Transaction, TransactionOutput, TransactionPayload};
+use lib_blockchain::transaction::{TokenTransferData, Transaction, TransactionPayload};
 use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 
 // =============================================================================

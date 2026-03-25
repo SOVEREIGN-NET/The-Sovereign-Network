@@ -21,9 +21,6 @@ use super::canonical::SCALE;
 /// Token scale: 1 whole token = 10^18 atomic units (18 decimals).
 const TOKEN_SCALE: u128 = SCALE;
 
-/// Basis points denominator (10_000 bps = 100%)
-const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
-
 // ============================================================================
 // Issue #1846: Graduation Threshold Constants
 // ============================================================================
@@ -49,16 +46,6 @@ pub const GRADUATION_CONFIRMATION_BLOCKS: u64 = 3;
 /// Price scale for fixed-point arithmetic (8 decimals).
 /// Re-exported from oracle to keep both modules in sync.
 pub use crate::oracle::ORACLE_PRICE_SCALE as USD_PRICE_SCALE;
-
-/// Maximum iterations for the iterative buy approximation (overflow guard)
-const MAX_BUY_ITERATIONS: u32 = 1_000;
-
-/// Maximum supply-in-whole-tokens fed into growth-rate exponential to prevent overflow
-const MAX_SUPPLY_WHOLE_FOR_GROWTH: u128 = 100;
-
-/// Sigmoid: divisor that produces half-max price at midpoint supply
-/// = 2 × TOKEN_SCALE, derived from: ratio(midpoint) × max_price / (2 × TOKEN_SCALE) = max_price / 2
-const SIGMOID_HALF_MAX_DIVISOR: u128 = 2 * TOKEN_SCALE as u128;
 
 /// Token lifecycle phase
 ///
@@ -113,31 +100,7 @@ impl std::fmt::Display for Phase {
 /// Bonding curve pricing formula types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CurveType {
-    /// Linear: price = base_price + slope × supply
-    Linear {
-        /// Initial price at zero supply (in stablecoin atomic units)
-        base_price: u128,
-        /// Price increase per token (in stablecoin atomic units)
-        slope: u128,
-    },
-    /// Exponential: price = base_price × (1 + growth_rate)^supply
-    Exponential {
-        /// Initial price (in stablecoin atomic units)
-        base_price: u128,
-        /// Growth rate per token (in basis points, e.g., 100 = 1%)
-        growth_rate_bps: u128,
-    },
-    /// Sigmoid: price = max_price / (1 + e^(-steepness × (supply - midpoint)))
-    Sigmoid {
-        /// Maximum price at saturation (in stablecoin atomic units)
-        max_price: u128,
-        /// Supply at which price is 50% of max
-        midpoint_supply: u128,
-        /// Steepness of the curve (higher = steeper)
-        steepness: u128,
-    },
-    /// Piecewise Linear: Document-compliant 4-band curve
-    /// See: lib-blockchain/src/contracts/bonding_curve/pricing.rs
+    /// Canonical 4-band CBE curve.
     PiecewiseLinear(crate::contracts::bonding_curve::pricing::PiecewiseLinearCurve),
 }
 
@@ -151,54 +114,6 @@ impl CurveType {
     /// Price per token in stablecoin atomic units
     pub fn calculate_price(&self, supply: u128) -> u128 {
         match self {
-            CurveType::Linear { base_price, slope } => {
-                // price = base_price + slope × supply
-                // Note: supply is in atomic units, need to normalize
-                let supply_whole = supply / TOKEN_SCALE; // Convert to whole tokens
-                base_price.saturating_add(slope.saturating_mul(supply_whole))
-            }
-            CurveType::Exponential {
-                base_price,
-                growth_rate_bps,
-            } => {
-                // For small growth rates, use approximation
-                // price = base_price × (1 + rate)^supply
-                // Simplified: linear approximation for small supplies
-                let supply_whole = supply / TOKEN_SCALE;
-                let multiplier = (BASIS_POINTS_DENOMINATOR as u128).saturating_add(
-                    growth_rate_bps.saturating_mul(supply_whole.min(MAX_SUPPLY_WHOLE_FOR_GROWTH)),
-                );
-                (*base_price)
-                    .saturating_mul(multiplier)
-                    .saturating_div(BASIS_POINTS_DENOMINATOR as u128)
-            }
-            CurveType::Sigmoid {
-                max_price,
-                midpoint_supply,
-                steepness,
-            } => {
-                // Simplified sigmoid: piecewise linear approximation
-                // For supply << midpoint: price ≈ max_price × e^(steepness × (supply - midpoint))
-                // For supply ≈ midpoint: price ≈ max_price / 2
-                // For supply >> midpoint: price ≈ max_price
-                if supply <= *midpoint_supply {
-                    let ratio = supply
-                        .saturating_mul(TOKEN_SCALE)
-                        .saturating_div(*midpoint_supply);
-                    (*max_price)
-                        .saturating_mul(ratio)
-                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR)
-                } else {
-                    let excess = supply.saturating_sub(*midpoint_supply);
-                    let approach_factor = excess.saturating_mul(*steepness).min(TOKEN_SCALE);
-                    let half_max = (*max_price).saturating_div(2);
-                    let remaining = (*max_price).saturating_sub(half_max);
-                    let additional = remaining
-                        .saturating_mul(approach_factor)
-                        .saturating_div(TOKEN_SCALE);
-                    half_max.saturating_add(additional)
-                }
-            }
             CurveType::PiecewiseLinear(curve) => {
                 // PiecewiseLinear was designed for u64 supply; with 18-decimal u128
                 // values, supply routinely exceeds u64::MAX. Silently clamping to
@@ -214,9 +129,6 @@ impl CurveType {
     /// Get display name for the curve type
     pub fn name(&self) -> &'static str {
         match self {
-            CurveType::Linear { .. } => "linear",
-            CurveType::Exponential { .. } => "exponential",
-            CurveType::Sigmoid { .. } => "sigmoid",
             CurveType::PiecewiseLinear(_) => "piecewise_linear",
         }
     }
@@ -249,91 +161,6 @@ impl CurveType {
                 };
                 curve.quote_buy(s, amt) as u128
             }
-            CurveType::Linear { base_price, slope } => {
-                // For linear curve: price = base + slope × supply
-                // Cost to buy from supply S1 to S2:
-                // ∫(base + slope×s) ds from S1 to S2 = base×(S2-S1) + slope/2×(S2²-S1²)
-                // Solving for S2 given cost C:
-                // S2 = (-base + sqrt(base² + 2×slope×C + 2×base×slope×S1 + slope²×S1²)) / slope - S1
-                // Simplified: use iterative approach for accuracy
-
-                if *slope == 0 {
-                    // Constant price: tokens = stable / base
-                    return stable_amount
-                        .saturating_mul(TOKEN_SCALE)
-                        .saturating_div((*base_price).max(1));
-                }
-
-                let supply_whole = current_supply / TOKEN_SCALE;
-                let mut tokens_out: u128 = 0;
-                let mut remaining_stable = stable_amount;
-                let mut current_price =
-                    (*base_price).saturating_add((*slope).saturating_mul(supply_whole));
-
-                // Iterative approximation (MAX_BUY_ITERATIONS cap prevents unbounded loops)
-                for _ in 0..MAX_BUY_ITERATIONS {
-                    if remaining_stable == 0 || current_price == 0 {
-                        break;
-                    }
-
-                    // Buy one atomic-unit chunk at a time
-                    let token_chunk = remaining_stable
-                        .saturating_div(current_price)
-                        .min(TOKEN_SCALE);
-                    if token_chunk == 0 {
-                        break;
-                    }
-
-                    tokens_out = tokens_out.saturating_add(token_chunk);
-                    remaining_stable = remaining_stable.saturating_sub(
-                        token_chunk
-                            .saturating_mul(current_price)
-                            .saturating_div(TOKEN_SCALE),
-                    );
-
-                    // Update price for next iteration
-                    let new_supply_whole = supply_whole.saturating_add(tokens_out / TOKEN_SCALE);
-                    current_price =
-                        (*base_price).saturating_add((*slope).saturating_mul(new_supply_whole));
-                }
-
-                tokens_out
-            }
-            CurveType::Exponential {
-                base_price,
-                growth_rate_bps,
-            } => {
-                // Approximate: treat as linear with average growth
-                let supply_whole = current_supply / TOKEN_SCALE;
-                let current_price = (*base_price).saturating_add(
-                    (*base_price)
-                        .saturating_mul((*growth_rate_bps).saturating_mul(supply_whole.min(MAX_SUPPLY_WHOLE_FOR_GROWTH)))
-                        / BASIS_POINTS_DENOMINATOR as u128,
-                );
-
-                stable_amount.saturating_mul(TOKEN_SCALE).saturating_div(current_price.max(1))
-            }
-            CurveType::Sigmoid {
-                max_price,
-                midpoint_supply,
-                steepness: _,
-            } => {
-                // Approximate based on current price level
-                let current_price = if current_supply <= *midpoint_supply {
-                    let ratio = current_supply
-                        .saturating_mul(TOKEN_SCALE)
-                        .saturating_div(*midpoint_supply);
-                    (*max_price)
-                        .saturating_mul(ratio)
-                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR)
-                } else {
-                    (*max_price).saturating_div(2)
-                };
-
-                stable_amount
-                    .saturating_mul(TOKEN_SCALE)
-                    .saturating_div(current_price.max(1))
-            }
         }
     }
 
@@ -352,60 +179,6 @@ impl CurveType {
                     u64::try_from(current_supply).unwrap_or(u64::MAX),
                     u64::try_from(token_amount).unwrap_or(u64::MAX),
                 ) as u128
-            }
-            CurveType::Linear { base_price, slope } => {
-                // Area under curve from (supply - tokens) to supply
-                let supply_whole = current_supply / TOKEN_SCALE;
-                let tokens_whole = token_amount / TOKEN_SCALE;
-                let start_supply = supply_whole.saturating_sub(tokens_whole);
-
-                // Integral: base×tokens + slope/2×(supply² - start²)
-                let base_component = (*base_price).saturating_mul(tokens_whole);
-
-                let slope_component = (*slope).saturating_mul(
-                    supply_whole
-                        .saturating_mul(supply_whole)
-                        .saturating_sub(start_supply.saturating_mul(start_supply)),
-                ) / 2;
-
-                base_component.saturating_add(slope_component)
-            }
-            CurveType::Exponential {
-                base_price,
-                growth_rate_bps,
-            } => {
-                let supply_whole = current_supply / TOKEN_SCALE;
-                let tokens_whole = token_amount / TOKEN_SCALE;
-                let avg_supply = supply_whole.saturating_sub(tokens_whole / 2);
-
-                let avg_price = (*base_price).saturating_add(
-                    (*base_price).saturating_mul((*growth_rate_bps).saturating_mul(avg_supply.min(MAX_SUPPLY_WHOLE_FOR_GROWTH)))
-                        / BASIS_POINTS_DENOMINATOR as u128,
-                );
-
-                token_amount.saturating_mul(avg_price).saturating_div(TOKEN_SCALE)
-            }
-            CurveType::Sigmoid {
-                max_price,
-                midpoint_supply,
-                steepness: _,
-            } => {
-                let supply_whole = current_supply / TOKEN_SCALE;
-                let tokens_whole = token_amount / TOKEN_SCALE;
-                let avg_supply = supply_whole.saturating_sub(tokens_whole / 2);
-
-                let avg_price = if avg_supply <= *midpoint_supply {
-                    let ratio = avg_supply
-                        .saturating_mul(TOKEN_SCALE)
-                        .saturating_div(*midpoint_supply);
-                    (*max_price)
-                        .saturating_mul(ratio)
-                        .saturating_div(SIGMOID_HALF_MAX_DIVISOR)
-                } else {
-                    (*max_price).saturating_div(2)
-                };
-
-                token_amount.saturating_mul(avg_price).saturating_div(TOKEN_SCALE)
             }
         }
     }
@@ -729,23 +502,16 @@ mod tests {
     }
 
     #[test]
-    fn test_linear_curve_pricing() {
-        // Linear: price = 0.10 + 0.0001 × supply
-        let curve = CurveType::Linear {
-            base_price: 10_000_000, // $0.10
-            slope: 10_000,          // $0.0001 per token
-        };
+    fn test_piecewise_curve_pricing() {
+        let curve = CurveType::PiecewiseLinear(
+            crate::contracts::bonding_curve::pricing::PiecewiseLinearCurve::cbe_default(),
+        );
 
-        // At 0 supply: price = $0.10
-        assert_eq!(curve.calculate_price(0), 10_000_000);
+        let initial_price = curve.calculate_price(0);
+        let mid_price = curve.calculate_price(1_000_000_000);
 
-        // At 1000 tokens: price = $0.10 + $0.0001 × 1000 = $0.20
-        let price_1000 = curve.calculate_price(1_000 * TOKEN_SCALE);
-        assert_eq!(price_1000, 20_000_000);
-
-        // At 5000 tokens: price = $0.10 + $0.0001 × 5000 = $0.60
-        let price_5000 = curve.calculate_price(5_000 * TOKEN_SCALE);
-        assert_eq!(price_5000, 60_000_000);
+        assert!(initial_price > 0);
+        assert!(mid_price >= initial_price);
     }
 
     #[test]
@@ -768,23 +534,9 @@ mod tests {
 
     #[test]
     fn test_curve_type_names() {
-        let linear = CurveType::Linear {
-            base_price: 100,
-            slope: 1,
-        };
-        assert_eq!(linear.name(), "linear");
-
-        let exp = CurveType::Exponential {
-            base_price: 100,
-            growth_rate_bps: 100,
-        };
-        assert_eq!(exp.name(), "exponential");
-
-        let sigmoid = CurveType::Sigmoid {
-            max_price: 1000,
-            midpoint_supply: 1000 * 100_000_000,
-            steepness: 1000,
-        };
-        assert_eq!(sigmoid.name(), "sigmoid");
+        let curve = CurveType::PiecewiseLinear(
+            crate::contracts::bonding_curve::pricing::PiecewiseLinearCurve::cbe_default(),
+        );
+        assert_eq!(curve.name(), "piecewise_linear");
     }
 }

@@ -522,15 +522,10 @@ impl OracleHandler {
 
                 let body = if let Some(token) = bonding_token {
                     let current_price_atomic = token.current_price() as u128;
-                    let base_price_atomic = match token.curve_type {
-                        lib_blockchain::contracts::bonding_curve::types::CurveType::Linear { base_price, .. } => base_price as u128,
-                        lib_blockchain::contracts::bonding_curve::types::CurveType::Exponential { base_price, .. } => base_price as u128,
-                        lib_blockchain::contracts::bonding_curve::types::CurveType::Sigmoid { max_price, .. } => (max_price as u128) / 2,
-                        lib_blockchain::contracts::bonding_curve::types::CurveType::PiecewiseLinear(ref curve) => {
-                            // Use initial price from first band as base
-                            curve.price_at(0) as u128
-                        }
-                    };
+                    let lib_blockchain::contracts::bonding_curve::types::CurveType::PiecewiseLinear(
+                        curve,
+                    ) = &token.curve_type;
+                    let base_price_atomic = curve.price_at(0) as u128;
                     let current_price = Self::price_f64_from_atomic(current_price_atomic);
                     let base_price = Self::price_f64_from_atomic(base_price_atomic);
                     let abs_change = current_price - base_price;

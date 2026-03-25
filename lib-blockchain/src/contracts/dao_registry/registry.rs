@@ -698,12 +698,6 @@ mod tests {
         PublicKey::new(vec![id; 1312])
     }
 
-    fn test_public_key_distinct(id: u8) -> PublicKey {
-        let mut bytes = vec![0u8; 1312];
-        bytes[0] = id;
-        PublicKey::new(bytes)
-    }
-
     // ============================================================================
     // CORE REGISTRATION TESTS
     // ============================================================================

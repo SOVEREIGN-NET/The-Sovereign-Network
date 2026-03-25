@@ -2657,18 +2657,6 @@ impl RuntimeOrchestrator {
         Ok(())
     }
 
-    /// Log that validator seeding from runtime config is disabled (canonical genesis only).
-    ///
-    /// This method exists for documentation purposes only. Startup seeding from runtime config
-    /// is intentionally disabled per Issue #1862. Canonical validator membership must come 
-    /// from genesis or persisted chain state, not a local bootstrap list.
-    /// 
-    /// DO NOT ADD VALIDATOR SEEDING LOGIC HERE. Use canonical genesis state instead.
-    async fn log_validator_seeding_disabled(&self) -> anyhow::Result<()> {
-        info!("Canonical validator startup: runtime bootstrap validator seeding disabled (validators must come from genesis state)");
-        Ok(())
-    }
-
     /// Bootstrap the oracle committee from active validator consensus keys if it is still empty.
     ///
     /// Called unconditionally during startup — after Sled load and dat-restore
@@ -2739,7 +2727,7 @@ impl RuntimeOrchestrator {
     /// All nodes that see this block will then add this node to their
     /// `validator_registry` via `process_and_commit_block`.
     async fn submit_self_validator_registration(&self) -> Result<()> {
-        use crate::keystore_names::{
+        use crate::keyfile_names::{
             KeystorePrivateKey, NODE_IDENTITY_FILENAME, NODE_PRIVATE_KEY_FILENAME,
         };
         use std::path::PathBuf;

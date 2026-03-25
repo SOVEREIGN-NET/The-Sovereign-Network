@@ -46,7 +46,7 @@ pub struct SeedStorageConfig {
 impl SeedStorageConfig {
     pub fn for_keystore(keystore_path: &Path) -> Self {
         Self {
-            storage_dir: keystore_path.join(crate::keystore_names::SEED_STORAGE_DIRNAME),
+            storage_dir: keystore_path.join(crate::keyfile_names::SEED_STORAGE_DIRNAME),
             keyring_service: "zhtp-seed-storage".to_string(),
             prefer_keyring: true,
         }

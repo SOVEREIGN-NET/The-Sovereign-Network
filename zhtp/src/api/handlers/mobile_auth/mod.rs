@@ -25,7 +25,7 @@
 //! - Audit log: every action written to immutable in-memory log
 
 use anyhow::anyhow;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 

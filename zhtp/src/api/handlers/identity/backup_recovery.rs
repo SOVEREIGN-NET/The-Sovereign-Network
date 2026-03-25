@@ -1735,7 +1735,7 @@ pub async fn handle_migrate_identity(
 }
 
 async fn load_migration_authority_keypair() -> anyhow::Result<lib_crypto::KeyPair> {
-    use crate::keystore_names::{KeystorePrivateKey, NODE_PRIVATE_KEY_FILENAME};
+    use crate::keyfile_names::{KeystorePrivateKey, NODE_PRIVATE_KEY_FILENAME};
     use std::path::PathBuf;
 
     let keystore_dir = std::env::var("ZHTP_KEYSTORE_DIR")
@@ -2063,7 +2063,7 @@ mod tests {
         let validator_kp = lib_crypto::KeyPair::generate().expect("validator keypair");
         let keystore_dir = tempfile::tempdir().expect("keystore tempdir");
         std::env::set_var("ZHTP_KEYSTORE_DIR", keystore_dir.path());
-        let keystore_key = crate::keystore_names::KeystorePrivateKey {
+        let keystore_key = crate::keyfile_names::KeystorePrivateKey {
             dilithium_sk: validator_kp.private_key.dilithium_sk.clone(),
             dilithium_pk: validator_kp.public_key.dilithium_pk.clone(),
             kyber_sk: validator_kp.private_key.kyber_sk.clone(),
@@ -2072,7 +2072,7 @@ mod tests {
         std::fs::write(
             keystore_dir
                 .path()
-                .join(crate::keystore_names::NODE_PRIVATE_KEY_FILENAME),
+                .join(crate::keyfile_names::NODE_PRIVATE_KEY_FILENAME),
             serde_json::to_vec(&keystore_key).expect("serialize keystore key"),
         )
         .expect("write node_private_key.json");

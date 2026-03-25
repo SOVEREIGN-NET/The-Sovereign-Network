@@ -267,7 +267,7 @@ impl KernelState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::treasury_kernel::types::{KernelState, KernelStats};
+    use crate::contracts::treasury_kernel::types::KernelState;
 
     fn test_governance() -> PublicKey {
         PublicKey {

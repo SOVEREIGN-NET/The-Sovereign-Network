@@ -14828,7 +14828,7 @@ impl Blockchain {
 #[cfg(test)]
 mod cbe_graduation_oracle_gate_tests {
     use super::*;
-    use crate::contracts::bonding_curve::{BondingCurveToken, Phase};
+    use crate::contracts::bonding_curve::{BondingCurveToken, Phase, PiecewiseLinearCurve};
     use crate::contracts::tokens::CBE_SYMBOL;
 
     fn create_test_cbe_token(reserve_micro_usd: u128) -> BondingCurveToken {
@@ -14841,10 +14841,9 @@ mod cbe_graduation_oracle_gate_tests {
             total_supply: 1_000_000_000u128,
             reserve_balance: reserve_micro_usd,
             treasury_balance: 0u128,
-            curve_type: crate::contracts::bonding_curve::CurveType::Linear {
-                base_price: 1u128,
-                slope: 1u128,
-            },
+            curve_type: crate::contracts::bonding_curve::CurveType::PiecewiseLinear(
+                PiecewiseLinearCurve::cbe_default(),
+            ),
             threshold: crate::contracts::bonding_curve::Threshold::ReserveAmount(1_000_000u128),
             sell_enabled: true,
             amm_pool_id: None,

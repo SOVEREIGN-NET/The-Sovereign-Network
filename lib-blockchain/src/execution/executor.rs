@@ -1871,7 +1871,7 @@ impl BlockExecutor {
         mutator: &StateMutator<'_>,
         tx: &crate::transaction::Transaction,
         block_height: u64,
-        block_timestamp: u64,
+        _block_timestamp: u64,
     ) -> Result<TxOutcome, TxApplyError> {
         let tx_hash = hash_transaction(tx);
 

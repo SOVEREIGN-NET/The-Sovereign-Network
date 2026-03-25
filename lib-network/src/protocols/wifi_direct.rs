@@ -3,7 +3,7 @@
 //! Handles WiFi Direct mesh networking for medium-range peer connections
 
 use crate::network_utils::get_local_ip;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use lib_crypto::symmetric::chacha20::encrypt_data;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use serde::{Deserialize, Serialize};

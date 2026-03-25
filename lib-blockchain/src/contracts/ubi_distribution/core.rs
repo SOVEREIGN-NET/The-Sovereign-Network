@@ -719,7 +719,7 @@ impl UbiDistributor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::executor::{CallOrigin, ExecutionContext};
+    use crate::contracts::executor::ExecutionContext;
 
     fn test_public_key(id: u8) -> PublicKey {
         PublicKey {

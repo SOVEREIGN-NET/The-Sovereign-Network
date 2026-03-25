@@ -884,20 +884,6 @@ impl Web4Contract {
             }
         }
     }
-
-    fn get_state(&self) -> Vec<u8> {
-        serde_json::to_vec(self).unwrap_or_default()
-    }
-
-    fn set_state(&mut self, state: Vec<u8>) -> Result<(), String> {
-        match serde_json::from_slice::<Web4Contract>(&state) {
-            Ok(contract) => {
-                *self = contract;
-                Ok(())
-            }
-            Err(e) => Err(format!("Failed to deserialize state: {}", e)),
-        }
-    }
 }
 
 #[cfg(test)]

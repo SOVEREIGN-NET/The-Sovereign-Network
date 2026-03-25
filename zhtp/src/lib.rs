@@ -10,7 +10,8 @@ pub mod runtime; // Proof-of-Useful-Work (Phase 1: Challenge Generation)
                  // CLI module moved to separate zhtp-cli crate
 pub mod api;
 pub mod discovery_coordinator;
-pub mod keystore_names;
+pub mod keyfile_names;
+pub use keyfile_names as keystore_names;
 pub mod network_output_dispatcher;
 pub mod security;
 pub mod server;

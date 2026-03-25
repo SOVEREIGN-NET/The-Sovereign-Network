@@ -23,9 +23,10 @@ pub use core::{
     GovernanceConfigUpdateData, GovernanceConfigOperation, IdentityTransactionData,
     InitCbeTokenData, InitEntityRegistryData, ProfitDeclarationData, ProcessPayrollData,
     RecordOnRampTradeData, RevenueSource, TokenMintData, TokenTransferData, Transaction,
-    TransactionInput, TransactionOutput, TransactionPayload, TreasuryAllocationData, UbiClaimData,
-    ValidatorOperation, ValidatorTransactionData, WalletPrivateData, WalletReference,
-    WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7, TX_VERSION_V8,
+    TransactionInput, TransactionOutput, TransactionPayload, TreasuryAllocationData,
+    UbiClaimData, ValidatorOperation, ValidatorTransactionData,
+    WalletPrivateData, WalletReference, WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7,
+    TX_VERSION_V8,
 };
 
 // Re-exports from threshold_approval module

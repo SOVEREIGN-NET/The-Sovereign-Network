@@ -16,7 +16,7 @@ use base64::Engine;
 use lib_identity::ZhtpIdentity;
 use lib_network::client::ZhtpClient;
 use std::path::PathBuf;
-use zhtp::keystore_names::{USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME};
+use zhtp::keyfile_names::{USER_IDENTITY_FILENAME, USER_PRIVATE_KEY_FILENAME};
 
 use super::web4_utils::save_private_key_to_file;
 use super::web4_utils::{build_trust_config, connect_client, load_identity_from_keystore};

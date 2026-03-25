@@ -86,7 +86,6 @@ use wasmtime::*;
 #[cfg(feature = "wasmtime")]
 pub struct WasmEngine {
     engine: Engine,
-    config: RuntimeConfig,
     stats: RuntimeStats,
 }
 
@@ -113,7 +112,6 @@ impl WasmEngine {
 
         Ok(Self {
             engine,
-            config,
             stats: RuntimeStats {
                 contracts_executed: 0,
                 total_gas_used: 0,

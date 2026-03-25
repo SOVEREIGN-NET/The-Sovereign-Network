@@ -1432,6 +1432,36 @@ impl Transaction {
         }
     }
 
+    /// Create a new RecordOnRampTrade transaction.
+    pub fn new_record_on_ramp_trade(chain_id: u8, data: RecordOnRampTradeData) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::RecordOnRampTrade,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature: Default::default(),
+            memo: b"ZHTP_RECORD_ON_RAMP_TRADE".to_vec(),
+            payload: TransactionPayload::RecordOnRampTrade(data),
+        }
+    }
+
+    /// Create a new TreasuryAllocation transaction.
+    pub fn new_treasury_allocation(chain_id: u8, data: TreasuryAllocationData) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::TreasuryAllocation,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature: Default::default(),
+            memo: b"ZHTP_TREASURY_ALLOCATION".to_vec(),
+            payload: TransactionPayload::TreasuryAllocation(data),
+        }
+    }
+
     pub fn new_init_cbe_token(
         chain_id: u8,
         compensation_key_id: [u8; 32],

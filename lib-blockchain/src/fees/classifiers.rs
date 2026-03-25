@@ -32,12 +32,9 @@ mod sizes {
     pub const ZK_PROOF_SIZE: u32 = 256;
 
     /// Estimated signature sizes by scheme
-    pub const ED25519_SIG_SIZE: u32 = 64;
     pub const DILITHIUM5_SIG_SIZE: u32 = 4627;
-    pub const HYBRID_SIG_SIZE: u32 = ED25519_SIG_SIZE + DILITHIUM5_SIG_SIZE;
 
     /// Public key sizes
-    pub const ED25519_PUBKEY_SIZE: u32 = 32;
     pub const DILITHIUM5_PUBKEY_SIZE: u32 = 2592;
 
     /// Balance entry size estimate (for state write bytes)

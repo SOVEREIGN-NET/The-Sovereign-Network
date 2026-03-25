@@ -5,14 +5,12 @@
 
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error};
+use tracing::{error, info};
 
 use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
 
 use crate::runtime::RuntimeOrchestrator;
-
-const CONTENT_TYPE_JSON: &str = "application/json";
 
 /// Per-height metrics response
 #[derive(Debug, Serialize, Deserialize)]
@@ -243,29 +241,5 @@ impl ObserverHandler {
             ZhtpStatus::NotImplemented,
             "Observer surprisal score not yet available - pending integration with consensus observer service".to_string(),
         ))
-    }
-
-    // Helper methods
-
-    /// Classification logic for consensus heights.
-    /// 
-    /// This defines the API contract for height classifications:
-    /// - `healthy`: 1 round, no stalls
-    /// - `delayed`: 1 round with stall
-    /// - `recovering`: 2-3 rounds, no fault
-    /// - `degraded`: 2-3 rounds with fault
-    /// - `divergence`: 4+ rounds
-    ///
-    /// TODO: When wiring to real ObserverService, this logic should come from
-    /// lib_consensus::observer::height_scoring::compute_height_score()
-    fn classify_height(round_count: u32, has_stall: bool, has_fault: bool) -> &'static str {
-        match (round_count, has_stall, has_fault) {
-            (1, false, _) => "healthy",
-            (1, true, _) => "delayed",
-            (2..=3, _, false) => "recovering",
-            (2..=3, _, true) => "degraded",
-            (4.., _, _) => "divergence",
-            _ => "unknown",
-        }
     }
 }

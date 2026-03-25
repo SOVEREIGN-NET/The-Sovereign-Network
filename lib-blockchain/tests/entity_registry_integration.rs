@@ -18,7 +18,14 @@ fn test_signature(signer: &PublicKey) -> Signature {
 }
 
 fn create_init_tx(signer: &PublicKey, cbe: PublicKey, nonprofit: PublicKey) -> Transaction {
-    Transaction::new_init_entity_registry(1, cbe, nonprofit, 123, 0, test_signature(signer))
+    Transaction::new_init_entity_registry(
+        1,
+        cbe,
+        nonprofit,
+        123,
+        0,
+        test_signature(signer),
+    )
 }
 
 fn create_block(blockchain: &Blockchain, transactions: Vec<Transaction>) -> Block {

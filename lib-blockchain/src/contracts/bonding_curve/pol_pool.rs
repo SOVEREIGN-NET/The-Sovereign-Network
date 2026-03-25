@@ -472,7 +472,7 @@ impl PolPool {
         derive_pool_id(&self.token_id)
     }
 
-    /// Get a compatibility pool state for APIs and tests that already consume `PoolState`.
+    /// Export the pool state using the shared `PoolState` shape.
     pub fn state(&self) -> PoolState {
         PoolState {
             sov_reserve: self.sov_reserve,
@@ -627,34 +627,6 @@ impl PolPool {
             fee_amount,
             price_impact_bps,
         })
-    }
-
-    // =========================================================================
-    // DISABLED OPERATIONS - These are intentionally NOT IMPLEMENTED
-    // =========================================================================
-
-    /// # DANGER - OPERATION DISABLED FOR POL POOL
-    ///
-    /// This function does NOT EXIST for POL pools.
-    /// Adding liquidity is PHYSICALLY IMPOSSIBLE.
-    ///
-    /// If you see code trying to call this, it is a bug.
-    /// POL pools have NO liquidity interface.
-    #[deprecated(note = "add_liquidity does not exist for POL pools")]
-    fn add_liquidity_disabled(&self) -> ! {
-        panic!("OPERATION DISABLED: POL pools cannot add liquidity")
-    }
-
-    /// # DANGER - OPERATION DISABLED FOR POL POOL
-    ///
-    /// This function does NOT EXIST for POL pools.
-    /// Removing liquidity is PHYSICALLY IMPOSSIBLE.
-    ///
-    /// If you see code trying to call this, it is a bug.
-    /// POL pools have NO liquidity interface.
-    #[deprecated(note = "remove_liquidity does not exist for POL pools")]
-    fn remove_liquidity_disabled(&self) -> ! {
-        panic!("OPERATION DISABLED: POL pools cannot remove liquidity")
     }
 
     /// # DANGER - OPERATION DISABLED FOR POL POOL
