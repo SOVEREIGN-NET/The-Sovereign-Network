@@ -126,6 +126,19 @@ pub struct ObserverNetworkHealthResponse {
     pub stability: f64,
 }
 
+/// Observer lifecycle response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ObserverLifecycleResponse {
+    pub status: String,
+    pub lifecycle_state: String,
+    pub node_role: String,
+    pub blockchain_component: String,
+    pub network_component: String,
+    pub local_height: u64,
+    pub connected_peers: u32,
+    pub mesh_connected: bool,
+}
+
 /// Observer handler implementation
 pub struct ObserverHandler {
     _runtime: Arc<RuntimeOrchestrator>,
@@ -161,6 +174,9 @@ impl ZhtpRequestHandler for ObserverHandler {
         let response = match (request.method, match_uri) {
             (ZhtpMethod::Get, "/api/v1/observer/status") => {
                 self.handle_get_observer_status(request).await
+            }
+            (ZhtpMethod::Get, "/api/v1/observer/lifecycle/current") => {
+                self.handle_get_observer_lifecycle(request).await
             }
             (ZhtpMethod::Get, "/api/v1/observer/sync/current") => {
                 self.handle_get_observer_sync(request).await
@@ -465,6 +481,52 @@ impl ObserverHandler {
         ))
     }
 
+    /// Get observer lifecycle status.
+    /// GET /api/v1/observer/lifecycle/current
+    async fn handle_get_observer_lifecycle(
+        &self,
+        _request: ZhtpRequest,
+    ) -> ZhtpResult<ZhtpResponse> {
+        info!("API: Getting observer lifecycle state");
+
+        let (
+            node_role,
+            blockchain_status,
+            network_status,
+            local_height,
+            connected_peers,
+            mesh_connected,
+            _mesh_connectivity_percent,
+        ) = self.observer_runtime_snapshot().await?;
+
+        let response = ObserverLifecycleResponse {
+            status: "success".to_string(),
+            lifecycle_state: Self::classify_observer_lifecycle(
+                &blockchain_status,
+                &network_status,
+                local_height,
+                connected_peers,
+                mesh_connected,
+            )
+            .to_string(),
+            node_role: format!("{:?}", node_role),
+            blockchain_component: blockchain_status,
+            network_component: network_status,
+            local_height,
+            connected_peers,
+            mesh_connected,
+        };
+
+        let json_response = serde_json::to_vec(&response)
+            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            CONTENT_TYPE_JSON.to_string(),
+            None,
+        ))
+    }
+
     /// Get metrics for current height
     /// GET /api/v1/observer/height/current (Issue #1788)
     async fn handle_get_current_height_metrics(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
@@ -682,6 +744,29 @@ mod tests {
         assert_eq!(decoded.local_height, 42);
         assert!(decoded.mesh_connected);
         assert!(decoded.internet_connected);
+    }
+
+    #[test]
+    fn observer_lifecycle_response_schema_round_trip() {
+        let original = ObserverLifecycleResponse {
+            status: "success".to_string(),
+            lifecycle_state: "bootstrapping".to_string(),
+            node_role: "Observer".to_string(),
+            blockchain_component: "running".to_string(),
+            network_component: "running".to_string(),
+            local_height: 0,
+            connected_peers: 2,
+            mesh_connected: true,
+        };
+
+        let json = serde_json::to_string(&original).expect("must serialise");
+        let decoded: ObserverLifecycleResponse =
+            serde_json::from_str(&json).expect("must deserialise");
+
+        assert_eq!(decoded.lifecycle_state, "bootstrapping");
+        assert_eq!(decoded.node_role, "Observer");
+        assert_eq!(decoded.connected_peers, 2);
+        assert!(decoded.mesh_connected);
     }
 
     #[test]
