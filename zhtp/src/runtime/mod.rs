@@ -5026,6 +5026,66 @@ mod runtime_orchestrator_tests {
     }
 
     #[test]
+    fn observer_lifecycle_sequence_preserves_join_then_restart_contract() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        let discovered_network = crate::runtime::ExistingNetworkInfo {
+            peer_count: 4,
+            blockchain_height: 128,
+            network_id: "observer-sequence-testnet".to_string(),
+            bootstrap_peers: vec![
+                "127.0.0.1:9334".to_string(),
+                "127.0.0.1:9335".to_string(),
+            ],
+            environment: Environment::Development,
+        };
+
+        assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
+
+        let fresh_start_err = RuntimeOrchestrator::validate_observer_join_policy(&config, false, None)
+            .expect_err("fresh observer without discovery must not serve");
+        assert!(
+            fresh_start_err
+                .to_string()
+                .contains("requires an existing network"),
+            "unexpected error: {fresh_start_err}"
+        );
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, false
+            ),
+            "fresh observer should stay in discovery until a network is found"
+        );
+
+        assert!(
+            RuntimeOrchestrator::validate_observer_join_policy(
+                &config,
+                false,
+                Some(&discovered_network)
+            )
+            .is_ok(),
+            "observer should join once an existing network is discovered"
+        );
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, false
+            ),
+            "observer should keep trying until local chain state exists"
+        );
+
+        assert!(RuntimeOrchestrator::validate_observer_join_policy(&config, true, None).is_ok());
+        assert!(
+            !RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, true
+            ),
+            "observer restart with local chain should not fall back into endless discovery"
+        );
+    }
+
+    #[test]
     fn edge_nodes_always_retry_discovery_continuously() {
         let config = crate::config::NodeConfig::default();
 
