@@ -4798,12 +4798,18 @@ pub(super) fn try_restore_validators_from_dat(
 
 #[cfg(test)]
 mod runtime_orchestrator_tests {
-    use crate::config::Environment;
     use super::RuntimeOrchestrator;
+    use crate::config::Environment;
     use crate::config::NodeType;
     use crate::runtime::node_runtime::NodeRole;
-    use tokio::sync::RwLock;
     use std::sync::Arc;
+    use std::sync::{Mutex, OnceLock};
+    use tokio::sync::RwLock;
+
+    fn runtime_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn should_skip_startup_sync_only_for_leader_with_local_data() {
@@ -5098,6 +5104,7 @@ mod runtime_orchestrator_tests {
 
     #[tokio::test]
     async fn observer_start_blockchain_sync_wires_runtime_state_for_joined_network() {
+        let _guard = runtime_test_lock().lock().expect("runtime test lock");
         crate::runtime::bootstrap_peers_provider::clear_bootstrap_peers().await;
 
         let mut config = crate::config::NodeConfig::default();
@@ -5176,6 +5183,126 @@ mod runtime_orchestrator_tests {
                 .await
                 .expect("restart should see shared blockchain height"),
             7
+        );
+
+        crate::runtime::blockchain_provider::set_global_blockchain(Arc::new(RwLock::new(
+            lib_blockchain::Blockchain::new().expect("fresh blockchain"),
+        )))
+        .await
+        .expect("global blockchain reset should succeed");
+        crate::runtime::bootstrap_peers_provider::clear_bootstrap_peers().await;
+    }
+
+    #[tokio::test]
+    async fn observer_multi_orchestrator_join_sync_restart_sequence_preserves_shared_network_state()
+    {
+        let _guard = runtime_test_lock().lock().expect("runtime test lock");
+        crate::runtime::bootstrap_peers_provider::clear_bootstrap_peers().await;
+
+        let mut observer_a_config = crate::config::NodeConfig::default();
+        observer_a_config.node_type = Some(NodeType::FullNode);
+        observer_a_config.node_role = NodeRole::Observer;
+        observer_a_config.consensus_config.validator_enabled = false;
+        observer_a_config.network_config.bootstrap_peers = vec!["127.0.0.1:9334".to_string()];
+
+        let mut observer_b_config = crate::config::NodeConfig::default();
+        observer_b_config.node_type = Some(NodeType::FullNode);
+        observer_b_config.node_role = NodeRole::Observer;
+        observer_b_config.consensus_config.validator_enabled = false;
+        observer_b_config.network_config.bootstrap_peers = vec!["127.0.0.1:9335".to_string()];
+
+        let discovered_network = crate::runtime::ExistingNetworkInfo {
+            peer_count: 3,
+            blockchain_height: 64,
+            network_id: "observer-shared-network".to_string(),
+            bootstrap_peers: vec![
+                "127.0.0.1:9334".to_string(),
+                "127.0.0.1:9335".to_string(),
+                "127.0.0.1:9336".to_string(),
+            ],
+            environment: Environment::Development,
+        };
+
+        let mut observer_a = RuntimeOrchestrator::new(observer_a_config)
+            .await
+            .expect("first observer runtime should initialize");
+        let mut observer_b = RuntimeOrchestrator::new(observer_b_config)
+            .await
+            .expect("second observer runtime should initialize");
+
+        observer_a
+            .set_joined_existing_network(true)
+            .await
+            .expect("first observer join state should be writable");
+        observer_a
+            .start_blockchain_sync(&discovered_network)
+            .await
+            .expect("first observer should wire sync state from discovered network");
+
+        assert!(
+            observer_a.get_joined_existing_network().await,
+            "first observer should remain marked as joined"
+        );
+
+        let bootstrap_peers = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers()
+            .await
+            .expect("bootstrap peers should be stored after first observer joins");
+        assert_eq!(bootstrap_peers, discovered_network.bootstrap_peers);
+
+        {
+            let blockchain = crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .expect("global blockchain should exist after first observer join");
+            let mut blockchain = blockchain.write().await;
+            blockchain.height = 9;
+        }
+
+        observer_b
+            .set_joined_existing_network(true)
+            .await
+            .expect("second observer join state should be writable");
+        observer_b
+            .start_blockchain_sync(&discovered_network)
+            .await
+            .expect("second observer should reuse discovered network state");
+
+        assert!(
+            observer_b.get_joined_existing_network().await,
+            "second observer should remain marked as joined"
+        );
+        assert_eq!(
+            observer_b
+                .get_blockchain_height()
+                .await
+                .expect("second observer should start from a fresh sync blockchain"),
+            0
+        );
+
+        {
+            let blockchain = crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .expect("second observer should install a fresh shared sync blockchain");
+            let mut blockchain = blockchain.write().await;
+            blockchain.height = 15;
+        }
+
+        let restarted_observer_a = RuntimeOrchestrator::new({
+            let mut cfg = crate::config::NodeConfig::default();
+            cfg.node_type = Some(NodeType::FullNode);
+            cfg.node_role = NodeRole::Observer;
+            cfg.consensus_config.validator_enabled = false;
+            cfg.network_config.bootstrap_peers = vec!["127.0.0.1:9334".to_string()];
+            cfg
+        })
+        .await
+        .expect("restarted first observer should initialize");
+
+        assert_eq!(
+            restarted_observer_a
+                .get_blockchain_height()
+                .await
+                .expect("restart should keep observing the shared synced height"),
+            15
         );
 
         crate::runtime::blockchain_provider::set_global_blockchain(Arc::new(RwLock::new(
