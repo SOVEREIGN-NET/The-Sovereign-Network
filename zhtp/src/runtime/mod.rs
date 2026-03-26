@@ -1212,7 +1212,8 @@ impl RuntimeOrchestrator {
 
     /// Standalone observers must join an existing network unless they already have
     /// local chain state. They are not allowed to create a fresh genesis on an
-    /// empty store.
+    /// empty store, and a peer set advertising only genesis height is treated as
+    /// "not ready" until blocks beyond genesis are committed.
     fn observer_requires_existing_network(config: &NodeConfig, has_local_chain_data: bool) -> bool {
         matches!(config.node_type, Some(crate::config::NodeType::FullNode)) && !has_local_chain_data
     }
@@ -1240,7 +1241,7 @@ impl RuntimeOrchestrator {
             .unwrap_or_default();
 
         Err(anyhow::anyhow!(
-            "Observer/full-node startup requires an existing network with committed blocks. \
+            "Observer/full-node startup requires an existing network with committed blocks beyond genesis. \
              Local chain state is empty, discovered peers={}, discovered_height={}, \
              configured_bootstrap_peers={}. Refusing to create genesis in observer mode.",
             discovered_peer_count,
@@ -4920,6 +4921,34 @@ mod runtime_orchestrator_tests {
             Some(&network_info)
         )
         .is_ok());
+    }
+
+    #[test]
+    fn observer_join_policy_rejects_genesis_only_networks() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        let network_info = crate::runtime::ExistingNetworkInfo {
+            peer_count: 3,
+            blockchain_height: 0,
+            network_id: "testnet".to_string(),
+            bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
+            environment: crate::config::Environment::Development,
+        };
+
+        let err = RuntimeOrchestrator::validate_observer_join_policy(
+            &config,
+            false,
+            Some(&network_info),
+        )
+        .expect_err("observer should keep waiting when peers only advertise genesis");
+
+        assert!(
+            err.to_string().contains("beyond genesis"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
