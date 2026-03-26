@@ -936,4 +936,16 @@ mod tests {
         assert!(!BlockchainComponent::peer_is_ahead(10, 9));
         assert!(BlockchainComponent::peer_is_ahead(10, 11));
     }
+
+    #[test]
+    fn sync_round_skips_stale_peer_and_keeps_scanning() {
+        let local_height = 10;
+        let peer_tips = [10_u64, 14_u64, 12_u64];
+
+        let first_ahead_peer = peer_tips
+            .iter()
+            .position(|tip| BlockchainComponent::peer_is_ahead(local_height, *tip));
+
+        assert_eq!(first_ahead_peer, Some(1));
+    }
 }
