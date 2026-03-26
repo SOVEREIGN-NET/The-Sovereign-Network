@@ -12,6 +12,8 @@ use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
 
 use crate::runtime::{ComponentHealth as RuntimeComponentHealth, ComponentId, ComponentStatus, RuntimeOrchestrator};
 
+const CONTENT_TYPE_JSON: &str = "application/json";
+
 /// Per-height metrics response
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HeightMetricsResponse {

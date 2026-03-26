@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
 use crate::runtime::node_runtime::NodeRole;
@@ -1087,8 +1087,6 @@ async fn bootstrap_identities_from_dht(
         errors,
     })
 }
-<<<<<<< HEAD
-=======
 
 /// After DHT bootstrap and identity migration, mint missing SOV balances via TokenMint txs.
 /// This makes token balances block-authoritative and durable across restarts.
