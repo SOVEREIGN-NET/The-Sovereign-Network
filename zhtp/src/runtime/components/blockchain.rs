@@ -272,6 +272,18 @@ impl BlockchainComponent {
         peer_tip_height > local_height
     }
 
+    fn should_continue_peer_scan(
+        local_height_before_peer: u64,
+        peer_tip_height: u64,
+        local_height_after_peer: u64,
+    ) -> bool {
+        if !Self::peer_is_ahead(local_height_before_peer, peer_tip_height) {
+            return true;
+        }
+
+        local_height_after_peer < peer_tip_height
+    }
+
     /// Periodic catch-up loop for Observer nodes.
     ///
     /// Runs every 30 seconds. For each bootstrap peer, opens a QUIC connection,
@@ -293,8 +305,6 @@ impl BlockchainComponent {
                 Err(_) => continue,
             };
 
-            let local_height = bc_arc.read().await.height;
-
             let discovered_peers = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers()
                 .await
                 .unwrap_or_default();
@@ -307,6 +317,8 @@ impl BlockchainComponent {
 
             // Try each bootstrap peer until one succeeds.
             'peers: for peer_quic_addr in &sync_peers {
+                let local_height_before_peer = bc_arc.read().await.height;
+
                 // Create a throwaway identity for the QUIC handshake.
                 let ts = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -390,10 +402,10 @@ impl BlockchainComponent {
                     }
                 };
 
-                if !Self::peer_is_ahead(local_height, peer_tip.height) {
+                if !Self::peer_is_ahead(local_height_before_peer, peer_tip.height) {
                     debug!(
                         "observer_sync: peer {} at height {}, local={}, no gap",
-                        peer_quic_addr, peer_tip.height, local_height
+                        peer_quic_addr, peer_tip.height, local_height_before_peer
                     );
                     continue;
                 }
@@ -402,12 +414,12 @@ impl BlockchainComponent {
                     "📥 Observer gap-fill: peer {} height={}, local={}, fetching {} block(s)",
                     peer_quic_addr,
                     peer_tip.height,
-                    local_height,
-                    peer_tip.height - local_height
+                    local_height_before_peer,
+                    peer_tip.height - local_height_before_peer
                 );
 
                 // Fetch and apply missing blocks in batches of 100.
-                let mut current = local_height;
+                let mut current = local_height_before_peer;
                 let target = peer_tip.height;
 
                 'batches: loop {
@@ -495,7 +507,23 @@ impl BlockchainComponent {
                     }
                 }
 
-                // Successfully synced (or gap is filled); stop trying other peers.
+                let local_height_after_peer = bc_arc.read().await.height;
+                if Self::should_continue_peer_scan(
+                    local_height_before_peer,
+                    peer_tip.height,
+                    local_height_after_peer,
+                ) {
+                    debug!(
+                        "observer_sync: peer {} did not fully close gap (local_before={}, target={}, local_after={}), trying next peer",
+                        peer_quic_addr,
+                        local_height_before_peer,
+                        peer_tip.height,
+                        local_height_after_peer
+                    );
+                    continue;
+                }
+
+                // Successfully synced to the peer's advertised tip; stop trying other peers.
                 break 'peers;
             }
         }
@@ -938,6 +966,17 @@ mod tests {
     }
 
     #[test]
+    fn failed_ahead_peer_does_not_end_sync_round() {
+        assert!(BlockchainComponent::should_continue_peer_scan(10, 14, 10));
+    }
+
+    #[test]
+    fn partial_catch_up_keeps_failover_scan_active() {
+        assert!(BlockchainComponent::should_continue_peer_scan(10, 14, 12));
+        assert!(!BlockchainComponent::should_continue_peer_scan(12, 14, 14));
+    }
+
+    #[test]
     fn sync_round_skips_stale_peer_and_keeps_scanning() {
         let local_height = 10;
         let peer_tips = [10_u64, 14_u64, 12_u64];
@@ -947,5 +986,28 @@ mod tests {
             .position(|tip| BlockchainComponent::peer_is_ahead(local_height, *tip));
 
         assert_eq!(first_ahead_peer, Some(1));
+    }
+
+    #[test]
+    fn sync_round_failover_reaches_later_peer_after_ahead_peer_failure() {
+        let mut local_height = 10;
+        let peer_attempts = [(10_u64, 10_u64), (14_u64, 10_u64), (14_u64, 14_u64)];
+        let mut stopping_peer = None;
+
+        for (index, (peer_tip_height, local_height_after_peer)) in peer_attempts.iter().enumerate()
+        {
+            if !BlockchainComponent::should_continue_peer_scan(
+                local_height,
+                *peer_tip_height,
+                *local_height_after_peer,
+            ) {
+                stopping_peer = Some(index);
+                break;
+            }
+
+            local_height = *local_height_after_peer;
+        }
+
+        assert_eq!(stopping_peer, Some(2));
     }
 }
