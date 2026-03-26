@@ -1010,4 +1010,60 @@ mod tests {
 
         assert_eq!(stopping_peer, Some(2));
     }
+
+    #[test]
+    fn observer_sync_round_preserves_progress_until_later_peer_closes_gap() {
+        let sync_peers = BlockchainComponent::sync_peers_for_round(
+            &["peer-a".to_string(), "peer-b".to_string()],
+            &[
+                "peer-b".to_string(),
+                "peer-c".to_string(),
+                "peer-d".to_string(),
+            ],
+        );
+
+        let peer_outcomes = [
+            ("peer-a", 10_u64, 10_u64),
+            ("peer-b", 14_u64, 12_u64),
+            ("peer-c", 12_u64, 12_u64),
+            ("peer-d", 14_u64, 14_u64),
+        ];
+
+        let mut local_height = 10_u64;
+        let mut stopping_peer = None;
+
+        for peer in &sync_peers {
+            let (peer_name, peer_tip_height, local_height_after_peer) = peer_outcomes
+                .iter()
+                .find(|(name, _, _)| name == peer)
+                .copied()
+                .expect("every sync peer should have an outcome");
+
+            assert_eq!(peer_name, peer);
+
+            if !BlockchainComponent::should_continue_peer_scan(
+                local_height,
+                peer_tip_height,
+                local_height_after_peer,
+            ) {
+                stopping_peer = Some(peer_name);
+                local_height = local_height_after_peer;
+                break;
+            }
+
+            local_height = local_height_after_peer;
+        }
+
+        assert_eq!(
+            sync_peers,
+            vec![
+                "peer-a".to_string(),
+                "peer-b".to_string(),
+                "peer-c".to_string(),
+                "peer-d".to_string()
+            ]
+        );
+        assert_eq!(local_height, 14);
+        assert_eq!(stopping_peer, Some("peer-d"));
+    }
 }
