@@ -268,6 +268,10 @@ impl BlockchainComponent {
         peers
     }
 
+    fn peer_is_ahead(local_height: u64, peer_tip_height: u64) -> bool {
+        peer_tip_height > local_height
+    }
+
     /// Periodic catch-up loop for Observer nodes.
     ///
     /// Runs every 30 seconds. For each bootstrap peer, opens a QUIC connection,
@@ -386,12 +390,12 @@ impl BlockchainComponent {
                     }
                 };
 
-                if peer_tip.height <= local_height {
+                if !Self::peer_is_ahead(local_height, peer_tip.height) {
                     debug!(
                         "observer_sync: peer {} at height {}, local={}, no gap",
                         peer_quic_addr, peer_tip.height, local_height
                     );
-                    break 'peers; // We're caught up; no need to try other peers.
+                    continue;
                 }
 
                 info!(
@@ -924,5 +928,12 @@ mod tests {
                 "127.0.0.1:9336".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn peer_is_ahead_requires_strictly_higher_tip() {
+        assert!(!BlockchainComponent::peer_is_ahead(10, 10));
+        assert!(!BlockchainComponent::peer_is_ahead(10, 9));
+        assert!(BlockchainComponent::peer_is_ahead(10, 11));
     }
 }
