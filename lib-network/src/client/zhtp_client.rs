@@ -183,8 +183,16 @@ impl ZhtpClient {
                 std::fs::create_dir_all(parent)?;
             }
             let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
-            NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
-                .context("Failed to open nonce cache")?
+            match NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch) {
+                Ok(c) => c,
+                Err(e) if e.to_string().contains("Network epoch mismatch") => {
+                    warn!("Client nonce cache epoch mismatch — clearing and retrying: {}", e);
+                    let _ = std::fs::remove_dir_all(&nonce_db_path);
+                    NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
+                        .context("Failed to open nonce cache after epoch mismatch clear")?
+                }
+                Err(e) => return Err(e.into()),
+            }
         };
 
         let handshake_ctx = HandshakeContext::new(nonce_cache);
