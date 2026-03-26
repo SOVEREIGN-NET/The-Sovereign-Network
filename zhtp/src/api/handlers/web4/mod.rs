@@ -808,8 +808,9 @@ mod tests {
         }
     }
 
-    async fn setup_handler_with_domain(
+    async fn setup_handler_with_domain_and_content(
         domain: &str,
+        initial_content: HashMap<String, Vec<u8>>,
     ) -> anyhow::Result<(Web4Handler, lib_identity::ZhtpIdentity)> {
         let storage: Arc<dyn UnifiedStorage> = Arc::new(TestStorage::default());
         let registry = Arc::new(DomainRegistry::new(storage.clone()).await?);
@@ -858,13 +859,19 @@ mod tests {
                         hosting_budget: 0.0,
                     },
                 },
-                initial_content: HashMap::new(),
+                initial_content,
                 registration_proof,
                 deploy_manifest_cid: None,
             })
             .await?;
 
         Ok((handler, owner))
+    }
+
+    async fn setup_handler_with_domain(
+        domain: &str,
+    ) -> anyhow::Result<(Web4Handler, lib_identity::ZhtpIdentity)> {
+        setup_handler_with_domain_and_content(domain, HashMap::new()).await
     }
 
     #[tokio::test]
@@ -936,5 +943,34 @@ mod tests {
         assert_eq!(body["status"], "success");
         assert_eq!(body["domain"], "observer-web4.zhtp");
         assert_eq!(body["content_available"], false);
+    }
+
+    #[tokio::test]
+    async fn web4_content_route_serves_registered_bytes_for_observer_mode() {
+        let mut initial_content = HashMap::new();
+        initial_content.insert(
+            "/index.html".to_string(),
+            b"<html><body>observer-ready</body></html>".to_vec(),
+        );
+
+        let (handler, _owner) =
+            setup_handler_with_domain_and_content("observer-web4.zhtp", initial_content)
+                .await
+                .expect("handler should initialize");
+
+        let request =
+            ZhtpRequest::get("/api/v1/web4/content/observer-web4.zhtp/index.html".to_string(), None)
+                .expect("request");
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("content should return a response");
+
+        assert!(response.is_success());
+        assert_eq!(response.body, b"<html><body>observer-ready</body></html>");
+        assert_eq!(
+            response.headers.content_type.as_deref(),
+            Some("text/html; charset=utf-8")
+        );
     }
 }
