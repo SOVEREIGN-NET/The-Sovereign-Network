@@ -2136,6 +2136,16 @@ impl Blockchain {
                         }
                     }
 
+                    // Replay token transactions from this block to reconstruct balances/nonces.
+                    // This makes token state derived from blocks (source of truth) rather than
+                    // a sled snapshot that can diverge when sled is wiped or copied between nodes.
+                    if let Err(e) = blockchain.process_token_transactions(&block) {
+                        warn!(
+                            "⚠️ Token replay error at height {} (non-fatal, continuing): {}",
+                            height, e
+                        );
+                    }
+
                     blockchain.blocks.push(block);
                     blockchain.height = height;
                 }
