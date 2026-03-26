@@ -102,6 +102,30 @@ pub struct ObserverSyncResponse {
     pub mesh_connectivity_percent: f64,
 }
 
+/// Observer network health response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ObserverNetworkHealthResponse {
+    pub status: String,
+    pub health_classification: String,
+    pub lifecycle_state: String,
+    pub blockchain_component: String,
+    pub network_component: String,
+    pub local_height: u64,
+    pub mesh_connected: bool,
+    pub internet_connected: bool,
+    pub connectivity_percentage: f64,
+    pub relay_connectivity: f64,
+    pub active_peers: u32,
+    pub local_peers: u32,
+    pub regional_peers: u32,
+    pub global_peers: u32,
+    pub relay_peers: u32,
+    pub churn_rate: f64,
+    pub coverage: f64,
+    pub redundancy: f64,
+    pub stability: f64,
+}
+
 /// Observer handler implementation
 pub struct ObserverHandler {
     _runtime: Arc<RuntimeOrchestrator>,
@@ -329,6 +353,30 @@ impl ObserverHandler {
         ))
     }
 
+    fn classify_network_health(
+        blockchain_status: &str,
+        network_status: &str,
+        mesh_connected: bool,
+        active_peers: u32,
+        connectivity_percentage: f64,
+    ) -> &'static str {
+        if matches!(blockchain_status, "error" | "failed")
+            || matches!(network_status, "error" | "failed")
+        {
+            return "degraded";
+        }
+
+        if !mesh_connected || active_peers == 0 {
+            return "warning";
+        }
+
+        if connectivity_percentage >= 80.0 {
+            return "healthy";
+        }
+
+        "warning"
+    }
+
     /// Get observer operational status.
     /// GET /api/v1/observer/status
     async fn handle_get_observer_status(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
@@ -464,11 +512,62 @@ impl ObserverHandler {
     async fn handle_get_network_health(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
         info!("API: Getting network health summary");
 
-        // TODO: Wire to actual ObserverService from lib-consensus
-        // Once integrated, query: observer_service.get_network_health(window_size)
-        Ok(ZhtpResponse::error(
-            ZhtpStatus::NotImplemented,
-            "Observer network health not yet available - pending integration with consensus observer service".to_string(),
+        let (
+            _node_role,
+            blockchain_status,
+            network_status,
+            local_height,
+            connected_peers,
+            mesh_connected,
+            _mesh_connectivity_percent,
+        ) = self.observer_runtime_snapshot().await?;
+
+        let lifecycle_state = Self::classify_observer_lifecycle(
+            &blockchain_status,
+            &network_status,
+            local_height,
+            connected_peers,
+            mesh_connected,
+        );
+
+        let mesh_status = lib_network::get_mesh_status().await.unwrap_or_default();
+
+        let response = ObserverNetworkHealthResponse {
+            status: "success".to_string(),
+            health_classification: Self::classify_network_health(
+                &blockchain_status,
+                &network_status,
+                mesh_status.mesh_connected,
+                mesh_status.active_peers,
+                mesh_status.connectivity_percentage,
+            )
+            .to_string(),
+            lifecycle_state: lifecycle_state.to_string(),
+            blockchain_component: blockchain_status,
+            network_component: network_status,
+            local_height,
+            mesh_connected: mesh_status.mesh_connected,
+            internet_connected: mesh_status.internet_connected,
+            connectivity_percentage: mesh_status.connectivity_percentage,
+            relay_connectivity: mesh_status.relay_connectivity,
+            active_peers: mesh_status.active_peers,
+            local_peers: mesh_status.local_peers,
+            regional_peers: mesh_status.regional_peers,
+            global_peers: mesh_status.global_peers,
+            relay_peers: mesh_status.relay_peers,
+            churn_rate: mesh_status.churn_rate,
+            coverage: mesh_status.coverage,
+            redundancy: mesh_status.redundancy,
+            stability: mesh_status.stability,
+        };
+
+        let json_response = serde_json::to_vec(&response)
+            .map_err(|e| anyhow::anyhow!("JSON serialization error: {}", e))?;
+
+        Ok(ZhtpResponse::success_with_content_type(
+            json_response,
+            CONTENT_TYPE_JSON.to_string(),
+            None,
         ))
     }
 
@@ -551,6 +650,41 @@ mod tests {
     }
 
     #[test]
+    fn observer_network_health_response_schema_round_trip() {
+        let original = ObserverNetworkHealthResponse {
+            status: "success".to_string(),
+            health_classification: "healthy".to_string(),
+            lifecycle_state: "serving".to_string(),
+            blockchain_component: "running".to_string(),
+            network_component: "running".to_string(),
+            local_height: 42,
+            mesh_connected: true,
+            internet_connected: true,
+            connectivity_percentage: 88.0,
+            relay_connectivity: 75.0,
+            active_peers: 5,
+            local_peers: 2,
+            regional_peers: 1,
+            global_peers: 1,
+            relay_peers: 1,
+            churn_rate: 0.5,
+            coverage: 90.0,
+            redundancy: 80.0,
+            stability: 95.0,
+        };
+
+        let json = serde_json::to_string(&original).expect("must serialise");
+        let decoded: ObserverNetworkHealthResponse =
+            serde_json::from_str(&json).expect("must deserialise");
+
+        assert_eq!(decoded.health_classification, "healthy");
+        assert_eq!(decoded.active_peers, 5);
+        assert_eq!(decoded.local_height, 42);
+        assert!(decoded.mesh_connected);
+        assert!(decoded.internet_connected);
+    }
+
+    #[test]
     fn observer_lifecycle_classification_prefers_discovering_before_bootstrapping() {
         assert_eq!(
             ObserverHandler::classify_observer_lifecycle("running", "running", 0, 0, false),
@@ -571,6 +705,22 @@ mod tests {
         assert_eq!(
             ObserverHandler::classify_sync_state(12, 3, true, "running"),
             "connected"
+        );
+    }
+
+    #[test]
+    fn observer_network_health_classification_degrades_for_component_errors() {
+        assert_eq!(
+            ObserverHandler::classify_network_health("error", "running", true, 4, 90.0),
+            "degraded"
+        );
+        assert_eq!(
+            ObserverHandler::classify_network_health("running", "running", true, 4, 90.0),
+            "healthy"
+        );
+        assert_eq!(
+            ObserverHandler::classify_network_health("running", "running", false, 0, 0.0),
+            "warning"
         );
     }
 }
