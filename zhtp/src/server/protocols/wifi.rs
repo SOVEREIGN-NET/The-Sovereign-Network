@@ -92,18 +92,35 @@ impl WiFiRouter {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let nonce_cache =
-            NonceCache::open_default(&db_path, 300, network_epoch).unwrap_or_else(|e| {
+        let nonce_cache = {
+            let open_result = NonceCache::open_default(&db_path, 300, network_epoch);
+            let open_result = match open_result {
+                Err(ref e) if e.to_string().contains("Network epoch mismatch") => {
+                    warn!(
+                        "WiFi nonce cache epoch mismatch at {:?} — clearing stale cache: {}",
+                        db_path, e
+                    );
+                    if db_path.exists() {
+                        let _ = std::fs::remove_dir_all(&db_path);
+                    }
+                    NonceCache::open_default(&db_path, 300, network_epoch)
+                }
+                other => other,
+            };
+            open_result.unwrap_or_else(|e| {
                 warn!(
                     "Failed to initialize persistent nonce cache at {:?}: {}, using fallback",
                     db_path, e
                 );
-                // Fallback: try again with /tmp path
                 let fallback_path = PathBuf::from("/tmp/zhtp/wifi_nonce_cache");
                 let _ = std::fs::create_dir_all(&fallback_path.parent().unwrap_or(&fallback_path));
+                if fallback_path.exists() {
+                    let _ = std::fs::remove_dir_all(&fallback_path);
+                }
                 NonceCache::open_default(&fallback_path, 300, network_epoch)
                     .expect("Failed to create WiFi nonce cache even with fallback path")
-            });
+            })
+        };
         let handshake_context = HandshakeContext::new(nonce_cache);
 
         Self {

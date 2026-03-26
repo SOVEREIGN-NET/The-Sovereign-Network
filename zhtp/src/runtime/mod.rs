@@ -4654,6 +4654,7 @@ fn bootstrap_commission_percent(commission_rate_bps: u16) -> u8 {
     (commission_rate_bps.min(10_000) / 100) as u8
 }
 
+
 pub(super) fn try_restore_validators_from_dat(
     bc: &mut lib_blockchain::Blockchain,
     dat_path: &std::path::Path,
