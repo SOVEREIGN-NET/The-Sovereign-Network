@@ -205,6 +205,12 @@ Observer-specific readiness guidance is documented in
 `docs/guides/OBSERVER_NODE_RUNBOOK.md`, including lifecycle expectations and
 the `/api/v1/observer/*` endpoints.
 
+That runbook also defines the supported observer Web4 layering:
+
+- base observer: full-state sync and operator APIs
+- content-serving observer: read-only Web4/domain resolution
+- gateway observer: host-header Web4 gateway serving
+
 ### Log Monitoring
 Monitor logs for:
 - Consensus participation (validators)

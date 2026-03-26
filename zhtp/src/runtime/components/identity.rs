@@ -373,6 +373,14 @@ fn should_run_identity_blockchain_migration(migrate_enabled: bool, can_mine: boo
     migrate_enabled && can_mine
 }
 
+fn should_mine_startup_backfill(can_mine: bool, is_genesis_node: bool) -> bool {
+    can_mine && is_genesis_node
+}
+
+fn should_defer_startup_backfill_to_leader(can_mine: bool, is_genesis_node: bool) -> bool {
+    can_mine && !is_genesis_node
+}
+
 async fn migrate_identities_to_blockchain(can_mine: bool) -> Result<(u32, u32)> {
     use std::io::BufReader;
 
@@ -1148,7 +1156,7 @@ async fn run_post_bootstrap_sov_backfill(can_mine: bool, is_bootstrap_leader: bo
         // stay in the mempool and get mined by the leader's next block.
         let is_genesis_node = bc.height == 0;
         if pending_wallet_regs {
-            if can_mine && is_genesis_node {
+            if should_mine_startup_backfill(can_mine, is_genesis_node) {
                 if let Err(e) =
                     crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc)
                         .await
@@ -1160,7 +1168,7 @@ async fn run_post_bootstrap_sov_backfill(can_mine: bool, is_bootstrap_leader: bo
                 } else {
                     info!("🪙 Mined wallet registration block before SOV backfill");
                 }
-            } else if can_mine {
+            } else if should_defer_startup_backfill_to_leader(can_mine, is_genesis_node) {
                 info!("🪙 Synced chain: deferring wallet registrations to leader's mining loop");
             } else {
                 info!("🪙 Observer node: skipping startup mine for wallet registrations (validator will broadcast)");
@@ -1208,7 +1216,7 @@ async fn run_post_bootstrap_sov_backfill(can_mine: bool, is_bootstrap_leader: bo
     }
 
     let is_genesis_node = bc.height == 0;
-    if can_mine && is_genesis_node {
+    if should_mine_startup_backfill(can_mine, is_genesis_node) {
         if let Err(e) =
             crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await
         {
@@ -1216,7 +1224,7 @@ async fn run_post_bootstrap_sov_backfill(can_mine: bool, is_bootstrap_leader: bo
         } else {
             info!("🪙 Mined SOV backfill block with {} TokenMint txs", queued);
         }
-    } else if can_mine {
+    } else if should_defer_startup_backfill_to_leader(can_mine, is_genesis_node) {
         info!("🪙 Synced chain: deferring SOV backfill to leader's mining loop");
     } else {
         info!(
@@ -1229,7 +1237,10 @@ async fn run_post_bootstrap_sov_backfill(can_mine: bool, is_bootstrap_leader: bo
 
 #[cfg(test)]
 mod tests {
-    use super::should_run_identity_blockchain_migration;
+    use super::{
+        should_defer_startup_backfill_to_leader, should_mine_startup_backfill,
+        should_run_identity_blockchain_migration,
+    };
 
     #[test]
     fn identity_blockchain_migration_requires_mining_capability() {
@@ -1237,5 +1248,21 @@ mod tests {
         assert!(!should_run_identity_blockchain_migration(true, false));
         assert!(!should_run_identity_blockchain_migration(false, true));
         assert!(!should_run_identity_blockchain_migration(false, false));
+    }
+
+    #[test]
+    fn startup_backfill_mining_is_genesis_validator_only() {
+        assert!(should_mine_startup_backfill(true, true));
+        assert!(!should_mine_startup_backfill(true, false));
+        assert!(!should_mine_startup_backfill(false, true));
+        assert!(!should_mine_startup_backfill(false, false));
+    }
+
+    #[test]
+    fn startup_backfill_defers_to_leader_after_sync_for_validators_only() {
+        assert!(!should_defer_startup_backfill_to_leader(true, true));
+        assert!(should_defer_startup_backfill_to_leader(true, false));
+        assert!(!should_defer_startup_backfill_to_leader(false, true));
+        assert!(!should_defer_startup_backfill_to_leader(false, false));
     }
 }

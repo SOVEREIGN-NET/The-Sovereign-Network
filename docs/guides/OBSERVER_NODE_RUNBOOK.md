@@ -10,6 +10,32 @@ An observer node is the canonical `FullNode` runtime path:
 - It does not participate in consensus.
 - It does not mine blocks.
 
+## Content And Gateway Capability
+
+Observer mode is layered:
+
+- Base observer:
+  stores full chain state, syncs, verifies, and exposes operator APIs.
+- Content-serving observer:
+  may serve read-only Web4 content and resolve domains from synced state.
+- Gateway observer:
+  may also answer host-based Web4 gateway requests for public content.
+
+Supported observer Web4 behavior on this branch:
+
+- `GET /api/v1/web4/resolve/{domain}`
+- `POST /api/v1/web4/load`
+- `GET /api/v1/web4/content/{domain}/{path}`
+- host-header-based Web4 gateway serving for registered public content
+
+Observer nodes do not become validators by serving content:
+
+- they do not mint blocks
+- they do not validate/vote in consensus
+- they do not require validator-only startup paths to serve read-only Web4 content
+
+Operationally, treat content serving as an optional observer capability, not the minimal observer contract. A base observer may run without public Web4/gateway exposure, while a gateway observer adds public-facing read-only content routes on top of the same non-validator full-state role.
+
 ## Required Startup Contract
 
 Observer startup is only valid when all of the following are true:
