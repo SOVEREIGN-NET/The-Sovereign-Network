@@ -169,6 +169,18 @@ impl Component for IdentityComponent {
             }
         }
 
+        // Backfill identities from blockchain.identity_registry that are missing from IdentityManager.
+        // This ensures all nodes have consistent identity state regardless of DHT storage gaps.
+        match backfill_identities_from_blockchain(&identity_manager_arc).await {
+            Ok(count) if count > 0 => {
+                info!("✅ Blockchain identity backfill: {} identities synced to IdentityManager", count);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                info!("⚠️ Blockchain identity backfill skipped (non-fatal): {}", e);
+            }
+        }
+
         info!("🪙 Startup SOV backfill disabled; canonical genesis/state must already be complete");
 
         if !genesis_ids.is_empty() {
