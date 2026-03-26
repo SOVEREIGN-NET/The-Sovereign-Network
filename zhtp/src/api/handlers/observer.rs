@@ -794,6 +794,22 @@ mod tests {
     }
 
     #[test]
+    fn observer_lifecycle_classification_reports_restart_readiness() {
+        assert_eq!(
+            ObserverHandler::classify_observer_lifecycle("running", "running", 64, 3, true),
+            "serving"
+        );
+        assert_eq!(
+            ObserverHandler::classify_observer_lifecycle("running", "running", 64, 2, false),
+            "caught_up"
+        );
+        assert_eq!(
+            ObserverHandler::classify_sync_state(64, 2, false, "running"),
+            "recovering"
+        );
+    }
+
+    #[test]
     fn observer_network_health_classification_degrades_for_component_errors() {
         assert_eq!(
             ObserverHandler::classify_network_health("error", "running", true, 4, 90.0),

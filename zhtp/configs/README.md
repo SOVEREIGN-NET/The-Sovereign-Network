@@ -201,6 +201,10 @@ All nodes expose health endpoints:
 - `http://localhost:8080/metrics` - Detailed metrics
 - `http://localhost:8080/peers` - Network connectivity
 
+Observer-specific readiness guidance is documented in
+`docs/guides/OBSERVER_NODE_RUNBOOK.md`, including lifecycle expectations and
+the `/api/v1/observer/*` endpoints.
+
 ### Log Monitoring
 Monitor logs for:
 - Consensus participation (validators)

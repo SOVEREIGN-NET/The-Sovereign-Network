@@ -4798,6 +4798,7 @@ pub(super) fn try_restore_validators_from_dat(
 
 #[cfg(test)]
 mod runtime_orchestrator_tests {
+    use crate::config::Environment;
     use super::RuntimeOrchestrator;
     use crate::config::NodeType;
     use crate::runtime::node_runtime::NodeRole;
@@ -4911,6 +4912,93 @@ mod runtime_orchestrator_tests {
             Some(&network_info)
         )
         .is_ok());
+    }
+
+    #[test]
+    fn full_node_role_derivation_disables_consensus_capabilities() {
+        let role = RuntimeOrchestrator::derive_node_role_from_node_type(NodeType::FullNode);
+
+        assert!(matches!(role, NodeRole::Observer));
+        assert!(!role.can_mine(), "observer/full-node must not mine");
+        assert!(!role.can_validate(), "observer/full-node must not validate");
+        assert!(
+            role.stores_full_blockchain(),
+            "observer/full-node must retain full chain state"
+        );
+    }
+
+    #[test]
+    fn observer_startup_sync_contract_requires_discovery_before_serving() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
+
+        let err = RuntimeOrchestrator::validate_observer_join_policy(&config, false, None)
+            .expect_err("fresh observer must not create genesis without discovering a network");
+        assert!(
+            err.to_string().contains("requires an existing network"),
+            "unexpected error: {err}"
+        );
+
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, false
+            ),
+            "fresh observer should keep retrying peer discovery until it can bootstrap"
+        );
+    }
+
+    #[test]
+    fn observer_restart_contract_uses_local_chain_without_forcing_discovery() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
+        assert!(RuntimeOrchestrator::validate_observer_join_policy(&config, true, None).is_ok());
+        assert!(
+            !RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, true
+            ),
+            "observer restart with local chain state should not be forced back into discovery"
+        );
+    }
+
+    #[test]
+    fn observer_sync_contract_transitions_to_bootstrap_when_network_exists() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        let network_info = crate::runtime::ExistingNetworkInfo {
+            peer_count: 4,
+            blockchain_height: 128,
+            network_id: "observer-testnet".to_string(),
+            bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
+            environment: Environment::Development,
+        };
+
+        assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
+        assert!(
+            RuntimeOrchestrator::validate_observer_join_policy(
+                &config,
+                false,
+                Some(&network_info)
+            )
+            .is_ok(),
+            "observer should be allowed to sync from an existing network instead of creating genesis"
+        );
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, false
+            ),
+            "fresh observer should continue discovery/sync attempts until chain data is local"
+        );
     }
 
     #[test]
