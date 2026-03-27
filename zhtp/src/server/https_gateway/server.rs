@@ -27,8 +27,8 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
 
-use crate::web4_stub::{Web4ContentService, ZdnsResolver};
-use lib_network::web4::DomainRegistry;
+use crate::web4_stub::ZdnsResolver;
+use lib_network::web4::{DomainRegistry, Web4ContentService};
 
 use super::config::{GatewayTlsConfig, TlsMode};
 use super::handlers::{
@@ -283,12 +283,14 @@ impl HttpsGateway {
     /// Create with ZDNS resolver for cached domain lookups
     pub async fn new_with_zdns(
         registry: Arc<DomainRegistry>,
-        zdns_resolver: Arc<ZdnsResolver>,
+        _zdns_resolver: Arc<ZdnsResolver>,
         config: GatewayTlsConfig,
     ) -> Result<Self> {
         config.validate().map_err(|e| anyhow::anyhow!(e))?;
 
-        let content_service = Arc::new(Web4ContentService::with_zdns(registry, zdns_resolver));
+        // ZDNS runtime was relocated out of lib-network; keep this constructor
+        // stable by accepting the resolver but using the canonical registry path.
+        let content_service = Arc::new(Web4ContentService::new(registry));
 
         Ok(Self {
             config,

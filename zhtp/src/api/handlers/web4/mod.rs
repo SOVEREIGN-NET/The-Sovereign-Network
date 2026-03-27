@@ -736,3 +736,241 @@ impl ZhtpRequestHandler for Web4Handler {
         200 // Higher priority for Web4 endpoints
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use lib_network::storage_stub::UnifiedStorage;
+    use lib_network::web4::{
+        ContentPublisher, DomainEconomicSettings, DomainMetadata, DomainRegistrationRequest,
+        DomainRegistry,
+    };
+    use lib_proofs::ZeroKnowledgeProof;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::{Arc, RwLock as StdRwLock};
+
+    #[derive(Clone, Default)]
+    struct TestStorage {
+        domains: Arc<StdRwLock<StdHashMap<String, Vec<u8>>>>,
+        manifests: Arc<StdRwLock<StdHashMap<String, Vec<u8>>>>,
+    }
+
+    #[async_trait]
+    impl UnifiedStorage for TestStorage {
+        async fn store_domain_record(&self, domain: &str, data: Vec<u8>) -> anyhow::Result<()> {
+            self.domains
+                .write()
+                .unwrap()
+                .insert(domain.to_string(), data);
+            Ok(())
+        }
+
+        async fn load_domain_record(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(self.domains.read().unwrap().get(domain).cloned())
+        }
+
+        async fn delete_domain_record(&self, domain: &str) -> anyhow::Result<()> {
+            self.domains.write().unwrap().remove(domain);
+            Ok(())
+        }
+
+        async fn list_domain_records(&self) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+            Ok(self
+                .domains
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect())
+        }
+
+        async fn store_manifest(
+            &self,
+            domain: &str,
+            manifest_data: Vec<u8>,
+        ) -> anyhow::Result<()> {
+            self.manifests
+                .write()
+                .unwrap()
+                .insert(domain.to_string(), manifest_data);
+            Ok(())
+        }
+
+        async fn load_manifest(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(self.manifests.read().unwrap().get(domain).cloned())
+        }
+
+        fn is_stub(&self) -> bool {
+            false
+        }
+    }
+
+    async fn setup_handler_with_domain_and_content(
+        domain: &str,
+        initial_content: HashMap<String, Vec<u8>>,
+    ) -> anyhow::Result<(Web4Handler, lib_identity::ZhtpIdentity)> {
+        let storage: Arc<dyn UnifiedStorage> = Arc::new(TestStorage::default());
+        let registry = Arc::new(DomainRegistry::new(storage.clone()).await?);
+        let publisher = Arc::new(ContentPublisher::new(registry.clone(), storage));
+
+        let owner = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::types::IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "observer-web4-test-owner",
+            None,
+        )?;
+
+        let mut identity_manager = lib_identity::IdentityManager::new();
+        identity_manager.add_identity(owner.clone());
+        let identity_manager = Arc::new(RwLock::new(identity_manager));
+        let blockchain = Arc::new(RwLock::new(lib_blockchain::Blockchain::new()?));
+
+        let handler =
+            Web4Handler::new_with_registry(registry.clone(), publisher, identity_manager, blockchain)
+                .await?;
+
+        let registration_proof = ZeroKnowledgeProof::new(
+            "Plonky2".to_string(),
+            lib_crypto::hash_blake3(b"observer-web4-proof").to_vec(),
+            owner.id.0.to_vec(),
+            owner.id.0.to_vec(),
+            None,
+        );
+
+        registry
+            .register_domain(DomainRegistrationRequest {
+                domain: domain.to_string(),
+                owner: owner.clone(),
+                duration_days: 365,
+                metadata: DomainMetadata {
+                    title: "Observer Web4".to_string(),
+                    description: "Observer-readiness Web4 test".to_string(),
+                    category: "test".to_string(),
+                    tags: vec!["observer".to_string(), "web4".to_string()],
+                    public: true,
+                    economic_settings: DomainEconomicSettings {
+                        registration_fee: 0.0,
+                        renewal_fee: 0.0,
+                        transfer_fee: 0.0,
+                        hosting_budget: 0.0,
+                    },
+                },
+                initial_content,
+                registration_proof,
+                deploy_manifest_cid: None,
+            })
+            .await?;
+
+        Ok((handler, owner))
+    }
+
+    async fn setup_handler_with_domain(
+        domain: &str,
+    ) -> anyhow::Result<(Web4Handler, lib_identity::ZhtpIdentity)> {
+        setup_handler_with_domain_and_content(domain, HashMap::new()).await
+    }
+
+    #[tokio::test]
+    async fn web4_handler_exposes_read_only_routes_for_observer_nodes() {
+        let (handler, _owner) = setup_handler_with_domain("observer-web4.zhtp")
+            .await
+            .expect("handler should initialize");
+
+        let stats_request =
+            ZhtpRequest::get("/api/v1/web4/statistics".to_string(), None).expect("request");
+        let resolve_request =
+            ZhtpRequest::get("/api/v1/web4/resolve/observer-web4.zhtp".to_string(), None)
+                .expect("request");
+        let content_request =
+            ZhtpRequest::get("/api/v1/web4/content/observer-web4.zhtp/index.html".to_string(), None)
+                .expect("request");
+
+        assert!(handler.can_handle(&stats_request));
+        assert!(handler.can_handle(&resolve_request));
+        assert!(handler.can_handle(&content_request));
+    }
+
+    #[tokio::test]
+    async fn web4_handler_resolves_registered_domain_for_observer_mode() {
+        let (handler, _owner) = setup_handler_with_domain("observer-web4.zhtp")
+            .await
+            .expect("handler should initialize");
+
+        let request =
+            ZhtpRequest::get("/api/v1/web4/resolve/observer-web4.zhtp".to_string(), None)
+                .expect("request");
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("resolve should return a response");
+
+        assert!(response.is_success());
+
+        let body: serde_json::Value =
+            serde_json::from_slice(&response.body).expect("response must be json");
+        assert_eq!(body["status"], "success");
+        assert_eq!(body["domain"], "observer-web4.zhtp");
+    }
+
+    #[tokio::test]
+    async fn web4_load_route_returns_domain_metadata_for_observer_mode() {
+        let (handler, _owner) = setup_handler_with_domain("observer-web4.zhtp")
+            .await
+            .expect("handler should initialize");
+
+        let request = ZhtpRequest::post(
+            "/api/v1/web4/load".to_string(),
+            serde_json::to_vec(&json!({ "url": "web4://observer-web4.zhtp/" }))
+                .expect("body"),
+            "application/json".to_string(),
+            None,
+        )
+        .expect("request");
+
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("load should return a response");
+
+        assert!(response.is_success());
+
+        let body: serde_json::Value =
+            serde_json::from_slice(&response.body).expect("response must be json");
+        assert_eq!(body["status"], "success");
+        assert_eq!(body["domain"], "observer-web4.zhtp");
+        assert_eq!(body["content_available"], false);
+    }
+
+    #[tokio::test]
+    async fn web4_content_route_serves_registered_bytes_for_observer_mode() {
+        let mut initial_content = HashMap::new();
+        initial_content.insert(
+            "/index.html".to_string(),
+            b"<html><body>observer-ready</body></html>".to_vec(),
+        );
+
+        let (handler, _owner) =
+            setup_handler_with_domain_and_content("observer-web4.zhtp", initial_content)
+                .await
+                .expect("handler should initialize");
+
+        let request =
+            ZhtpRequest::get("/api/v1/web4/content/observer-web4.zhtp/index.html".to_string(), None)
+                .expect("request");
+        let response = handler
+            .handle_request(request)
+            .await
+            .expect("content should return a response");
+
+        assert!(response.is_success());
+        assert_eq!(response.body, b"<html><body>observer-ready</body></html>");
+        assert_eq!(
+            response.headers.content_type.as_deref(),
+            Some("text/html; charset=utf-8")
+        );
+    }
+}

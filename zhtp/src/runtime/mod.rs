@@ -1210,6 +1210,54 @@ impl RuntimeOrchestrator {
         local_is_bootstrap_leader && has_local_chain_data
     }
 
+    /// Standalone observers must join an existing network unless they already have
+    /// local chain state. They are not allowed to create a fresh genesis on an
+    /// empty store, and a peer set advertising only genesis height is treated as
+    /// "not ready" until blocks beyond genesis are committed.
+    fn observer_requires_existing_network(config: &NodeConfig, has_local_chain_data: bool) -> bool {
+        matches!(config.node_type, Some(crate::config::NodeType::FullNode)) && !has_local_chain_data
+    }
+
+    fn validate_observer_join_policy(
+        config: &NodeConfig,
+        has_local_chain_data: bool,
+        network_info: Option<&ExistingNetworkInfo>,
+    ) -> Result<()> {
+        if !Self::observer_requires_existing_network(config, has_local_chain_data) {
+            return Ok(());
+        }
+
+        if network_info
+            .map(|info| info.blockchain_height > 0)
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
+        let configured_bootstrap_peers = config.network_config.bootstrap_peers.len();
+        let discovered_peer_count = network_info.map(|info| info.peer_count).unwrap_or(0);
+        let discovered_height = network_info
+            .map(|info| info.blockchain_height)
+            .unwrap_or_default();
+
+        Err(anyhow::anyhow!(
+            "Observer/full-node startup requires an existing network with committed blocks beyond genesis. \
+             Local chain state is empty, discovered peers={}, discovered_height={}, \
+             configured_bootstrap_peers={}. Refusing to create genesis in observer mode.",
+            discovered_peer_count,
+            discovered_height,
+            configured_bootstrap_peers
+        ))
+    }
+
+    fn should_retry_network_discovery_continuously(
+        config: &NodeConfig,
+        is_edge_node: bool,
+        has_local_chain_data: bool,
+    ) -> bool {
+        is_edge_node || Self::observer_requires_existing_network(config, has_local_chain_data)
+    }
+
     fn validate_validator_endpoint(network_address: &str) -> Result<()> {
         if network_address.trim().is_empty() {
             return Err(anyhow::anyhow!("Validator endpoint is empty"));
@@ -1412,6 +1460,33 @@ impl RuntimeOrchestrator {
         }
     }
 
+    /// Enforce the standalone observer startup contract for `NodeType::FullNode`.
+    ///
+    /// Full-node dispatch is the canonical observer startup path in this runtime.
+    /// A config that explicitly requests `FullNode` but still enables validator behavior
+    /// is internally contradictory and must be rejected at startup.
+    fn validate_observer_startup_config(config: &NodeConfig) -> Result<()> {
+        if config.consensus_config.validator_enabled {
+            return Err(anyhow::anyhow!(
+                "Invalid observer/full-node config: `node_type = full` requires \
+                 `consensus_config.validator_enabled = false`."
+            ));
+        }
+
+        if !matches!(
+            config.node_role,
+            crate::runtime::node_runtime::NodeRole::Observer
+        ) {
+            return Err(anyhow::anyhow!(
+                "Invalid observer/full-node config: `node_type = full` must resolve to \
+                 `NodeRole::Observer`, got {:?}.",
+                config.node_role
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Start a full node - THE canonical way
     ///
     /// Full nodes (FullNode type) store the complete blockchain and verify all blocks,
@@ -1421,6 +1496,7 @@ impl RuntimeOrchestrator {
     /// Returns an error if config.node_type is not FullNode.
     pub async fn start_full_node(config: NodeConfig) -> Result<Self> {
         Self::validate_node_type(&config, crate::config::NodeType::FullNode)?;
+        Self::validate_observer_startup_config(&config)?;
         let orchestrator = Self::new(config).await?;
         orchestrator.start_node().await?;
         Ok(orchestrator)
@@ -1861,6 +1937,12 @@ impl RuntimeOrchestrator {
                 // process is killed.  This prevents every node from spawning its
                 // own incompatible genesis when all nodes start simultaneously.
                 // ─────────────────────────────────────────────────────────────
+                Self::validate_observer_join_policy(
+                    &self.config,
+                    self.has_local_chain_data(),
+                    network_info.as_ref(),
+                )?;
+
                 if synced_blockchain.is_none() && !local_is_bootstrap_leader {
                     let retry_peers: Vec<_> = network_info
                         .as_ref()
@@ -4291,7 +4373,7 @@ impl RuntimeOrchestrator {
         if leader_has_local_data {
             orchestrator.set_joined_existing_network(false).await?;
             info!("🌱 Bootstrap leader with local chain data detected - skipping startup sync");
-        } else if let Some(ref net_info) = network_info.filter(|_| peers_have_blocks) {
+        } else if let Some(net_info) = network_info.as_ref().filter(|_| peers_have_blocks) {
             // Joining existing network
             orchestrator.set_joined_existing_network(true).await?;
             orchestrator.start_blockchain_sync(net_info).await?;
@@ -4314,6 +4396,12 @@ impl RuntimeOrchestrator {
                 }
             }
         } else {
+            Self::validate_observer_join_policy(
+                &orchestrator.config,
+                orchestrator.has_local_chain_data(),
+                network_info.as_ref(),
+            )?;
+
             // Creating genesis network
             if is_edge_node {
                 return Err(anyhow::anyhow!("Edge nodes must find an existing network"));
@@ -4415,15 +4503,37 @@ impl RuntimeOrchestrator {
         let discovery = DiscoveryCoordinator::new(config);
         discovery.start_event_listener().await;
 
-        if is_edge_node {
-            info!("🔍 Edge node: Continuously searching for ZHTP network...");
-            info!("   Will retry every 35 seconds until a full node is found");
+        let retry_continuously = Self::should_retry_network_discovery_continuously(
+            &self.config,
+            is_edge_node,
+            self.has_local_chain_data(),
+        );
+
+        if retry_continuously {
+            if is_edge_node {
+                info!("🔍 Edge node: Continuously searching for ZHTP network...");
+                info!("   Will retry every 5 seconds until a full node is found");
+            } else {
+                info!("🔍 Observer/full node: waiting for an existing ZHTP network...");
+                info!("   Will retry every 5 seconds until committed blocks are discoverable");
+            }
 
             let mut attempt = 1;
             loop {
                 info!("📡 Discovery attempt #{}", attempt);
                 match discovery.discover_network(&self.config.environment).await {
                     Ok(network_info) => {
+                        if !is_edge_node && network_info.blockchain_height == 0 {
+                            info!(
+                                "   ⏳ Found peers on attempt #{} but chain height is 0; \
+                                 observer startup will keep waiting for committed blocks",
+                                attempt
+                            );
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            attempt += 1;
+                            continue;
+                        }
+
                         info!("✓ Found network on attempt #{}", attempt);
                         return Ok(Some(network_info));
                     }
@@ -4653,8 +4763,6 @@ pub(super) fn seed_validators_from_bootstrap_config(
 fn bootstrap_commission_percent(commission_rate_bps: u16) -> u8 {
     (commission_rate_bps.min(10_000) / 100) as u8
 }
-
-
 pub(super) fn try_restore_validators_from_dat(
     bc: &mut lib_blockchain::Blockchain,
     dat_path: &std::path::Path,
@@ -4692,6 +4800,17 @@ pub(super) fn try_restore_validators_from_dat(
 #[cfg(test)]
 mod runtime_orchestrator_tests {
     use super::RuntimeOrchestrator;
+    use crate::config::Environment;
+    use crate::config::NodeType;
+    use crate::runtime::node_runtime::NodeRole;
+    use std::sync::Arc;
+    use std::sync::{Mutex, OnceLock};
+    use tokio::sync::RwLock;
+
+    fn runtime_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn should_skip_startup_sync_only_for_leader_with_local_data() {
@@ -4714,6 +4833,513 @@ mod runtime_orchestrator_tests {
             RuntimeOrchestrator::validate_validator_endpoint("validator-g2.example.net:9334")
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn full_node_startup_contract_accepts_observer_config() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
+    }
+
+    #[test]
+    fn full_node_startup_contract_rejects_validator_enabled() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::FullValidator;
+        config.consensus_config.validator_enabled = true;
+
+        let err = RuntimeOrchestrator::validate_observer_startup_config(&config)
+            .expect_err("full-node observer contract should reject validator-enabled config");
+        assert!(
+            err.to_string().contains("validator_enabled = false"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn full_node_startup_contract_rejects_non_observer_role() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::LightNode;
+        config.consensus_config.validator_enabled = false;
+
+        let err = RuntimeOrchestrator::validate_observer_startup_config(&config)
+            .expect_err("full-node observer contract should reject non-observer role");
+        assert!(
+            err.to_string().contains("NodeRole::Observer") || err.to_string().contains("Observer"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn observer_join_policy_requires_existing_network_when_local_state_is_empty() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        let err = RuntimeOrchestrator::validate_observer_join_policy(&config, false, None)
+            .expect_err("observer with empty local state must not create genesis");
+        assert!(
+            err.to_string().contains("requires an existing network"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn observer_join_policy_allows_restart_from_local_chain_data() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(RuntimeOrchestrator::validate_observer_join_policy(&config, true, None).is_ok());
+    }
+
+    #[test]
+    fn observer_join_policy_allows_joining_network_with_committed_blocks() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        let network_info = crate::runtime::ExistingNetworkInfo {
+            peer_count: 3,
+            blockchain_height: 42,
+            network_id: "testnet".to_string(),
+            bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
+            environment: crate::config::Environment::Development,
+        };
+
+        assert!(RuntimeOrchestrator::validate_observer_join_policy(
+            &config,
+            false,
+            Some(&network_info)
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn observer_join_policy_rejects_genesis_only_networks() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        let network_info = crate::runtime::ExistingNetworkInfo {
+            peer_count: 3,
+            blockchain_height: 0,
+            network_id: "testnet".to_string(),
+            bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
+            environment: crate::config::Environment::Development,
+        };
+
+        let err = RuntimeOrchestrator::validate_observer_join_policy(
+            &config,
+            false,
+            Some(&network_info),
+        )
+        .expect_err("observer should keep waiting when peers only advertise genesis");
+
+        assert!(
+            err.to_string().contains("beyond genesis"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn full_node_role_derivation_disables_consensus_capabilities() {
+        let role = RuntimeOrchestrator::derive_node_role_from_node_type(NodeType::FullNode);
+
+        assert!(matches!(role, NodeRole::Observer));
+        assert!(!role.can_mine(), "observer/full-node must not mine");
+        assert!(!role.can_validate(), "observer/full-node must not validate");
+        assert!(
+            role.stores_full_blockchain(),
+            "observer/full-node must retain full chain state"
+        );
+    }
+
+    #[test]
+    fn observer_startup_sync_contract_requires_discovery_before_serving() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
+
+        let err = RuntimeOrchestrator::validate_observer_join_policy(&config, false, None)
+            .expect_err("fresh observer must not create genesis without discovering a network");
+        assert!(
+            err.to_string().contains("requires an existing network"),
+            "unexpected error: {err}"
+        );
+
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, false
+            ),
+            "fresh observer should keep retrying peer discovery until it can bootstrap"
+        );
+    }
+
+    #[test]
+    fn observer_restart_contract_uses_local_chain_without_forcing_discovery() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
+        assert!(RuntimeOrchestrator::validate_observer_join_policy(&config, true, None).is_ok());
+        assert!(
+            !RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, true
+            ),
+            "observer restart with local chain state should not be forced back into discovery"
+        );
+    }
+
+    #[test]
+    fn observer_sync_contract_transitions_to_bootstrap_when_network_exists() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        let network_info = crate::runtime::ExistingNetworkInfo {
+            peer_count: 4,
+            blockchain_height: 128,
+            network_id: "observer-testnet".to_string(),
+            bootstrap_peers: vec!["127.0.0.1:9334".to_string()],
+            environment: Environment::Development,
+        };
+
+        assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
+        assert!(
+            RuntimeOrchestrator::validate_observer_join_policy(
+                &config,
+                false,
+                Some(&network_info)
+            )
+            .is_ok(),
+            "observer should be allowed to sync from an existing network instead of creating genesis"
+        );
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, false
+            ),
+            "fresh observer should continue discovery/sync attempts until chain data is local"
+        );
+    }
+
+    #[test]
+    fn observer_without_local_chain_retries_discovery_continuously() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, false, false)
+        );
+    }
+
+    #[test]
+    fn observer_with_local_chain_does_not_force_continuous_discovery() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        assert!(
+            !RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, false, true)
+        );
+    }
+
+    #[test]
+    fn observer_lifecycle_sequence_preserves_join_then_restart_contract() {
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+
+        let discovered_network = crate::runtime::ExistingNetworkInfo {
+            peer_count: 4,
+            blockchain_height: 128,
+            network_id: "observer-sequence-testnet".to_string(),
+            bootstrap_peers: vec![
+                "127.0.0.1:9334".to_string(),
+                "127.0.0.1:9335".to_string(),
+            ],
+            environment: Environment::Development,
+        };
+
+        assert!(RuntimeOrchestrator::validate_observer_startup_config(&config).is_ok());
+
+        let fresh_start_err = RuntimeOrchestrator::validate_observer_join_policy(&config, false, None)
+            .expect_err("fresh observer without discovery must not serve");
+        assert!(
+            fresh_start_err
+                .to_string()
+                .contains("requires an existing network"),
+            "unexpected error: {fresh_start_err}"
+        );
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, false
+            ),
+            "fresh observer should stay in discovery until a network is found"
+        );
+
+        assert!(
+            RuntimeOrchestrator::validate_observer_join_policy(
+                &config,
+                false,
+                Some(&discovered_network)
+            )
+            .is_ok(),
+            "observer should join once an existing network is discovered"
+        );
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, false
+            ),
+            "observer should keep trying until local chain state exists"
+        );
+
+        assert!(RuntimeOrchestrator::validate_observer_join_policy(&config, true, None).is_ok());
+        assert!(
+            !RuntimeOrchestrator::should_retry_network_discovery_continuously(
+                &config, false, true
+            ),
+            "observer restart with local chain should not fall back into endless discovery"
+        );
+    }
+
+    #[test]
+    fn edge_nodes_always_retry_discovery_continuously() {
+        let config = crate::config::NodeConfig::default();
+
+        assert!(
+            RuntimeOrchestrator::should_retry_network_discovery_continuously(&config, true, true)
+        );
+    }
+
+    #[tokio::test]
+    async fn observer_start_blockchain_sync_wires_runtime_state_for_joined_network() {
+        let _guard = runtime_test_lock().lock().expect("runtime test lock");
+        crate::runtime::bootstrap_peers_provider::clear_bootstrap_peers().await;
+
+        let mut config = crate::config::NodeConfig::default();
+        config.node_type = Some(NodeType::FullNode);
+        config.node_role = NodeRole::Observer;
+        config.consensus_config.validator_enabled = false;
+        config.network_config.bootstrap_peers = vec!["127.0.0.1:1".to_string()];
+
+        let mut orchestrator = RuntimeOrchestrator::new(config)
+            .await
+            .expect("observer runtime should initialize");
+        let network_info = crate::runtime::ExistingNetworkInfo {
+            peer_count: 1,
+            blockchain_height: 42,
+            network_id: "observer-runtime-join".to_string(),
+            bootstrap_peers: vec!["127.0.0.1:1".to_string()],
+            environment: Environment::Development,
+        };
+
+        orchestrator
+            .set_joined_existing_network(true)
+            .await
+            .expect("join state should be writable");
+        orchestrator
+            .start_blockchain_sync(&network_info)
+            .await
+            .expect("start_blockchain_sync should wire temporary sync state");
+
+        assert!(
+            orchestrator.get_joined_existing_network().await,
+            "observer should remain marked as joining an existing network"
+        );
+
+        let bootstrap_peers = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers()
+            .await
+            .expect("bootstrap peers should be stored globally");
+        assert_eq!(bootstrap_peers, network_info.bootstrap_peers);
+
+        let global_blockchain = crate::runtime::blockchain_provider::get_global_blockchain()
+            .await
+            .expect("temporary blockchain should be installed globally");
+        assert_eq!(
+            orchestrator
+                .get_blockchain_height()
+                .await
+                .expect("height should be readable"),
+            0
+        );
+
+        {
+            let mut blockchain = global_blockchain.write().await;
+            blockchain.height = 7;
+        }
+
+        assert_eq!(
+            orchestrator
+                .get_blockchain_height()
+                .await
+                .expect("height should reflect synced progress"),
+            7
+        );
+
+        let restarted = RuntimeOrchestrator::new({
+            let mut cfg = crate::config::NodeConfig::default();
+            cfg.node_type = Some(NodeType::FullNode);
+            cfg.node_role = NodeRole::Observer;
+            cfg.consensus_config.validator_enabled = false;
+            cfg
+        })
+        .await
+        .expect("restart orchestrator should initialize");
+
+        assert_eq!(
+            restarted
+                .get_blockchain_height()
+                .await
+                .expect("restart should see shared blockchain height"),
+            7
+        );
+
+        crate::runtime::blockchain_provider::set_global_blockchain(Arc::new(RwLock::new(
+            lib_blockchain::Blockchain::new().expect("fresh blockchain"),
+        )))
+        .await
+        .expect("global blockchain reset should succeed");
+        crate::runtime::bootstrap_peers_provider::clear_bootstrap_peers().await;
+    }
+
+    #[tokio::test]
+    async fn observer_multi_orchestrator_join_sync_restart_sequence_preserves_shared_network_state()
+    {
+        let _guard = runtime_test_lock().lock().expect("runtime test lock");
+        crate::runtime::bootstrap_peers_provider::clear_bootstrap_peers().await;
+
+        let mut observer_a_config = crate::config::NodeConfig::default();
+        observer_a_config.node_type = Some(NodeType::FullNode);
+        observer_a_config.node_role = NodeRole::Observer;
+        observer_a_config.consensus_config.validator_enabled = false;
+        observer_a_config.network_config.bootstrap_peers = vec!["127.0.0.1:9334".to_string()];
+
+        let mut observer_b_config = crate::config::NodeConfig::default();
+        observer_b_config.node_type = Some(NodeType::FullNode);
+        observer_b_config.node_role = NodeRole::Observer;
+        observer_b_config.consensus_config.validator_enabled = false;
+        observer_b_config.network_config.bootstrap_peers = vec!["127.0.0.1:9335".to_string()];
+
+        let discovered_network = crate::runtime::ExistingNetworkInfo {
+            peer_count: 3,
+            blockchain_height: 64,
+            network_id: "observer-shared-network".to_string(),
+            bootstrap_peers: vec![
+                "127.0.0.1:9334".to_string(),
+                "127.0.0.1:9335".to_string(),
+                "127.0.0.1:9336".to_string(),
+            ],
+            environment: Environment::Development,
+        };
+
+        let mut observer_a = RuntimeOrchestrator::new(observer_a_config)
+            .await
+            .expect("first observer runtime should initialize");
+        let mut observer_b = RuntimeOrchestrator::new(observer_b_config)
+            .await
+            .expect("second observer runtime should initialize");
+
+        observer_a
+            .set_joined_existing_network(true)
+            .await
+            .expect("first observer join state should be writable");
+        observer_a
+            .start_blockchain_sync(&discovered_network)
+            .await
+            .expect("first observer should wire sync state from discovered network");
+
+        assert!(
+            observer_a.get_joined_existing_network().await,
+            "first observer should remain marked as joined"
+        );
+
+        let bootstrap_peers = crate::runtime::bootstrap_peers_provider::get_bootstrap_peers()
+            .await
+            .expect("bootstrap peers should be stored after first observer joins");
+        assert_eq!(bootstrap_peers, discovered_network.bootstrap_peers);
+
+        {
+            let blockchain = crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .expect("global blockchain should exist after first observer join");
+            let mut blockchain = blockchain.write().await;
+            blockchain.height = 9;
+        }
+
+        observer_b
+            .set_joined_existing_network(true)
+            .await
+            .expect("second observer join state should be writable");
+        observer_b
+            .start_blockchain_sync(&discovered_network)
+            .await
+            .expect("second observer should reuse discovered network state");
+
+        assert!(
+            observer_b.get_joined_existing_network().await,
+            "second observer should remain marked as joined"
+        );
+        assert_eq!(
+            observer_b
+                .get_blockchain_height()
+                .await
+                .expect("second observer should start from a fresh sync blockchain"),
+            0
+        );
+
+        {
+            let blockchain = crate::runtime::blockchain_provider::get_global_blockchain()
+                .await
+                .expect("second observer should install a fresh shared sync blockchain");
+            let mut blockchain = blockchain.write().await;
+            blockchain.height = 15;
+        }
+
+        let restarted_observer_a = RuntimeOrchestrator::new({
+            let mut cfg = crate::config::NodeConfig::default();
+            cfg.node_type = Some(NodeType::FullNode);
+            cfg.node_role = NodeRole::Observer;
+            cfg.consensus_config.validator_enabled = false;
+            cfg.network_config.bootstrap_peers = vec!["127.0.0.1:9334".to_string()];
+            cfg
+        })
+        .await
+        .expect("restarted first observer should initialize");
+
+        assert_eq!(
+            restarted_observer_a
+                .get_blockchain_height()
+                .await
+                .expect("restart should keep observing the shared synced height"),
+            15
+        );
+
+        crate::runtime::blockchain_provider::set_global_blockchain(Arc::new(RwLock::new(
+            lib_blockchain::Blockchain::new().expect("fresh blockchain"),
+        )))
+        .await
+        .expect("global blockchain reset should succeed");
+        crate::runtime::bootstrap_peers_provider::clear_bootstrap_peers().await;
     }
 }
 
