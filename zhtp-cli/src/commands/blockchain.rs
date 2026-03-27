@@ -9,14 +9,18 @@ use crate::commands::web4_utils::{
 };
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
+use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+use lib_blockchain::transaction::TransactionPayload;
+use lib_blockchain::transaction::WalletTransactionData;
 use lib_blockchain::{
     blake3_hash, CallPermissions, ContractCall, ContractDeploymentPayloadV1,
     ContractTransactionBuilder, ContractType, Transaction, TransactionOutput, TransactionType,
 };
-use lib_blockchain::transaction::TransactionPayload;
 use lib_crypto::keypair::KeyPair;
 use lib_network::client::ZhtpClient;
+use serde::Serialize;
 use serde_json::json;
+use std::path::PathBuf;
 
 fn validate_tx_hash(tx_hash: &str) -> CliResult<()> {
     if tx_hash.is_empty() {
@@ -90,6 +94,150 @@ fn load_default_keypair() -> CliResult<KeyPair> {
     let keystore = default_keystore_path()?;
     let loaded = load_identity_from_keystore(&keystore)?;
     Ok(loaded.keypair)
+}
+
+fn default_blockchain_dat_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join(".zhtp/data/testnet/blockchain.dat")
+}
+
+fn normalize_wallet_type_for_registration(wallet_type: &str) -> Option<&'static str> {
+    match wallet_type {
+        "Primary" | "primary" => Some("Primary"),
+        "UBI" | "ubi" => Some("UBI"),
+        "Savings" | "savings" => Some("Savings"),
+        "DAO" | "dao" => Some("DAO"),
+        _ => None,
+    }
+}
+
+fn build_wallet_migration_tx(wallet_data: &WalletTransactionData) -> Option<Transaction> {
+    let normalized_type = normalize_wallet_type_for_registration(&wallet_data.wallet_type)?;
+    if wallet_data.public_key.is_empty()
+        || wallet_data.seed_commitment == lib_blockchain::Hash::zero()
+    {
+        return None;
+    }
+
+    let mut normalized_wallet = wallet_data.clone();
+    normalized_wallet.wallet_type = normalized_type.to_string();
+
+    Some(Transaction::new_wallet_registration(
+        normalized_wallet.clone(),
+        vec![],
+        Signature {
+            signature: normalized_wallet.public_key.clone(),
+            public_key: PublicKey::new(normalized_wallet.public_key.clone()),
+            algorithm: SignatureAlgorithm::Dilithium2,
+            timestamp: normalized_wallet.created_at,
+        },
+        format!(
+            "WALLET_CANONICAL_MIGRATION_V1:{}",
+            hex::encode(normalized_wallet.wallet_id.as_bytes())
+        )
+        .into_bytes(),
+    ))
+}
+
+#[derive(Debug, Serialize)]
+struct WalletMigrationCandidateReport {
+    wallet_id: String,
+    wallet_type: String,
+    owner_identity_id: Option<String>,
+    initial_balance: u64,
+    canonical_in_history: bool,
+    registrable_via_existing_wallet_tx: bool,
+    migration_tx_hex: Option<String>,
+    notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct WalletMigrationAuditReport {
+    dat_file: String,
+    chain_height: u64,
+    total_wallets_in_local_state: usize,
+    noncanonical_wallet_count: usize,
+    treasury_wallet_id: String,
+    treasury_wallet_present_in_local_state: bool,
+    treasury_wallet_canonical_in_history: bool,
+    treasury_wallet_requires_schema_change: bool,
+    candidates: Vec<WalletMigrationCandidateReport>,
+}
+
+fn audit_wallet_migration(
+    dat_file: Option<PathBuf>,
+    include_tx_hex: bool,
+) -> CliResult<serde_json::Value> {
+    let dat_path = dat_file.unwrap_or_else(default_blockchain_dat_path);
+    #[allow(deprecated)]
+    let blockchain = lib_blockchain::Blockchain::load_from_file(&dat_path).map_err(|e| {
+        CliError::ConfigError(format!("Failed to load {}: {}", dat_path.display(), e))
+    })?;
+
+    let treasury_wallet_id = lib_blockchain::Blockchain::deterministic_treasury_wallet_id();
+    let treasury_wallet_id_hex = hex::encode(treasury_wallet_id.as_bytes());
+    let noncanonical_wallets = blockchain.collect_noncanonical_wallets();
+
+    let candidates = noncanonical_wallets
+        .into_iter()
+        .map(|wallet| {
+            let migration_tx = build_wallet_migration_tx(&wallet);
+            let mut notes = Vec::new();
+            if normalize_wallet_type_for_registration(&wallet.wallet_type).is_none() {
+                notes.push(format!(
+                    "wallet_type '{}' is not registrable under current wallet transaction rules",
+                    wallet.wallet_type
+                ));
+            }
+            if wallet.public_key.is_empty() {
+                notes.push("wallet has empty public_key".to_string());
+            }
+            if wallet.seed_commitment == lib_blockchain::Hash::zero() {
+                notes.push("wallet has zero seed_commitment".to_string());
+            }
+            if wallet.wallet_id == treasury_wallet_id {
+                notes.push("treasury wallet should be canonical genesis state, not a migration transaction".to_string());
+            }
+
+            WalletMigrationCandidateReport {
+                wallet_id: hex::encode(wallet.wallet_id.as_bytes()),
+                wallet_type: wallet.wallet_type.clone(),
+                owner_identity_id: wallet
+                    .owner_identity_id
+                    .map(|owner_id| hex::encode(owner_id.as_bytes())),
+                initial_balance: wallet.initial_balance,
+                canonical_in_history: blockchain.wallet_exists_in_canonical_history(&wallet.wallet_id),
+                registrable_via_existing_wallet_tx: migration_tx.is_some(),
+                migration_tx_hex: if include_tx_hex {
+                    migration_tx.and_then(|tx| bincode::serialize(&tx).ok().map(hex::encode))
+                } else {
+                    None
+                },
+                notes,
+            }
+        })
+        .collect();
+
+    let report = WalletMigrationAuditReport {
+        dat_file: dat_path.display().to_string(),
+        chain_height: blockchain.height,
+        total_wallets_in_local_state: blockchain.wallet_registry.len(),
+        noncanonical_wallet_count: blockchain.collect_noncanonical_wallets().len(),
+        treasury_wallet_id: treasury_wallet_id_hex.clone(),
+        treasury_wallet_present_in_local_state: blockchain
+            .wallet_registry
+            .contains_key(&treasury_wallet_id_hex),
+        treasury_wallet_canonical_in_history: blockchain.dao_treasury_wallet_is_canonical(),
+        treasury_wallet_requires_schema_change: blockchain
+            .wallet_registry
+            .get(&treasury_wallet_id_hex)
+            .map(|wallet| build_wallet_migration_tx(wallet).is_none())
+            .unwrap_or(false),
+        candidates,
+    };
+
+    serde_json::to_value(report)
+        .map_err(|e| CliError::ConfigError(format!("Failed to serialize migration audit: {}", e)))
 }
 
 fn build_signed_contract_call_tx(
@@ -179,14 +327,28 @@ async fn handle_blockchain_command_impl(
     cli: &ZhtpCli,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let client = connect_default(&cli.server).await?;
-
     match args.action {
-        BlockchainAction::Status => fetch_and_display_blockchain_status(&client, cli, output).await,
+        BlockchainAction::MigrationAudit {
+            dat_file,
+            include_tx_hex,
+        } => {
+            let result = audit_wallet_migration(dat_file, include_tx_hex)?;
+            output.header("Wallet Migration Audit")?;
+            output.print(&format_output(&result, &cli.format)?)?;
+            Ok(())
+        }
+        BlockchainAction::Status => {
+            let client = connect_default(&cli.server).await?;
+            fetch_and_display_blockchain_status(&client, cli, output).await
+        }
         BlockchainAction::Transaction { tx_hash } => {
+            let client = connect_default(&cli.server).await?;
             fetch_and_display_transaction(&client, &tx_hash, cli, output).await
         }
-        BlockchainAction::Stats => fetch_and_display_blockchain_stats(&client, cli, output).await,
+        BlockchainAction::Stats => {
+            let client = connect_default(&cli.server).await?;
+            fetch_and_display_blockchain_stats(&client, cli, output).await
+        }
         BlockchainAction::ContractDeploy {
             contract_type,
             code_hex,
@@ -195,6 +357,7 @@ async fn handle_blockchain_command_impl(
             gas_limit,
             memory_limit_bytes,
         } => {
+            let client = connect_default(&cli.server).await?;
             let keypair = load_default_keypair()?;
             serde_json::from_str::<serde_json::Value>(&abi_json)
                 .map_err(|e| CliError::ConfigError(format!("Invalid abi_json: {e}")))?;
@@ -225,6 +388,7 @@ async fn handle_blockchain_command_impl(
             method,
             params_hex,
         } => {
+            let client = connect_default(&cli.server).await?;
             let keypair = load_default_keypair()?;
             let contract_id = parse_hex_32("contract_id", &contract_id)?;
             let contract_type = parse_contract_type(&contract_type)?;
@@ -247,6 +411,7 @@ async fn handle_blockchain_command_impl(
             limit,
             offset,
         } => {
+            let client = connect_default(&cli.server).await?;
             let filter = parse_contract_filter(&contract_type)?;
             let endpoint = build_contract_list_endpoint(filter, limit, offset);
             let response = client
@@ -268,6 +433,7 @@ async fn handle_blockchain_command_impl(
             Ok(())
         }
         BlockchainAction::ContractInfo { contract_id } => {
+            let client = connect_default(&cli.server).await?;
             let contract_id = parse_hex_32("contract_id", &contract_id)?;
             let endpoint = build_contract_info_endpoint(contract_id);
             let response = client
@@ -289,6 +455,7 @@ async fn handle_blockchain_command_impl(
             Ok(())
         }
         BlockchainAction::ContractState { contract_id } => {
+            let client = connect_default(&cli.server).await?;
             let contract_id = parse_hex_32("contract_id", &contract_id)?;
             let endpoint = build_contract_state_endpoint(contract_id);
             let response = client
@@ -310,6 +477,7 @@ async fn handle_blockchain_command_impl(
             Ok(())
         }
         BlockchainAction::BroadcastRaw { tx_hex } => {
+            let client = connect_default(&cli.server).await?;
             let tx_bytes = parse_hex("tx", &tx_hex)?;
             let body = json!({ "transaction_data": hex::encode(tx_bytes) });
             let response = client
@@ -452,6 +620,49 @@ mod tests {
     #[test]
     fn test_parse_hex_rejects_invalid_values() {
         assert!(parse_hex("payload", "xyz").is_err());
+    }
+
+    #[test]
+    fn test_build_wallet_migration_tx_normalizes_lowercase_primary() {
+        let wallet = WalletTransactionData {
+            wallet_id: lib_blockchain::Hash::new([0x11; 32]),
+            wallet_type: "primary".to_string(),
+            wallet_name: "Ghost Wallet".to_string(),
+            alias: Some("primary".to_string()),
+            public_key: vec![0x22; 32],
+            owner_identity_id: Some(lib_blockchain::Hash::new([0x33; 32])),
+            seed_commitment: lib_blockchain::Hash::new([0x44; 32]),
+            created_at: 1_700_000_000,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance: 5_000,
+        };
+
+        let tx = build_wallet_migration_tx(&wallet).expect("lowercase primary should normalize");
+        let tx_wallet = tx.wallet_data().expect("wallet payload required");
+        assert_eq!(tx_wallet.wallet_type, "Primary");
+    }
+
+    #[test]
+    fn test_build_wallet_migration_tx_rejects_legacy_treasury_shape() {
+        let treasury_wallet = WalletTransactionData {
+            wallet_id: lib_blockchain::Blockchain::deterministic_treasury_wallet_id(),
+            wallet_type: "treasury".to_string(),
+            wallet_name: "DAO Treasury".to_string(),
+            alias: None,
+            public_key: vec![],
+            owner_identity_id: None,
+            seed_commitment: lib_blockchain::Hash::zero(),
+            created_at: 0,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance: 0,
+        };
+
+        assert!(
+            build_wallet_migration_tx(&treasury_wallet).is_none(),
+            "legacy treasury wallet should not be emitted as a normal wallet registration"
+        );
     }
 
     #[test]

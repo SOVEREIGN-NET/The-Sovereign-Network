@@ -172,7 +172,10 @@ impl Web4Client {
         let nonce_cache = match NonceCache::open(&nonces_path, 3600, 10_000, network_epoch) {
             Ok(c) => c,
             Err(e) if e.to_string().contains("Network epoch mismatch") => {
-                warn!("Web4 client nonce cache epoch mismatch — clearing and retrying: {}", e);
+                warn!(
+                    "Web4 client nonce cache epoch mismatch — clearing and retrying: {}",
+                    e
+                );
                 let _ = std::fs::remove_dir_all(&nonces_path);
                 NonceCache::open(&nonces_path, 3600, 10_000, network_epoch)
                     .context("Failed to create nonce cache after epoch mismatch clear")?

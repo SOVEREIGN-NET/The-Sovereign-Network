@@ -3,12 +3,12 @@
 //! Provides endpoints for consensus observer metrics and network health summaries.
 //! Issue #1788: Expose observer metrics via API endpoints
 
-use std::sync::Arc;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tracing::{error, info};
 
-use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use lib_protocols::zhtp::{ZhtpRequestHandler, ZhtpResult};
 
 use crate::runtime::{ComponentHealth as RuntimeComponentHealth, ComponentId, ComponentStatus, RuntimeOrchestrator};
 
@@ -150,7 +150,6 @@ impl ObserverHandler {
     pub fn new(_runtime: Arc<RuntimeOrchestrator>) -> Self {
         Self { _runtime }
     }
-
 }
 
 #[async_trait::async_trait]
@@ -198,12 +197,10 @@ impl ZhtpRequestHandler for ObserverHandler {
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/observer/surprisal/") => {
                 self.handle_get_surprisal_score(request).await
             }
-            _ => {
-                Ok(ZhtpResponse::error(
-                    ZhtpStatus::NotFound,
-                    "Observer endpoint not found".to_string(),
-                ))
-            }
+            _ => Ok(ZhtpResponse::error(
+                ZhtpStatus::NotFound,
+                "Observer endpoint not found".to_string(),
+            )),
         };
 
         let duration_ms = start_time.elapsed().as_millis();
@@ -531,7 +528,10 @@ impl ObserverHandler {
 
     /// Get metrics for current height
     /// GET /api/v1/observer/height/current (Issue #1788)
-    async fn handle_get_current_height_metrics(&self, _request: ZhtpRequest) -> ZhtpResult<ZhtpResponse> {
+    async fn handle_get_current_height_metrics(
+        &self,
+        _request: ZhtpRequest,
+    ) -> ZhtpResult<ZhtpResponse> {
         info!("API: Getting current height metrics");
 
         // TODO: Wire to actual ObserverService from lib-consensus
@@ -553,9 +553,11 @@ impl ObserverHandler {
         info!("API: Getting specific height metrics");
 
         // Extract height from URL for validation (even though we return 501)
-        let height_str = request.uri.strip_prefix("/api/v1/observer/height/")
+        let height_str = request
+            .uri
+            .strip_prefix("/api/v1/observer/height/")
             .unwrap_or("");
-        
+
         if height_str.parse::<u64>().is_err() {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,
@@ -641,9 +643,11 @@ impl ObserverHandler {
         info!("API: Getting surprisal score");
 
         // Extract height from URL for validation (even though we return 501)
-        let height_str = request.uri.strip_prefix("/api/v1/observer/surprisal/")
+        let height_str = request
+            .uri
+            .strip_prefix("/api/v1/observer/surprisal/")
             .unwrap_or("");
-        
+
         if height_str.parse::<u64>().is_err() {
             return Ok(ZhtpResponse::error(
                 ZhtpStatus::BadRequest,

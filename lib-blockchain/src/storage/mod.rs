@@ -177,6 +177,23 @@ pub struct TokenStateSnapshot {
     pub token_nonces: HashMap<([u8; 32], [u8; 32]), u64>,
 }
 
+/// Rebuildable wallet projection entry persisted in the dedicated wallets tree.
+///
+/// Schema:
+/// - key: raw 32-byte wallet_id
+/// - value: bincode-serialized `WalletProjectionRecord`
+///
+/// This is an indexed projection of committed wallet-registration state. It is
+/// not authoritative consensus state and is safe to rebuild from canonical block
+/// replay when required.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalletProjectionRecord {
+    /// Canonical committed wallet data mirrored from block execution.
+    pub wallet_data: crate::transaction::WalletTransactionData,
+    /// Block height where this wallet registration committed.
+    pub committed_at_height: u64,
+}
+
 impl Utxo {
     pub fn new(amount: u64, owner: Address, token: TokenId, created_at_height: u64) -> Self {
         Self {
@@ -891,6 +908,66 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     }
 
     // =========================================================================
+    // Pending Transactions (Non-Consensus Recovery State)
+    // =========================================================================
+
+    /// Persist a pending transaction for restart recovery.
+    ///
+    /// This is intentionally outside the block transaction boundary because the
+    /// mempool is not consensus state. Implementations should make the write
+    /// durable before returning so queued registrations survive restart.
+    fn put_pending_transaction(&self, tx: &crate::transaction::Transaction) -> StorageResult<()>;
+
+    /// Remove a pending transaction from recovery storage.
+    fn delete_pending_transaction(&self, tx_hash: &[u8; 32]) -> StorageResult<()>;
+
+    /// Iterate over all persisted pending transactions.
+    fn iter_pending_transactions(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = crate::transaction::Transaction> + '_>>;
+
+    // =========================================================================
+    // Wallet Projection (Non-Authoritative, Rebuildable)
+    // =========================================================================
+
+    /// Load a wallet projection entry by wallet id.
+    fn get_wallet_projection(
+        &self,
+        wallet_id: &[u8; 32],
+    ) -> StorageResult<Option<WalletProjectionRecord>>;
+
+    /// Persist a wallet projection entry.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn put_wallet_projection(
+        &self,
+        wallet_id: &[u8; 32],
+        record: &WalletProjectionRecord,
+    ) -> StorageResult<()>;
+
+    /// Delete a wallet projection entry.
+    ///
+    /// # Requirements
+    /// - MUST be called within begin_block/commit_block
+    fn delete_wallet_projection(&self, wallet_id: &[u8; 32]) -> StorageResult<()>;
+
+    /// Iterate all wallet projection entries.
+    fn iter_wallet_projections(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = ([u8; 32], WalletProjectionRecord)> + '_>>;
+
+    /// Replace the full wallet projection tree outside block execution.
+    ///
+    /// This is reserved for startup recovery of the non-authoritative wallet
+    /// projection from canonical replay. It must not be used to mutate
+    /// consensus-authoritative state.
+    fn replace_wallet_projections(
+        &self,
+        records: &[([u8; 32], WalletProjectionRecord)],
+    ) -> StorageResult<()>;
+
+    // =========================================================================
     // Token Balances (Hot Path)
     // =========================================================================
     // Token balances are separate from contract metadata for performance.
@@ -1276,9 +1353,7 @@ pub trait BlockchainStore: Send + Sync + fmt::Debug {
     ///
     /// Returns a zero-initialised default when no state has been persisted yet
     /// (first transaction on a fresh chain).
-    fn get_cbe_economic_state(
-        &self,
-    ) -> StorageResult<lib_types::BondingCurveEconomicState>;
+    fn get_cbe_economic_state(&self) -> StorageResult<lib_types::BondingCurveEconomicState>;
 
     /// Persist the global canonical CBE economic state.
     ///

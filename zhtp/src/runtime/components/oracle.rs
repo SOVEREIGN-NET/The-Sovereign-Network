@@ -263,7 +263,12 @@ impl OracleComponent {
                                     median_price,
                                     max_deviation_bps,
                                     actual_deviation_bps,
-                                } => (*attested_price, *median_price, *max_deviation_bps, *actual_deviation_bps),
+                                } => (
+                                    *attested_price,
+                                    *median_price,
+                                    *max_deviation_bps,
+                                    *actual_deviation_bps,
+                                ),
                                 _ => (0, 0, 0, 0),
                             };
                             warn!(
@@ -407,8 +412,7 @@ impl OracleComponent {
                             warn!(
                                 "Oracle Mode B: overflow or divide-by-zero deriving SOV/USD \
                                  from cbe_usd_vwap={} cbe_sov_curve={}",
-                                cbe_usd,
-                                cbe_sov
+                                cbe_usd, cbe_sov
                             );
                             (Vec::new(), None)
                         }

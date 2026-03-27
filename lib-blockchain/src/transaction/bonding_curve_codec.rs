@@ -66,13 +66,15 @@ pub fn decode_bonding_curve_buy(
     Ok(BondingCurveBuyTx {
         action: payload[0],
         chain_id: payload[1],
-        nonce: Nonce48(payload[2..8].try_into().expect("nonce slice length is fixed")),
+        nonce: Nonce48(
+            payload[2..8]
+                .try_into()
+                .expect("nonce slice length is fixed"),
+        ),
         sender,
         amount_in: u128::from_be_bytes(payload[40..56].try_into().expect("amount slice length")),
         max_price: u128::from_be_bytes(payload[56..72].try_into().expect("price slice length")),
-        expected_s_c: u128::from_be_bytes(
-            payload[72..88].try_into().expect("supply slice length"),
-        ),
+        expected_s_c: u128::from_be_bytes(payload[72..88].try_into().expect("supply slice length")),
     })
 }
 
@@ -104,17 +106,15 @@ pub fn decode_bonding_curve_sell(
     Ok(BondingCurveSellTx {
         action: payload[0],
         chain_id: payload[1],
-        nonce: Nonce48(payload[2..8].try_into().expect("nonce slice length is fixed")),
+        nonce: Nonce48(
+            payload[2..8]
+                .try_into()
+                .expect("nonce slice length is fixed"),
+        ),
         sender,
-        amount_cbe: u128::from_be_bytes(
-            payload[40..56].try_into().expect("amount slice length"),
-        ),
-        min_payout: u128::from_be_bytes(
-            payload[56..72].try_into().expect("payout slice length"),
-        ),
-        expected_s_c: u128::from_be_bytes(
-            payload[72..88].try_into().expect("supply slice length"),
-        ),
+        amount_cbe: u128::from_be_bytes(payload[40..56].try_into().expect("amount slice length")),
+        min_payout: u128::from_be_bytes(payload[56..72].try_into().expect("payout slice length")),
+        expected_s_c: u128::from_be_bytes(payload[72..88].try_into().expect("supply slice length")),
     })
 }
 

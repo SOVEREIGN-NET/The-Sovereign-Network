@@ -102,7 +102,9 @@ impl std::fmt::Display for PolPoolError {
             PolPoolError::InsufficientLiquidity => write!(f, "Insufficient liquidity"),
             PolPoolError::SlippageExceeded => write!(f, "Slippage tolerance exceeded"),
             PolPoolError::Overflow => write!(f, "Arithmetic overflow"),
-            PolPoolError::InsufficientInitialLiquidity => write!(f, "Initial liquidity below minimum"),
+            PolPoolError::InsufficientInitialLiquidity => {
+                write!(f, "Initial liquidity below minimum")
+            }
             PolPoolError::OperationDisabledForPol => write!(f, "Operation disabled for POL pool"),
         }
     }
@@ -177,11 +179,7 @@ impl PolPool {
     /// * `AlreadyInitialized` - Pool already initialized.
     /// * `InsufficientInitialLiquidity` - Reserves below minimum.
     /// * `Overflow` - k calculation overflow.
-    pub fn initialize(
-        &mut self,
-        initial_sov: u64,
-        initial_token: u64,
-    ) -> Result<(), PolPoolError> {
+    pub fn initialize(&mut self, initial_sov: u64, initial_token: u64) -> Result<(), PolPoolError> {
         if self.initialized {
             return Err(PolPoolError::AlreadyInitialized);
         }
@@ -361,7 +359,7 @@ impl PolPool {
             return Err(PolPoolError::SlippageExceeded);
         }
 
-        // Update reserves: 
+        // Update reserves:
         // - token_reserve increases by full token_in
         // - sov_reserve decreases to new_sov_without_fee
         // - BUT fee stays in pool! So actual new_sov = new_sov_without_fee + fee
@@ -752,7 +750,10 @@ mod tests {
 
         // Below minimum should fail
         let result = pool.initialize(POL_MINIMUM_INITIAL_LIQUIDITY - 1, 100_000_000);
-        assert!(matches!(result, Err(PolPoolError::InsufficientInitialLiquidity)));
+        assert!(matches!(
+            result,
+            Err(PolPoolError::InsufficientInitialLiquidity)
+        ));
 
         // At minimum should succeed
         let mut pool2 = PolPool::new(test_token_id());
@@ -838,12 +839,18 @@ mod tests {
         // Buy tokens (increase price)
         pool.swap_sov_to_token(10_000_000_00, 0).unwrap();
         let price_after_buy = pool.get_token_price().unwrap();
-        assert!(price_after_buy > initial_price, "Price should increase after buying");
+        assert!(
+            price_after_buy > initial_price,
+            "Price should increase after buying"
+        );
 
         // Sell tokens (decrease price)
         pool.swap_token_to_sov(50_000_000_00, 0).unwrap();
         let price_after_sell = pool.get_token_price().unwrap();
-        assert!(price_after_sell < price_after_buy, "Price should decrease after selling");
+        assert!(
+            price_after_sell < price_after_buy,
+            "Price should decrease after selling"
+        );
     }
 
     /// Issue #1849: Test skim and sync are disabled.

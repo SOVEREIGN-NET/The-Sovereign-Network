@@ -5,12 +5,6 @@
 pub mod employment_registry;
 
 pub use employment_registry::{
-    EmploymentRegistry,
-    EmploymentContract,
-    ContractAccessType,
-    EmploymentStatus,
-    EconomicPeriod,
-    TerminationReason,
-    PaymentDetails,
-    ProfitShareResult,
+    ContractAccessType, EconomicPeriod, EmploymentContract, EmploymentRegistry, EmploymentStatus,
+    PaymentDetails, ProfitShareResult, TerminationReason,
 };

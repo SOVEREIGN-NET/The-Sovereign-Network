@@ -25,8 +25,8 @@
 //!   POST /api/v1/oracle/attest            — DISABLED in strict spec mode
 //!                                           Use transaction-based attestation instead
 
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Result;
 use lib_blockchain::oracle::{OracleSlashReason, ORACLE_PRICE_SCALE};
@@ -134,7 +134,8 @@ impl OracleHandler {
             ("CBE", "USD") => Ok(OraclePair::CbeUsd),
             _ => Err(anyhow::anyhow!(
                 "Unsupported base/quote '{} / {}'. Supported: SOV/USD, CBE/USD",
-                base, quote
+                base,
+                quote
             )),
         }
     }
@@ -172,8 +173,12 @@ impl ZhtpRequestHandler for OracleHandler {
 
         match (request.method.clone(), path_parts.as_slice()) {
             // Existing read endpoints
-            (ZhtpMethod::Get, ["api", "v1", "oracle", "price"]) => self.handle_get_price(&request).await,
-            (ZhtpMethod::Get, ["api", "v1", "oracle", "variation"]) => self.handle_get_variation(&request).await,
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "price"]) => {
+                self.handle_get_price(&request).await
+            }
+            (ZhtpMethod::Get, ["api", "v1", "oracle", "variation"]) => {
+                self.handle_get_variation(&request).await
+            }
             (ZhtpMethod::Get, ["api", "v1", "oracle", "status"]) => self.handle_get_status().await,
             (ZhtpMethod::Get, ["api", "v1", "oracle", "config"]) => self.handle_get_config().await,
 
@@ -371,7 +376,9 @@ impl OracleHandler {
                         "reserve_balance": token.reserve_balance,
                         "current_epoch": current_epoch,
                     })
-                } else if let Some(token) = bc.token_contracts.values().find(|t| t.symbol == cbe_symbol) {
+                } else if let Some(token) =
+                    bc.token_contracts.values().find(|t| t.symbol == cbe_symbol)
+                {
                     // CBE exists as a standard token contract without a bonding curve price.
                     json!({
                         "pair": pair.as_str(),
@@ -441,7 +448,10 @@ impl OracleHandler {
                 let epochs_span = period_secs.saturating_add(epoch_duration - 1) / epoch_duration;
                 let start_epoch = current_epoch.saturating_sub(epochs_span);
 
-                let latest = match bc.oracle_state.latest_finalized_price_at_or_before(current_epoch) {
+                let latest = match bc
+                    .oracle_state
+                    .latest_finalized_price_at_or_before(current_epoch)
+                {
                     Some(p) => p,
                     None => {
                         return Ok(ZhtpResponse::error(
@@ -450,7 +460,10 @@ impl OracleHandler {
                         ));
                     }
                 };
-                let reference = match bc.oracle_state.latest_finalized_price_at_or_before(start_epoch) {
+                let reference = match bc
+                    .oracle_state
+                    .latest_finalized_price_at_or_before(start_epoch)
+                {
                     Some(p) => p,
                     None => latest,
                 };
@@ -468,7 +481,8 @@ impl OracleHandler {
                 let high = prices.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
                 let low = prices.iter().cloned().fold(f64::INFINITY, f64::min);
                 let mean = prices.iter().sum::<f64>() / prices.len() as f64;
-                let variance = prices.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / prices.len() as f64;
+                let variance =
+                    prices.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / prices.len() as f64;
                 let stdev = variance.sqrt();
 
                 let latest_price = Self::price_f64_from_atomic(latest.sov_usd_price);
@@ -499,7 +513,10 @@ impl OracleHandler {
                 let bytes = match serde_json::to_vec(&body) {
                     Ok(b) => b,
                     Err(e) => {
-                        warn!("Oracle variation API: failed to serialize SOV response: {}", e);
+                        warn!(
+                            "Oracle variation API: failed to serialize SOV response: {}",
+                            e
+                        );
                         return Ok(ZhtpResponse::error(
                             ZhtpStatus::InternalServerError,
                             "Failed to serialize SOV variation response".to_string(),
@@ -552,7 +569,9 @@ impl OracleHandler {
                         "graduation_progress_percent": stats.graduation_progress_percent,
                         "can_graduate": stats.can_graduate,
                     })
-                } else if let Some(token) = bc.token_contracts.values().find(|t| t.symbol == cbe_symbol) {
+                } else if let Some(token) =
+                    bc.token_contracts.values().find(|t| t.symbol == cbe_symbol)
+                {
                     // CBE exists as a standard token contract; no bonding curve variation data.
                     json!({
                         "pair": pair.as_str(),
@@ -579,7 +598,10 @@ impl OracleHandler {
                 let bytes = match serde_json::to_vec(&body) {
                     Ok(b) => b,
                     Err(e) => {
-                        warn!("Oracle variation API: failed to serialize CBE response: {}", e);
+                        warn!(
+                            "Oracle variation API: failed to serialize CBE response: {}",
+                            e
+                        );
                         return Ok(ZhtpResponse::error(
                             ZhtpStatus::InternalServerError,
                             "Failed to serialize CBE variation response".to_string(),
@@ -621,15 +643,23 @@ impl OracleHandler {
         let pricing_mode = bc.onramp_state.oracle_mode(current_block);
         let pricing_mode_str = match pricing_mode {
             lib_blockchain::onramp::OraclePricingMode::LiveDerived => "Mode B (Live Derived)",
-            lib_blockchain::onramp::OraclePricingMode::GenesisReference => "Mode A (Genesis Reference)",
+            lib_blockchain::onramp::OraclePricingMode::GenesisReference => {
+                "Mode A (Genesis Reference)"
+            }
         };
         let cbe_usd_vwap = bc.onramp_state.cbe_usd_vwap(current_block);
         // Count trades in the VWAP window for status reporting.
         let window_start = current_block.saturating_sub(lib_blockchain::onramp::VWAP_WINDOW_BLOCKS);
-        let onramp_window_trade_count = bc.onramp_state.trades.iter()
+        let onramp_window_trade_count = bc
+            .onramp_state
+            .trades
+            .iter()
             .filter(|t| t.block_height >= window_start)
             .count();
-        let onramp_window_usdc_volume: u128 = bc.onramp_state.trades.iter()
+        let onramp_window_usdc_volume: u128 = bc
+            .onramp_state
+            .trades
+            .iter()
             .filter(|t| t.block_height >= window_start)
             .map(|t| t.usdc_amount)
             .sum();
@@ -1294,7 +1324,7 @@ impl OracleHandler {
     ///
     /// Manually submit an oracle attestation (testnet only).
     /// Disabled on mainnet and in strict spec mode.
-    /// 
+    ///
     /// ORACLE-R9: In strict spec mode, attestations MUST go through the canonical
     /// transaction path. Direct API submission is disabled to prevent non-canonical
     /// state mutations.
@@ -1374,11 +1404,13 @@ mod tests {
     fn parses_supported_pairs() {
         let h = OracleHandler::new();
         assert!(matches!(
-            h.parse_pair_from_uri("/api/v1/oracle/price?base=SOV&quote=USD").unwrap(),
+            h.parse_pair_from_uri("/api/v1/oracle/price?base=SOV&quote=USD")
+                .unwrap(),
             OraclePair::SovUsd
         ));
         assert!(matches!(
-            h.parse_pair_from_uri("/api/v1/oracle/price?pair=CBE_USD").unwrap(),
+            h.parse_pair_from_uri("/api/v1/oracle/price?pair=CBE_USD")
+                .unwrap(),
             OraclePair::CbeUsd
         ));
     }
@@ -1387,15 +1419,18 @@ mod tests {
     fn parses_supported_periods() {
         let h = OracleHandler::new();
         assert_eq!(
-            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=1h").unwrap(),
+            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=1h")
+                .unwrap(),
             3600
         );
         assert_eq!(
-            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=24h").unwrap(),
+            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=24h")
+                .unwrap(),
             24 * 3600
         );
         assert_eq!(
-            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=7d").unwrap(),
+            h.parse_period_secs_from_uri("/api/v1/oracle/variation?period=7d")
+                .unwrap(),
             7 * 24 * 3600
         );
     }

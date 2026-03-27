@@ -106,7 +106,9 @@ impl ExchangeState {
     }
 
     pub fn last_trade_price_sov_usdc(&self) -> Option<LastTradePrice> {
-        self.last_trade_prices.get(&TradingPair::sov_usdc()).copied()
+        self.last_trade_prices
+            .get(&TradingPair::sov_usdc())
+            .copied()
     }
 
     pub fn order_book_mid_sov_usdc(&self) -> Option<u128> {

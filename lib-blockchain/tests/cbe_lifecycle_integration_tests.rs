@@ -22,9 +22,9 @@ use lib_blockchain::{
     contracts::bonding_curve::{
         create_pol_pool_for_graduated_token,
         pol_pool::{PolPool, POL_FEE_BPS},
+        pricing::ONE_BILLION_TOKENS,
         token::{RESERVE_SPLIT_DENOMINATOR, RESERVE_SPLIT_NUMERATOR},
         BondingCurveToken, CurveType, Phase, PiecewiseLinearCurve, Threshold,
-        pricing::ONE_BILLION_TOKENS,
     },
     contracts::tokens::{CBE_NAME, CBE_SYMBOL},
     integration::crypto_integration::PublicKey,
@@ -126,7 +126,10 @@ fn test_genesis_allocation_cbe_token() {
     println!("✓ CBE token genesis verified");
     println!("  Name: {}", token.name);
     println!("  Symbol: {}", token.symbol);
-    println!("  Initial supply: {} (tokens minted on buy)", token.total_supply);
+    println!(
+        "  Initial supply: {} (tokens minted on buy)",
+        token.total_supply
+    );
     println!("  Phase: {:?}", token.phase);
 }
 
@@ -149,7 +152,7 @@ fn test_piecewise_linear_pricing_4_bands() {
     // Define expected band boundaries (in atomic units)
     // Band 1: 0-10B, Band 2: 10B-30B, Band 3: 30B-60B, Band 4: 60B-100B
     let band_boundaries = [
-        (0u64, billions_to_atomic(10)),          // Band 1: 0-10B
+        (0u64, billions_to_atomic(10)),                    // Band 1: 0-10B
         (billions_to_atomic(10), billions_to_atomic(30)),  // Band 2: 10B-30B
         (billions_to_atomic(30), billions_to_atomic(60)),  // Band 3: 30B-60B
         (billions_to_atomic(60), billions_to_atomic(100)), // Band 4: 60B-100B
@@ -158,12 +161,16 @@ fn test_piecewise_linear_pricing_4_bands() {
     // Verify band boundaries
     for (i, band) in curve.bands.iter().enumerate() {
         assert_eq!(
-            band.start_supply, band_boundaries[i].0,
-            "Band {} start_supply mismatch", i + 1
+            band.start_supply,
+            band_boundaries[i].0,
+            "Band {} start_supply mismatch",
+            i + 1
         );
         assert_eq!(
-            band.end_supply, band_boundaries[i].1,
-            "Band {} end_supply mismatch", i + 1
+            band.end_supply,
+            band_boundaries[i].1,
+            "Band {} end_supply mismatch",
+            i + 1
         );
     }
 
@@ -185,7 +192,8 @@ fn test_piecewise_linear_pricing_4_bands() {
         if *supply > 0 {
             assert!(
                 price > prev_price,
-                "Price should increase with supply at {}", description
+                "Price should increase with supply at {}",
+                description
             );
         }
         prev_price = price;
@@ -204,9 +212,12 @@ fn test_piecewise_linear_pricing_4_bands() {
 #[test]
 fn test_price_continuity_at_band_boundaries() {
     let curve = PiecewiseLinearCurve::cbe_default();
-    
+
     // Verify continuity at each boundary
-    assert!(curve.verify_continuity(), "Price must be continuous at band boundaries");
+    assert!(
+        curve.verify_continuity(),
+        "Price must be continuous at band boundaries"
+    );
 
     println!("✓ Price continuity verified at all band boundaries");
 }
@@ -262,9 +273,18 @@ fn test_reserve_treasury_split() {
 
     println!("✓ Reserve/treasury split verified on purchase");
     println!("  Buy amount: {} SOV", buy_amount as f64 / 100_000_000.0);
-    println!("  To reserve (20%): {} SOV", reserve_increase as f64 / 100_000_000.0);
-    println!("  To treasury (80%): {} SOV", treasury_increase as f64 / 100_000_000.0);
-    println!("  CBE received: {} CBE", cbe_received as f64 / 100_000_000.0);
+    println!(
+        "  To reserve (20%): {} SOV",
+        reserve_increase as f64 / 100_000_000.0
+    );
+    println!(
+        "  To treasury (80%): {} SOV",
+        treasury_increase as f64 / 100_000_000.0
+    );
+    println!(
+        "  CBE received: {} CBE",
+        cbe_received as f64 / 100_000_000.0
+    );
 }
 
 /// Issue #1851: Test 3b - Verify split consistency across multiple buys
@@ -281,23 +301,32 @@ fn test_split_consistency_across_multiple_buys() {
         let initial_reserve = token.reserve_balance;
         let initial_treasury = token.treasury_balance;
 
-        token.buy(buyer.clone(), buy_amount, 2 + i as u64, 1_600_000_100 + i as u64 * 10)
+        token
+            .buy(
+                buyer.clone(),
+                buy_amount,
+                2 + i as u64,
+                1_600_000_100 + i as u64 * 10,
+            )
             .expect(&format!("Buy {} should succeed", i + 1));
 
         let reserve_increase = token.reserve_balance - initial_reserve;
         let treasury_increase = token.treasury_balance - initial_treasury;
 
-        let expected_to_reserve =
-            buy_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
+        let expected_to_reserve = buy_amount * RESERVE_SPLIT_NUMERATOR / RESERVE_SPLIT_DENOMINATOR;
         let expected_to_treasury = buy_amount - expected_to_reserve;
 
         assert_eq!(
-            reserve_increase, expected_to_reserve,
-            "Buy {}: Reserve split should match configured ratio", i + 1
+            reserve_increase,
+            expected_to_reserve,
+            "Buy {}: Reserve split should match configured ratio",
+            i + 1
         );
         assert_eq!(
-            treasury_increase, expected_to_treasury,
-            "Buy {}: Treasury split should match configured ratio", i + 1
+            treasury_increase,
+            expected_to_treasury,
+            "Buy {}: Treasury split should match configured ratio",
+            i + 1
         );
     }
 
@@ -361,14 +390,20 @@ fn test_buy_sell_roundtrip() {
     );
 
     println!("✓ Buy/sell roundtrip verified");
-    println!("  Bought: {} SOV → {} CBE", 
+    println!(
+        "  Bought: {} SOV → {} CBE",
         buy_amount as f64 / 100_000_000.0,
-        cbe_received as f64 / 100_000_000.0);
-    println!("  Sold: {} CBE → {} SOV (partial - reserve-limited)",
+        cbe_received as f64 / 100_000_000.0
+    );
+    println!(
+        "  Sold: {} CBE → {} SOV (partial - reserve-limited)",
         sell_amount as f64 / 100_000_000.0,
-        sov_received as f64 / 100_000_000.0);
-    println!("  Tokens burned: {} CBE",
-        (supply_after_buy - token.total_supply) as f64 / 100_000_000.0);
+        sov_received as f64 / 100_000_000.0
+    );
+    println!(
+        "  Tokens burned: {} CBE",
+        (supply_after_buy - token.total_supply) as f64 / 100_000_000.0
+    );
 }
 
 // ============================================================================
@@ -401,9 +436,13 @@ fn test_graduation_threshold_269k_usd() {
     // reserve_sov_whole = $269K / $0.05 = 5,380,000 SOV
     // reserve_sov_atoms = reserve_sov_whole * 1e8
     const SOV_DECIMALS: u128 = 100_000_000;
-    let target_reserve_sov = ((GRADUATION_THRESHOLD_USD * PRICE_SCALE) / sov_usd_price) * SOV_DECIMALS;
+    let target_reserve_sov =
+        ((GRADUATION_THRESHOLD_USD * PRICE_SCALE) / sov_usd_price) * SOV_DECIMALS;
 
-    println!("✓ Graduation threshold verified: ${} USD", GRADUATION_THRESHOLD_USD);
+    println!(
+        "✓ Graduation threshold verified: ${} USD",
+        GRADUATION_THRESHOLD_USD
+    );
     println!(
         "  At SOV price ${:.4}, need {} SOV reserve to graduate",
         sov_usd_price as f64 / SOV_DECIMALS as f64,
@@ -469,7 +508,8 @@ fn test_phase_transition_atomicity() {
 
     // Verify phase transitioned to Graduated
     assert_eq!(
-        token.phase, Phase::Graduated,
+        token.phase,
+        Phase::Graduated,
         "Phase should be Graduated after graduation"
     );
 
@@ -528,19 +568,19 @@ fn test_amm_pool_creation_constant_product() {
     );
 
     // Graduate via the normal path (ReserveAmount threshold is now exceeded).
-    assert!(token.can_graduate(1_700_000_003, 3), "Token should be eligible to graduate");
-    token.graduate(1_700_000_003, 3).expect("Graduation should succeed");
+    assert!(
+        token.can_graduate(1_700_000_003, 3),
+        "Token should be eligible to graduate"
+    );
+    token
+        .graduate(1_700_000_003, 3)
+        .expect("Graduation should succeed");
     assert_eq!(token.phase, Phase::Graduated);
 
     // Create POL pool
-    let (pool, _result, _) = create_pol_pool_for_graduated_token(
-        &mut token,
-        governance(),
-        treasury(),
-        4,
-        1_700_000_004,
-    )
-    .expect("POL pool creation should succeed");
+    let (pool, _result, _) =
+        create_pol_pool_for_graduated_token(&mut token, governance(), treasury(), 4, 1_700_000_004)
+            .expect("POL pool creation should succeed");
 
     // Verify pool is initialized
     assert!(pool.is_initialized(), "POL pool should be initialized");
@@ -556,7 +596,11 @@ fn test_amm_pool_creation_constant_product() {
     assert_eq!(k, expected_k, "k should equal sov_reserve * cbe_reserve");
 
     // Verify phase transitioned to AMM
-    assert_eq!(token.phase, Phase::AMM, "Phase should be AMM after pool creation");
+    assert_eq!(
+        token.phase,
+        Phase::AMM,
+        "Phase should be AMM after pool creation"
+    );
 
     // Verify pool ID is set
     assert!(token.amm_pool_id.is_some(), "AMM pool ID should be set");
@@ -565,7 +609,11 @@ fn test_amm_pool_creation_constant_product() {
     println!("  SOV reserve: {} SOV", sov_reserve as f64 / 100_000_000.0);
     println!("  CBE reserve: {} CBE", cbe_reserve as f64 / 100_000_000.0);
     println!("  k: {}", k);
-    println!("  Fee bps: {} ({}%)", POL_FEE_BPS, POL_FEE_BPS as f64 / 100.0);
+    println!(
+        "  Fee bps: {} ({}%)",
+        POL_FEE_BPS,
+        POL_FEE_BPS as f64 / 100.0
+    );
 }
 
 // ============================================================================
@@ -602,8 +650,12 @@ fn test_pol_no_liquidity_interface() {
     assert!(sync_result.is_err(), "sync() should panic");
 
     // Verify only swap operations are allowed
-    let _ = pool.calculate_token_out(1_000_000_00).expect("Should be able to calculate");
-    let _ = pool.calculate_sov_out(1_000_000_00).expect("Should be able to calculate");
+    let _ = pool
+        .calculate_token_out(1_000_000_00)
+        .expect("Should be able to calculate");
+    let _ = pool
+        .calculate_sov_out(1_000_000_00)
+        .expect("Should be able to calculate");
 
     println!("✓ POL liquidity interface verified");
     println!("  add_liquidity(): NOT IMPLEMENTED ✓");
@@ -650,7 +702,8 @@ fn test_amm_swaps_k_invariant() {
             "k should not decrease after swap (fees increase k)"
         );
 
-        println!("  Swap {}: {} SOV → {} CBE, k: {} → {}",
+        println!(
+            "  Swap {}: {} SOV → {} CBE, k: {} → {}",
             i + 1,
             sov_in as f64 / 100_000_000.0,
             cbe_out as f64 / 100_000_000.0,
@@ -709,7 +762,8 @@ fn test_fee_accumulation_increases_k() {
     println!("✓ Fee accumulation verified");
     println!("  k initial: {}", k_initial);
     println!("  k final: {}", k_final);
-    println!("  Increase: {} ({:.2}%)",
+    println!(
+        "  Increase: {} ({:.2}%)",
         k_final - k_initial,
         (k_final - k_initial) as f64 / k_initial as f64 * 100.0
     );
@@ -728,7 +782,10 @@ fn test_full_lifecycle_genesis_to_amm() {
     // Phase 1: Genesis
     let creator = test_pubkey(0x03);
     let mut token = create_cbe_token(creator, 1, 1_600_000_000);
-    println!("1. Genesis: {} CBE deployed (0 initial)", token.total_supply);
+    println!(
+        "1. Genesis: {} CBE deployed (0 initial)",
+        token.total_supply
+    );
     assert_eq!(token.phase, Phase::Curve);
 
     // Phase 2: Trading on curve
@@ -740,14 +797,23 @@ fn test_full_lifecycle_genesis_to_amm() {
     for i in 0..5 {
         let buy_amount = 50_000u128; // well within u64 supply bounds
         let (cbe_received, _) = token
-            .buy(buyer.clone(), buy_amount, 2 + i as u64, 1_600_000_100 + i as u64 * 10)
+            .buy(
+                buyer.clone(),
+                buy_amount,
+                2 + i as u64,
+                1_600_000_100 + i as u64 * 10,
+            )
             .expect(&format!("Buy {} should succeed", i + 1));
-        
+
         total_sov_spent += buy_amount;
         total_cbe_acquired += cbe_received;
     }
-    println!("2. Curve Trading: {} buys, {} SOV → {} CBE",
-        5, total_sov_spent as f64 / 100_000_000.0, total_cbe_acquired as f64 / 100_000_000.0);
+    println!(
+        "2. Curve Trading: {} buys, {} SOV → {} CBE",
+        5,
+        total_sov_spent as f64 / 100_000_000.0,
+        total_cbe_acquired as f64 / 100_000_000.0
+    );
 
     // Phase 3: Execute a sell (small portion that reserve can cover)
     // Reserve has 20% of buys, so we can sell tokens worth ~20% of reserve value
@@ -755,8 +821,11 @@ fn test_full_lifecycle_genesis_to_amm() {
     if sell_amount > 0 {
         match token.sell(buyer.clone(), sell_amount, 10, 1_600_000_200) {
             Ok((sov_received, _)) => {
-                println!("3. Curve Sell: {} CBE → {} SOV",
-                    sell_amount as f64 / 100_000_000.0, sov_received as f64 / 100_000_000.0);
+                println!(
+                    "3. Curve Sell: {} CBE → {} SOV",
+                    sell_amount as f64 / 100_000_000.0,
+                    sov_received as f64 / 100_000_000.0
+                );
             }
             Err(_) => {
                 println!("3. Curve Sell: Skipped (insufficient reserve for amount)");
@@ -770,7 +839,7 @@ fn test_full_lifecycle_genesis_to_amm() {
     while buy_count < 200 && token.phase == Phase::Curve {
         let _ = token.buy(buyer.clone(), 100_000u128, 20 + buy_count, 1_600_000_300);
         buy_count += 1;
-        
+
         // Try to graduate if threshold reached
         if token.can_graduate(1_600_000_400, 100) {
             match token.graduate(1_600_000_400, 100) {
@@ -794,16 +863,21 @@ fn test_full_lifecycle_genesis_to_amm() {
         ) {
             Ok((pool, _, _)) => {
                 let (sov_r, cbe_r) = pool.get_reserves().unwrap();
-                println!("5. AMM Pool Created: {} SOV / {} CBE in pool",
-                    sov_r as f64 / 100_000_000.0, cbe_r as f64 / 100_000_000.0);
+                println!(
+                    "5. AMM Pool Created: {} SOV / {} CBE in pool",
+                    sov_r as f64 / 100_000_000.0,
+                    cbe_r as f64 / 100_000_000.0
+                );
             }
             Err(e) => {
                 println!("   AMM pool creation skipped: {:?}", e);
             }
         }
     } else {
-        println!("   Graduation threshold not reached (reserve: {} SOV)",
-            token.reserve_balance as f64 / 100_000_000.0);
+        println!(
+            "   Graduation threshold not reached (reserve: {} SOV)",
+            token.reserve_balance as f64 / 100_000_000.0
+        );
     }
 
     println!("✓ Full lifecycle test completed!");
@@ -822,7 +896,12 @@ fn test_oracle_observation_read_only() {
     // Build up reserve
     let buyer = test_pubkey(0x04);
     for i in 0..5 {
-        let _ = token.buy(buyer.clone(), 50_000_000_00u128, 2 + i as u64, 1_600_000_100);
+        let _ = token.buy(
+            buyer.clone(),
+            50_000_000_00u128,
+            2 + i as u64,
+            1_600_000_100,
+        );
     }
 
     let initial_price = token.current_price();
@@ -839,8 +918,14 @@ fn test_oracle_observation_read_only() {
     );
 
     println!("✓ Oracle observation verified as read-only");
-    println!("  Price before oracle check: {} SOV/CBE", initial_price as f64 / 100_000_000.0);
-    println!("  Price after oracle check: {} SOV/CBE", price_after_oracle as f64 / 100_000_000.0);
+    println!(
+        "  Price before oracle check: {} SOV/CBE",
+        initial_price as f64 / 100_000_000.0
+    );
+    println!(
+        "  Price after oracle check: {} SOV/CBE",
+        price_after_oracle as f64 / 100_000_000.0
+    );
     println!("  Token state unchanged: ✓");
 }
 
@@ -956,7 +1041,9 @@ fn test_deterministic_replay() {
         // Sell a small portion (what reserve can cover)
         let sell_amount = find_reserve_safe_sell_amount(&token, total_cbe / 10);
         if sell_amount > 0 {
-            let _ = token.sell(buyer.clone(), sell_amount, 5, 1_600_000_200).unwrap();
+            let _ = token
+                .sell(buyer.clone(), sell_amount, 5, 1_600_000_200)
+                .unwrap();
         }
 
         // More buys
@@ -985,9 +1072,13 @@ fn test_deterministic_replay() {
     assert_eq!(run1.3, run2.3, "Current price should be deterministic");
 
     println!("✓ Deterministic replay verified");
-    println!("  Run 1: supply={}, reserve={}, treasury={}, price={}",
-        run1.0, run1.1, run1.2, run1.3);
-    println!("  Run 2: supply={}, reserve={}, treasury={}, price={}",
-        run2.0, run2.1, run2.2, run2.3);
+    println!(
+        "  Run 1: supply={}, reserve={}, treasury={}, price={}",
+        run1.0, run1.1, run1.2, run1.3
+    );
+    println!(
+        "  Run 2: supply={}, reserve={}, treasury={}, price={}",
+        run2.0, run2.1, run2.2, run2.3
+    );
     println!("  Identical: ✓");
 }

@@ -130,7 +130,10 @@ mod cbe_token_tests {
 
     #[test]
     fn test_cbe_atomic_supply_uses_18_decimals() {
-        assert_eq!(CBE_TOTAL_SUPPLY_TOKENS * TOKEN_SCALE_18, lib_types::CBE_MAX_SUPPLY);
+        assert_eq!(
+            CBE_TOTAL_SUPPLY_TOKENS * TOKEN_SCALE_18,
+            lib_types::CBE_MAX_SUPPLY
+        );
     }
 
     #[test]

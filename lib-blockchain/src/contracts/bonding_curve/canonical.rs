@@ -4,9 +4,7 @@ pub use lib_types::{
 };
 use primitive_types::U256;
 
-use crate::contracts::utils::{
-    integer_sqrt_u256, mul_div_floor_u128, u256_to_u128, MathError,
-};
+use crate::contracts::utils::{integer_sqrt_u256, mul_div_floor_u128, u256_to_u128, MathError};
 
 // ── Immutable curve logic ────────────────────────────────────────────────────
 //
@@ -128,11 +126,46 @@ pub fn derive_cbe_bands(p_start_0: u128) -> [Band; BAND_COUNT] {
     let p4 = p3 + 4 * (S4 - S3) / SLOPE_DEN;
 
     [
-        Band { index: 0, start_supply: 0,  end_supply: S1,        slope_num: 1, slope_den: SLOPE_DEN, p_start: p_start_0 },
-        Band { index: 1, start_supply: S1, end_supply: S2,        slope_num: 2, slope_den: SLOPE_DEN, p_start: p1 },
-        Band { index: 2, start_supply: S2, end_supply: S3,        slope_num: 3, slope_den: SLOPE_DEN, p_start: p2 },
-        Band { index: 3, start_supply: S3, end_supply: S4,        slope_num: 4, slope_den: SLOPE_DEN, p_start: p3 },
-        Band { index: 4, start_supply: S4, end_supply: MAX_SUPPLY, slope_num: 5, slope_den: SLOPE_DEN, p_start: p4 },
+        Band {
+            index: 0,
+            start_supply: 0,
+            end_supply: S1,
+            slope_num: 1,
+            slope_den: SLOPE_DEN,
+            p_start: p_start_0,
+        },
+        Band {
+            index: 1,
+            start_supply: S1,
+            end_supply: S2,
+            slope_num: 2,
+            slope_den: SLOPE_DEN,
+            p_start: p1,
+        },
+        Band {
+            index: 2,
+            start_supply: S2,
+            end_supply: S3,
+            slope_num: 3,
+            slope_den: SLOPE_DEN,
+            p_start: p2,
+        },
+        Band {
+            index: 3,
+            start_supply: S3,
+            end_supply: S4,
+            slope_num: 4,
+            slope_den: SLOPE_DEN,
+            p_start: p3,
+        },
+        Band {
+            index: 4,
+            start_supply: S4,
+            end_supply: MAX_SUPPLY,
+            slope_num: 5,
+            slope_den: SLOPE_DEN,
+            p_start: p4,
+        },
     ]
 }
 
@@ -193,7 +226,8 @@ pub fn price_at_supply(supply: u128) -> u128 {
 }
 
 pub fn integer_sqrt(n: u128) -> u128 {
-    u256_to_u128(integer_sqrt_u256(U256::from(n))).expect("canonical integer_sqrt downcast overflow")
+    u256_to_u128(integer_sqrt_u256(U256::from(n)))
+        .expect("canonical integer_sqrt downcast overflow")
 }
 
 pub fn cost_single_band(s_from: u128, s_to: u128, band: &Band) -> Result<u128, MathError> {
@@ -401,8 +435,7 @@ mod tests {
     fn derive_cbe_bands_continuity_invariant() {
         let derived = derive_cbe_bands(P_START_0);
         for pair in derived.windows(2) {
-            let price_at_left_end =
-                price_at_supply_in_band(pair[0].end_supply, &pair[0]).unwrap();
+            let price_at_left_end = price_at_supply_in_band(pair[0].end_supply, &pair[0]).unwrap();
             assert_eq!(
                 price_at_left_end, pair[1].p_start,
                 "Price continuity broken at band {} → {} boundary",
@@ -479,8 +512,7 @@ mod tests {
         let cost_small =
             cost_single_band(band.start_supply, band.start_supply + one_token, &band).unwrap();
         let cost_large =
-            cost_single_band(band.start_supply, band.start_supply + 10 * one_token, &band)
-                .unwrap();
+            cost_single_band(band.start_supply, band.start_supply + 10 * one_token, &band).unwrap();
         assert!(cost_large > cost_small);
     }
 
@@ -544,7 +576,12 @@ mod tests {
     fn payout_for_burn_crosses_boundary_right_to_left() {
         let current_supply = BANDS[1].start_supply + 10 * SCALE;
         let amount = 20 * SCALE;
-        let expected = cost_single_band(BANDS[0].end_supply - 10 * SCALE, BANDS[0].end_supply, &BANDS[0]).unwrap()
+        let expected = cost_single_band(
+            BANDS[0].end_supply - 10 * SCALE,
+            BANDS[0].end_supply,
+            &BANDS[0],
+        )
+        .unwrap()
             + cost_single_band(BANDS[1].start_supply, current_supply, &BANDS[1]).unwrap();
         assert_eq!(payout_for_burn(amount, current_supply).unwrap(), expected);
     }

@@ -604,7 +604,8 @@ impl OracleObservabilityState {
         }
 
         let below_threshold = metrics.agreement_rate_percent() < config.alarm_threshold_percent;
-        let consecutive_exceeded = self.consecutive_disagreements >= config.consecutive_disagreements_threshold;
+        let consecutive_exceeded =
+            self.consecutive_disagreements >= config.consecutive_disagreements_threshold;
 
         self.alarm_active = below_threshold || consecutive_exceeded;
     }
@@ -890,15 +891,15 @@ mod tests {
     #[test]
     fn parity_metrics_calculates_agreement_rate() {
         let mut metrics = OracleParityMetrics::default();
-        
+
         // No comparisons yet - should be 100%
         assert_eq!(metrics.agreement_rate_percent(), 100.0);
-        
+
         // Record some comparisons
-        metrics.record_comparison(true, 100);   // agreement
-        metrics.record_comparison(true, 101);   // agreement
-        metrics.record_comparison(false, 102);  // disagreement
-        
+        metrics.record_comparison(true, 100); // agreement
+        metrics.record_comparison(true, 101); // agreement
+        metrics.record_comparison(false, 102); // disagreement
+
         assert_eq!(metrics.total_comparisons, 3);
         assert_eq!(metrics.agreements, 2);
         assert_eq!(metrics.disagreements, 1);
@@ -908,7 +909,7 @@ mod tests {
     #[test]
     fn parity_metrics_parity_acceptable_threshold() {
         let mut metrics = OracleParityMetrics::default();
-        
+
         // Add 1000 comparisons with 5 disagreements (99.5% agreement)
         for i in 0..995 {
             metrics.record_comparison(true, i);
@@ -916,7 +917,7 @@ mod tests {
         for i in 995..1000 {
             metrics.record_comparison(false, i);
         }
-        
+
         // Should not be acceptable at 99.9% threshold
         assert!(!metrics.is_parity_acceptable(99.9));
         // Should be acceptable at 99.0% threshold
@@ -926,22 +927,25 @@ mod tests {
     #[test]
     fn rollback_controls_trigger_and_clear() {
         let mut controls = RollbackControls::default();
-        
+
         assert!(!controls.is_rollback_triggered());
         assert!(controls.enabled);
-        
+
         let target = controls.trigger_rollback(
             1000,
             "Divergence alarm triggered".to_string(),
             "operator-1".to_string(),
         );
-        
+
         assert!(controls.is_rollback_triggered());
         assert_eq!(target, OracleProtocolVersion::V0Legacy);
         assert_eq!(controls.triggered_at_height, Some(1000));
-        assert_eq!(controls.rollback_reason, Some("Divergence alarm triggered".to_string()));
+        assert_eq!(
+            controls.rollback_reason,
+            Some("Divergence alarm triggered".to_string())
+        );
         assert_eq!(controls.authorized_by, Some("operator-1".to_string()));
-        
+
         controls.clear_rollback();
         assert!(!controls.is_rollback_triggered());
     }
@@ -951,19 +955,19 @@ mod tests {
         let mut state = OracleObservabilityState::default();
         state.divergence_config.min_comparisons_before_alarm = 10;
         state.divergence_config.alarm_threshold_percent = 95.0;
-        
+
         // Not enough comparisons yet
         for i in 0..5 {
             state.record_agreement(i);
         }
         assert!(!state.alarm_active);
-        
+
         // Add more comparisons but keep agreement high
         for i in 5..15 {
             state.record_agreement(i);
         }
         assert!(!state.alarm_active);
-        
+
         // Now add many disagreements to drop agreement rate
         for i in 15..25 {
             state.record_disagreement(i, i);
@@ -979,13 +983,13 @@ mod tests {
         state.divergence_config.min_comparisons_before_alarm = 0;
         state.divergence_config.alarm_threshold_percent = 0.0;
         state.divergence_config.consecutive_disagreements_threshold = 3;
-        
+
         // Add some agreements first
         for i in 0..5 {
             state.record_agreement(i);
         }
         assert!(!state.alarm_active);
-        
+
         // Now add consecutive disagreements
         state.record_disagreement(100, 10);
         assert_eq!(state.consecutive_disagreements, 1);
@@ -997,7 +1001,7 @@ mod tests {
         assert_eq!(state.consecutive_disagreements, 3);
         // 3 consecutive disagreements should trigger alarm
         assert!(state.alarm_active);
-        
+
         // One agreement should reset consecutive counter and clear alarm
         state.record_agreement(13);
         assert!(!state.alarm_active);

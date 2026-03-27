@@ -1186,11 +1186,6 @@ impl RuntimeOrchestrator {
 
     /// Returns true if local persistent chain artifacts already exist.
     fn has_local_chain_data(&self) -> bool {
-        let dat_path = std::path::PathBuf::from(self.config.environment.blockchain_data_path());
-        if dat_path.exists() {
-            return true;
-        }
-
         let data_dir = self.config.environment.data_directory();
         let sled_path = std::path::Path::new(&data_dir).join("sled");
         if !sled_path.exists() {
@@ -1731,7 +1726,7 @@ impl RuntimeOrchestrator {
 
                 warn!(
                     "⚠️  SledStore open error ({}). ZHTP_SLED_RESET_ON_ERROR is set — \
-                     wiping store directory and attempting recovery from blockchain.dat",
+                     wiping store directory and continuing with canonical startup flow",
                     e
                 );
                 if let Err(rm_err) = std::fs::remove_dir_all(&sled_path) {
@@ -1750,8 +1745,18 @@ impl RuntimeOrchestrator {
         };
 
         let mut synced_blockchain: Option<lib_blockchain::Blockchain> = None;
+        let emergency_restore_enabled = self.config.emergency_restore_from_local;
+        if emergency_restore_enabled {
+            warn!(
+                "⚠️  Emergency restore mode enabled: local blockchain.dat reads are permitted for recovery only"
+            );
+            if self.config.allow_emergency_restore_genesis_mismatch {
+                warn!(
+                    "⚠️  Emergency restore genesis mismatch override enabled: incompatible local files will be accepted with warnings"
+                );
+            }
+        }
 
-        // Before peer sync or genesis: try loading from blockchain.dat backup if sled is empty
         let dat_path = std::path::PathBuf::from(self.config.environment.blockchain_data_path());
 
         let (blockchain, was_loaded) = match lib_blockchain::Blockchain::load_from_store(
@@ -1774,20 +1779,40 @@ impl RuntimeOrchestrator {
                     info!("🪙 SOV token contract initialized (persistence deferred to next block commit): {}", hex::encode(&sov_token_id[..8]));
                 }
 
-                // If oracle committee is empty after Sled load (node missed init_oracle_committee,
-                // or Sled was wiped), restore oracle_state from blockchain.dat which persists it
-                // via BlockchainStorageV4.
                 if bc.oracle_state.committee.members().is_empty() {
-                    try_restore_oracle_from_dat(&mut bc, &dat_path);
+                    if emergency_restore_enabled {
+                        let restored = try_restore_oracle_from_dat(
+                            &mut bc,
+                            &dat_path,
+                            self.config.allow_emergency_restore_genesis_mismatch,
+                        )?;
+                        if !restored {
+                            return Err(anyhow::anyhow!(
+                                "Oracle committee missing after canonical Sled load and no compatible emergency backup was restored"
+                            ));
+                        }
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "Oracle committee missing after canonical Sled load. Standard startup refuses blockchain.dat fallback; use --emergency-restore-from-local to attempt explicit local recovery."
+                        ));
+                    }
+                } else {
+                    info!(
+                        "[startup] oracle_state: reconstructed from blockchain state (height {})",
+                        bc.height
+                    );
                 }
 
-                // If validator_registry is empty after Sled load (validators were seeded via
-                // bootstrap config and never committed as on-chain ValidatorData transactions),
-                // restore from blockchain.dat which persists validator_registry via BlockchainStorageV7+.
-                // If .dat also has none, fall back to bootstrap config so consensus can start on nodes
-                // where validators have never been written as on-chain transactions.
                 if bc.get_active_validators().is_empty() {
-                    let restored = try_restore_validators_from_dat(&mut bc, &dat_path);
+                    let restored = if emergency_restore_enabled {
+                        try_restore_validators_from_dat(
+                            &mut bc,
+                            &dat_path,
+                            self.config.allow_emergency_restore_genesis_mismatch,
+                        )?
+                    } else {
+                        false
+                    };
                     if !restored {
                         seed_validators_from_bootstrap_config(
                             &mut bc,
@@ -1799,54 +1824,55 @@ impl RuntimeOrchestrator {
                 (bc, true)
             }
             None => {
-                // First: try loading from blockchain.dat backup before attempting peer sync or genesis
-                if dat_path.exists() {
-                    match lib_blockchain::Blockchain::load_from_file(&dat_path) {
-                        Ok(mut bc) => {
-                            info!(
-                                "📂 Recovered blockchain from backup file (height: {})",
-                                bc.height
-                            );
-                            bc.set_store(store.clone());
-                            // Persist all blocks to the fresh SledStore
-                            let store_ref: &dyn lib_blockchain::storage::BlockchainStore =
-                                store.as_ref();
-                            let mut migration_ok = true;
-                            for block in &bc.blocks {
-                                let h = block.height();
-                                if let Err(e) = store_ref.begin_block(h) {
-                                    warn!(
-                                        "⚠️  Failed to begin migration tx for block {}: {}",
-                                        h, e
-                                    );
-                                    migration_ok = false;
-                                    break;
-                                }
-                                let write_result = store_ref
-                                    .append_block(block)
-                                    .and_then(|_| store_ref.commit_block());
-                                if let Err(e) = write_result {
-                                    warn!("⚠️  Failed to migrate block {} to SledStore: {}", h, e);
-                                    // begin_block succeeded — rollback to leave the store clean
-                                    if let Err(rb) = store_ref.rollback_block() {
-                                        warn!("   rollback_block also failed: {}", rb);
-                                    }
-                                    migration_ok = false;
-                                    break;
-                                }
-                            }
-                            if migration_ok {
-                                info!(
-                                    "✅ Migrated {} blocks from blockchain.dat to SledStore",
-                                    bc.blocks.len()
+                if emergency_restore_enabled {
+                    if let Some(mut bc) = load_validated_blockchain_dat(
+                        &dat_path,
+                        self.config.allow_emergency_restore_genesis_mismatch,
+                    )? {
+                        warn!(
+                            "⚠️  Emergency restore: recovered blockchain from local backup file (height: {})",
+                            bc.height
+                        );
+                        bc.set_store(store.clone());
+                        let store_ref: &dyn lib_blockchain::storage::BlockchainStore = store.as_ref();
+                        let mut migration_ok = true;
+                        for block in &bc.blocks {
+                            let h = block.height();
+                            if let Err(e) = store_ref.begin_block(h) {
+                                warn!(
+                                    "⚠️  Failed to begin emergency migration tx for block {}: {}",
+                                    h, e
                                 );
-                                synced_blockchain = Some(bc);
+                                migration_ok = false;
+                                break;
+                            }
+                            let write_result = store_ref
+                                .append_block(block)
+                                .and_then(|_| store_ref.commit_block());
+                            if let Err(e) = write_result {
+                                warn!(
+                                    "⚠️  Failed to migrate emergency backup block {} to SledStore: {}",
+                                    h, e
+                                );
+                                if let Err(rb) = store_ref.rollback_block() {
+                                    warn!("   rollback_block also failed: {}", rb);
+                                }
+                                migration_ok = false;
+                                break;
                             }
                         }
-                        Err(e) => {
-                            warn!("⚠️  blockchain.dat recovery failed: {}", e);
+                        if migration_ok {
+                            warn!(
+                                "⚠️  Emergency restore migrated {} blocks from blockchain.dat to SledStore",
+                                bc.blocks.len()
+                            );
+                            synced_blockchain = Some(bc);
                         }
                     }
+                } else if dat_path.exists() {
+                    warn!(
+                        "Ignoring blockchain.dat during standard startup. Use --emergency-restore-from-local to permit explicit local recovery."
+                    );
                 }
 
                 // If we discovered peers, sync via paginated block-range protocol.
@@ -2759,7 +2785,6 @@ impl RuntimeOrchestrator {
         info!("Canonical validator startup: runtime bootstrap validator seeding disabled (validators must come from genesis state)");
         Ok(())
     }
-
 
     /// Bootstrap the oracle committee from active validator consensus keys if it is still empty.
     ///
@@ -4658,49 +4683,93 @@ impl RuntimeOrchestrator {
     }
 }
 
-/// Tries to restore the oracle committee from a `blockchain.dat` backup file.
+fn canonical_genesis_hash() -> Result<lib_blockchain::Hash> {
+    let bc = lib_blockchain::genesis::GenesisConfig::from_embedded()?.build_block0()?;
+    let genesis = bc
+        .blocks
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("embedded genesis config produced no block 0"))?;
+    Ok(genesis.header.calculate_hash())
+}
+
+fn validate_local_restore_compatibility(
+    dat_bc: &lib_blockchain::Blockchain,
+    allow_genesis_mismatch: bool,
+) -> Result<()> {
+    let expected_genesis_hash = canonical_genesis_hash()?;
+    let actual_genesis_hash = dat_bc
+        .blocks
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("blockchain.dat contains no genesis block"))?
+        .header
+        .calculate_hash();
+
+    if actual_genesis_hash != expected_genesis_hash {
+        let message = format!(
+            "blockchain.dat genesis hash mismatch: local={}, expected={}",
+            actual_genesis_hash, expected_genesis_hash
+        );
+        if allow_genesis_mismatch {
+            warn!("⚠️  {}", message);
+            warn!(
+                "⚠️  Proceeding because --allow-emergency-restore-genesis-mismatch was set"
+            );
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "{}. Emergency restore requires a compatible canonical genesis unless override is set.",
+                message
+            ))
+        }
+    } else {
+        Ok(())
+    }
+}
+
+fn load_validated_blockchain_dat(
+    dat_path: &std::path::Path,
+    allow_genesis_mismatch: bool,
+) -> Result<Option<lib_blockchain::Blockchain>> {
+    if !dat_path.exists() {
+        return Ok(None);
+    }
+    #[allow(deprecated)]
+    let dat_bc = lib_blockchain::Blockchain::load_from_file(dat_path)?;
+    validate_local_restore_compatibility(&dat_bc, allow_genesis_mismatch)?;
+    Ok(Some(dat_bc))
+}
+
+/// Tries to restore the oracle committee from an explicitly requested `blockchain.dat` backup.
 ///
-/// Called when the blockchain was successfully loaded from Sled but the oracle
-/// committee is empty — which can happen when Sled is wiped or the node missed
-/// `init_oracle_committee` before the first restart.
-///
-/// Returns `true` if the committee was restored, `false` otherwise (dat absent,
-/// dat also has an empty committee, or the file could not be read).
+/// Returns `true` if the committee was restored, `false` otherwise (dat absent or dat also has
+/// an empty committee). Invalid or incompatible local files return an error.
 pub(super) fn try_restore_oracle_from_dat(
     bc: &mut lib_blockchain::Blockchain,
     dat_path: &std::path::Path,
-) -> bool {
-    if !dat_path.exists() {
-        return false;
-    }
-    #[allow(deprecated)]
-    match lib_blockchain::Blockchain::load_from_file(dat_path) {
-        Ok(dat_bc) if !dat_bc.oracle_state.committee.members().is_empty() => {
+    allow_genesis_mismatch: bool,
+) -> Result<bool> {
+    match load_validated_blockchain_dat(dat_path, allow_genesis_mismatch)? {
+        Some(dat_bc) if !dat_bc.oracle_state.committee.members().is_empty() => {
             let count = dat_bc.oracle_state.committee.members().len();
             bc.oracle_state = dat_bc.oracle_state;
-            info!(
-                "🔮 Restored oracle committee from blockchain.dat ({} members)",
+            warn!(
+                "⚠️  Emergency restore loaded oracle committee from blockchain.dat ({} members)",
                 count
             );
-            // Write back to Sled so future restarts don't need the .dat fallback.
             if let Some(store_ref) = bc.store.as_ref() {
                 if let Err(e) = store_ref.save_oracle_state(&bc.oracle_state) {
                     warn!("⚠️ Failed to persist restored oracle_state to Sled: {}", e);
                 }
             }
-            true
+            Ok(true)
         }
-        Ok(_) => {
-            info!("🔮 blockchain.dat has no oracle committee either — will rebuild from validator registry");
-            false
-        }
-        Err(e) => {
+        Some(_) => {
             warn!(
-                "⚠️ Failed to read blockchain.dat for oracle_state fallback: {}",
-                e
+                "⚠️  Emergency restore requested, but blockchain.dat has no oracle committee"
             );
-            false
+            Ok(false)
         }
+        None => Ok(false),
     }
 }
 
@@ -4766,34 +4835,25 @@ fn bootstrap_commission_percent(commission_rate_bps: u16) -> u8 {
 pub(super) fn try_restore_validators_from_dat(
     bc: &mut lib_blockchain::Blockchain,
     dat_path: &std::path::Path,
-) -> bool {
-    if !dat_path.exists() {
-        return false;
-    }
-    #[allow(deprecated)]
-    match lib_blockchain::Blockchain::load_from_file(dat_path) {
-        Ok(dat_bc) if !dat_bc.get_active_validators().is_empty() => {
+    allow_genesis_mismatch: bool,
+) -> Result<bool> {
+    match load_validated_blockchain_dat(dat_path, allow_genesis_mismatch)? {
+        Some(dat_bc) if !dat_bc.get_active_validators().is_empty() => {
             let count = dat_bc.get_active_validators().len();
             bc.validator_registry = dat_bc.validator_registry;
-            info!(
-                "✅ Restored validator_registry from blockchain.dat ({} validators)",
+            warn!(
+                "⚠️  Emergency restore loaded validator_registry from blockchain.dat ({} validators)",
                 count
             );
-            true
+            Ok(true)
         }
-        Ok(_) => {
-            info!(
-                "validator_registry in blockchain.dat is also empty — validators not yet on-chain"
-            );
-            false
-        }
-        Err(e) => {
+        Some(_) => {
             warn!(
-                "⚠️ Failed to read blockchain.dat for validator_registry fallback: {}",
-                e
+                "⚠️  Emergency restore requested, but blockchain.dat has no validator_registry entries"
             );
-            false
+            Ok(false)
         }
+        None => Ok(false),
     }
 }
 
@@ -5345,7 +5405,7 @@ mod runtime_orchestrator_tests {
 
 #[cfg(test)]
 mod oracle_startup_tests {
-    use super::try_restore_oracle_from_dat;
+    use super::{load_validated_blockchain_dat, try_restore_oracle_from_dat};
     use lib_blockchain::{Blockchain, ValidatorInfo};
     use tempfile::tempdir;
 
@@ -5366,6 +5426,13 @@ mod oracle_startup_tests {
         bc
     }
 
+    fn write_incompatible_dat(dat_path: &std::path::Path) {
+        let mut bc = Blockchain::new().expect("Blockchain::new");
+        bc.blocks[0].header.version = bc.blocks[0].header.version.saturating_add(1);
+        #[allow(deprecated)]
+        bc.save_to_file(dat_path).expect("save_to_file");
+    }
+
     // ------------------------------------------------------------------
     // try_restore_oracle_from_dat
     // ------------------------------------------------------------------
@@ -5384,7 +5451,8 @@ mod oracle_startup_tests {
         let mut target = Blockchain::new().expect("Blockchain::new");
         assert!(target.oracle_state.committee.members().is_empty());
 
-        let restored = try_restore_oracle_from_dat(&mut target, &dat_path);
+        let restored = try_restore_oracle_from_dat(&mut target, &dat_path, false)
+            .expect("try_restore_oracle_from_dat");
 
         assert!(restored, "expected restoration to succeed");
         assert_eq!(
@@ -5405,7 +5473,8 @@ mod oracle_startup_tests {
         empty_src.save_to_file(&dat_path).expect("save_to_file");
 
         let mut target = Blockchain::new().expect("Blockchain::new");
-        let restored = try_restore_oracle_from_dat(&mut target, &dat_path);
+        let restored = try_restore_oracle_from_dat(&mut target, &dat_path, false)
+            .expect("try_restore_oracle_from_dat");
 
         assert!(
             !restored,
@@ -5423,10 +5492,36 @@ mod oracle_startup_tests {
         let nonexistent = dir.path().join("does_not_exist.dat");
 
         let mut target = Blockchain::new().expect("Blockchain::new");
-        let restored = try_restore_oracle_from_dat(&mut target, &nonexistent);
+        let restored = try_restore_oracle_from_dat(&mut target, &nonexistent, false)
+            .expect("try_restore_oracle_from_dat");
 
         assert!(!restored, "should not restore when dat file does not exist");
         assert!(target.oracle_state.committee.members().is_empty());
+    }
+
+    #[test]
+    fn emergency_restore_rejects_mismatched_genesis_without_override() {
+        let dir = tempdir().unwrap();
+        let dat_path = dir.path().join("blockchain.dat");
+        write_incompatible_dat(&dat_path);
+
+        let err = load_validated_blockchain_dat(&dat_path, false)
+            .expect_err("mismatched genesis should be rejected");
+        assert!(
+            err.to_string().contains("genesis hash mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn emergency_restore_allows_mismatched_genesis_with_override() {
+        let dir = tempdir().unwrap();
+        let dat_path = dir.path().join("blockchain.dat");
+        write_incompatible_dat(&dat_path);
+
+        let restored = load_validated_blockchain_dat(&dat_path, true)
+            .expect("override should allow incompatible dat");
+        assert!(restored.is_some(), "override should still load local dat");
     }
 
     // ------------------------------------------------------------------
@@ -5586,7 +5681,8 @@ mod validator_startup_tests {
         let mut target = Blockchain::new().expect("Blockchain::new");
         assert!(target.get_active_validators().is_empty());
 
-        let restored = try_restore_validators_from_dat(&mut target, &dat_path);
+        let restored = try_restore_validators_from_dat(&mut target, &dat_path, false)
+            .expect("try_restore_validators_from_dat");
 
         assert!(restored, "expected restoration to succeed");
         assert_eq!(
@@ -5606,7 +5702,8 @@ mod validator_startup_tests {
         empty_src.save_to_file(&dat_path).expect("save_to_file");
 
         let mut target = Blockchain::new().expect("Blockchain::new");
-        let restored = try_restore_validators_from_dat(&mut target, &dat_path);
+        let restored = try_restore_validators_from_dat(&mut target, &dat_path, false)
+            .expect("try_restore_validators_from_dat");
 
         assert!(
             !restored,
@@ -5630,7 +5727,8 @@ mod validator_startup_tests {
         let nonexistent = dir.path().join("does_not_exist.dat");
 
         let mut target = Blockchain::new().expect("Blockchain::new");
-        let restored = try_restore_validators_from_dat(&mut target, &nonexistent);
+        let restored = try_restore_validators_from_dat(&mut target, &nonexistent, false)
+            .expect("try_restore_validators_from_dat");
 
         assert!(!restored, "should not restore when dat file does not exist");
         assert!(target.get_active_validators().is_empty());

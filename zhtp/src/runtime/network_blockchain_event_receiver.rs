@@ -3,9 +3,9 @@
 //! Implements lib-network's BlockchainEventReceiver trait to handle
 //! blocks and transactions received from mesh peers.
 //!
-//! **CRITICAL (Issue #938, #1862)**: Relay blocks from network are used 
-//! ONLY as sync hints to trigger catch-up. They are NOT forwarded as 
-//! proposals and NOT applied directly. BFT consensus must commit blocks 
+//! **CRITICAL (Issue #938, #1862)**: Relay blocks from network are used
+//! ONLY as sync hints to trigger catch-up. They are NOT forwarded as
+//! proposals and NOT applied directly. BFT consensus must commit blocks
 //! through the canonical proposal/commit flow before they are persisted.
 
 use anyhow::Result;

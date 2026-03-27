@@ -10,11 +10,18 @@ use std::sync::{Arc, Mutex};
 use tracing::{debug, info, trace, warn};
 
 use crate::observer::{
-    build_height_trajectories,
-    encode_height_states,
-    event_normalizer::{normalize_consensus_event, ConsensusBehaviorEventType, ConsensusNormalizedEvent, RuntimeConsensusSignal},
-    height_scoring::{compute_height_score, HeightScore, HeightScoringConfig, NetworkHealthSummary},
-    state_encoder::{EncodedConsensusState, ParsedConsensusEvent, ParsedConsensusPhase, ParsedHeightTrajectory, ParsedPhaseTrajectory, ParsedRoundTrajectory, StateEncoderConfig},
+    build_height_trajectories, encode_height_states,
+    event_normalizer::{
+        normalize_consensus_event, ConsensusBehaviorEventType, ConsensusNormalizedEvent,
+        RuntimeConsensusSignal,
+    },
+    height_scoring::{
+        compute_height_score, HeightScore, HeightScoringConfig, NetworkHealthSummary,
+    },
+    state_encoder::{
+        EncodedConsensusState, ParsedConsensusEvent, ParsedConsensusPhase, ParsedHeightTrajectory,
+        ParsedPhaseTrajectory, ParsedRoundTrajectory, StateEncoderConfig,
+    },
     surprisal_engine::{analyze_height_surprisal, SurprisalConfig, SurprisalStats},
     trajectory_builder::{ConsensusPhaseType, HeightTrajectory, PhaseTrajectory, RoundTrajectory},
     transition_model::TransitionModel,
@@ -123,7 +130,10 @@ impl ObserverService {
         use crate::observer::event_normalizer::normalize_runtime_signal;
 
         let normalized = normalize_runtime_signal(signal);
-        trace!("Observer ingested runtime signal: {:?}", normalized.event_type);
+        trace!(
+            "Observer ingested runtime signal: {:?}",
+            normalized.event_type
+        );
 
         if let Ok(mut pending) = self.pending_events.lock() {
             pending.push(normalized);
@@ -173,7 +183,7 @@ impl ObserverService {
 
         // Convert to parsed trajectory for encoding
         let parsed_trajectory = convert_to_parsed_trajectory(&trajectory);
-        
+
         // Encode states
         let encoded_states = encode_height_states(&parsed_trajectory, self.config.encoder_config);
 
@@ -187,7 +197,12 @@ impl ObserverService {
                     return;
                 }
             };
-            analyze_height_surprisal(height, &encoded_states, &model, &self.config.surprisal_config)
+            analyze_height_surprisal(
+                height,
+                &encoded_states,
+                &model,
+                &self.config.surprisal_config,
+            )
         };
 
         // Update transition model with the new sequence for future heights
@@ -309,7 +324,11 @@ impl ObserverService {
 
     /// Get total number of stored analyses.
     pub fn stored_height_count(&self) -> usize {
-        self.height_analyses.lock().ok().map(|a| a.len()).unwrap_or(0)
+        self.height_analyses
+            .lock()
+            .ok()
+            .map(|a| a.len())
+            .unwrap_or(0)
     }
 
     /// Clear all stored data.
@@ -389,11 +408,19 @@ fn convert_behavior_event(event: ConsensusBehaviorEventType) -> Option<ParsedCon
     match event {
         ConsensusBehaviorEventType::EnterPropose => Some(ParsedConsensusEvent::EnterPropose),
         ConsensusBehaviorEventType::ProposalCreated => Some(ParsedConsensusEvent::ProposalCreated),
-        ConsensusBehaviorEventType::ProposalReceived => Some(ParsedConsensusEvent::ProposalReceived),
+        ConsensusBehaviorEventType::ProposalReceived => {
+            Some(ParsedConsensusEvent::ProposalReceived)
+        }
         ConsensusBehaviorEventType::StepTimeout => Some(ParsedConsensusEvent::StepTimeout),
-        ConsensusBehaviorEventType::BlockApplyStarted => Some(ParsedConsensusEvent::BlockApplyStarted),
-        ConsensusBehaviorEventType::BlockApplySucceeded => Some(ParsedConsensusEvent::BlockApplySucceeded),
-        ConsensusBehaviorEventType::BlockApplyFailed => Some(ParsedConsensusEvent::BlockApplyFailed),
+        ConsensusBehaviorEventType::BlockApplyStarted => {
+            Some(ParsedConsensusEvent::BlockApplyStarted)
+        }
+        ConsensusBehaviorEventType::BlockApplySucceeded => {
+            Some(ParsedConsensusEvent::BlockApplySucceeded)
+        }
+        ConsensusBehaviorEventType::BlockApplyFailed => {
+            Some(ParsedConsensusEvent::BlockApplyFailed)
+        }
         // Commit/quorum events are consensus outcomes, not execution/apply outcomes.
         // Return None to avoid incorrectly signaling apply progress.
         _ => None,
@@ -407,7 +434,7 @@ fn convert_event(event: &ConsensusNormalizedEvent) -> Option<ParsedConsensusEven
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ConsensusEvent, ConsensusProposal, ConsensusProof, ConsensusType};
+    use crate::types::{ConsensusEvent, ConsensusProof, ConsensusProposal, ConsensusType};
     use lib_crypto::{Hash, PostQuantumSignature};
     use lib_identity::IdentityId;
 
@@ -557,6 +584,9 @@ mod tests {
         assert!(model.is_some());
 
         let model = model.unwrap();
-        assert!(model.total_transitions() > 0, "Expected transitions to be observed");
+        assert!(
+            model.total_transitions() > 0,
+            "Expected transitions to be observed"
+        );
     }
 }

@@ -178,8 +178,7 @@ impl MonitorHandler {
         let mempool_health = "ok"; // Placeholder
 
         // Determine overall status
-        let overall_status =
-            Self::compute_overall_status(network_health, blockchain_health);
+        let overall_status = Self::compute_overall_status(network_health, blockchain_health);
 
         // Get uptime
         // TODO: Track actual node start time in the runtime and compute real uptime here.
@@ -356,8 +355,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&original).expect("must serialise");
-        let decoded: SystemMetricsResponse =
-            serde_json::from_str(&json).expect("must deserialise");
+        let decoded: SystemMetricsResponse = serde_json::from_str(&json).expect("must deserialise");
 
         assert_eq!(decoded.status, "success");
         assert!((decoded.cpu_usage_percent - 42.5).abs() < f64::EPSILON);
@@ -598,16 +596,37 @@ mod handler_tests {
 
         // Verify required fields exist
         assert!(parsed.get("status").is_some(), "status field required");
-        assert!(parsed.get("components").is_some(), "components field required");
-        assert!(parsed.get("uptime_secs").is_some(), "uptime_secs field required");
+        assert!(
+            parsed.get("components").is_some(),
+            "components field required"
+        );
+        assert!(
+            parsed.get("uptime_secs").is_some(),
+            "uptime_secs field required"
+        );
 
         // Verify components sub-fields
         let components = parsed.get("components").unwrap();
-        assert!(components.get("blockchain").is_some(), "blockchain component required");
-        assert!(components.get("consensus").is_some(), "consensus component required");
-        assert!(components.get("oracle").is_some(), "oracle component required");
-        assert!(components.get("mempool").is_some(), "mempool component required");
-        assert!(components.get("network").is_some(), "network component required");
+        assert!(
+            components.get("blockchain").is_some(),
+            "blockchain component required"
+        );
+        assert!(
+            components.get("consensus").is_some(),
+            "consensus component required"
+        );
+        assert!(
+            components.get("oracle").is_some(),
+            "oracle component required"
+        );
+        assert!(
+            components.get("mempool").is_some(),
+            "mempool component required"
+        );
+        assert!(
+            components.get("network").is_some(),
+            "network component required"
+        );
     }
 
     #[test]
@@ -633,7 +652,10 @@ mod handler_tests {
             ("/api/v1/monitor/health", "/api/v1/monitor/health"),
             ("/api/v1/monitor/health/", "/api/v1/monitor/health"),
             ("/api/v1/monitor/health?verbose=1", "/api/v1/monitor/health"),
-            ("/api/v1/monitor/health/?verbose=1", "/api/v1/monitor/health/"), // '?' split happens first!
+            (
+                "/api/v1/monitor/health/?verbose=1",
+                "/api/v1/monitor/health/",
+            ), // '?' split happens first!
         ];
 
         for (input, expected) in test_cases {

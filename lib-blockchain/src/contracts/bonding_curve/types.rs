@@ -26,19 +26,19 @@ const TOKEN_SCALE: u128 = SCALE;
 // ============================================================================
 
 /// Graduation threshold in USD (whole dollars).
-/// 
+///
 /// Per CBE Token Launch specification: $269,000 USD reserve value triggers graduation.
 /// This constant ensures the threshold is defined in one place and used consistently.
 pub const GRADUATION_THRESHOLD_USD: u128 = 269_000;
 
 /// Maximum acceptable age for oracle price data (in seconds).
-/// 
+///
 /// Safety mechanism: If oracle price is older than this, graduation cannot proceed.
 /// Prevents manipulation using stale price data.
 pub const MAX_ORACLE_PRICE_AGE_SECONDS: u64 = 300; // 5 minutes
 
 /// Required confirmation period before graduation (in blocks).
-/// 
+///
 /// Safety mechanism: Graduation must be pending for this many blocks before execution.
 /// Allows time for validators to detect and challenge invalid graduation attempts.
 pub const GRADUATION_CONFIRMATION_BLOCKS: u64 = 3;
@@ -174,12 +174,10 @@ impl CurveType {
     /// Stablecoin to return (in atomic units)
     pub fn calculate_sell_stable(&self, current_supply: u128, token_amount: u128) -> u128 {
         match self {
-            CurveType::PiecewiseLinear(curve) => {
-                curve.quote_sell(
-                    u64::try_from(current_supply).unwrap_or(u64::MAX),
-                    u64::try_from(token_amount).unwrap_or(u64::MAX),
-                ) as u128
-            }
+            CurveType::PiecewiseLinear(curve) => curve.quote_sell(
+                u64::try_from(current_supply).unwrap_or(u64::MAX),
+                u64::try_from(token_amount).unwrap_or(u64::MAX),
+            ) as u128,
         }
     }
 }
@@ -205,7 +203,7 @@ pub enum Threshold {
         min_supply: u128,
     },
     /// Issue #1846: Reserve value in USD using oracle price.
-    /// 
+    ///
     /// Graduation triggers when `reserve_sov * sov_usd_price >= threshold_usd`.
     /// Requires oracle price data that is not stale (within MAX_ORACLE_PRICE_AGE_SECONDS).
     ReserveValueUsd {
@@ -268,7 +266,8 @@ impl Threshold {
             threshold_usd,
             max_price_age_seconds,
             confirmation_blocks,
-        } = self else {
+        } = self
+        else {
             // Non-USD thresholds use standard is_met
             return false;
         };

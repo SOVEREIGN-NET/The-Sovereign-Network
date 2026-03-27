@@ -703,13 +703,6 @@ async fn create_identity_direct(
         }
     }
 
-    // Distribute DID document to DHT network
-    distribute_identity_to_dht(&identity_json)
-        .await
-        .unwrap_or_else(|e| {
-            warn!("Failed to distribute identity to DHT: {}", e);
-        });
-
     // Return the full response structure expected by browser
     Ok(serde_json::json!({
         "success": true,
@@ -1015,16 +1008,6 @@ async fn create_standalone_wallet_direct(
     .await
     .unwrap_or_else(|e| warn!("Failed to record identity-wallet on blockchain: {}", e));
 
-    // Distribute identity-wallet info to DHT
-    distribute_standalone_wallet_to_dht(
-        &user_identity_id,
-        &wallet_id,
-        &wallet_type_str,
-        &wallet_name,
-    )
-    .await
-    .unwrap_or_else(|e| warn!("Failed to distribute identity-wallet to DHT: {}", e));
-
     // Return wallet creation result with identity
     Ok(serde_json::json!({
         "success": true,
@@ -1063,7 +1046,6 @@ async fn record_standalone_wallet_on_blockchain(
     // Create seed commitment hash
     let seed_commitment = lib_crypto::hash_blake3(seed_phrase.as_bytes());
 
-    // Store sensitive wallet data in encrypted DHT
     let wallet_private_data = lib_blockchain::WalletPrivateData {
         wallet_name: wallet_name.to_string(),
         alias: wallet_alias.clone(),
@@ -1073,8 +1055,6 @@ async fn record_standalone_wallet_on_blockchain(
         transaction_history: Vec::new(),
         metadata: std::collections::HashMap::new(),
     };
-
-    store_wallet_private_data_in_dht(identity_id, wallet_id, &wallet_private_data).await?;
 
     // Create full wallet data for local blockchain storage
     let wallet_data = lib_blockchain::WalletTransactionData {
@@ -1093,7 +1073,32 @@ async fn record_standalone_wallet_on_blockchain(
         initial_balance: 0,
     };
 
-    let _tx_hash = blockchain_guard.register_wallet(wallet_data)?;
+    let tx_hash = blockchain_guard.register_wallet(wallet_data)?;
+    crate::runtime::blockchain_provider::register_pending_wallet_projection(
+        &hex::encode(tx_hash),
+        crate::runtime::blockchain_provider::PendingWalletProjection {
+            identity_id: hex::encode(&identity_id.0),
+            wallet_id: hex::encode(&wallet_id.0),
+            wallet_record: Some(serde_json::json!({
+                "identity_id": hex::encode(&identity_id.0),
+                "wallet_id": hex::encode(&wallet_id.0),
+                "wallet_type": wallet_type,
+                "wallet_name": wallet_name,
+                "identity_linked": true,
+                "public_endpoint": format!("zhtp://identity.{}.wallet.{}.zhtp/",
+                    truncate_id(&hex::encode(&identity_id.0), 16),
+                    truncate_id(&hex::encode(&wallet_id.0), 16)),
+                "capabilities": ["receive"],
+                "created_at": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs()
+            })),
+            wallet_private_record: Some(
+                bincode::serialize(&wallet_private_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize wallet private data: {}", e))?
+            ),
+        },
+    );
     info!("✅ Identity-linked wallet recorded on blockchain");
     Ok(())
 }
@@ -1142,8 +1147,11 @@ async fn store_wallet_private_data_in_dht(
     Ok(())
 }
 
-/// Load wallet private data from DHT
-pub async fn load_wallet_private_data_from_dht(
+/// Load wallet private data from the local projection cache.
+///
+/// This does not consult DHT state. Canonical wallet existence and ownership come from
+/// committed blockchain state; this helper only returns locally persisted enrichment.
+pub async fn load_wallet_private_data_from_local_cache(
     identity_id: &lib_identity::IdentityId,
     wallet_id: &lib_identity::wallets::WalletId,
 ) -> Result<Option<lib_blockchain::WalletPrivateData>> {
@@ -1175,8 +1183,20 @@ pub async fn load_wallet_private_data_from_dht(
     Ok(None)
 }
 
-/// Load wallet public info from DHT
-pub async fn load_wallet_info_from_dht(
+/// Backwards-compatible wrapper for older call sites.
+#[deprecated(note = "use load_wallet_private_data_from_local_cache(); DHT is not authoritative")]
+pub async fn load_wallet_private_data_from_dht(
+    identity_id: &lib_identity::IdentityId,
+    wallet_id: &lib_identity::wallets::WalletId,
+) -> Result<Option<lib_blockchain::WalletPrivateData>> {
+    load_wallet_private_data_from_local_cache(identity_id, wallet_id).await
+}
+
+/// Load wallet public info from the local projection cache.
+///
+/// This does not consult DHT state. Canonical wallet existence and ownership come from
+/// committed blockchain state; this helper only returns locally persisted enrichment.
+pub async fn load_wallet_info_from_local_cache(
     identity_id: &lib_identity::IdentityId,
     wallet_id: &lib_identity::wallets::WalletId,
 ) -> Result<Option<serde_json::Value>> {
@@ -1206,6 +1226,15 @@ pub async fn load_wallet_info_from_dht(
     }
 
     Ok(None)
+}
+
+/// Backwards-compatible wrapper for older call sites.
+#[deprecated(note = "use load_wallet_info_from_local_cache(); DHT is not authoritative")]
+pub async fn load_wallet_info_from_dht(
+    identity_id: &lib_identity::IdentityId,
+    wallet_id: &lib_identity::wallets::WalletId,
+) -> Result<Option<serde_json::Value>> {
+    load_wallet_info_from_local_cache(identity_id, wallet_id).await
 }
 
 /// Distribute identity-wallet pair to DHT
@@ -1277,6 +1306,99 @@ async fn distribute_standalone_wallet_to_dht(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::OnceLock;
+    use tokio::sync::{Mutex, RwLock};
+
+    fn test_guard() -> &'static Mutex<()> {
+        static TEST_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+        TEST_GUARD.get_or_init(|| Mutex::new(()))
+    }
+
+    async fn install_test_storage() -> Arc<RwLock<lib_storage::PersistentStorageSystem>> {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::runtime::components::identity::create_default_storage_config().unwrap();
+        let storage = lib_storage::UnifiedStorageSystem::new_persistent(config, temp.path())
+            .await
+            .unwrap();
+        let storage = Arc::new(RwLock::new(storage));
+        crate::runtime::storage_provider::set_global_storage(storage.clone())
+            .await
+            .unwrap();
+        storage
+    }
+
+    #[tokio::test]
+    async fn wallet_private_cache_load_does_not_depend_on_dht() {
+        let _guard = test_guard().lock().await;
+        let storage = install_test_storage().await;
+        let identity_id = lib_crypto::Hash::from_bytes(&[0x11; 32]);
+        let wallet_id = lib_crypto::Hash::from_bytes(&[0x22; 32]);
+        let private_data = lib_blockchain::WalletPrivateData {
+            wallet_name: "Primary Wallet".to_string(),
+            alias: Some("primary".to_string()),
+            seed_commitment: lib_blockchain::Hash::from_slice(&[0x33; 32]),
+            capabilities: 0x0F,
+            initial_balance: 0,
+            transaction_history: Vec::new(),
+            metadata: std::collections::HashMap::new(),
+        };
+
+        storage
+            .write()
+            .await
+            .store_wallet_private_record(
+                &hex::encode(identity_id.as_bytes()),
+                &hex::encode(wallet_id.as_bytes()),
+                &bincode::serialize(&private_data).unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let loaded = load_wallet_private_data_from_local_cache(&identity_id, &wallet_id)
+            .await
+            .unwrap()
+            .expect("private wallet cache record should exist");
+        assert_eq!(loaded.wallet_name, "Primary Wallet");
+        assert_eq!(loaded.alias.as_deref(), Some("primary"));
+    }
+
+    #[tokio::test]
+    async fn wallet_info_cache_load_does_not_depend_on_dht() {
+        let _guard = test_guard().lock().await;
+        let storage = install_test_storage().await;
+        let identity_id = lib_crypto::Hash::from_bytes(&[0x11; 32]);
+        let wallet_id = lib_crypto::Hash::from_bytes(&[0x22; 32]);
+        let wallet_info = serde_json::json!({
+            "wallet_id": hex::encode(wallet_id.as_bytes()),
+            "wallet_name": "Primary Wallet",
+            "wallet_type": "Primary"
+        });
+
+        storage
+            .write()
+            .await
+            .store_wallet_record(
+                &hex::encode(identity_id.as_bytes()),
+                &hex::encode(wallet_id.as_bytes()),
+                &serde_json::to_vec(&wallet_info).unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let loaded = load_wallet_info_from_local_cache(&identity_id, &wallet_id)
+            .await
+            .unwrap()
+            .expect("wallet cache record should exist");
+        assert_eq!(
+            loaded.get("wallet_name").and_then(|value| value.as_str()),
+            Some("Primary Wallet")
+        );
+    }
 }
 
 /// Record identity and wallets on blockchain for immutable proof
@@ -1354,7 +1476,41 @@ async fn record_identity_on_blockchain(identity_result: &serde_json::Value) -> R
         owned_wallets: Vec::new(),
     };
 
-    let _identity_tx_hash = blockchain_guard.register_identity(identity_data)?;
+    let identity_tx_hash = blockchain_guard.register_identity(identity_data)?;
+    crate::runtime::blockchain_provider::register_pending_identity_projection(
+        &hex::encode(identity_tx_hash),
+        crate::runtime::blockchain_provider::PendingIdentityProjection {
+            identity_id: identity_id_str.to_string(),
+            display_name: identity_result
+                .get("citizenship_result")
+                .and_then(|cr| cr.get("display_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("ZHTP Citizen")
+                .to_string(),
+            device_id: "mesh".to_string(),
+            node_id: String::new(),
+            kyber_public_key: None,
+            primary_wallet_id: identity_result
+                .get("citizenship_result")
+                .and_then(|cr| cr.get("primary_wallet_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            ubi_wallet_id: identity_result
+                .get("citizenship_result")
+                .and_then(|cr| cr.get("ubi_wallet_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            savings_wallet_id: identity_result
+                .get("citizenship_result")
+                .and_then(|cr| cr.get("savings_wallet_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            registered_at: created_at,
+        },
+    );
     info!("✅ Registered identity {} on blockchain", identity_id_str);
 
     // Register all wallets

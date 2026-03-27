@@ -158,7 +158,9 @@ impl SurprisalStats {
         let surprisals: Vec<f64> = transitions.iter().map(|t| t.surprisal).collect();
         let total: f64 = surprisals.iter().sum();
         let max: f64 = surprisals.iter().fold(0.0_f64, |a: f64, b: &f64| a.max(*b));
-        let min: f64 = surprisals.iter().fold(f64::INFINITY, |a: f64, b: &f64| a.min(*b));
+        let min: f64 = surprisals
+            .iter()
+            .fold(f64::INFINITY, |a: f64, b: &f64| a.min(*b));
 
         // Count transitions with surprisal > 5 bits (low probability < 1/32)
         let high_count = surprisals.iter().filter(|&&s| s > 5.0).count();
@@ -290,11 +292,7 @@ mod tests {
         transition_model::TransitionModel,
     };
 
-    fn test_state(
-        height: u64,
-        round: u32,
-        phase: EncodedConsensusPhase,
-    ) -> EncodedConsensusState {
+    fn test_state(height: u64, round: u32, phase: EncodedConsensusPhase) -> EncodedConsensusState {
         EncodedConsensusState {
             height,
             round,
@@ -317,8 +315,11 @@ mod tests {
     fn surprisal_of_unlikely_event_is_high() {
         let config = SurprisalConfig::bits();
         let s = surprisal(0.01, &config).unwrap(); // 1% probability
-        // -log2(0.01) ≈ 6.64 bits
-        assert!(s > 6.0 && s < 7.0, "Surprisal of P=0.01 should be ~6.64 bits");
+                                                   // -log2(0.01) ≈ 6.64 bits
+        assert!(
+            s > 6.0 && s < 7.0,
+            "Surprisal of P=0.01 should be ~6.64 bits"
+        );
     }
 
     #[test]
@@ -397,10 +398,22 @@ mod tests {
 
     #[test]
     fn surprisal_level_classification() {
-        assert!(matches!(SurprisalLevel::from_surprisal(1.0), SurprisalLevel::Expected));
-        assert!(matches!(SurprisalLevel::from_surprisal(3.0), SurprisalLevel::Unusual));
-        assert!(matches!(SurprisalLevel::from_surprisal(5.0), SurprisalLevel::Anomalous));
-        assert!(matches!(SurprisalLevel::from_surprisal(10.0), SurprisalLevel::Critical));
+        assert!(matches!(
+            SurprisalLevel::from_surprisal(1.0),
+            SurprisalLevel::Expected
+        ));
+        assert!(matches!(
+            SurprisalLevel::from_surprisal(3.0),
+            SurprisalLevel::Unusual
+        ));
+        assert!(matches!(
+            SurprisalLevel::from_surprisal(5.0),
+            SurprisalLevel::Anomalous
+        ));
+        assert!(matches!(
+            SurprisalLevel::from_surprisal(10.0),
+            SurprisalLevel::Critical
+        ));
     }
 
     #[test]

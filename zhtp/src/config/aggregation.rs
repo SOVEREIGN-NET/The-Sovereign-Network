@@ -144,6 +144,10 @@ pub struct NodeConfig {
     pub security_level: SecurityLevel,
     pub environment: Environment,
     pub data_directory: String,
+    #[serde(default)]
+    pub emergency_restore_from_local: bool,
+    #[serde(default)]
+    pub allow_emergency_restore_genesis_mismatch: bool,
 
     // Canonical node type - SINGLE SOURCE OF TRUTH
     // Determined at startup from config and immutable thereafter.
@@ -657,6 +661,8 @@ impl Default for NodeConfig {
             security_level: SecurityLevel::High,
             environment: Environment::Development,
             data_directory: "./lib-data".to_string(),
+            emergency_restore_from_local: false,
+            allow_emergency_restore_genesis_mismatch: false,
 
             // node_type is not set by default; it will be derived during aggregation
             node_type: None,
@@ -810,6 +816,9 @@ impl NodeConfig {
         };
         self.environment = args.environment;
         self.data_directory = args.data_dir.to_string_lossy().to_string();
+        self.emergency_restore_from_local = args.emergency_restore_from_local;
+        self.allow_emergency_restore_genesis_mismatch =
+            args.allow_emergency_restore_genesis_mismatch;
 
         // If pure mesh mode is enabled, remove TCP protocols
         if args.pure_mesh {

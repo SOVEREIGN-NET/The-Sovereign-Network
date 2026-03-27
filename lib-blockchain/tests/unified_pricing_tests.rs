@@ -12,9 +12,7 @@
 //! Oracle = SECONDARY observer
 //! ```
 
-use lib_blockchain::{
-    pricing::{PricingPhase, TokenPricingState, PRICE_SCALE, GENESIS_SRV_8DEC},
-};
+use lib_blockchain::pricing::{PricingPhase, TokenPricingState, GENESIS_SRV_8DEC, PRICE_SCALE};
 
 /// Issue #1852: Test that TokenPricingState initializes with correct defaults
 #[test]
@@ -67,7 +65,7 @@ fn cbe_usd_calculation_is_correct() {
     // CBE/SOV = 0.000313, SOV/USD = $0.0218
     // CBE/USD = 0.000313 * 0.0218 = $0.00000682
     let cbe_sov = 31_334_570u128; // 0.0003133457 SOV per CBE
-    let sov_usd = 2_180_000u128;  // $0.0218 SOV/USD
+    let sov_usd = 2_180_000u128; // $0.0218 SOV/USD
 
     let cbe_usd = PricingCalculator::calculate_cbe_usd(cbe_sov, sov_usd);
 
@@ -144,8 +142,14 @@ fn legacy_methods_backward_compatible() {
     state.update_cbe_sov_ratio(60 * PRICE_SCALE, 1000);
 
     // Pricing is still fixed (SRV-based)
-    assert_eq!(state.get_sov_pricing_mode(), lib_blockchain::pricing::PricingMode::Fixed);
-    assert_eq!(state.get_sov_price_source(), lib_blockchain::pricing::PriceSource::Srv);
+    assert_eq!(
+        state.get_sov_pricing_mode(),
+        lib_blockchain::pricing::PricingMode::Fixed
+    );
+    assert_eq!(
+        state.get_sov_price_source(),
+        lib_blockchain::pricing::PriceSource::Srv
+    );
 
     // Components exist but don't include oracle-derived values
     let components = state.get_sov_components();

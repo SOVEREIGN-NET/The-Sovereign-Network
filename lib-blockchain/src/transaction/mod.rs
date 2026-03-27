@@ -8,11 +8,11 @@ pub mod contract_deployment;
 pub mod contract_execution;
 pub mod core;
 pub mod creation;
-pub mod threshold_approval;
 pub mod fee;
 pub mod hashing;
 pub mod oracle_governance;
 pub mod signing;
+pub mod threshold_approval;
 pub mod token_creation;
 pub mod validation;
 
@@ -20,13 +20,12 @@ pub mod validation;
 pub use core::{
     BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData, BondingCurveSellData,
     CreateEmploymentContractData, DaoExecutionData, DaoProposalData, DaoVoteData,
-    GovernanceConfigUpdateData, GovernanceConfigOperation, IdentityTransactionData,
-    InitCbeTokenData, InitEntityRegistryData, ProfitDeclarationData, ProcessPayrollData,
+    GovernanceConfigOperation, GovernanceConfigUpdateData, IdentityTransactionData,
+    InitCbeTokenData, InitEntityRegistryData, ProcessPayrollData, ProfitDeclarationData,
     RecordOnRampTradeData, RevenueSource, TokenMintData, TokenTransferData, Transaction,
-    TransactionInput, TransactionOutput, TransactionPayload, TreasuryAllocationData,
-    UbiClaimData, ValidatorOperation, ValidatorTransactionData,
-    WalletPrivateData, WalletReference, WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7,
-    TX_VERSION_V8,
+    TransactionInput, TransactionOutput, TransactionPayload, TreasuryAllocationData, UbiClaimData,
+    ValidatorOperation, ValidatorTransactionData, WalletPrivateData, WalletReference,
+    WalletTransactionData, TX_VERSION_V3, TX_VERSION_V7, TX_VERSION_V8,
 };
 
 // Re-exports from threshold_approval module
@@ -38,10 +37,9 @@ pub use threshold_approval::{
 pub use bonding_curve_codec::{
     bonding_curve_signed_region, decode_bonding_curve_buy, decode_bonding_curve_sell,
     decode_canonical_bonding_curve_tx, encode_bonding_curve_buy, encode_bonding_curve_sell,
-    encode_canonical_bonding_curve_tx, envelope_signer_matches_sender,
-    BondingCurveCodecError, CanonicalBondingCurveEnvelope, CanonicalBondingCurveTx,
-    BONDING_CURVE_BUY_ACTION, BONDING_CURVE_SELL_ACTION, BONDING_CURVE_TX_PAYLOAD_LEN,
-    BONDING_CURVE_TX_SIGNED_REGION_END,
+    encode_canonical_bonding_curve_tx, envelope_signer_matches_sender, BondingCurveCodecError,
+    CanonicalBondingCurveEnvelope, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
+    BONDING_CURVE_SELL_ACTION, BONDING_CURVE_TX_PAYLOAD_LEN, BONDING_CURVE_TX_SIGNED_REGION_END,
 };
 
 // Re-exports from oracle_governance module

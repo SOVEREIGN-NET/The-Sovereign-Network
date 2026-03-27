@@ -15,7 +15,9 @@ use lib_blockchain::integration::crypto_integration::{PublicKey, Signature, Sign
 use lib_blockchain::integration::zk_integration::ZkTransactionProof;
 use lib_blockchain::protocol::ProtocolParams;
 use lib_blockchain::storage::{Address, BlockchainStore, SledStore};
-use lib_blockchain::transaction::{Transaction, TransactionInput, TransactionOutput, TransactionPayload};
+use lib_blockchain::transaction::{
+    Transaction, TransactionInput, TransactionOutput, TransactionPayload,
+};
 use lib_blockchain::types::{Difficulty, Hash, TransactionType};
 use lib_proofs::types::ZkProof;
 
@@ -258,11 +260,17 @@ fn test_fee_sink_receives_collected_fees() {
     // Empty genesis, then a funded block to create the spendable coinbase UTXO.
     let miner_pk = create_recipient_pk(1);
     let genesis = create_empty_genesis();
-    executor.apply_block(&genesis).expect("Genesis should succeed");
+    executor
+        .apply_block(&genesis)
+        .expect("Genesis should succeed");
 
     let funded_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, 0);
-    let funded_block =
-        create_block_with_txs(1, genesis.header.block_hash, funded_coinbase.clone(), vec![]);
+    let funded_block = create_block_with_txs(
+        1,
+        genesis.header.block_hash,
+        funded_coinbase.clone(),
+        vec![],
+    );
     executor
         .apply_block(&funded_block)
         .expect("Funded block should succeed");
@@ -278,7 +286,12 @@ fn test_fee_sink_receives_collected_fees() {
     let block1_coinbase =
         create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, transfer_fee);
 
-    let block1 = create_block_with_txs(2, funded_block.header.block_hash, block1_coinbase, vec![transfer]);
+    let block1 = create_block_with_txs(
+        2,
+        funded_block.header.block_hash,
+        block1_coinbase,
+        vec![transfer],
+    );
 
     let outcome = executor
         .apply_block(&block1)
@@ -412,8 +425,12 @@ fn test_coinbase_without_fee_sink_rejected() {
     executor.apply_block(&genesis).unwrap();
 
     let funded_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, 0);
-    let funded_block =
-        create_block_with_txs(1, genesis.header.block_hash, funded_coinbase.clone(), vec![]);
+    let funded_block = create_block_with_txs(
+        1,
+        genesis.header.block_hash,
+        funded_coinbase.clone(),
+        vec![],
+    );
     executor.apply_block(&funded_block).unwrap();
 
     let coinbase_hash = hash_transaction(&funded_coinbase);
@@ -502,8 +519,12 @@ fn test_executor_outcome_reports_fee_routing() {
     executor.apply_block(&genesis).unwrap();
 
     let funded_coinbase = create_coinbase_with_fees(miner_pk.clone(), &fee_sink, 50_000_000, 0);
-    let funded_block =
-        create_block_with_txs(1, genesis.header.block_hash, funded_coinbase.clone(), vec![]);
+    let funded_block = create_block_with_txs(
+        1,
+        genesis.header.block_hash,
+        funded_coinbase.clone(),
+        vec![],
+    );
     executor.apply_block(&funded_block).unwrap();
 
     let coinbase_hash = hash_transaction(&funded_coinbase);

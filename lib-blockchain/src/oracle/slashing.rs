@@ -108,7 +108,10 @@ mod tests {
             "conflicting_attestation"
         );
         assert_eq!(OracleSlashReason::WrongEpoch.to_string(), "wrong_epoch");
-        assert_eq!(OracleSlashReason::DeviationBand.to_string(), "deviation_band");
+        assert_eq!(
+            OracleSlashReason::DeviationBand.to_string(),
+            "deviation_band"
+        );
     }
 
     #[test]

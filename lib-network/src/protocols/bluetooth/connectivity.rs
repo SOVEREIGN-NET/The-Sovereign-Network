@@ -1,8 +1,8 @@
 //! Connectivity helpers for Bluetooth mesh protocol.
 
-use anyhow::Result;
 #[cfg(not(target_os = "macos"))]
 use anyhow::anyhow;
+use anyhow::Result;
 use tracing::info;
 
 use super::device::MeshPeer;

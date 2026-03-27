@@ -12,11 +12,11 @@
 
 #[cfg(test)]
 mod sov_week10_integration_tests {
+    use lib_blockchain::transaction::TransactionPayload;
     use lib_blockchain::{
         integration::crypto_integration::{Signature, SignatureAlgorithm},
         Block, BlockHeader, Difficulty, Hash, Transaction, TransactionOutput, TransactionType,
     };
-    use lib_blockchain::transaction::TransactionPayload;
     use lib_crypto::PublicKey;
     use std::collections::HashMap;
     use std::time::Instant;

@@ -1290,7 +1290,10 @@ impl WalletStartupManager {
         ))
     }
 
-    /// Discover wallets on mesh network using DHT
+    /// Discover wallet advertisements on the mesh network using DHT.
+    ///
+    /// These results are advisory UX data only. They must never be treated as canonical wallet
+    /// authority; committed blockchain state remains the source of truth.
     async fn discover_mesh_wallets() -> Result<Vec<(String, u64)>> {
         println!("Connecting to mesh network via DHT...");
 
@@ -1524,7 +1527,9 @@ impl WalletStartupManager {
         }
     }
 
-    /// Fallback wallet discovery when DHT is unavailable
+    /// Fallback wallet discovery when DHT is unavailable.
+    ///
+    /// Peer discovery here is also non-authoritative and only supports the interactive import UX.
     async fn discover_mesh_wallets_fallback() -> Result<Vec<(String, u64)>> {
         println!("Attempting alternative wallet discovery methods...");
 
@@ -1553,7 +1558,10 @@ impl WalletStartupManager {
         }
     }
 
-    /// Import identity and wallet data from mesh network peer
+    /// Import identity and wallet data from a mesh advertisement.
+    ///
+    /// A DHT miss or stale entry cannot change canonical chain state. This path is only a
+    /// recovery/convenience flow for local identity material.
     async fn import_wallet_from_mesh(
         wallet_name: &str,
         balance: u64,
