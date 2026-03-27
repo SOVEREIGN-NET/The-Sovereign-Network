@@ -3,14 +3,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::contracts::utils::generate_lib_token_id;
-use lib_blockchain::contracts::TokenContract;
 use lib_blockchain::integration::crypto_integration::PublicKey;
-use lib_blockchain::storage::{BlockchainStore, SledStore, TokenStateSnapshot};
+use lib_blockchain::storage::{BlockchainStore, SledStore};
 use lib_blockchain::transaction::{
-    TokenTransferData, Transaction, TransactionInput, TransactionOutput, TransactionPayload,
-    WalletTransactionData,
+    TokenMintData, TokenTransferData, Transaction, WalletTransactionData,
 };
-use lib_blockchain::types::{Difficulty, Hash, TransactionType};
+use lib_blockchain::types::{Difficulty, Hash};
 use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
 fn test_pubkey(id: u8) -> PublicKey {
@@ -27,16 +25,8 @@ fn test_signature(pubkey: &PublicKey) -> Signature {
 }
 
 fn wallet_registration_tx(wallet_id: [u8; 32], owner_pubkey: &PublicKey) -> Transaction {
-    Transaction {
-        version: 2,
-        chain_id: 0x03,
-        transaction_type: TransactionType::WalletRegistration,
-        inputs: vec![],
-        outputs: vec![],
-        fee: 0,
-        signature: test_signature(owner_pubkey),
-        memo: Vec::new(),
-        payload: TransactionPayload::Wallet(WalletTransactionData {
+    Transaction::new_wallet_registration(
+        WalletTransactionData {
             wallet_id: Hash::new(wallet_id),
             wallet_type: "Primary".to_string(),
             wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
@@ -48,8 +38,11 @@ fn wallet_registration_tx(wallet_id: [u8; 32], owner_pubkey: &PublicKey) -> Tran
             registration_fee: 0,
             capabilities: 0,
             initial_balance: 0,
-        }),
-    }
+        },
+        Vec::new(),
+        test_signature(owner_pubkey),
+        Vec::new(),
+    )
 }
 
 fn token_transfer_tx(
@@ -60,32 +53,29 @@ fn token_transfer_tx(
     amount: u64,
     nonce: u64,
 ) -> Transaction {
-    Transaction {
-        version: 2,
-        chain_id: 0x03,
-        transaction_type: TransactionType::TokenTransfer,
-        inputs: vec![TransactionInput {
-            previous_output: Hash::new([7u8; 32]),
-            output_index: 0,
-            nullifier: Hash::new([7u8; 32]),
-            zk_proof: lib_blockchain::integration::zk_integration::ZkTransactionProof::default(),
-        }],
-        outputs: vec![TransactionOutput {
-            commitment: Hash::new([8u8; 32]),
-            note: Hash::new([9u8; 32]),
-            recipient: test_pubkey(0),
-        }],
-        fee: 0,
-        signature: test_signature(sender),
-        memo: Vec::new(),
-        payload: TransactionPayload::TokenTransfer(TokenTransferData {
+    Transaction::new_token_transfer(
+        TokenTransferData {
             token_id,
             from,
             to,
             amount: amount as u128,
             nonce,
-        }),
-    }
+        },
+        test_signature(sender),
+        b"restart-test-transfer".to_vec(),
+    )
+}
+
+fn token_mint_tx(signer: &PublicKey, token_id: [u8; 32], to: [u8; 32], amount: u64) -> Transaction {
+    Transaction::new_token_mint(
+        TokenMintData {
+            token_id,
+            to,
+            amount: amount as u128,
+        },
+        test_signature(signer),
+        b"restart-test-mint".to_vec(),
+    )
 }
 
 fn block(height: u64, txs: Vec<Transaction>) -> Block {
@@ -116,7 +106,7 @@ fn wallet_key(wallet_id: &[u8; 32]) -> PublicKey {
 }
 
 #[test]
-fn test_restart_restores_token_snapshot_and_nonces() -> Result<()> {
+fn test_restart_replays_committed_token_state_and_nonces() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(tmp.path())?);
 
@@ -126,45 +116,32 @@ fn test_restart_restores_token_snapshot_and_nonces() -> Result<()> {
     let recipient_wallet = [0x22u8; 32];
     let sov_token_id = generate_lib_token_id();
 
-    let mut sov = TokenContract::new_sov_native();
-    sov.mint(&wallet_key(&sender_wallet), 10_000).unwrap();
-    sov.transfer(
-        &lib_blockchain::contracts::executor::ExecutionContext::new(
-            wallet_key(&sender_wallet),
-            0,
-            1_700_000_000,
-            0,
-            [0u8; 32],
-        ),
-        &wallet_key(&recipient_wallet),
-        1_500,
-    )
-    .unwrap();
-
-    let mut snapshot = TokenStateSnapshot::default();
-    snapshot.token_contracts.insert(sov_token_id, sov);
-    snapshot
-        .token_nonces
-        .insert((sov_token_id, sender_wallet), 1);
-
     store.begin_block(0)?;
-    store.put_token_state_snapshot(&snapshot)?;
     store.append_block(&block(
         0,
         vec![
             wallet_registration_tx(sender_wallet, &sender_pk),
             wallet_registration_tx(recipient_wallet, &recipient_pk),
+            token_mint_tx(&sender_pk, sov_token_id, sender_wallet, 10_000),
+            token_transfer_tx(
+                &sender_pk,
+                sov_token_id,
+                sender_wallet,
+                recipient_wallet,
+                1_500,
+                0,
+            ),
         ],
     ))?;
     store.commit_block()?;
 
     let reloaded = lib_blockchain::Blockchain::load_from_store(store)?
-        .expect("Expected blockchain to load from snapshot");
+        .expect("Expected blockchain to load from committed block replay");
 
     let token = reloaded
         .token_contracts
         .get(&sov_token_id)
-        .expect("SOV token must exist");
+        .expect("SOV token must be reconstructed from committed block replay");
     assert_eq!(token.balance_of(&wallet_key(&sender_wallet)), 8_500);
     assert_eq!(token.balance_of(&wallet_key(&recipient_wallet)), 1_500);
     assert_eq!(reloaded.get_token_nonce(&sov_token_id, &sender_wallet), 1);
@@ -199,34 +176,21 @@ fn test_cross_node_loads_converge_to_identical_token_state() -> Result<()> {
     let recipient_wallet = [0x44u8; 32];
     let sov_token_id = generate_lib_token_id();
 
-    let mut sov = TokenContract::new_sov_native();
-    sov.mint(&wallet_key(&sender_wallet), 20_000).unwrap();
-    sov.transfer(
-        &lib_blockchain::contracts::executor::ExecutionContext::new(
-            wallet_key(&sender_wallet),
-            0,
-            1_700_000_000,
-            0,
-            [0u8; 32],
-        ),
-        &wallet_key(&recipient_wallet),
-        2_500,
-    )
-    .unwrap();
-
-    let mut snapshot = TokenStateSnapshot::default();
-    snapshot.token_contracts.insert(sov_token_id, sov);
-    snapshot
-        .token_nonces
-        .insert((sov_token_id, sender_wallet), 1);
-
     store.begin_block(0)?;
-    store.put_token_state_snapshot(&snapshot)?;
     store.append_block(&block(
         0,
         vec![
             wallet_registration_tx(sender_wallet, &sender_pk),
             wallet_registration_tx(recipient_wallet, &recipient_pk),
+            token_mint_tx(&sender_pk, sov_token_id, sender_wallet, 20_000),
+            token_transfer_tx(
+                &sender_pk,
+                sov_token_id,
+                sender_wallet,
+                recipient_wallet,
+                2_500,
+                0,
+            ),
         ],
     ))?;
     store.commit_block()?;
@@ -261,60 +225,38 @@ fn test_uncommitted_block_does_not_leak_token_state_after_restart() -> Result<()
     let tmp = tempfile::tempdir()?;
     let db_path = tmp.path().to_path_buf();
 
+    let sender_pk = test_pubkey(3);
+    let recipient_pk = test_pubkey(4);
     let sender_wallet = [0x55u8; 32];
     let recipient_wallet = [0x66u8; 32];
     let sov_token_id = generate_lib_token_id();
 
     let committed_store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(&db_path)?);
-    let mut committed_token = TokenContract::new_sov_native();
-    committed_token
-        .mint(&wallet_key(&sender_wallet), 9_000)
-        .unwrap();
-
-    let mut committed_snapshot = TokenStateSnapshot::default();
-    committed_snapshot
-        .token_contracts
-        .insert(sov_token_id, committed_token);
-    committed_snapshot
-        .token_nonces
-        .insert((sov_token_id, sender_wallet), 0);
-
     committed_store.begin_block(0)?;
-    committed_store.put_token_state_snapshot(&committed_snapshot)?;
-    committed_store.append_block(&block(0, vec![]))?;
+    committed_store.append_block(&block(
+        0,
+        vec![
+            wallet_registration_tx(sender_wallet, &sender_pk),
+            wallet_registration_tx(recipient_wallet, &recipient_pk),
+            token_mint_tx(&sender_pk, sov_token_id, sender_wallet, 9_000),
+        ],
+    ))?;
     committed_store.commit_block()?;
     drop(committed_store);
 
     let crashing_store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(&db_path)?);
-    let mut uncommitted_token = TokenContract::new_sov_native();
-    uncommitted_token
-        .mint(&wallet_key(&sender_wallet), 9_000)
-        .unwrap();
-    uncommitted_token
-        .transfer(
-            &lib_blockchain::contracts::executor::ExecutionContext::new(
-                wallet_key(&sender_wallet),
-                1,
-                1_700_000_001,
-                0,
-                [1u8; 32],
-            ),
-            &wallet_key(&recipient_wallet),
-            1_000,
-        )
-        .unwrap();
-
-    let mut uncommitted_snapshot = TokenStateSnapshot::default();
-    uncommitted_snapshot
-        .token_contracts
-        .insert(sov_token_id, uncommitted_token);
-    uncommitted_snapshot
-        .token_nonces
-        .insert((sov_token_id, sender_wallet), 1);
-
     crashing_store.begin_block(1)?;
-    crashing_store.put_token_state_snapshot(&uncommitted_snapshot)?;
-    crashing_store.append_block(&block(1, vec![]))?;
+    crashing_store.append_block(&block(
+        1,
+        vec![token_transfer_tx(
+            &sender_pk,
+            sov_token_id,
+            sender_wallet,
+            recipient_wallet,
+            1_000,
+            0,
+        )],
+    ))?;
     // Intentionally do not commit block 1 to simulate crash.
     drop(crashing_store);
 
