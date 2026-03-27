@@ -1,22 +1,22 @@
-﻿//! Mobile Authentication Handler (Issue #1877)
+//! Mobile Authentication Handler (Issue #1877)
 //!
 //! Implements the HTTP side of the mobile-to-web authentication delegation
 //! protocol across all three phases:
 //!
-//! ## Phase 1 ΓÇö MVP session establishment
-//! - `POST /api/v1/auth/mobile/challenge`  ΓåÆ issue CSPRNG challenge + QR payload
-//! - `POST /api/v1/auth/mobile/verify`     ΓåÆ verify Dilithium signature, issue session
-//! - `GET  /api/v1/auth/mobile/session`    ΓåÆ validate bearer and return session info
-//! - `POST /api/v1/auth/mobile/signout`    ΓåÆ revoke session
+//! ## Phase 1 — MVP session establishment
+//! - `POST /api/v1/auth/mobile/challenge`  → issue CSPRNG challenge + QR payload
+//! - `POST /api/v1/auth/mobile/verify`     → verify Dilithium signature, issue session
+//! - `GET  /api/v1/auth/mobile/session`    → validate bearer and return session info
+//! - `POST /api/v1/auth/mobile/signout`    → revoke session
 //!
-//! ## Phase 2 ΓÇö Enhanced security
-//! - `POST /api/v1/auth/mobile/refresh`    ΓåÆ rotate refresh token (one-time use)
+//! ## Phase 2 — Enhanced security
+//! - `POST /api/v1/auth/mobile/refresh`    → rotate refresh token (one-time use)
 //!
-//! ## Phase 3 ΓÇö Delegation
-//! - `POST /api/v1/auth/delegate`          ΓåÆ register delegation certificate
-//! - `GET  /api/v1/auth/delegate/:cert_id` ΓåÆ look up a certificate
-//! - `POST /api/v1/auth/delegate/:cert_id/revoke` ΓåÆ revoke a certificate
-//! - `GET  /api/v1/auth/delegate/list`     ΓåÆ list all active certs for a DID
+//! ## Phase 3 — Delegation
+//! - `POST /api/v1/auth/delegate`          → register delegation certificate
+//! - `GET  /api/v1/auth/delegate/:cert_id` → look up a certificate
+//! - `POST /api/v1/auth/delegate/:cert_id/revoke` → revoke a certificate
+//! - `GET  /api/v1/auth/delegate/list`     → list all active certs for a DID
 //!
 //! ## Security controls enforced here
 //! - Rate limiting: 3 challenge requests per IP per minute
@@ -25,7 +25,7 @@
 //! - Audit log: every action written to immutable in-memory log
 
 use anyhow::anyhow;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -270,7 +270,7 @@ impl MobileAuthHandler {
             return Ok(json_error(ZhtpStatus::Unauthorized, "Invalid signature"));
         }
 
-        // Consume challenge (replay protection ΓÇö must happen before session creation)
+        // Consume challenge (replay protection — must happen before session creation)
         if let Err(e) = self.store.consume_challenge(&req.session_id).await {
             return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string()));
         }
@@ -501,7 +501,7 @@ impl MobileAuthHandler {
         if req.expires_in_secs == 0 || req.expires_in_secs > 30 * 24 * 3600 {
             return Ok(json_error(
                 ZhtpStatus::BadRequest,
-                "expires_in_secs must be 1ΓÇô2592000 (30 days)",
+                "expires_in_secs must be 1–2592000 (30 days)",
             ));
         }
 
@@ -775,7 +775,7 @@ mod tests {
         }
     }
 
-    // Phase 1 ΓÇö challenge
+    // Phase 1 — challenge
     #[tokio::test]
     async fn challenge_returns_session_id_and_qr() {
         let h = make_handler();
@@ -793,7 +793,7 @@ mod tests {
             .starts_with("zhtp://auth"));
     }
 
-    // Phase 1 ΓÇö verify with wrong signature returns Unauthorized
+    // Phase 1 — verify with wrong signature returns Unauthorized
     #[tokio::test]
     async fn verify_bad_signature_returns_401() {
         let h = make_handler();
@@ -804,8 +804,8 @@ mod tests {
         let session_id = ch_body["session_id"].as_str().unwrap().to_string();
 
         // Attempt verify with a garbage Dilithium-sized pk and signature
-        let bad_pk = "ab".repeat(1312); // Dilithium2 pk = 1312 bytes ΓåÆ 2624 hex chars
-        let bad_sig = "cd".repeat(2420); // Dilithium2 sig Γëê 2420 bytes
+        let bad_pk = "ab".repeat(1312); // Dilithium2 pk = 1312 bytes → 2624 hex chars
+        let bad_sig = "cd".repeat(2420); // Dilithium2 sig ≈ 2420 bytes
         let identity_hex = hex::encode([0u8; 32]);
 
         let verify_req = post(
@@ -818,7 +818,7 @@ mod tests {
             }),
         );
         let v_resp = h.handle_request(verify_req).await.unwrap();
-        // Should be Unauthorized or BadRequest (either is fine ΓÇö signature invalid)
+        // Should be Unauthorized or BadRequest (either is fine — signature invalid)
         assert!(
             v_resp.status == ZhtpStatus::Unauthorized || v_resp.status == ZhtpStatus::BadRequest,
             "Expected 401 or 400, got {:?}",
@@ -826,7 +826,7 @@ mod tests {
         );
     }
 
-    // Phase 1 ΓÇö unknown challenge id
+    // Phase 1 — unknown challenge id
     #[tokio::test]
     async fn verify_unknown_session_returns_400() {
         let h = make_handler();
@@ -843,7 +843,7 @@ mod tests {
         assert_eq!(resp.status, ZhtpStatus::BadRequest);
     }
 
-    // Phase 1 ΓÇö session info without token
+    // Phase 1 — session info without token
     #[tokio::test]
     async fn session_info_no_token_returns_401() {
         let h = make_handler();
@@ -854,7 +854,7 @@ mod tests {
         assert_eq!(resp.status, ZhtpStatus::Unauthorized);
     }
 
-    // Phase 2 ΓÇö refresh without valid token
+    // Phase 2 — refresh without valid token
     #[tokio::test]
     async fn refresh_unknown_token_returns_401() {
         let h = make_handler();
@@ -866,7 +866,7 @@ mod tests {
         assert_eq!(resp.status, ZhtpStatus::Unauthorized);
     }
 
-    // Phase 3 ΓÇö delegate issue without bearer
+    // Phase 3 — delegate issue without bearer
     #[tokio::test]
     async fn delegate_issue_no_bearer_returns_401() {
         let h = make_handler();
@@ -884,7 +884,7 @@ mod tests {
         assert_eq!(resp.status, ZhtpStatus::Unauthorized);
     }
 
-    // Phase 3 ΓÇö get nonexistent cert
+    // Phase 3 — get nonexistent cert
     #[tokio::test]
     async fn delegate_get_unknown_cert_returns_404() {
         let h = make_handler();
