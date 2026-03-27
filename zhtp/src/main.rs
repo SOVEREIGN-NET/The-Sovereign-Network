@@ -46,7 +46,9 @@ async fn main() -> anyhow::Result<()> {
             RuntimeOrchestrator::start_edge_node(config).await?
         }
         NodeType::FullNode => {
-            tracing::info!("Starting node as FullNode (complete blockchain, no mining)");
+            tracing::info!(
+                "Starting node as Observer via FullNode startup path (complete blockchain, no mining, no consensus)"
+            );
             RuntimeOrchestrator::start_full_node(config).await?
         }
         NodeType::Relay => {

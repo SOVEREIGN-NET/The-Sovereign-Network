@@ -146,7 +146,7 @@ impl Component for IdentityComponent {
 
         // Bootstrap identities from DHT storage
         info!("🔄 Bootstrapping identities from DHT storage...");
-        match bootstrap_identities_from_dht(&identity_manager_arc).await {
+        match bootstrap_identities_from_dht(&identity_manager_arc, self.can_mine).await {
             Ok(result) => {
                 info!(
                     "✅ Bootstrap complete: {} identities, {} wallets loaded",
@@ -369,7 +369,11 @@ async fn rebuild_index_from_backup(
 /// that are not yet on the blockchain.
 ///
 /// SAFE: Only adds missing identities, never overwrites existing ones.
-async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
+fn should_run_identity_blockchain_migration(migrate_enabled: bool, can_mine: bool) -> bool {
+    migrate_enabled && can_mine
+}
+
+async fn migrate_identities_to_blockchain(can_mine: bool) -> Result<(u32, u32)> {
     use std::io::BufReader;
 
     // Check if migration is enabled
@@ -377,7 +381,12 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false);
 
-    if !migrate_enabled {
+    if !should_run_identity_blockchain_migration(migrate_enabled, can_mine) {
+        if migrate_enabled && !can_mine {
+            info!(
+                "🔄 MIGRATION MODE requested, but this node cannot mine; skipping identity migration on observer/non-validator startup"
+            );
+        }
         return Ok((0, 0));
     }
 
@@ -606,6 +615,7 @@ async fn migrate_identities_to_blockchain() -> Result<(u32, u32)> {
 /// available for API queries and peer discovery.
 async fn bootstrap_identities_from_dht(
     identity_manager: &Arc<RwLock<IdentityManager>>,
+    can_mine: bool,
 ) -> Result<DhtBootstrapResult> {
     use crate::runtime::storage_provider;
 
@@ -652,7 +662,7 @@ async fn bootstrap_identities_from_dht(
 
     // One-time migration: register identities from backup to blockchain
     // Enable with: ZHTP_MIGRATE_IDENTITIES=1
-    match migrate_identities_to_blockchain().await {
+    match migrate_identities_to_blockchain(can_mine).await {
         Ok((migrated, skipped)) if migrated > 0 => {
             info!(
                 "🔄 Blockchain migration: {} new, {} existing",
@@ -1068,4 +1078,17 @@ async fn bootstrap_identities_from_dht(
         wallets_loaded,
         errors,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_run_identity_blockchain_migration;
+
+    #[test]
+    fn identity_blockchain_migration_requires_mining_capability() {
+        assert!(should_run_identity_blockchain_migration(true, true));
+        assert!(!should_run_identity_blockchain_migration(true, false));
+        assert!(!should_run_identity_blockchain_migration(false, true));
+        assert!(!should_run_identity_blockchain_migration(false, false));
+    }
 }
