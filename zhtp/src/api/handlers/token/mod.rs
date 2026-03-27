@@ -345,11 +345,17 @@ impl TokenHandler {
                     Some(d) => (hex::encode(d.to), hex::encode(d.token_id), d.amount),
                     None => {
                         tracing::error!(
-                            "[TRANSFER] FAIL: TokenTransfer but token_transfer_data is None"
+                            "[TRANSFER] FAIL: TokenTransfer payload is None (tx version={}). \
+                             Client is using an outdated transaction format — upgrade to V8+.",
+                            tx.version
                         );
                         return Ok(create_error_response(
                             ZhtpStatus::BadRequest,
-                            "TokenTransfer missing data".to_string(),
+                            format!(
+                                "TokenTransfer payload missing — transaction version {} is \
+                                 not supported; rebuild your client against the current SDK",
+                                tx.version
+                            ),
                         ));
                     }
                 }
