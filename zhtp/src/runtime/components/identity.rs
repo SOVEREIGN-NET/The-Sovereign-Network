@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
 use crate::runtime::node_runtime::NodeRole;
@@ -329,6 +329,114 @@ pub struct DhtBootstrapResult {
 fn truncate_for_display(s: &str, max_len: usize) -> &str {
     let len = max_len.min(s.len());
     &s[..len]
+}
+
+fn parse_identity_type(identity_type: &str) -> lib_identity::IdentityType {
+    match identity_type.to_ascii_lowercase().as_str() {
+        "human" => lib_identity::IdentityType::Human,
+        "device" => lib_identity::IdentityType::Device,
+        "organization" => lib_identity::IdentityType::Organization,
+        "agent" => lib_identity::IdentityType::Agent,
+        "contract" => lib_identity::IdentityType::Contract,
+        _ => lib_identity::IdentityType::Human,
+    }
+}
+
+fn parse_wallet_type(wallet_type: &str) -> lib_identity::wallets::WalletType {
+    match wallet_type.to_ascii_lowercase().as_str() {
+        "primary" => lib_identity::wallets::WalletType::Primary,
+        "ubi" => lib_identity::wallets::WalletType::UBI,
+        "savings" => lib_identity::wallets::WalletType::Savings,
+        "business" => lib_identity::wallets::WalletType::Business,
+        "stealth" => lib_identity::wallets::WalletType::Stealth,
+        "dao" | "nonprofitdao" | "non_profit_dao" | "non-profit-dao" => {
+            lib_identity::wallets::WalletType::NonProfitDAO
+        }
+        "forprofitdao" | "for_profit_dao" | "for-profit-dao" => {
+            lib_identity::wallets::WalletType::ForProfitDAO
+        }
+        "standard" => lib_identity::wallets::WalletType::Standard,
+        _ => lib_identity::wallets::WalletType::Primary,
+    }
+}
+
+fn reconstruct_identity_manager_from_blockchain_state(
+    identity_manager: &mut IdentityManager,
+    identity_registry: &HashMap<String, lib_blockchain::transaction::IdentityTransactionData>,
+    wallet_registry: &HashMap<String, lib_blockchain::transaction::WalletTransactionData>,
+) -> Result<(u32, u32)> {
+    let mut wallets_by_owner: HashMap<String, Vec<&lib_blockchain::transaction::WalletTransactionData>> =
+        HashMap::new();
+    for wallet in wallet_registry.values() {
+        if let Some(owner_identity_id) = wallet.owner_identity_id {
+            wallets_by_owner
+                .entry(hex::encode(owner_identity_id.as_bytes()))
+                .or_default()
+                .push(wallet);
+        }
+    }
+
+    let mut identities_loaded = 0u32;
+    let mut wallets_loaded = 0u32;
+
+    for identity_data in identity_registry.values() {
+        let identity_id = match lib_identity::did::parse_did_to_identity_id(&identity_data.did) {
+            Ok(id) => id,
+            Err(_) => continue,
+        };
+
+        if identity_manager.get_identity(&identity_id).is_some() {
+            continue;
+        }
+
+        let public_key = lib_crypto::PublicKey::new(identity_data.public_key.clone());
+        let display_name = if identity_data.display_name.is_empty() {
+            None
+        } else {
+            Some(identity_data.display_name.clone())
+        };
+        let mut identity = lib_identity::ZhtpIdentity::new_external(
+            identity_data.did.clone(),
+            public_key,
+            parse_identity_type(&identity_data.identity_type),
+            identity_data
+                .did
+                .trim_start_matches("did:zhtp:")
+                .to_string(),
+            display_name,
+            identity_data.created_at,
+        )?;
+        identity.did_document_hash =
+            Some(lib_crypto::Hash::from_bytes(identity_data.did_document_hash.as_bytes()));
+        identity.wallet_manager.wallets.clear();
+        identity.wallet_manager.total_balance = 0;
+
+        let owner_key = hex::encode(identity_id.as_bytes());
+        if let Some(wallets) = wallets_by_owner.get(&owner_key) {
+            for wallet_data in wallets {
+                if let Ok(wallet_id) = identity.wallet_manager.add_restored_wallet(
+                    &hex::encode(wallet_data.wallet_id.as_bytes()),
+                    parse_wallet_type(&wallet_data.wallet_type),
+                    wallet_data.created_at,
+                ) {
+                    if let Some(wallet) = identity.wallet_manager.get_wallet_mut(&wallet_id) {
+                        wallet.name = wallet_data.wallet_name.clone();
+                        wallet.alias = wallet_data.alias.clone();
+                        wallet.public_key = wallet_data.public_key.clone();
+                        wallet.seed_commitment =
+                            Some(hex::encode(wallet_data.seed_commitment.as_bytes()));
+                        wallet.balance = wallet_data.initial_balance;
+                    }
+                    wallets_loaded += 1;
+                }
+            }
+        }
+
+        identity_manager.add_identity(identity);
+        identities_loaded += 1;
+    }
+
+    Ok((identities_loaded, wallets_loaded))
 }
 
 /// Rebuild identity index from backup file (~/.zhtp/backup/identities.json)
@@ -1096,213 +1204,93 @@ async fn backfill_identities_from_blockchain(
     };
 
     let bc = blockchain_arc.read().await;
-    let registry_snapshot: Vec<_> = bc
-        .identity_registry
-        .iter()
-        .map(|(did, data)| (did.clone(), data.clone()))
-        .collect();
+    let identity_registry = bc.identity_registry.clone();
+    let wallet_registry = bc.wallet_registry.clone();
     drop(bc);
 
-    if registry_snapshot.is_empty() {
+    if identity_registry.is_empty() {
         return Ok(0);
     }
 
-    let mut count = 0usize;
-    for (did, identity_data) in registry_snapshot {
-        // Parse identity_id from DID
-        let identity_hash = match lib_identity::did::parse_did_to_identity_id(&did) {
-            Ok(h) => h,
-            Err(_) => continue,
-        };
-
-        // Skip if already in IdentityManager
-        {
-            let mgr = identity_manager.read().await;
-            if mgr.get_identity(&identity_hash).is_some() {
-                continue;
-            }
-        }
-
-        let public_key = lib_crypto::PublicKey::new(identity_data.public_key.clone());
-        let identity_type = match identity_data.identity_type.as_str() {
-            "Device" => lib_identity::IdentityType::Device,
-            "Organization" => lib_identity::IdentityType::Organization,
-            _ => lib_identity::IdentityType::Human,
-        };
-        // device_id is not stored in IdentityTransactionData; derive from DID prefix
-        let device_id = did.trim_start_matches("did:zhtp:").chars().take(16).collect::<String>();
-        let display_name = if identity_data.display_name.is_empty() {
-            None
-        } else {
-            Some(identity_data.display_name.clone())
-        };
-
-        let mut mgr = identity_manager.write().await;
-        if mgr
-            .register_external_identity(
-                identity_hash,
-                did.clone(),
-                public_key,
-                identity_type,
-                device_id,
-                display_name,
-                identity_data.created_at,
-            )
-            .is_ok()
-        {
-            count += 1;
-            info!(
-                "🔄 Backfilled identity from blockchain: {} ({})",
-                &did[..did.len().min(32)],
-                &identity_data.display_name
-            );
-        }
-    }
-
-    Ok(count)
-}
-
-/// After DHT bootstrap and identity migration, mint missing SOV balances via TokenMint txs.
-/// This makes token balances block-authoritative and durable across restarts.
-/// Observer nodes skip the mine_block calls — they receive these blocks from the validator.
-async fn run_post_bootstrap_sov_backfill(can_mine: bool, is_bootstrap_leader: bool) -> Result<()> {
-    let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain().await?;
-
-    // Only the bootstrap leader creates SOV backfill TokenMint transactions.
-    // Non-leader nodes get their SOV balances by syncing the leader's mined blocks.
-    // Allowing all validators to create TokenMint txs floods the mempool with 4× duplicates
-    // (each node signs with its own key → unique hashes → no deduplication).
-    if !is_bootstrap_leader {
-        let bc = blockchain_arc.read().await;
-        info!("🪙 Not bootstrap leader (height {}): skipping SOV backfill — balances come from leader's blocks", bc.height);
-        return Ok(());
-    }
-
-    // First, ensure all wallets in the registry are registered on-chain before minting.
-    // This prevents TokenMint blocks from referencing wallets unknown to other nodes.
-    {
-        let mut bc = blockchain_arc.write().await;
-        let mut added_wallet_regs = 0usize;
-
-        // Enqueue WalletRegistration txs for any registry wallets missing on-chain.
-        let wallet_entries: Vec<_> = bc
-            .wallet_registry
-            .iter()
-            .map(|(id, data)| (id.clone(), data.clone()))
-            .collect();
-        for (wallet_id, wallet_data) in wallet_entries {
-            let is_on_chain = bc
-                .wallet_blocks
-                .get(&wallet_id)
-                .map(|h| *h <= bc.height)
-                .unwrap_or(false);
-            if is_on_chain {
-                continue;
-            }
-
-            let registration_tx = lib_blockchain::transaction::Transaction::new_wallet_registration(
-                wallet_data.clone(),
-                vec![],
-                lib_blockchain::integration::crypto_integration::Signature {
-                    signature: wallet_data.public_key.clone(),
-                    public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(wallet_data.public_key.clone()),
-                    algorithm: lib_blockchain::integration::crypto_integration::SignatureAlgorithm::Dilithium2,
-                    timestamp: wallet_data.created_at,
-                },
-                b"WALLET_BACKFILL_V1".to_vec(),
-            );
-            if bc.add_system_transaction(registration_tx).is_ok() {
-                added_wallet_regs += 1;
-            }
-        }
-
-        let pending_wallet_regs = added_wallet_regs > 0
-            || bc.pending_transactions.iter().any(|tx| {
-                matches!(
-                    tx.transaction_type,
-                    lib_blockchain::TransactionType::WalletRegistration
-                )
-            });
-        // Only mine startup blocks on the genesis node (height == 0).
-        // On all other nodes the chain was synced from the leader; startup transactions
-        // stay in the mempool and get mined by the leader's next block.
-        let is_genesis_node = bc.height == 0;
-        if pending_wallet_regs {
-            if can_mine && is_genesis_node {
-                if let Err(e) =
-                    crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc)
-                        .await
-                {
-                    warn!(
-                        "🪙 Failed to mine wallet registration block before backfill: {}",
-                        e
-                    );
-                } else {
-                    info!("🪙 Mined wallet registration block before SOV backfill");
-                }
-            } else if can_mine {
-                info!("🪙 Synced chain: deferring wallet registrations to leader's mining loop");
-            } else {
-                info!("🪙 Observer node: skipping startup mine for wallet registrations (validator will broadcast)");
-            }
-        }
-    }
-
-    let entries = {
-        let bc = blockchain_arc.read().await;
-        bc.collect_sov_backfill_entries()
-    };
-
-    if entries.is_empty() {
-        info!("🪙 No SOV backfill needed after DHT bootstrap");
-        return Ok(());
-    }
-
-    let mut mint_txs: Vec<lib_blockchain::Transaction> = Vec::new();
-    for (wallet_id_bytes, amount, wallet_id) in entries {
-        let memo = format!("TOKEN_BACKFILL_V1:{}", wallet_id).into_bytes();
-        match crate::runtime::token_utils::build_sov_mint_tx(&wallet_id_bytes, amount, memo).await {
-            Ok(tx) => mint_txs.push(tx),
-            Err(e) => warn!("🪙 Failed to build backfill TokenMint tx: {}", e),
-        }
-    }
-
-    if mint_txs.is_empty() {
-        info!("🪙 No SOV backfill mints queued (all failed to build)");
-        return Ok(());
-    }
-
-    let mut bc = blockchain_arc.write().await;
-    let mut queued = 0usize;
-    for tx in mint_txs {
-        if let Err(e) = bc.add_pending_transaction(tx) {
-            warn!("🪙 Failed to enqueue backfill TokenMint tx: {}", e);
-        } else {
-            queued += 1;
-        }
-    }
-
-    if queued == 0 {
-        info!("🪙 No SOV backfill transactions queued");
-        return Ok(());
-    }
-
-    let is_genesis_node = bc.height == 0;
-    if can_mine && is_genesis_node {
-        if let Err(e) =
-            crate::runtime::services::mining_service::MiningService::mine_block(&mut *bc).await
-        {
-            warn!("🪙 Failed to mine SOV backfill block: {}", e);
-        } else {
-            info!("🪙 Mined SOV backfill block with {} TokenMint txs", queued);
-        }
-    } else if can_mine {
-        info!("🪙 Synced chain: deferring SOV backfill to leader's mining loop");
-    } else {
+    let mut mgr = identity_manager.write().await;
+    let (identities_loaded, wallets_loaded) = reconstruct_identity_manager_from_blockchain_state(
+        &mut mgr,
+        &identity_registry,
+        &wallet_registry,
+    )?;
+    if identities_loaded > 0 || wallets_loaded > 0 {
         info!(
-            "🪙 Observer node: skipping startup mine for SOV backfill (validator will broadcast)"
+            "🔄 Blockchain backfill restored {} identities and {} wallets into IdentityManager",
+            identities_loaded, wallets_loaded
         );
     }
 
-    Ok(())
+    Ok(identities_loaded as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lib_blockchain::transaction::{IdentityTransactionData, WalletTransactionData};
+    use lib_blockchain::Hash;
+
+    #[test]
+    fn reconstruct_identity_manager_from_blockchain_state_restores_wallets() {
+        let did = "did:zhtp:1111111111111111111111111111111111111111111111111111111111111111";
+        let identity_id =
+            lib_identity::did::parse_did_to_identity_id(did).expect("identity id should parse");
+        let mut manager = IdentityManager::new();
+
+        let mut identities = HashMap::new();
+        identities.insert(
+            did.to_string(),
+            IdentityTransactionData {
+                did: did.to_string(),
+                did_document_hash: Hash::new([0x21; 32]),
+                public_key: vec![0x22; 32],
+                ownership_proof: vec![],
+                identity_type: "Human".to_string(),
+                display_name: "Backfilled".to_string(),
+                registration_fee: 0,
+                dao_fee: 0,
+                created_at: 1_700_000_000,
+                controlled_nodes: vec![],
+                owned_wallets: vec![],
+            },
+        );
+
+        let wallet_id = Hash::new([0x31; 32]);
+        let mut wallets = HashMap::new();
+        wallets.insert(
+            hex::encode(wallet_id.as_bytes()),
+            WalletTransactionData {
+                wallet_id,
+                wallet_type: "Primary".to_string(),
+                wallet_name: "Primary Wallet".to_string(),
+                alias: Some("main".to_string()),
+                public_key: vec![0x41; 32],
+                owner_identity_id: Some(Hash::from_slice(identity_id.as_bytes())),
+                seed_commitment: Hash::new([0x51; 32]),
+                created_at: 1_700_000_001,
+                registration_fee: 0,
+                capabilities: 0,
+                initial_balance: 77,
+            },
+        );
+
+        let (identities_loaded, wallets_loaded) =
+            reconstruct_identity_manager_from_blockchain_state(&mut manager, &identities, &wallets)
+                .expect("blockchain reconstruction should succeed");
+
+        assert_eq!(identities_loaded, 1);
+        assert_eq!(wallets_loaded, 1);
+
+        let identity = manager
+            .get_identity(&identity_id)
+            .expect("identity should be restored");
+        let restored_wallets = identity.wallet_manager.list_wallets();
+        assert_eq!(restored_wallets.len(), 1);
+        assert_eq!(restored_wallets[0].name, "Primary Wallet");
+        assert_eq!(restored_wallets[0].balance, 77);
+    }
 }

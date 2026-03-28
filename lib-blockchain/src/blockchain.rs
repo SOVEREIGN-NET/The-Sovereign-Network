@@ -2090,14 +2090,15 @@ impl Blockchain {
                     }
 
                     // Replay token transactions from this block to reconstruct balances/nonces.
-                    // This makes token state derived from blocks (source of truth) rather than
-                    // a sled snapshot that can diverge when sled is wiped or copied between nodes.
-                    if let Err(e) = blockchain.process_token_transactions(&block) {
-                        warn!(
-                            "⚠️ Token replay error at height {} (non-fatal, continuing): {}",
-                            height, e
-                        );
-                    }
+                    // Token replay is canonical restart state. If replay fails, startup must
+                    // fail rather than silently drift into snapshot/blob fallback state.
+                    blockchain.process_token_transactions(&block).map_err(|e| {
+                        anyhow::anyhow!(
+                            "Token replay error at height {} during load_from_store: {}",
+                            height,
+                            e
+                        )
+                    })?;
 
                     blockchain.blocks.push(block);
                     blockchain.height = height;
@@ -2111,29 +2112,7 @@ impl Blockchain {
             }
         }
 
-        // Token state is now rebuilt from block replay above.
-        // Fall back to the sled TokenStateSnapshot only if no blocks existed (fresh node
-        // receiving its first sync, or genesis-only state before any token transactions).
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        if blockchain.token_contracts.is_empty() {
-            if let Ok(Some(snapshot)) = store.get_token_state_snapshot() {
-                for (id, contract) in snapshot.token_contracts {
-                    blockchain.token_contracts.insert(id, contract);
-                }
-                for (key, nonce) in snapshot.token_nonces {
-                    blockchain.token_nonces.insert(key, nonce);
-                }
-                info!("Loaded TokenStateSnapshot from SledStore (fallback — no blocks with token txs)");
-            }
-            // Also try the SOV contract blob as a last resort
-            if !blockchain.token_contracts.contains_key(&sov_token_id) {
-                let token_id = crate::storage::TokenId(sov_token_id);
-                if let Ok(Some(sov_token)) = store.get_token_contract(&token_id) {
-                    info!("🪙 Loaded SOV token contract from SledStore (fallback)");
-                    blockchain.token_contracts.insert(sov_token_id, sov_token);
-                }
-            }
-        }
 
         // Sync SOV balances from the TokenContract blob into the token_balances Sled tree.
         //
