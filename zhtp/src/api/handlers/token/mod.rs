@@ -345,17 +345,13 @@ impl TokenHandler {
                     Some(d) => (hex::encode(d.to), hex::encode(d.token_id), d.amount),
                     None => {
                         tracing::error!(
-                            "[TRANSFER] FAIL: TokenTransfer payload is None (tx version={}). \
-                             Client is using an outdated transaction format — upgrade to V8+.",
+                            "[TRANSFER] FAIL: TokenTransfer payload is None after decode \
+                             (tx version={})",
                             tx.version
                         );
                         return Ok(create_error_response(
                             ZhtpStatus::BadRequest,
-                            format!(
-                                "TokenTransfer payload missing — transaction version {} is \
-                                 not supported; rebuild your client against the current SDK",
-                                tx.version
-                            ),
+                            "TokenTransfer missing data".to_string(),
                         ));
                     }
                 }
@@ -834,6 +830,18 @@ impl TokenHandler {
             hex::decode(signed_tx).map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
         let tx: Transaction = bincode::deserialize(&tx_bytes)
             .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
+        // V1-V7 transactions deserialize successfully but land with payload=None because
+        // the old tuple format's identity_data field maps to TransactionPayload variant 0.
+        // Re-decode using the legacy visitor to recover the actual payload.
+        if tx.version < lib_blockchain::transaction::core::TX_VERSION_V8
+            && matches!(tx.payload, lib_blockchain::transaction::TransactionPayload::None)
+        {
+            if let Some(upgraded) =
+                lib_blockchain::transaction::legacy::try_decode_legacy(&tx_bytes)
+            {
+                return Ok(upgraded);
+            }
+        }
         Ok(tx)
     }
 
