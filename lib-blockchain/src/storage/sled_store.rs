@@ -374,29 +374,8 @@ impl BlockchainStore for SledStore {
         // Get block data from hash index
         match self.blocks_by_hash.get(hash_bytes.as_ref()) {
             Ok(Some(block_bytes)) => {
-                match Self::deserialize::<Block>(&block_bytes) {
-                    Ok(block) => Ok(Some(block)),
-                    Err(e) => {
-                        // Full-block deserialization failed (likely pre-V8 transaction bytes).
-                        // Fall back to header-only: bincode reads exactly 158 bytes for
-                        // BlockHeader and ignores trailing transaction bytes.
-                        use crate::block::BlockHeader;
-                        match bincode::deserialize::<BlockHeader>(&block_bytes) {
-                            Ok(header) => {
-                                tracing::warn!(
-                                    "⚠️  Block {} has unreadable transactions ({}); \
-                                     loading header-only (empty tx list)",
-                                    h, e
-                                );
-                                Ok(Some(Block {
-                                    header,
-                                    transactions: vec![],
-                                }))
-                            }
-                            Err(_) => Err(e),
-                        }
-                    }
-                }
+                let block: Block = Self::deserialize(&block_bytes)?;
+                Ok(Some(block))
             }
             Ok(None) => Err(StorageError::CorruptedData(format!(
                 "Block hash exists at height {} but block data missing",

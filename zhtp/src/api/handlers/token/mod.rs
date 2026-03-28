@@ -828,21 +828,23 @@ impl TokenHandler {
         tracing::warn!("[FLOW] decode_signed_tx_raw: len={}", signed_tx.len());
         let tx_bytes =
             hex::decode(signed_tx).map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
-        let tx: Transaction = bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
-        // V1-V7 transactions deserialize successfully but land with payload=None because
-        // the old tuple format's identity_data field maps to TransactionPayload variant 0.
-        // Re-decode using the legacy visitor to recover the actual payload.
-        if tx.version < lib_blockchain::transaction::core::TX_VERSION_V8
-            && matches!(tx.payload, lib_blockchain::transaction::TransactionPayload::None)
-        {
-            if let Some(upgraded) =
-                lib_blockchain::transaction::legacy::try_decode_legacy(&tx_bytes)
-            {
-                return Ok(upgraded);
-            }
+        let wire_version = tx_bytes
+            .get(..4)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u32::from_le_bytes)
+            .ok_or_else(|| anyhow::anyhow!("Invalid signed_tx payload: truncated version"))?;
+
+        if wire_version > 0 && wire_version < lib_blockchain::transaction::core::TX_VERSION_V8 {
+            return lib_blockchain::transaction::legacy::try_decode_legacy(&tx_bytes)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Invalid signed_tx payload: unsupported legacy transaction encoding"
+                    )
+                });
         }
-        Ok(tx)
+
+        bincode::deserialize(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))
     }
 
     async fn submit_to_mempool(&self, tx: Transaction) -> Result<()> {
@@ -980,7 +982,11 @@ impl Default for TokenHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lib_blockchain::transaction::core::{
+        TokenTransferData, TransactionPayload, TX_VERSION_V6,
+    };
     use lib_crypto::types::keys::PublicKey;
+    use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
     // Helper to parse identity without needing full handler
     fn parse_identity(identity: &str) -> Result<PublicKey> {
@@ -1059,5 +1065,54 @@ mod tests {
         // parts: ["", "api", "v1", "token", "abc123", "balance"]
         // This has 6 elements, not 7
         assert!(parts.len() < 7);
+    }
+
+    #[test]
+    fn test_decode_signed_tx_raw_uses_legacy_decoder_for_v6_wire_format() {
+        let tx = Transaction {
+            version: TX_VERSION_V6,
+            chain_id: 0x03,
+            transaction_type: lib_blockchain::types::TransactionType::TokenTransfer,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: Signature {
+                signature: vec![0x11; 64],
+                public_key: lib_blockchain::integration::crypto_integration::PublicKey::new(
+                    vec![0x22; 32],
+                ),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: 1_700_000_000,
+            },
+            memo: b"legacy-mobile".to_vec(),
+            payload: TransactionPayload::TokenTransfer(TokenTransferData {
+                token_id: [0x33; 32],
+                from: [0x44; 32],
+                to: [0x55; 32],
+                amount: 999,
+                nonce: 4,
+            }),
+        };
+        let encoded = lib_blockchain::transaction::legacy::serialize_legacy_transaction(&tx, false)
+            .expect("legacy encoding should succeed");
+        let encoded_hex = hex::encode(encoded);
+
+        let handler = TokenHandler {
+            blockchain: Arc::new(RwLock::new(
+                lib_blockchain::Blockchain::new().expect("test blockchain"),
+            )),
+        };
+        let decoded = handler
+            .decode_signed_tx_raw(&encoded_hex)
+            .expect("legacy tx should decode");
+
+        assert_eq!(decoded.version, TX_VERSION_V6);
+        match decoded.payload {
+            TransactionPayload::TokenTransfer(data) => {
+                assert_eq!(data.amount, 999);
+                assert_eq!(data.nonce, 4);
+            }
+            other => panic!("unexpected payload: {:?}", other),
+        }
     }
 }

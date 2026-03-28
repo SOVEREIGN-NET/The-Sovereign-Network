@@ -12,6 +12,12 @@ use tracing::debug;
 
 /// Hash a complete transaction
 pub fn hash_transaction(transaction: &Transaction) -> Hash {
+    if let Some(serialized) =
+        crate::transaction::legacy::serialize_legacy_transaction(transaction, true)
+    {
+        return crate::types::hash::blake3_hash(&serialized);
+    }
+
     // Create a copy without signature for consistent hashing
     let mut tx_for_hash = transaction.clone();
     // CRITICAL: Must use all-zero key_id, NOT blake3(empty)
@@ -182,6 +188,12 @@ pub fn create_encrypted_note(
 
 /// Hash transaction for signature (deterministic ordering)
 pub fn hash_for_signature(transaction: &Transaction) -> Hash {
+    if let Some(serialized) =
+        crate::transaction::legacy::serialize_legacy_transaction(transaction, true)
+    {
+        return crate::types::hash::blake3_hash(&serialized);
+    }
+
     // Create signing hash with deterministic field ordering
     // CRITICAL: This function defines the canonical signing format for ALL clients
     // (server, CLI, mobile). Any changes here require updates to all clients.
@@ -237,6 +249,48 @@ pub fn hash_for_signature(transaction: &Transaction) -> Hash {
     let mut hash_bytes = [0u8; 32];
     hash_bytes.copy_from_slice(hasher.finalize().as_bytes());
     Hash::new(hash_bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+    use crate::transaction::core::{TokenTransferData, TransactionPayload, TX_VERSION_V6};
+    use crate::types::transaction_type::TransactionType;
+
+    #[test]
+    fn legacy_transaction_hashing_uses_legacy_wire_format() {
+        let tx = Transaction {
+            version: TX_VERSION_V6,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenTransfer,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: Signature {
+                signature: vec![0xBB; 64],
+                public_key: PublicKey::new(vec![0x44; 32]),
+                algorithm: SignatureAlgorithm::Dilithium5,
+                timestamp: 1_700_000_000,
+            },
+            memo: b"legacy-signing".to_vec(),
+            payload: TransactionPayload::TokenTransfer(TokenTransferData {
+                token_id: [0x10; 32],
+                from: [0x20; 32],
+                to: [0x30; 32],
+                amount: 77,
+                nonce: 9,
+            }),
+        };
+
+        let expected =
+            crate::transaction::legacy::serialize_legacy_transaction(&tx, true).expect("legacy");
+        assert_eq!(hash_transaction(&tx), crate::types::hash::blake3_hash(&expected));
+        assert_eq!(
+            hash_for_signature(&tx),
+            crate::types::hash::blake3_hash(&expected)
+        );
+    }
 }
 
 
