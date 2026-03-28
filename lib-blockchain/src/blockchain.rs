@@ -1427,64 +1427,8 @@ pub struct BlockchainImport {
     pub last_oracle_epoch_processed: u64,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct LegacyFixupReport {
-    affected_entities: usize,
-    affected_raw_units: u128,
-}
-
-impl LegacyFixupReport {
-    const fn new(affected_entities: usize, affected_raw_units: u128) -> Self {
-        Self {
-            affected_entities,
-            affected_raw_units,
-        }
-    }
-
-    const fn fired(self) -> bool {
-        self.affected_entities > 0 || self.affected_raw_units > 0
-    }
-}
-
 impl Blockchain {
     const MIN_DILITHIUM_PK_LEN: usize = 1312;
-    const LEGACY_FIXUP_REMOVAL_GATE: &str = "zero firings for 14 days across target environments";
-
-    fn format_legacy_fixup_summary(
-        startup_path: &str,
-        reports: &[(&str, LegacyFixupReport)],
-    ) -> String {
-        let details = reports
-            .iter()
-            .map(|(name, report)| {
-                format!(
-                    "{}={{fired:{}, entities:{}, raw_units:{}}}",
-                    name,
-                    report.fired(),
-                    report.affected_entities,
-                    report.affected_raw_units
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        format!(
-            "LEGACY_FIXUP_SUMMARY path={} removal_gate=\"{}\" {}",
-            startup_path,
-            Self::LEGACY_FIXUP_REMOVAL_GATE,
-            details
-        )
-    }
-
-    fn log_legacy_fixup_summary(startup_path: &str, reports: &[(&str, LegacyFixupReport)]) {
-        let summary = Self::format_legacy_fixup_summary(startup_path, reports);
-        if reports.iter().any(|(_, report)| report.fired()) {
-            warn!("{}", summary);
-        } else {
-            info!("{}", summary);
-        }
-    }
-
     fn new_runtime_state() -> Self {
         let genesis_block = crate::block::create_genesis_block();
 
@@ -2075,14 +2019,23 @@ impl Blockchain {
                             blockchain.utxo_set.insert(tx_hash, output.clone());
                         }
 
-                        // Process identity transactions using the same replay semantics as
-                        // the live block path so restart reconstruction does not diverge.
+                        // Process identity registrations
                         if let Some(identity_data) = tx.identity_data() {
-                            blockchain.apply_identity_transaction_to_memory(
-                                tx.transaction_type,
-                                identity_data,
-                                height,
-                            )?;
+                            blockchain
+                                .identity_registry
+                                .insert(identity_data.did.clone(), identity_data.clone());
+                            blockchain
+                                .identity_blocks
+                                .insert(identity_data.did.clone(), height);
+                        }
+
+                        // Process wallet registrations
+                        if let Some(wallet_data) = tx.wallet_data() {
+                            let wallet_id = hex::encode(wallet_data.wallet_id.as_bytes());
+                            blockchain
+                                .wallet_registry
+                                .insert(wallet_id.clone(), wallet_data.clone());
+                            blockchain.wallet_blocks.insert(wallet_id, height);
                         }
 
                         // Replay contract executions through the canonical runtime path.
@@ -2137,14 +2090,15 @@ impl Blockchain {
                     }
 
                     // Replay token transactions from this block to reconstruct balances/nonces.
-                    // This makes token state derived from blocks (source of truth) rather than
-                    // a sled snapshot that can diverge when sled is wiped or copied between nodes.
-                    if let Err(e) = blockchain.process_token_transactions(&block) {
-                        warn!(
-                            "⚠️ Token replay error at height {} (non-fatal, continuing): {}",
-                            height, e
-                        );
-                    }
+                    // Token replay is canonical restart state. If replay fails, startup must
+                    // fail rather than silently drift into snapshot/blob fallback state.
+                    blockchain.process_token_transactions(&block).map_err(|e| {
+                        anyhow::anyhow!(
+                            "Token replay error at height {} during load_from_store: {}",
+                            height,
+                            e
+                        )
+                    })?;
 
                     blockchain.blocks.push(block);
                     blockchain.height = height;
@@ -2158,36 +2112,33 @@ impl Blockchain {
             }
         }
 
-        blockchain.rebuild_identity_projection_from_canonical_replay(store.as_ref())?;
-        blockchain.restore_wallet_projection_from_startup_state(store.as_ref())?;
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
 
-        // Replay wallet and token transactions through the canonical in-memory paths.
-        // Wallet replay remains explicit because wallet registration still carries
-        // canonical initial-balance mint semantics for restart reconstruction.
-        // During restart reconstruction we intentionally suppress store writes here:
-        // replay must derive state from committed blocks, not re-persist snapshot/blob helpers.
-        let replay_store = blockchain.store.take();
-        let replay_blocks = blockchain.blocks.clone();
-        for block in &replay_blocks {
-            blockchain.process_wallet_transactions(block)?;
-            blockchain.process_token_transactions(block)?;
+        // Sync SOV balances from the TokenContract blob into the token_balances Sled tree.
+        //
+        // When SOV was minted via the legacy block processing path (before BlockExecutor was
+        // active), balances were only written to the in-memory token_contracts HashMap and
+        // the TokenContract blob. The BlockExecutor reads exclusively from the separate
+        // token_balances Sled tree, so wallets funded via the legacy path appear to have
+        // zero balance to the executor, causing "Insufficient token balance" on every transfer.
+        //
+        // This backfill is idempotent: entries already present in token_balances are skipped.
+        if let Some(sov_contract) = blockchain.token_contracts.get(&sov_token_id) {
+            let entries: Vec<([u8; 32], u64)> = sov_contract
+                .balances
+                .iter()
+                .map(|(pk, &bal)| (pk.key_id, bal))
+                .collect();
+            let token_id = crate::storage::TokenId(sov_token_id);
+            match store.backfill_token_balances_from_contract(&token_id, &entries) {
+                Ok(0) => debug!("SOV token_balances tree already up-to-date (no backfill needed)"),
+                Ok(n) => info!(
+                    "💰 Backfilled {} SOV balances into token_balances tree (legacy migration)",
+                    n
+                ),
+                Err(e) => warn!("⚠️ Failed to backfill SOV token_balances: {}", e),
+            }
         }
-        blockchain.store = replay_store;
-
-        // NOTE: Do not mint SOV in-memory here. Missing or underfunded balances are
-        // repaired only via explicit compatibility fixups that are tracked below.
-        blockchain.ensure_treasury_wallet();
-        let backfill_report = LegacyFixupReport::default();
-        let migrate_report = blockchain.migrate_sov_key_balances_to_wallets();
-        let repair_report = blockchain.repair_backfill_inflation();
-        Self::log_legacy_fixup_summary(
-            "load_from_store",
-            &[
-                ("backfill_token_balances_from_contract", backfill_report),
-                ("migrate_sov_key_balances_to_wallets", migrate_report),
-                ("repair_backfill_inflation", repair_report),
-            ],
-        );
 
         // Populate contract_blocks for any contracts missing deployment height tracking.
         // This ensures get_contract_block_height() returns valid data after restart.
@@ -2236,6 +2187,15 @@ impl Blockchain {
             );
         }
 
+        // NOTE: Do not mint SOV in-memory here. SledStore requires writes inside
+        // an active block transaction. Missing or underfunded balances are
+        // repaired via TokenMint backfill after startup.
+        blockchain.ensure_sov_token_contract();
+        blockchain.ensure_treasury_wallet();
+        blockchain.migrate_sov_key_balances_to_wallets();
+        // Repair any balances inflated by the pre-fix backfill bug (minted on every restart).
+        blockchain.repair_backfill_inflation();
+
         // One-time CBE backfill for nodes restarting from SledStore before CBE token state
         // is persisted there. Restart constructors intentionally skip genesis side effects,
         // so this branch is the canonical compatibility path.
@@ -2246,16 +2206,52 @@ impl Blockchain {
             blockchain.initialize_cbe_token_genesis();
         }
 
-        if let Err(e) = blockchain.process_approved_governance_proposals() {
-            warn!(
-                "Failed to apply governance parameter updates during load_from_store: {}",
-                e
+        // Sync SOV balances from the authoritative token_balances Sled tree into in-memory
+        // token_contracts.balances.  The BlockExecutor updates token_balances on every
+        // TokenMint/TokenTransfer block, but put_token_contract (which updates the blob) is
+        // only called from legacy process_wallet_transactions — which runs post-commit and has
+        // no active transaction, causing it to silently fail.  As a result the blob is stale
+        // and in-memory balances loaded from it are zero for wallets registered via the
+        // executor path.  Reading back from the Sled tree (which is always correct) fixes the
+        // wallet handler, which reads token_contracts.balances directly.
+        {
+            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+            let storage_sov_id = crate::storage::TokenId(sov_token_id);
+            let wallet_ids: Vec<String> = blockchain.wallet_registry.keys().cloned().collect();
+            let mut synced = 0usize;
+            for wallet_id_hex in &wallet_ids {
+                if let Some(wallet_bytes) = Self::wallet_id_bytes(wallet_id_hex) {
+                    let addr = crate::storage::Address::new(wallet_bytes);
+                    if let Ok(balance) = store.get_token_balance(&storage_sov_id, &addr) {
+                        if balance > 0 {
+                            if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+                                let pk = Self::wallet_key_for_sov(&wallet_bytes);
+                                token.balances.insert(pk, balance as u64);
+                                synced += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            if synced > 0 {
+                info!(
+                    "💰 Synced {} SOV balances from token_balances tree into in-memory contracts",
+                    synced
+                );
+            }
+        }
+
+        let backfill_entries = blockchain.collect_sov_backfill_entries();
+        if !backfill_entries.is_empty() {
+            info!(
+                "SOV backfill needed for {} wallets (will be minted via TokenMint after startup)",
+                backfill_entries.len()
             );
         }
 
-        if let Err(e) = blockchain.restore_pending_transactions_from_store() {
+        if let Err(e) = blockchain.process_approved_governance_proposals() {
             warn!(
-                "Failed to restore pending transactions from SledStore: {}",
+                "Failed to apply governance parameter updates during load_from_store: {}",
                 e
             );
         }
@@ -2810,52 +2806,24 @@ impl Blockchain {
                     // touched by this block (transfers debit/credit, mints credit).
                     // This keeps the in-memory HashMap authoritative for balance queries
                     // without a second source of truth.
-                    if let Some(store) = self.store.clone() {
+                    if let Some(store) = &self.store {
                         let sov_id = crate::contracts::utils::generate_lib_token_id();
                         let storage_sov_id = crate::storage::TokenId(sov_id);
                         let mut addrs_to_sync: Vec<[u8; 32]> = Vec::new();
-                        let mut nonce_keys_to_sync: Vec<[u8; 32]> = Vec::new();
                         for tx in &block.transactions {
                             match tx.transaction_type {
                                 TransactionType::TokenTransfer => {
                                     if let Some(d) = tx.token_transfer_data() {
-                                        if !Self::is_sov_token_id(&d.token_id) {
-                                            continue;
-                                        }
                                         addrs_to_sync.push(d.from);
                                         addrs_to_sync.push(d.to);
-                                        nonce_keys_to_sync.push(d.from);
                                     }
                                 }
                                 TransactionType::TokenMint => {
                                     if let Some(d) = tx.token_mint_data() {
-                                        if !Self::is_sov_token_id(&d.token_id) {
-                                            continue;
-                                        }
                                         addrs_to_sync.push(d.to);
                                     }
                                 }
-                                TransactionType::WalletRegistration => {
-                                    if let Some(d) = tx.wallet_data() {
-                                        if d.initial_balance > 0 {
-                                            let mut wallet_id = [0u8; 32];
-                                            wallet_id.copy_from_slice(d.wallet_id.as_bytes());
-                                            addrs_to_sync.push(wallet_id);
-                                        }
-                                    }
-                                }
                                 _ => {}
-                            }
-                        }
-                        if !addrs_to_sync.is_empty() {
-                            self.ensure_sov_token_contract();
-                            if let Ok(Some(contract)) = store.get_token_contract(&storage_sov_id) {
-                                self.token_contracts.insert(sov_id, contract);
-                            }
-                            if let Ok(Some(supply)) = store.get_token_supply(&storage_sov_id) {
-                                if let Some(token) = self.token_contracts.get_mut(&sov_id) {
-                                    token.total_supply = supply;
-                                }
                             }
                         }
                         for addr_bytes in addrs_to_sync {
@@ -2867,12 +2835,6 @@ impl Blockchain {
                                 }
                             }
                         }
-                        for sender_bytes in nonce_keys_to_sync {
-                            let sender = crate::storage::Address::new(sender_bytes);
-                            if let Ok(nonce) = store.get_token_nonce(&storage_sov_id, &sender) {
-                                self.token_nonces.insert((sov_id, sender_bytes), nonce);
-                            }
-                        }
                     }
 
                     // Update blockchain metadata
@@ -2881,17 +2843,6 @@ impl Blockchain {
                     self.process_validator_registration_transactions(&block);
                     for tx in &block.transactions {
                         self.index_dao_registry_entry_from_tx(tx, block.header.height);
-                        if matches!(
-                            tx.transaction_type,
-                            TransactionType::WalletRegistration | TransactionType::WalletUpdate
-                        ) {
-                            if let Some(wallet_data) = tx.wallet_data() {
-                                let wallet_id_hex = hex::encode(wallet_data.wallet_id.as_bytes());
-                                self.wallet_registry
-                                    .insert(wallet_id_hex.clone(), wallet_data.clone());
-                                self.wallet_blocks.insert(wallet_id_hex, block.header.height);
-                            }
-                        }
                         // Executor returns LegacySystem for ValidatorRegistration — update registry here
                         if tx.transaction_type == TransactionType::ValidatorRegistration {
                             if let Some(vd) = tx.validator_data() {
@@ -3005,10 +2956,8 @@ impl Blockchain {
         self.save_utxo_snapshot(self.height)?;
         self.adjust_difficulty()?;
 
-        // Remove processed transactions from the in-memory pending pool immediately so the
-        // active node does not re-propose them. Durable recovery entries are only deleted
-        // after the block commit path succeeds.
-        self.drop_pending_transactions_from_memory(&block.transactions);
+        // Remove processed transactions from pending pool
+        self.remove_pending_transactions(&block.transactions);
 
         // Begin sled transaction for remaining processing
         if let Some(ref store) = self.store {
@@ -3088,7 +3037,6 @@ impl Blockchain {
         }
 
         // Persist block to SledStore
-        let mut block_persisted = self.store.is_none();
         if let Some(ref store) = self.store {
             if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
                 error!(
@@ -3098,62 +3046,10 @@ impl Blockchain {
                 );
             } else {
                 debug!("Block {} persisted to SledStore", block.height());
-                block_persisted = true;
             }
-        }
-
-        if block_persisted {
-            self.delete_persisted_pending_transactions(&block.transactions);
         }
 
         self.blocks_since_last_persist += 1;
-
-        for tx in &block.transactions {
-            let tx_hash_bytes = tx.hash();
-            let tx_hash: [u8; 32] = match tx_hash_bytes.as_bytes().try_into() {
-                Ok(arr) => arr,
-                Err(e) => {
-                    error!(
-                        "Invariant violation: tx hash in block {} is not 32 bytes (len = {}, error = {:?})",
-                        block.header.height,
-                        tx_hash_bytes.as_bytes().len(),
-                        e
-                    );
-                    continue;
-                }
-            };
-
-            let event = match tx.transaction_type {
-                TransactionType::IdentityRegistration => {
-                    tx.identity_data().cloned().map(|identity_data| {
-                        crate::events::BlockchainEvent::IdentityRegistered {
-                            tx_hash,
-                            block_height: block.header.height,
-                            identity_data,
-                        }
-                    })
-                }
-                TransactionType::WalletRegistration => {
-                    tx.wallet_data().cloned().map(|wallet_data| {
-                        crate::events::BlockchainEvent::WalletRegistered {
-                            tx_hash,
-                            block_height: block.header.height,
-                            wallet_data,
-                        }
-                    })
-                }
-                _ => None,
-            };
-
-            if let Some(event) = event {
-                if let Err(e) = self.event_publisher.publish(event).await {
-                    warn!(
-                        "Failed to publish committed transaction event for block {}: {}",
-                        block.header.height, e
-                    );
-                }
-            }
-        }
 
         // Emit BlockAdded event
         let block_hash_bytes = block.hash();
@@ -3185,10 +3081,8 @@ impl Blockchain {
     /// Finish block processing after state mutations are complete.
     /// This handles post-processing steps that happen regardless of which path was used.
     async fn finish_block_processing(&mut self, block: Block) -> Result<()> {
-        // Remove processed transactions from the in-memory pending pool immediately so the
-        // active node does not re-propose them. Durable recovery entries are only deleted
-        // after the block commit path succeeds.
-        self.drop_pending_transactions_from_memory(&block.transactions);
+        // Remove processed transactions from pending pool
+        self.remove_pending_transactions(&block.transactions);
 
         // When the BlockExecutor is active it has already called begin_block/commit_block
         // inside apply_block(). Starting a second begin_block() for the same height would
@@ -3295,7 +3189,6 @@ impl Blockchain {
         // commit_block). On the executor path we commit the metadata-only batch opened
         // above; on the legacy path we call persist_to_sled_store which handles its own
         // transaction via the normal block transaction opened earlier.
-        let mut block_persisted = self.store.is_none();
         if using_executor {
             if let Some(ref store) = self.store {
                 if let Err(e) = store.commit_metadata_write() {
@@ -3310,7 +3203,6 @@ impl Blockchain {
                 "Block {} block data already persisted by BlockExecutor; metadata committed",
                 block.height()
             );
-            block_persisted = true;
         } else if let Some(ref store) = self.store {
             if let Err(e) = self.persist_to_sled_store(&block, store.clone()) {
                 error!(
@@ -3320,12 +3212,7 @@ impl Blockchain {
                 );
             } else {
                 debug!("Block {} persisted to SledStore", block.height());
-                block_persisted = true;
             }
-        }
-
-        if block_persisted {
-            self.delete_persisted_pending_transactions(&block.transactions);
         }
 
         self.blocks_since_last_persist += 1;
@@ -4150,102 +4037,6 @@ impl Blockchain {
         self.pending_transactions.clone()
     }
 
-    fn persist_pending_transaction(&self, transaction: &Transaction) -> Result<()> {
-        if let Some(ref store) = self.store {
-            let tx_hash: [u8; 32] = transaction
-                .hash()
-                .as_bytes()
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("Transaction hash must be 32 bytes"))?;
-            store.put_pending_transaction(transaction).map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to persist pending transaction {}: {}",
-                    hex::encode(&tx_hash[..8]),
-                    e
-                )
-            })?;
-        }
-        Ok(())
-    }
-
-    fn delete_persisted_pending_transactions(&self, transactions: &[Transaction]) {
-        if let Some(ref store) = self.store {
-            for tx in transactions {
-                let tx_hash: [u8; 32] = match tx.hash().as_bytes().try_into() {
-                    Ok(hash) => hash,
-                    Err(_) => {
-                        warn!("Skipping persisted pending transaction removal: invalid hash size");
-                        continue;
-                    }
-                };
-                if let Err(e) = store.delete_pending_transaction(&tx_hash) {
-                    warn!(
-                        "Failed to remove pending transaction {} from SledStore: {}",
-                        hex::encode(&tx_hash[..8]),
-                        e
-                    );
-                }
-            }
-        }
-    }
-
-    fn drop_pending_transactions_from_memory(&mut self, transactions: &[Transaction]) {
-        let tx_hashes: HashSet<Hash> = transactions.iter().map(|tx| tx.hash()).collect();
-        self.pending_transactions
-            .retain(|tx| !tx_hashes.contains(&tx.hash()));
-    }
-
-    fn restore_pending_transactions_from_store(&mut self) -> Result<()> {
-        let Some(ref store) = self.store else {
-            return Ok(());
-        };
-
-        let committed_hashes: HashSet<[u8; 32]> = self
-            .blocks
-            .iter()
-            .flat_map(|block| block.transactions.iter())
-            .filter_map(|tx| tx.hash().as_bytes().try_into().ok())
-            .collect();
-
-        let mut restored = 0usize;
-        let mut dropped = 0usize;
-
-        for tx in store
-            .iter_pending_transactions()
-            .map_err(|e| anyhow::anyhow!("Failed to iterate pending transactions: {}", e))?
-        {
-            let tx_hash: [u8; 32] = tx
-                .hash()
-                .as_bytes()
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("Pending transaction hash must be 32 bytes"))?;
-
-            if committed_hashes.contains(&tx_hash) {
-                store.delete_pending_transaction(&tx_hash).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to delete committed pending transaction {}: {}",
-                        hex::encode(&tx_hash[..8]),
-                        e
-                    )
-                })?;
-                dropped += 1;
-                continue;
-            }
-
-            self.pending_transactions.push(tx);
-            restored += 1;
-        }
-
-        if restored > 0 || dropped > 0 {
-            info!(
-                "Restored {} pending transactions from SledStore, dropped {} stale committed entries",
-                restored, dropped
-            );
-        }
-
-        Ok(())
-    }
-
     /// Add a transaction to the pending pool
     pub fn add_pending_transaction(&mut self, transaction: Transaction) -> Result<()> {
         tracing::debug!(
@@ -4293,7 +4084,6 @@ impl Blockchain {
             return Err(anyhow::anyhow!("Transaction verification failed"));
         }
 
-        self.persist_pending_transaction(&transaction)?;
         self.pending_transactions.push(transaction);
         tracing::debug!("[FLOW] verify_and_enqueue_transaction: enqueued");
         Ok(())
@@ -4321,15 +4111,16 @@ impl Blockchain {
     /// Add system transaction to pending pool without validation (for identity registration, etc.)
     pub fn add_system_transaction(&mut self, transaction: Transaction) -> Result<()> {
         tracing::info!("Adding system transaction to pending pool (bypassing validation)");
-        self.persist_pending_transaction(&transaction)?;
         self.pending_transactions.push(transaction);
         Ok(())
     }
 
     /// Remove transactions from pending pool
     pub fn remove_pending_transactions(&mut self, transactions: &[Transaction]) {
-        self.drop_pending_transactions_from_memory(transactions);
-        self.delete_persisted_pending_transactions(transactions);
+        let tx_hashes: HashSet<Hash> = transactions.iter().map(|tx| tx.hash()).collect();
+
+        self.pending_transactions
+            .retain(|tx| !tx_hashes.contains(&tx.hash()));
     }
 
     // ===== IDENTITY MANAGEMENT METHODS =====
@@ -4359,6 +4150,12 @@ impl Blockchain {
 
         // Add to pending transactions for inclusion in next block
         self.add_pending_transaction(registration_tx.clone())?;
+
+        // Store in identity registry immediately for queries
+        self.identity_registry
+            .insert(identity_data.did.clone(), identity_data.clone());
+        self.identity_blocks
+            .insert(identity_data.did.clone(), self.height + 1);
 
         Ok(registration_tx.hash())
     }
@@ -4556,19 +4353,23 @@ impl Blockchain {
         for transaction in &block.transactions {
             if transaction.transaction_type.is_identity_transaction() {
                 if let Some(identity_data) = transaction.identity_data() {
-                    let applied_identity = self.apply_identity_transaction_to_memory(
-                        transaction.transaction_type,
-                        identity_data,
-                        block.height(),
-                    )?;
-
                     match transaction.transaction_type {
                         TransactionType::IdentityRegistration => {
-                            let new_identity_data = applied_identity.ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "Identity registration did not produce replay state"
-                                )
-                            })?;
+                            // CRITICAL: Preserve controlled_nodes if identity already exists
+                            let mut new_identity_data = identity_data.clone();
+                            if let Some(existing_identity) =
+                                self.identity_registry.get(&identity_data.did)
+                            {
+                                // Preserve controlled_nodes from existing identity
+                                new_identity_data.controlled_nodes =
+                                    existing_identity.controlled_nodes.clone();
+                            }
+
+                            // Store in memory (backward compatibility + fast queries)
+                            self.identity_registry
+                                .insert(identity_data.did.clone(), new_identity_data.clone());
+                            self.identity_blocks
+                                .insert(identity_data.did.clone(), block.height());
 
                             // PHASE 0: Persist to sled storage (consensus state)
                             if let Some(ref store) = self.store {
@@ -4613,9 +4414,45 @@ impl Blockchain {
                             }
                         }
                         TransactionType::IdentityUpdate => {
-                            let updated_identity_data = applied_identity.ok_or_else(|| {
-                                anyhow::anyhow!("Identity update did not produce replay state")
-                            })?;
+                            // CRITICAL: Preserve controlled_nodes on update
+                            let mut updated_identity_data = identity_data.clone();
+                            if let Some(existing_identity) =
+                                self.identity_registry.get(&identity_data.did)
+                            {
+                                // Preserve controlled_nodes from existing identity
+                                updated_identity_data.controlled_nodes =
+                                    existing_identity.controlled_nodes.clone();
+                            }
+
+                            // Enforce immutable ownership and identity invariants
+                            if let Some(existing_identity) =
+                                self.identity_registry.get(&identity_data.did)
+                            {
+                                if existing_identity.public_key != updated_identity_data.public_key
+                                {
+                                    return Err(anyhow::anyhow!(
+                                        "Immutable public key mismatch for identity update: {}",
+                                        identity_data.did
+                                    ));
+                                }
+                                if existing_identity.identity_type
+                                    != updated_identity_data.identity_type
+                                {
+                                    return Err(anyhow::anyhow!(
+                                        "Immutable identity type mismatch for identity update: {}",
+                                        identity_data.did
+                                    ));
+                                }
+                            } else {
+                                return Err(anyhow::anyhow!(
+                                    "Cannot update non-existent identity: {}",
+                                    identity_data.did
+                                ));
+                            }
+
+                            // Store in memory (post-validation)
+                            self.identity_registry
+                                .insert(identity_data.did.clone(), updated_identity_data.clone());
 
                             // PHASE 0: Persist update to sled storage
                             if let Some(ref store) = self.store {
@@ -4627,6 +4464,13 @@ impl Blockchain {
                         }
                         TransactionType::IdentityRevocation => {
                             let did_hash = did_to_hash(&identity_data.did);
+
+                            // Store revoked state in memory
+                            let mut revoked_data = identity_data.clone();
+                            revoked_data.identity_type = "revoked".to_string();
+                            self.identity_registry
+                                .insert(format!("{}_revoked", identity_data.did), revoked_data);
+                            self.identity_registry.remove(&identity_data.did);
 
                             // PHASE 0: Delete from sled storage (identity + indexes)
                             if let Some(ref store) = self.store {
@@ -4658,249 +4502,11 @@ impl Blockchain {
                                 })?;
                             }
                         }
-                        _ => {}
+                        _ => {} // Other transaction types
                     }
                 }
             }
         }
-        Ok(())
-    }
-
-    /// Persist a newly-registered identity to sled (registration only).
-    fn apply_identity_transaction_to_memory(
-        &mut self,
-        tx_type: TransactionType,
-        identity_data: &IdentityTransactionData,
-        block_height: u64,
-    ) -> Result<Option<IdentityTransactionData>> {
-        match tx_type {
-            TransactionType::IdentityRegistration => {
-                // Preserve controlled_nodes if identity already exists.
-                let mut new_identity_data = identity_data.clone();
-                if let Some(existing_identity) = self.identity_registry.get(&identity_data.did) {
-                    new_identity_data.controlled_nodes = existing_identity.controlled_nodes.clone();
-                }
-
-                self.identity_registry
-                    .insert(identity_data.did.clone(), new_identity_data.clone());
-                self.identity_blocks
-                    .insert(identity_data.did.clone(), block_height);
-                Ok(Some(new_identity_data))
-            }
-            TransactionType::IdentityUpdate => {
-                let existing_identity = self
-                    .identity_registry
-                    .get(&identity_data.did)
-                    .cloned()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Cannot update non-existent identity during replay: {}",
-                            identity_data.did
-                        )
-                    })?;
-
-                let mut updated_identity_data = identity_data.clone();
-                updated_identity_data.controlled_nodes = existing_identity.controlled_nodes;
-
-                if existing_identity.public_key != updated_identity_data.public_key {
-                    return Err(anyhow::anyhow!(
-                        "Immutable public key mismatch for identity update: {}",
-                        identity_data.did
-                    ));
-                }
-                if existing_identity.identity_type != updated_identity_data.identity_type {
-                    return Err(anyhow::anyhow!(
-                        "Immutable identity type mismatch for identity update: {}",
-                        identity_data.did
-                    ));
-                }
-
-                self.identity_registry
-                    .insert(identity_data.did.clone(), updated_identity_data.clone());
-                Ok(Some(updated_identity_data))
-            }
-            TransactionType::IdentityRevocation => {
-                let mut revoked_data = identity_data.clone();
-                revoked_data.identity_type = "revoked".to_string();
-                self.identity_registry
-                    .insert(format!("{}_revoked", identity_data.did), revoked_data);
-                self.identity_registry.remove(&identity_data.did);
-                self.identity_blocks.remove(&identity_data.did);
-                Ok(None)
-            }
-            _ => Ok(None),
-        }
-    }
-
-    fn rebuild_identity_projection_from_canonical_replay(
-        &self,
-        store: &dyn BlockchainStore,
-    ) -> Result<()> {
-        use std::collections::BTreeSet;
-
-        store.begin_metadata_write().map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to begin metadata write for identity projection rebuild: {}",
-                e
-            )
-        })?;
-
-        let rebuild_result = (|| -> Result<()> {
-            let mut did_hashes = BTreeSet::new();
-            for height in 0..=self.height {
-                for did_hash in store.get_identities_at_height(height).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to enumerate persisted identities at height {}: {}",
-                        height,
-                        e
-                    )
-                })? {
-                    did_hashes.insert(did_hash);
-                }
-            }
-
-            for did_hash in did_hashes {
-                if let Some(existing_identity) = store.get_identity(&did_hash).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to load persisted identity during projection rebuild: {}",
-                        e
-                    )
-                })? {
-                    store
-                        .delete_identity_owner_index(&existing_identity.owner)
-                        .map_err(|e| {
-                            anyhow::anyhow!(
-                                "Failed to delete stale identity owner index during projection rebuild: {}",
-                                e
-                            )
-                        })?;
-                }
-                store.delete_identity(&did_hash).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to delete stale identity consensus row during projection rebuild: {}",
-                        e
-                    )
-                })?;
-                store.delete_identity_metadata(&did_hash).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to delete stale identity metadata row during projection rebuild: {}",
-                        e
-                    )
-                })?;
-            }
-
-            for (did, identity_data) in &self.identity_registry {
-                if did.ends_with("_revoked") {
-                    continue;
-                }
-                let registered_height = *self.identity_blocks.get(did).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Missing registration height while rebuilding identity projection: {}",
-                        did
-                    )
-                })?;
-                self.persist_identity_registration(store, identity_data, registered_height)?;
-            }
-
-            Ok(())
-        })();
-
-        match rebuild_result {
-            Ok(()) => store.commit_metadata_write().map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to commit metadata write for identity projection rebuild: {}",
-                    e
-                )
-            }),
-            Err(err) => {
-                let _ = store.rollback_block();
-                Err(err)
-            }
-        }
-    }
-
-    fn collect_canonical_wallet_projection_from_blocks(
-        &self,
-    ) -> HashMap<[u8; 32], crate::storage::WalletProjectionRecord> {
-        let mut projection = HashMap::new();
-        for block in &self.blocks {
-            for tx in &block.transactions {
-                if !matches!(
-                    tx.transaction_type,
-                    TransactionType::WalletRegistration | TransactionType::WalletUpdate
-                ) {
-                    continue;
-                }
-                if let Some(wallet_data) = tx.wallet_data() {
-                    projection.insert(
-                        wallet_data.wallet_id.as_array(),
-                        crate::storage::WalletProjectionRecord {
-                            wallet_data: wallet_data.clone(),
-                            committed_at_height: block.height(),
-                        },
-                    );
-                }
-            }
-        }
-        projection
-    }
-
-    fn apply_wallet_projection_records(
-        &mut self,
-        projection: &HashMap<[u8; 32], crate::storage::WalletProjectionRecord>,
-    ) {
-        self.wallet_registry.clear();
-        self.wallet_blocks.clear();
-        for (wallet_id, record) in projection {
-            let wallet_id_hex = hex::encode(wallet_id);
-            self.wallet_registry
-                .insert(wallet_id_hex.clone(), record.wallet_data.clone());
-            self.wallet_blocks
-                .insert(wallet_id_hex, record.committed_at_height);
-        }
-    }
-
-    fn restore_wallet_projection_from_startup_state(
-        &mut self,
-        store: &dyn BlockchainStore,
-    ) -> Result<()> {
-        let expected_projection = self.collect_canonical_wallet_projection_from_blocks();
-        let stored_projection: HashMap<[u8; 32], crate::storage::WalletProjectionRecord> = store
-            .iter_wallet_projections()
-            .map_err(|e| anyhow::anyhow!("Failed to iterate wallet projection tree: {}", e))?
-            .collect();
-
-        if stored_projection == expected_projection {
-            self.apply_wallet_projection_records(&stored_projection);
-            info!(
-                "Loaded {} wallet projections from sled startup cache",
-                stored_projection.len()
-            );
-            return Ok(());
-        }
-
-        if stored_projection.is_empty() && !expected_projection.is_empty() {
-            info!(
-                "Wallet projection tree missing {} committed wallets at startup; rebuilding from canonical replay",
-                expected_projection.len()
-            );
-        } else if stored_projection != expected_projection {
-            warn!(
-                "Wallet projection tree diverged from canonical replay (stored={}, expected={}); rebuilding projection from committed blocks",
-                stored_projection.len(),
-                expected_projection.len()
-            );
-        }
-
-        self.apply_wallet_projection_records(&expected_projection);
-
-        let replacement_records: Vec<_> = expected_projection.into_iter().collect();
-        store
-            .replace_wallet_projections(&replacement_records)
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to rebuild wallet projection tree from replay: {}", e)
-            })?;
-
         Ok(())
     }
 
@@ -5166,109 +4772,44 @@ impl Blockchain {
         }
     }
 
-    const TREASURY_GENESIS_SEED: &'static [u8] = b"ZHTP-GENESIS-TREASURY-SEED-V1";
-    const TREASURY_KEY_DOMAIN: &'static [u8] = b"ZHTP-TREASURY-V1";
-    const TREASURY_SEED_COMMITMENT_DOMAIN: &'static [u8] = b"ZHTP-TREASURY-SEED-COMMITMENT-V1";
-
-    /// Deterministic DAO treasury wallet ID used across genesis/bootstrap paths.
-    pub fn deterministic_treasury_wallet_id() -> crate::types::Hash {
-        crate::types::Hash::new(crate::types::hash::blake3_hash(b"SOV_DAO_TREASURY_V1").as_array())
-    }
-
-    fn deterministic_treasury_public_key() -> Vec<u8> {
-        let mut entropy =
-            Vec::with_capacity(Self::TREASURY_GENESIS_SEED.len() + Self::TREASURY_KEY_DOMAIN.len());
-        entropy.extend_from_slice(Self::TREASURY_GENESIS_SEED);
-        entropy.extend_from_slice(Self::TREASURY_KEY_DOMAIN);
-        let (public_key, _) = lib_crypto::post_quantum::dilithium5_keypair_from_entropy(&entropy);
-        public_key
-    }
-
-    fn deterministic_treasury_seed_commitment() -> crate::types::Hash {
-        let mut material = Vec::with_capacity(
-            Self::TREASURY_GENESIS_SEED.len() + Self::TREASURY_SEED_COMMITMENT_DOMAIN.len(),
-        );
-        material.extend_from_slice(Self::TREASURY_GENESIS_SEED);
-        material.extend_from_slice(Self::TREASURY_SEED_COMMITMENT_DOMAIN);
-        crate::types::hash::blake3_hash(&material)
-    }
-
-    fn canonical_treasury_wallet_data(
-        created_at: u64,
-    ) -> crate::transaction::WalletTransactionData {
-        crate::transaction::WalletTransactionData {
-            wallet_id: Self::deterministic_treasury_wallet_id(),
-            wallet_type: "DAO".to_string(),
-            wallet_name: "DAO Treasury".to_string(),
-            alias: None,
-            public_key: Self::deterministic_treasury_public_key(),
-            owner_identity_id: None,
-            seed_commitment: Self::deterministic_treasury_seed_commitment(),
-            created_at,
-            registration_fee: 0,
-            capabilities: 0,
-            initial_balance: 0,
-        }
-    }
-
-    /// Returns true if a wallet exists in canonical history, either via genesis state
-    /// (`wallet_blocks[id] = 0`) or via a committed WalletRegistration transaction.
-    pub fn wallet_exists_in_canonical_history(&self, wallet_id: &crate::types::Hash) -> bool {
-        let wallet_id_hex = hex::encode(wallet_id.as_bytes());
-        if self.wallet_blocks.get(&wallet_id_hex).copied() == Some(0) {
-            return true;
-        }
-
-        self.blocks.iter().any(|block| {
-            block.transactions.iter().any(|tx| {
-                tx.wallet_data()
-                    .map(|wallet_data| wallet_data.wallet_id == *wallet_id)
-                    .unwrap_or(false)
-            })
-        })
-    }
-
-    /// Return wallets present in local state but absent from committed block history.
-    pub fn collect_noncanonical_wallets(&self) -> Vec<crate::transaction::WalletTransactionData> {
-        let mut wallets: Vec<_> = self
-            .wallet_registry
-            .values()
-            .filter(|wallet| !self.wallet_exists_in_canonical_history(&wallet.wallet_id))
-            .cloned()
-            .collect();
-        wallets.sort_by_key(|wallet| hex::encode(wallet.wallet_id.as_bytes()));
-        wallets
-    }
-
-    /// Returns true when the configured DAO treasury wallet exists in committed block history.
-    pub fn dao_treasury_wallet_is_canonical(&self) -> bool {
-        self.dao_treasury_wallet_id
-            .as_ref()
-            .and_then(|wallet_id_hex| self.wallet_registry.get(wallet_id_hex))
-            .map(|wallet| self.wallet_exists_in_canonical_history(&wallet.wallet_id))
-            .unwrap_or(false)
-    }
-
-    /// Ensure the deterministic DAO treasury wallet exists as canonical genesis state.
+    /// Ensure the deterministic DAO treasury wallet exists in the registry.
     ///
-    /// This normalizes older snapshots that carried a legacy `"treasury"` wallet with
-    /// empty public key / zero seed commitment, and marks the treasury as genesis-backed
-    /// by recording `wallet_blocks[id] = 0`.
+    /// Uses `blake3(b"SOV_DAO_TREASURY_V1")` as the wallet ID so every node
+    /// derives the same identity independently.  Idempotent: a second call is a
+    /// no-op when the wallet is already present and linked.
     fn ensure_treasury_wallet(&mut self) {
-        let wallet_id = Self::deterministic_treasury_wallet_id();
-        let wallet_id_hex = hex::encode(wallet_id.as_bytes());
-        let created_at = self
-            .wallet_registry
-            .get(&wallet_id_hex)
-            .map(|wallet| wallet.created_at)
-            .unwrap_or_else(|| self.get_genesis_timestamp());
-        let wallet_data = Self::canonical_treasury_wallet_data(created_at);
-        self.wallet_registry
-            .insert(wallet_id_hex.clone(), wallet_data);
-        self.wallet_blocks.insert(wallet_id_hex.clone(), 0);
+        // Deterministic ID — identical on every node.
+        let wallet_id_bytes = crate::types::hash::blake3_hash(b"SOV_DAO_TREASURY_V1").as_array();
+        let wallet_id_hex = hex::encode(wallet_id_bytes);
 
-        self.dao_treasury_wallet_id = Some(wallet_id_hex);
-        info!("🏦 DAO treasury wallet initialized as canonical genesis DAO wallet");
+        // Insert into registry if not present.
+        if !self.wallet_registry.contains_key(&wallet_id_hex) {
+            let wallet_data = crate::transaction::WalletTransactionData {
+                wallet_id: crate::types::Hash::new(wallet_id_bytes),
+                wallet_type: "treasury".to_string(),
+                wallet_name: "DAO Treasury".to_string(),
+                alias: None,
+                // public_key is intentionally empty: the DAO treasury wallet uses the
+                // balance model (token.balances keyed by wallet_key_for_sov(wallet_id)),
+                // not the UTXO model. UTXO-based treasury paths (get_dao_treasury_utxos,
+                // execute_dao_proposal) are legacy and do not apply to this wallet.
+                public_key: vec![],
+                owner_identity_id: None,
+                seed_commitment: crate::types::Hash::zero(),
+                created_at: 0,
+                registration_fee: 0,
+                capabilities: 0,
+                initial_balance: 0,
+            };
+            self.wallet_registry
+                .insert(wallet_id_hex.clone(), wallet_data);
+        }
+
+        // Link as the active treasury wallet if not already set.
+        if self.dao_treasury_wallet_id.is_none() {
+            self.dao_treasury_wallet_id = Some(wallet_id_hex);
+            info!("🏦 DAO treasury wallet initialized (deterministic bootstrap)");
+        }
     }
 
     // =========================================================================
@@ -5690,11 +5231,11 @@ impl Blockchain {
     }
 
     /// Migrate legacy SOV balances keyed by public-key key_id into Primary wallet_id entries.
-    fn migrate_sov_key_balances_to_wallets(&mut self) -> LegacyFixupReport {
+    fn migrate_sov_key_balances_to_wallets(&mut self) {
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
         let token = match self.token_contracts.get_mut(&sov_token_id) {
             Some(token) => token,
-            None => return LegacyFixupReport::default(),
+            None => return,
         };
 
         // Map signer key_id -> primary wallet_id
@@ -5710,7 +5251,6 @@ impl Blockchain {
             }
         }
 
-        let mut migrated_entities = 0usize;
         let mut migrated_total: u64 = 0;
         let balances: Vec<(PublicKey, u64)> = token
             .balances
@@ -5733,7 +5273,6 @@ impl Blockchain {
                 token
                     .balances
                     .insert(wallet_key, existing.saturating_add(bal));
-                migrated_entities += 1;
                 migrated_total = migrated_total.saturating_add(bal);
             }
         }
@@ -5744,7 +5283,6 @@ impl Blockchain {
                 migrated_total
             );
         }
-        LegacyFixupReport::new(migrated_entities, migrated_total as u128)
     }
 
     /// Resolve a full public key from a key_id by searching wallet and identity registries.
@@ -5797,16 +5335,79 @@ impl Blockchain {
         0
     }
 
+    /// Collect SOV backfill entries from wallet_registry for wallets missing token balances.
+    ///
+    /// Returns a list of (public_key_bytes, amount, wallet_id) that should be minted
+    /// via TokenMint transactions in a migration block.
+    pub fn collect_sov_backfill_entries(&self) -> Vec<([u8; 32], u64, String)> {
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let token_opt = self.token_contracts.get(&sov_token_id);
+
+        let mut entries: Vec<([u8; 32], u64, String)> = Vec::new();
+        for (wallet_id, wallet) in &self.wallet_registry {
+            // Only backfill wallets that are already registered on-chain.
+            // This prevents minting to wallets that only exist in local state.
+            let is_on_chain = self
+                .wallet_blocks
+                .get(wallet_id)
+                .map(|h| *h <= self.height)
+                .unwrap_or(false);
+            if !is_on_chain {
+                continue;
+            }
+            if wallet.initial_balance == 0 {
+                continue;
+            }
+            let wallet_key = match Self::wallet_id_bytes(wallet_id) {
+                Some(bytes) => bytes,
+                None => {
+                    warn!(
+                        "Skipping SOV backfill for wallet {}: invalid wallet_id",
+                        &wallet_id[..16.min(wallet_id.len())]
+                    );
+                    continue;
+                }
+            };
+
+            let recipient = Self::wallet_key_for_sov(&wallet_key);
+            // Prefer Sled token_balances tree (authoritative when executor is active)
+            // over in-memory token_contracts.balances, which is never updated after
+            // executor-path TokenMint transactions. Using stale in-memory balances
+            // causes repeat minting on every restart.
+            let current_balance: u64 = if let Some(store) = self.get_store() {
+                let sov_storage_token_id = crate::storage::TokenId(sov_token_id);
+                let addr = crate::storage::Address::new(wallet_key);
+                store
+                    .get_token_balance(&sov_storage_token_id, &addr)
+                    .unwrap_or(0) as u64
+            } else {
+                token_opt
+                    .map(|token| token.balance_of(&recipient))
+                    .unwrap_or(0)
+            };
+            // Only backfill wallets that have NEVER received any SOV (balance == 0).
+            // Wallets with a positive balance already have their initial SOV (either from
+            // process_wallet_transactions, a previous backfill, or incoming transfers).
+            // Backfilling wallets that merely spent below initial_balance would inflate them.
+            if current_balance > 0 {
+                continue;
+            }
+            let deficit = wallet.initial_balance;
+            entries.push((wallet_key, deficit, wallet_id.clone()));
+        }
+        entries
+    }
+
     /// Scan all blocks for duplicate TOKEN_BACKFILL_V1 TokenMint transactions and
     /// correct any inflated Sled balances. Each restart that triggered the old
     /// backfill code incorrectly minted an extra `initial_balance` worth of SOV.
     /// This function detects duplicates and subtracts the excess.
     ///
     /// Safe to call on every startup — no-ops when store unavailable or no duplicates found.
-    fn repair_backfill_inflation(&self) -> LegacyFixupReport {
+    pub fn repair_backfill_inflation(&self) -> usize {
         let store = match self.get_store() {
             Some(s) => s,
-            None => return LegacyFixupReport::default(),
+            None => return 0,
         };
 
         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
@@ -5912,21 +5513,14 @@ impl Blockchain {
             }
         }
 
-        let corrected_entities = corrections.len();
-        let corrected_total = corrections
-            .iter()
-            .map(|(_, _, corrected)| *corrected)
-            .sum::<u128>();
-        if corrected_entities > 0 {
+        let count = corrections.len();
+        if count > 0 {
             match store.force_set_token_balances(&corrections) {
-                Ok(_) => info!(
-                    "🔧 Repaired backfill inflation for {} wallets",
-                    corrected_entities
-                ),
+                Ok(_) => info!("🔧 Repaired backfill inflation for {} wallets", count),
                 Err(e) => warn!("⚠️ Failed to write backfill corrections: {}", e),
             }
         }
-        LegacyFixupReport::new(corrected_entities, corrected_total)
+        count
     }
 
     /// Register a new wallet on the blockchain
@@ -5956,10 +5550,46 @@ impl Blockchain {
             format!("Wallet registration for {}", wallet_data.wallet_name).into_bytes(),
         );
 
-        // Queue the wallet registration for inclusion in the next block.
-        // Canonical wallet registry updates and initial-balance minting happen during
-        // process_wallet_transactions() when the registration is actually committed.
+        // Add to pending transactions for inclusion in next block
+        // Wallet registration from node startup is a system operation - bypass signature validation
+        // This is consistent with how genesis funding directly inserts into wallet_registry
         self.add_system_transaction(registration_tx.clone())?;
+
+        // Store in wallet registry immediately for queries
+        self.wallet_registry
+            .insert(wallet_id_str.clone(), wallet_data.clone());
+        self.wallet_blocks
+            .insert(wallet_id_str.clone(), self.height + 1);
+
+        // Mint SOV immediately in-memory so the balance is available regardless of whether
+        // the WalletRegistration tx ever lands in a block (e.g. when consensus is stalled).
+        // process_wallet_transactions() guards with `balance_of > 0` so it will skip
+        // wallets that are already credited, preventing double-minting on block commit.
+        if wallet_data.initial_balance > 0 {
+            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+            self.ensure_sov_token_contract();
+            let mut wallet_id_bytes_arr = [0u8; 32];
+            wallet_id_bytes_arr.copy_from_slice(wallet_data.wallet_id.as_bytes());
+            let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes_arr);
+            if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
+                if token.balance_of(&recipient_pk) == 0 {
+                    if let Err(e) = token.mint(&recipient_pk, wallet_data.initial_balance) {
+                        warn!(
+                            "register_wallet: failed to mint {} SOV for {}: {}",
+                            wallet_data.initial_balance,
+                            &wallet_id_str[..16.min(wallet_id_str.len())],
+                            e
+                        );
+                    } else {
+                        info!(
+                            "💰 register_wallet: minted {} SOV for wallet {} (in-memory)",
+                            wallet_data.initial_balance,
+                            &wallet_id_str[..16.min(wallet_id_str.len())]
+                        );
+                    }
+                }
+            }
+        }
 
         Ok(registration_tx.hash())
     }
@@ -6051,21 +5681,11 @@ impl Blockchain {
                         .insert(wallet_id_str.clone(), wallet_data.clone());
                     self.wallet_blocks
                         .insert(wallet_id_str.clone(), block.height());
-                    if let Some(store) = &self.store {
-                        store.put_wallet_projection(
-                            &wallet_data.wallet_id.as_array(),
-                            &crate::storage::WalletProjectionRecord {
-                                wallet_data: wallet_data.clone(),
-                                committed_at_height: block.height(),
-                            },
-                        )?;
-                    }
 
                     // Mint initial SOV balance for new wallets (block-authoritative).
                     // This ensures the token contract is the source of truth and persists in the store.
                     if transaction.transaction_type == TransactionType::WalletRegistration
                         && wallet_data.initial_balance > 0
-                        && (!self.has_executor() || self.store.is_none())
                     {
                         let sov_token_id = crate::contracts::utils::generate_lib_token_id();
                         self.ensure_sov_token_contract();
@@ -6968,46 +6588,26 @@ impl Blockchain {
                         .try_into()
                         .map_err(|_| anyhow::anyhow!("TokenTransfer amount exceeds u64"))?;
 
-                    // Executor-backed live processing and canonical replay must derive
-                    // transfer fees from the protocol fee sink, not from legacy treasury
-                    // bookkeeping. Keep the legacy treasury path only for non-executor
-                    // live blocks until that path is retired.
-                    let treasury_pk_opt: Option<PublicKey> = if self.has_executor()
-                        || self.store.is_none()
-                    {
-                        let zero_address = crate::storage::Address::new([0u8; 32]);
-                        let fee_sink = self
-                            .executor
-                            .as_ref()
-                            .map(|executor| *executor.fee_model().protocol_params.fee_sink_address())
-                            .unwrap_or(zero_address);
-                        if fee_sink == zero_address {
-                            None
-                        } else {
-                            Some(Self::wallet_key_for_sov(fee_sink.as_bytes()))
-                        }
-                    } else {
-                        self.dao_treasury_wallet_id
-                            .as_ref()
-                            .and_then(|hex_id| hex::decode(hex_id).ok())
-                            .and_then(|bytes| {
-                                if bytes.len() == 32 {
-                                    let mut arr = [0u8; 32];
-                                    arr.copy_from_slice(&bytes);
-                                    Some(Self::wallet_key_for_sov(&arr))
-                                } else {
-                                    None
-                                }
-                            })
-                    };
-                    let fee_rate_bps = if treasury_pk_opt.is_some() {
-                        crate::contracts::tokens::constants::SOV_FEE_RATE_BPS
-                    } else {
-                        0
-                    };
+                    // Compute 1% protocol fee and resolve DAO treasury key before
+                    // any mutable borrows are taken on token_contracts.
+                    let fee_rate_bps = crate::contracts::tokens::constants::SOV_FEE_RATE_BPS;
                     let fee_amount: u64 =
                         (amount_u64 as u128 * fee_rate_bps as u128 / 10_000) as u64;
                     let net_amount: u64 = amount_u64.saturating_sub(fee_amount);
+
+                    let treasury_pk_opt: Option<PublicKey> = self
+                        .dao_treasury_wallet_id
+                        .as_ref()
+                        .and_then(|hex_id| hex::decode(hex_id).ok())
+                        .and_then(|bytes| {
+                            if bytes.len() == 32 {
+                                let mut arr = [0u8; 32];
+                                arr.copy_from_slice(&bytes);
+                                Some(Self::wallet_key_for_sov(&arr))
+                            } else {
+                                None
+                            }
+                        });
 
                     let tx_hash_obj = transaction.hash();
                     let tx_hash_bytes = tx_hash_obj.as_bytes();
@@ -12776,11 +12376,7 @@ impl Blockchain {
         // Backfill SOV balances for wallets registered before the in-memory credit was added.
         blockchain.ensure_sov_token_contract();
         blockchain.ensure_treasury_wallet();
-        let migrate_report = blockchain.migrate_sov_key_balances_to_wallets();
-        Self::log_legacy_fixup_summary(
-            "load_from_file",
-            &[("migrate_sov_key_balances_to_wallets", migrate_report)],
-        );
+        blockchain.migrate_sov_key_balances_to_wallets();
 
         // One-time CBE backfill for legacy v6 blockchain.dat files that predate persisted
         // cbe_token state. Once such a node saves again, it will persist as v7.
@@ -12788,12 +12384,33 @@ impl Blockchain {
             info!("CBE token not found in storage — running one-time backfill from genesis allocation");
             blockchain.initialize_cbe_token_genesis();
         }
-        // Detect legacy wallets whose snapshot balance is below initial_balance, but do not
-        // mint the deficit here. Startup loading must not create new SOV outside committed
-        // TokenMint transactions, even when older snapshot files contain under-scaled values.
+        let backfill_entries = blockchain.collect_sov_backfill_entries();
+        if !backfill_entries.is_empty() {
+            info!(
+                "Backfilling SOV balances for {} wallets",
+                backfill_entries.len()
+            );
+            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+            for (wallet_id_bytes, amount, wallet_id) in &backfill_entries {
+                let recipient_pk = Self::wallet_key_for_sov(wallet_id_bytes);
+                if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+                    if let Ok(()) = token.mint(&recipient_pk, *amount) {
+                        info!(
+                            "Backfill: credited {} SOV to wallet {}",
+                            amount,
+                            &wallet_id[..16.min(wallet_id.len())]
+                        );
+                    }
+                }
+            }
+        }
+
+        // Fix wallets that were already minted with the wrong (un-scaled) balance.
+        // If a wallet has initial_balance=X*10^8 but token balance is X (un-scaled),
+        // mint the difference to bring it up to the correct amount.
         {
             let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-            let mut underfunded = 0usize;
+            let mut corrections = 0usize;
             let wallet_entries: Vec<(String, [u8; 32], u64)> = blockchain
                 .wallet_registry
                 .iter()
@@ -12810,20 +12427,26 @@ impl Blockchain {
                 if let Some(token) = blockchain.token_contracts.get(&sov_token_id) {
                     let current = token.balance_of(&recipient_pk);
                     if current > 0 && current < *expected {
-                        underfunded += 1;
-                        warn!(
-                            "Legacy snapshot wallet {} is underfunded in blockchain.dat: current={}, expected={}. No startup mint performed.",
-                            &wallet_id[..16.min(wallet_id.len())],
-                            current,
-                            expected
-                        );
+                        let deficit = expected - current;
+                        if let Some(token_mut) = blockchain.token_contracts.get_mut(&sov_token_id) {
+                            if let Ok(()) = token_mut.mint(&recipient_pk, deficit) {
+                                corrections += 1;
+                                info!(
+                                    "Corrected wallet {} balance: {} -> {} atomic units (+{})",
+                                    &wallet_id[..16.min(wallet_id.len())],
+                                    current,
+                                    expected,
+                                    deficit
+                                );
+                            }
+                        }
                     }
                 }
             }
-            if underfunded > 0 {
-                warn!(
-                    "Detected {} underfunded legacy wallet balances in blockchain.dat; canonical recovery requires block-based migration, not startup minting",
-                    underfunded
+            if corrections > 0 {
+                info!(
+                    "Corrected {} wallet balances from legacy un-scaled values",
+                    corrections
                 );
             }
         }
@@ -14142,13 +13765,8 @@ mod replay_contract_execution_tests {
 mod store_backed_blockchain_tests {
     use super::*;
     use crate::block::{Block, BlockHeader};
-    use crate::storage::{derive_address_from_public_key, did_to_hash, BlockchainStore, SledStore};
-    use crate::transaction::{
-        IdentityTransactionData, TokenMintData, TokenTransferData, Transaction,
-        WalletTransactionData,
-    };
+    use crate::storage::SledStore;
     use crate::types::{Difficulty, Hash};
-    use lib_crypto::types::signatures::{Signature, SignatureAlgorithm};
 
     fn make_header(height: u64, prev_hash: Hash) -> BlockHeader {
         let mut hash_bytes = [0u8; 32];
@@ -14168,113 +13786,6 @@ mod store_backed_blockchain_tests {
             block_size: 0,
             fee_model_version: 2,
         }
-    }
-
-    fn make_block(height: u64, prev_hash: Hash, transactions: Vec<Transaction>) -> Block {
-        let mut header = make_header(height, prev_hash);
-        header.transaction_count = transactions.len() as u32;
-        Block::new(header, transactions)
-    }
-
-    fn identity_signature(public_key: &[u8], timestamp: u64) -> Signature {
-        Signature {
-            signature: vec![0xAA; 64],
-            public_key: PublicKey::new(public_key.to_vec()),
-            algorithm: SignatureAlgorithm::Dilithium5,
-            timestamp,
-        }
-    }
-
-    fn identity_data(did: &str, pk_fill: u8, display_name: &str) -> IdentityTransactionData {
-        IdentityTransactionData {
-            did: did.to_string(),
-            display_name: display_name.to_string(),
-            public_key: vec![pk_fill; 32],
-            ownership_proof: vec![],
-            identity_type: "citizen".to_string(),
-            did_document_hash: Hash::new([pk_fill; 32]),
-            created_at: 1_700_000_000,
-            registration_fee: 0,
-            dao_fee: 0,
-            controlled_nodes: vec![],
-            owned_wallets: vec![],
-        }
-    }
-
-    fn identity_registration_tx(identity: IdentityTransactionData) -> Transaction {
-        Transaction::new_identity_registration(
-            identity.clone(),
-            vec![],
-            identity_signature(&identity.public_key, identity.created_at),
-            Vec::new(),
-        )
-    }
-
-    fn identity_revocation_tx(did: &str) -> Transaction {
-        Transaction::new_identity_revocation(
-            did.to_string(),
-            Vec::new(),
-            0,
-            identity_signature(&[0xEF; 32], 1_700_000_001),
-            Vec::new(),
-        )
-    }
-
-    fn wallet_data(wallet_id_fill: u8, pk_fill: u8, name: &str) -> WalletTransactionData {
-        WalletTransactionData {
-            wallet_id: Hash::new([wallet_id_fill; 32]),
-            wallet_type: "Primary".to_string(),
-            wallet_name: name.to_string(),
-            alias: None,
-            public_key: vec![pk_fill; 32],
-            owner_identity_id: Some(Hash::new([pk_fill.wrapping_add(1); 32])),
-            seed_commitment: Hash::new([pk_fill.wrapping_add(2); 32]),
-            created_at: 1_700_000_000,
-            registration_fee: 0,
-            capabilities: 0,
-            initial_balance: 0,
-        }
-    }
-
-    fn wallet_registration_tx(wallet: WalletTransactionData) -> Transaction {
-        Transaction::new_wallet_registration(
-            wallet.clone(),
-            Vec::new(),
-            identity_signature(&wallet.public_key, wallet.created_at),
-            Vec::new(),
-        )
-    }
-
-    fn token_mint_tx(to_wallet_id: [u8; 32], amount: u128) -> Transaction {
-        Transaction::new_token_mint(
-            TokenMintData {
-                token_id: crate::contracts::utils::generate_lib_token_id(),
-                to: to_wallet_id,
-                amount,
-            },
-            identity_signature(&[0xAC; 32], 1_700_000_002),
-            b"CANONICAL_TEST_MINT".to_vec(),
-        )
-    }
-
-    fn token_transfer_tx(
-        sender_public_key: &[u8],
-        from_wallet_id: [u8; 32],
-        to_wallet_id: [u8; 32],
-        amount: u128,
-        nonce: u64,
-    ) -> Transaction {
-        Transaction::new_token_transfer(
-            TokenTransferData {
-                token_id: crate::contracts::utils::generate_lib_token_id(),
-                from: from_wallet_id,
-                to: to_wallet_id,
-                amount,
-                nonce,
-            },
-            identity_signature(sender_public_key, 1_700_000_003),
-            b"CANONICAL_TEST_TRANSFER".to_vec(),
-        )
     }
 
     /// new_with_store() + add_block(genesis) + add_block(block 1) must succeed
@@ -14320,184 +13831,12 @@ mod store_backed_blockchain_tests {
     }
 
     #[test]
-    fn test_legacy_fixup_summary_includes_gate_and_counts() {
-        let summary = Blockchain::format_legacy_fixup_summary(
-            "load_from_store",
-            &[
-                ("repair_backfill_inflation", LegacyFixupReport::new(2, 500_000_000_000)),
-                ("migrate_sov_key_balances_to_wallets", LegacyFixupReport::default()),
-            ],
-        );
-
-        assert!(summary.contains("path=load_from_store"));
-        assert!(summary.contains("zero firings for 14 days across target environments"));
-        assert!(summary.contains("repair_backfill_inflation={fired:true, entities:2, raw_units:500000000000}"));
-        assert!(summary.contains("migrate_sov_key_balances_to_wallets={fired:false, entities:0, raw_units:0}"));
-    }
-
-    #[test]
-    fn test_load_from_store_rebuilds_missing_identity_projection() {
-        let temp = tempfile::tempdir().unwrap();
-        let store_path = temp.path().join("identity_rebuild_store");
-        let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
-        let identity = identity_data("did:zhtp:replay-projection", 0x11, "Replay Projection");
-        let did_hash = did_to_hash(&identity.did);
-        let owner = derive_address_from_public_key(&identity.public_key);
-
-        store.begin_block(0).unwrap();
-        store
-            .append_block(&Block::new(
-                make_header(0, Hash::default()),
-                vec![identity_registration_tx(identity.clone())],
-            ))
-            .unwrap();
-        store.commit_block().unwrap();
-
-        store.begin_metadata_write().unwrap();
-        store.delete_identity(&did_hash).unwrap();
-        store.delete_identity_metadata(&did_hash).unwrap();
-        store.delete_identity_owner_index(&owner).unwrap();
-        store.commit_metadata_write().unwrap();
-
-        let reloaded = Blockchain::load_from_store(store.clone())
-            .expect("load_from_store should succeed")
-            .expect("blockchain should reload");
-
-        assert!(reloaded.identity_registry.contains_key(&identity.did));
-        assert_eq!(reloaded.identity_blocks.get(&identity.did), Some(&0));
-        assert!(store.get_identity(&did_hash).unwrap().is_some());
-        assert!(store.get_identity_metadata(&did_hash).unwrap().is_some());
-        assert_eq!(store.get_identity_by_owner(&owner).unwrap(), Some(did_hash));
-    }
-
-    #[test]
-    fn test_load_from_store_replay_removes_stale_revoked_identity_projection() {
-        let temp = tempfile::tempdir().unwrap();
-        let store_path = temp.path().join("identity_revocation_store");
-        let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
-        let identity = identity_data("did:zhtp:revoked-projection", 0x21, "Revoked Projection");
-        let did_hash = did_to_hash(&identity.did);
-        let owner = derive_address_from_public_key(&identity.public_key);
-
-        store.begin_block(0).unwrap();
-        store
-            .append_block(&Block::new(
-                make_header(0, Hash::default()),
-                vec![identity_registration_tx(identity.clone())],
-            ))
-            .unwrap();
-        store.commit_block().unwrap();
-
-        store.begin_block(1).unwrap();
-        store
-            .append_block(&Block::new(
-                make_header(1, Hash::default()),
-                vec![identity_revocation_tx(&identity.did)],
-            ))
-            .unwrap();
-        store.commit_block().unwrap();
-        assert!(
-            store.get_block_by_height(1).unwrap().is_some(),
-            "revocation block must deserialize before projection rebuild"
-        );
-
-        // Simulate stale projection state surviving after revocation.
-        store.begin_metadata_write().unwrap();
-        let stale_consensus = IdentityConsensus {
-            did_hash,
-            owner,
-            public_key_hash: crate::types::hash::blake3_hash(&identity.public_key).as_array(),
-            did_document_hash: identity.did_document_hash.as_array(),
-            seed_commitment: None,
-            identity_type: IdentityType::from_str(&identity.identity_type),
-            status: IdentityStatus::Active,
-            version: 1,
-            created_at: identity.created_at,
-            registered_at_height: 0,
-            registration_fee: identity.registration_fee,
-            dao_fee: identity.dao_fee,
-            controlled_node_count: 0,
-            owned_wallet_count: 0,
-            attribute_count: 0,
-        };
-        let stale_metadata = IdentityMetadata {
-            did: identity.did.clone(),
-            display_name: identity.display_name.clone(),
-            public_key: identity.public_key.clone(),
-            ownership_proof: vec![],
-            controlled_nodes: vec![],
-            owned_wallets: vec![],
-            attributes: Vec::new(),
-        };
-        store.put_identity(&did_hash, &stale_consensus).unwrap();
-        store
-            .put_identity_metadata(&did_hash, &stale_metadata)
-            .unwrap();
-        store.put_identity_owner_index(&owner, &did_hash).unwrap();
-        store.commit_metadata_write().unwrap();
-
-        let reloaded = Blockchain::load_from_store(store.clone())
-            .expect("load_from_store should succeed")
-            .expect("blockchain should reload");
-
-        assert!(!reloaded.identity_registry.contains_key(&identity.did));
-        assert!(store.get_identity(&did_hash).unwrap().is_none());
-        assert!(store.get_identity_metadata(&did_hash).unwrap().is_none());
-        assert_eq!(store.get_identity_by_owner(&owner).unwrap(), None);
-    }
-
-    #[test]
     fn test_restart_runtime_state_skips_cbe_genesis() {
         let blockchain = Blockchain::new_runtime_state();
         assert!(
             !blockchain.cbe_token.is_initialized(),
             "restart constructor must not run CBE genesis side effects"
         );
-    }
-
-    #[test]
-    fn test_load_from_store_replays_token_state_without_snapshot_or_contract_blob() {
-        let temp = tempfile::tempdir().unwrap();
-        let store_path = temp.path().join("token_replay_store");
-        let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
-
-        let recipient = wallet_data(0x91, 0x92, "Token Recipient");
-        let recipient_wallet_id: [u8; 32] = recipient.wallet_id.as_bytes().try_into().unwrap();
-        let mint_amount = 777u128;
-
-        store.begin_block(0).unwrap();
-        store
-            .append_block(&Block::new(
-                make_header(0, Hash::default()),
-                vec![
-                    wallet_registration_tx(recipient.clone()),
-                    token_mint_tx(recipient_wallet_id, mint_amount),
-                ],
-            ))
-            .unwrap();
-        store.commit_block().unwrap();
-
-        assert!(
-            store.get_token_state_snapshot().unwrap().is_none(),
-            "test fixture must not rely on token snapshots"
-        );
-        let sov_token_id = crate::storage::TokenId::new(crate::contracts::utils::generate_lib_token_id());
-        assert!(
-            store.get_token_contract(&sov_token_id).unwrap().is_none(),
-            "test fixture must not rely on token contract blobs"
-        );
-
-        let reloaded = Blockchain::load_from_store(store)
-            .expect("load_from_store should succeed")
-            .expect("store should contain a chain");
-
-        let token = reloaded
-            .token_contracts
-            .get(&crate::contracts::utils::generate_lib_token_id())
-            .expect("SOV token contract should be reconstructed from block replay");
-        let recipient_key = Blockchain::wallet_key_for_sov(&recipient_wallet_id);
-        assert_eq!(token.balance_of(&recipient_key) as u128, mint_amount);
-        assert_eq!(token.total_supply as u128, mint_amount);
     }
 
     #[tokio::test]
@@ -14520,595 +13859,6 @@ mod store_backed_blockchain_tests {
         assert!(
             reloaded.cbe_token.is_initialized(),
             "restart reconstruction must restore CBE state even without constructor genesis"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_store_restores_pending_wallet_registration() {
-        let temp = tempfile::tempdir().unwrap();
-        let store_path = temp.path().join("pending_restart_store");
-        let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
-
-        let mut bc = Blockchain::new_with_store(store.clone()).unwrap();
-        let genesis_header = make_header(0, Hash::default());
-        let genesis = Block::new(genesis_header, vec![]);
-        bc.add_block(genesis)
-            .await
-            .expect("genesis should apply before restart recovery");
-
-        let wallet_id = Hash::new([0x61; 32]);
-        let owner_identity_id = Hash::new([0x62; 32]);
-        let wallet_data = crate::transaction::WalletTransactionData {
-            wallet_id,
-            wallet_type: "primary".to_string(),
-            wallet_name: "Pending Wallet".to_string(),
-            alias: Some("pending".to_string()),
-            public_key: vec![0x63; 32],
-            owner_identity_id: Some(owner_identity_id),
-            seed_commitment: Hash::new([0x64; 32]),
-            created_at: 1_700_000_000,
-            registration_fee: 0,
-            capabilities: 0,
-            initial_balance: 100,
-        };
-
-        let queued_hash = bc
-            .register_wallet(wallet_data.clone())
-            .expect("wallet registration should queue");
-
-        let reloaded = Blockchain::load_from_store(store)
-            .expect("load_from_store should succeed")
-            .expect("store should contain runtime state");
-
-        assert_eq!(
-            reloaded.pending_transactions.len(),
-            1,
-            "queued wallet registration should survive restart"
-        );
-        assert_eq!(
-            reloaded.pending_transactions[0].hash(),
-            queued_hash,
-            "restored pending transaction hash must match queued tx"
-        );
-        assert!(
-            reloaded
-                .get_wallet(&hex::encode(wallet_id.as_bytes()))
-                .is_none(),
-            "wallet must not become canonical before block inclusion"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_committed_wallet_registration_writes_wallet_projection() {
-        let temp = tempfile::tempdir().unwrap();
-        let store_path = temp.path().join("wallet_projection_store");
-        let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
-
-        let mut blockchain = Blockchain::new_with_store(store.clone()).unwrap();
-        blockchain
-            .add_block(make_block(0, Hash::default(), vec![]))
-            .await
-            .expect("genesis should commit before wallet projection test");
-
-        let mut wallet = wallet_data(0x71, 0x72, "Projected Wallet");
-        wallet.initial_balance = 25;
-        let wallet_id: [u8; 32] = wallet.wallet_id.as_bytes().try_into().unwrap();
-
-        let block1 = make_block(
-            1,
-            blockchain.latest_block().unwrap().hash(),
-            vec![wallet_registration_tx(wallet.clone())],
-        );
-        blockchain
-            .add_block(block1)
-            .await
-            .expect("wallet registration block should commit");
-
-        let wallet_id_hex = hex::encode(wallet.wallet_id.as_bytes());
-        assert_eq!(blockchain.wallet_blocks.get(&wallet_id_hex), Some(&1));
-        assert_eq!(blockchain.wallet_registry.get(&wallet_id_hex), Some(&wallet));
-
-        let projection = store
-            .get_wallet_projection(&wallet_id)
-            .unwrap()
-            .expect("wallet projection should be persisted from committed wallet tx");
-        assert_eq!(projection.wallet_data, wallet);
-        assert_eq!(projection.committed_at_height, 1);
-    }
-
-    #[tokio::test]
-    async fn test_load_from_store_rebuilds_missing_wallet_projection() {
-        let temp = tempfile::tempdir().unwrap();
-        let store_path = temp.path().join("wallet_projection_missing_store");
-        let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
-
-        let mut blockchain = Blockchain::new_with_store(store.clone()).unwrap();
-        let genesis = make_block(0, Hash::default(), vec![]);
-        blockchain
-            .add_block(genesis)
-            .await
-            .expect("genesis should commit before wallet projection rebuild test");
-
-        let wallet = wallet_data(0x81, 0x82, "Missing Projection Wallet");
-        let wallet_id: [u8; 32] = wallet.wallet_id.as_bytes().try_into().unwrap();
-        let wallet_id_hex = hex::encode(wallet_id);
-
-        let block1 = make_block(
-            1,
-            blockchain.latest_block().unwrap().hash(),
-            vec![wallet_registration_tx(wallet.clone())],
-        );
-        blockchain
-            .add_block(block1)
-            .await
-            .expect("wallet registration block should commit");
-
-        store.replace_wallet_projections(&[]).unwrap();
-
-        let reloaded = Blockchain::load_from_store(store.clone())
-            .expect("load_from_store should succeed")
-            .expect("blockchain should reload");
-
-        let mut normalized = reloaded
-            .wallet_registry
-            .get(&wallet_id_hex)
-            .cloned()
-            .expect("wallet should be rebuilt from canonical replay");
-        normalized.initial_balance = wallet.initial_balance;
-        assert_eq!(normalized, wallet);
-        assert_eq!(reloaded.wallet_blocks.get(&wallet_id_hex), Some(&1));
-        assert_eq!(
-            store.get_wallet_projection(&wallet_id).unwrap(),
-            Some(crate::storage::WalletProjectionRecord {
-                wallet_data: wallet,
-                committed_at_height: 1,
-            })
-        );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_store_rebuilds_stale_wallet_projection() {
-        let temp = tempfile::tempdir().unwrap();
-        let store_path = temp.path().join("wallet_projection_stale_store");
-        let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
-
-        let mut blockchain = Blockchain::new_with_store(store.clone()).unwrap();
-        let genesis = make_block(0, Hash::default(), vec![]);
-        blockchain
-            .add_block(genesis)
-            .await
-            .expect("genesis should commit before stale wallet projection test");
-
-        let wallet = wallet_data(0x83, 0x84, "Canonical Wallet");
-        let wallet_id: [u8; 32] = wallet.wallet_id.as_bytes().try_into().unwrap();
-        let wallet_id_hex = hex::encode(wallet_id);
-
-        let block1 = make_block(
-            1,
-            blockchain.latest_block().unwrap().hash(),
-            vec![wallet_registration_tx(wallet.clone())],
-        );
-        blockchain
-            .add_block(block1)
-            .await
-            .expect("wallet registration block should commit");
-
-        let mut stale_wallet = wallet.clone();
-        stale_wallet.wallet_name = "Stale Wallet Name".to_string();
-        store
-            .replace_wallet_projections(&[(
-                wallet_id,
-                crate::storage::WalletProjectionRecord {
-                    wallet_data: stale_wallet,
-                    committed_at_height: 99,
-                },
-            )])
-            .unwrap();
-
-        let reloaded = Blockchain::load_from_store(store.clone())
-            .expect("load_from_store should succeed")
-            .expect("blockchain should reload");
-
-        let mut normalized = reloaded
-            .wallet_registry
-            .get(&wallet_id_hex)
-            .cloned()
-            .expect("wallet should be restored from canonical replay");
-        normalized.initial_balance = wallet.initial_balance;
-        assert_eq!(normalized, wallet);
-        assert_eq!(reloaded.wallet_blocks.get(&wallet_id_hex), Some(&1));
-        assert_eq!(
-            store.get_wallet_projection(&wallet_id).unwrap(),
-            Some(crate::storage::WalletProjectionRecord {
-                wallet_data: wallet,
-                committed_at_height: 1,
-            })
-        );
-    }
-
-    #[tokio::test]
-    async fn test_load_from_store_restart_replay_equivalence_for_identity_wallet_and_sov_state() {
-        let temp = tempfile::tempdir().unwrap();
-        let store_path = temp.path().join("restart_equivalence_store");
-        let store = std::sync::Arc::new(SledStore::open(&store_path).unwrap());
-
-        let mut blockchain = Blockchain::new_with_store(store.clone()).unwrap();
-        let genesis = make_block(0, Hash::default(), vec![]);
-        blockchain
-            .add_block(genesis)
-            .await
-            .expect("genesis should commit before restart equivalence test");
-
-        let mut identity = identity_data("did:zhtp:restart-equivalence", 0x31, "Restart Equivalence");
-        let identity_hash = did_to_hash(&identity.did);
-        let owner_identity_id = Hash::new(identity_hash);
-
-        let mut sender_wallet = wallet_data(0x41, 0x51, "Sender Wallet");
-        sender_wallet.owner_identity_id = Some(owner_identity_id);
-        sender_wallet.initial_balance = 1_000;
-        let sender_wallet_id: [u8; 32] = sender_wallet.wallet_id.as_bytes().try_into().unwrap();
-
-        let mut recipient_wallet = wallet_data(0x42, 0x52, "Recipient Wallet");
-        recipient_wallet.owner_identity_id = Some(owner_identity_id);
-        let recipient_wallet_id: [u8; 32] =
-            recipient_wallet.wallet_id.as_bytes().try_into().unwrap();
-
-        identity.owned_wallets = vec![
-            hex::encode(sender_wallet.wallet_id.as_bytes()),
-            hex::encode(recipient_wallet.wallet_id.as_bytes()),
-        ];
-
-        let block1 = make_block(
-            1,
-            blockchain.latest_block().unwrap().hash(),
-            vec![
-                identity_registration_tx(identity.clone()),
-                wallet_registration_tx(sender_wallet.clone()),
-                wallet_registration_tx(recipient_wallet.clone()),
-            ],
-        );
-        blockchain
-            .add_block(block1)
-            .await
-            .expect("block 1 should commit canonical identity, wallet, and mint state");
-
-        let block2 = make_block(
-            2,
-            blockchain.latest_block().unwrap().hash(),
-            vec![token_transfer_tx(
-                &sender_wallet.public_key,
-                sender_wallet_id,
-                recipient_wallet_id,
-                250,
-                0,
-            )],
-        );
-        blockchain
-            .add_block(block2)
-            .await
-            .expect("block 2 should commit canonical transfer state");
-
-        let expected_height = blockchain
-            .latest_block()
-            .expect("latest block should exist before restart")
-            .height();
-        let expected_identity_registry = blockchain.identity_registry.clone();
-        let expected_identity_blocks = blockchain.identity_blocks.clone();
-        let expected_sender_wallet = blockchain
-            .wallet_registry
-            .get(&hex::encode(sender_wallet.wallet_id.as_bytes()))
-            .cloned()
-            .expect("sender wallet should exist before restart");
-        let expected_recipient_wallet = blockchain
-            .wallet_registry
-            .get(&hex::encode(recipient_wallet.wallet_id.as_bytes()))
-            .cloned()
-            .expect("recipient wallet should exist before restart");
-        let expected_sender_wallet_block = *blockchain
-            .wallet_blocks
-            .get(&hex::encode(sender_wallet.wallet_id.as_bytes()))
-            .expect("sender wallet block should exist before restart");
-        let expected_recipient_wallet_block = *blockchain
-            .wallet_blocks
-            .get(&hex::encode(recipient_wallet.wallet_id.as_bytes()))
-            .expect("recipient wallet block should exist before restart");
-        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        let expected_token = blockchain
-            .token_contracts
-            .get(&sov_token_id)
-            .expect("SOV contract must exist before restart")
-            .clone();
-        let sender_key = Blockchain::wallet_key_for_sov(&sender_wallet_id);
-        let recipient_key = Blockchain::wallet_key_for_sov(&recipient_wallet_id);
-        let expected_sender_balance = expected_token.balance_of(&sender_key);
-        let expected_recipient_balance = expected_token.balance_of(&recipient_key);
-        let expected_total_supply = expected_token.total_supply;
-
-        let owner = derive_address_from_public_key(&identity.public_key);
-        store.begin_metadata_write().unwrap();
-        store.delete_identity(&identity_hash).unwrap();
-        store.delete_identity_metadata(&identity_hash).unwrap();
-        store.delete_identity_owner_index(&owner).unwrap();
-        store.commit_metadata_write().unwrap();
-
-        let reloaded = Blockchain::load_from_store(store.clone())
-            .expect("load_from_store should succeed")
-            .expect("store should contain the committed chain");
-
-        assert_eq!(reloaded.height, expected_height);
-        assert_eq!(reloaded.identity_registry, expected_identity_registry);
-        assert_eq!(reloaded.identity_blocks, expected_identity_blocks);
-        let mut normalized_sender_wallet = reloaded
-            .wallet_registry
-            .get(&hex::encode(sender_wallet.wallet_id.as_bytes()))
-            .cloned()
-            .expect("reloaded sender wallet should exist");
-        normalized_sender_wallet.initial_balance = expected_sender_wallet.initial_balance;
-        assert_eq!(normalized_sender_wallet, expected_sender_wallet);
-        let mut normalized_recipient_wallet = reloaded
-            .wallet_registry
-            .get(&hex::encode(recipient_wallet.wallet_id.as_bytes()))
-            .cloned()
-            .expect("reloaded recipient wallet should exist");
-        normalized_recipient_wallet.initial_balance = expected_recipient_wallet.initial_balance;
-        assert_eq!(normalized_recipient_wallet, expected_recipient_wallet);
-        assert_eq!(
-            reloaded
-                .wallet_blocks
-                .get(&hex::encode(sender_wallet.wallet_id.as_bytes())),
-            Some(&expected_sender_wallet_block)
-        );
-        assert_eq!(
-            reloaded
-                .wallet_blocks
-                .get(&hex::encode(recipient_wallet.wallet_id.as_bytes())),
-            Some(&expected_recipient_wallet_block)
-        );
-        let treasury_wallet_id = Blockchain::deterministic_treasury_wallet_id();
-        let treasury_wallet_id_hex = hex::encode(treasury_wallet_id.as_bytes());
-        assert!(
-            reloaded.wallet_registry.contains_key(&treasury_wallet_id_hex),
-            "reloaded state must include the canonical treasury wallet"
-        );
-        assert_eq!(reloaded.wallet_blocks.get(&treasury_wallet_id_hex), Some(&0));
-        assert_eq!(
-            reloaded.get_token_nonce(&sov_token_id, &sender_wallet_id),
-            blockchain.get_token_nonce(&sov_token_id, &sender_wallet_id)
-        );
-
-        let reloaded_token = reloaded
-            .token_contracts
-            .get(&sov_token_id)
-            .expect("SOV contract must be reconstructed after restart");
-        assert_eq!(reloaded_token.balance_of(&sender_key), expected_sender_balance);
-        assert_eq!(
-            reloaded_token.balance_of(&recipient_key),
-            expected_recipient_balance
-        );
-        assert_eq!(reloaded_token.total_supply, expected_total_supply);
-
-        assert!(store.get_identity(&identity_hash).unwrap().is_some());
-        assert!(store.get_identity_metadata(&identity_hash).unwrap().is_some());
-        assert_eq!(store.get_identity_by_owner(&owner).unwrap(), Some(identity_hash));
-    }
-
-    #[test]
-    fn test_load_from_file_does_not_backfill_missing_wallet_initial_balance() {
-        let mut bc = Blockchain::new().unwrap();
-        let wallet_id = Hash::new([0x71; 32]);
-        let wallet_id_hex = hex::encode(wallet_id.as_bytes());
-        bc.wallet_registry.insert(
-            wallet_id_hex.clone(),
-            crate::transaction::WalletTransactionData {
-                wallet_id,
-                wallet_type: "Primary".to_string(),
-                wallet_name: "Legacy Wallet".to_string(),
-                alias: None,
-                public_key: vec![0x72; 32],
-                owner_identity_id: Some(Hash::new([0x73; 32])),
-                seed_commitment: Hash::new([0x74; 32]),
-                created_at: 1_700_000_000,
-                registration_fee: 0,
-                capabilities: 0,
-                initial_balance: 5_000_000,
-            },
-        );
-        bc.wallet_blocks.insert(wallet_id_hex, 0);
-        bc.ensure_sov_token_contract();
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let path = tmp.path().join("legacy_backfill.dat");
-
-        #[allow(deprecated)]
-        bc.save_to_file(&path).expect("save_to_file should succeed");
-
-        #[allow(deprecated)]
-        let loaded = Blockchain::load_from_file(&path).expect("load_from_file should succeed");
-
-        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        let wallet_id_bytes: [u8; 32] = wallet_id.as_bytes().try_into().unwrap();
-        let recipient = Blockchain::wallet_key_for_sov(&wallet_id_bytes);
-        let loaded_balance = loaded
-            .token_contracts
-            .get(&sov_token_id)
-            .map(|token| token.balance_of(&recipient))
-            .unwrap_or(0);
-        assert_eq!(
-            loaded_balance, 0,
-            "load_from_file must not mint missing wallet initial_balance outside committed blocks"
-        );
-    }
-
-    #[test]
-    fn test_load_from_file_does_not_correct_underfunded_wallet_balance_by_minting() {
-        let mut bc = Blockchain::new().unwrap();
-        let wallet_id = Hash::new([0x81; 32]);
-        let wallet_id_hex = hex::encode(wallet_id.as_bytes());
-        let wallet_id_bytes: [u8; 32] = wallet_id.as_bytes().try_into().unwrap();
-        bc.wallet_registry.insert(
-            wallet_id_hex.clone(),
-            crate::transaction::WalletTransactionData {
-                wallet_id,
-                wallet_type: "Primary".to_string(),
-                wallet_name: "Underfunded Wallet".to_string(),
-                alias: None,
-                public_key: vec![0x82; 32],
-                owner_identity_id: Some(Hash::new([0x83; 32])),
-                seed_commitment: Hash::new([0x84; 32]),
-                created_at: 1_700_000_000,
-                registration_fee: 0,
-                capabilities: 0,
-                initial_balance: 5_000_000,
-            },
-        );
-        bc.wallet_blocks.insert(wallet_id_hex, 0);
-        bc.ensure_sov_token_contract();
-
-        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        let recipient = Blockchain::wallet_key_for_sov(&wallet_id_bytes);
-        bc.token_contracts
-            .get_mut(&sov_token_id)
-            .expect("SOV token contract should exist")
-            .balances
-            .insert(recipient.clone(), 5);
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let path = tmp.path().join("legacy_underfunded.dat");
-
-        #[allow(deprecated)]
-        bc.save_to_file(&path).expect("save_to_file should succeed");
-
-        #[allow(deprecated)]
-        let loaded = Blockchain::load_from_file(&path).expect("load_from_file should succeed");
-
-        let loaded_balance = loaded
-            .token_contracts
-            .get(&sov_token_id)
-            .map(|token| token.balance_of(&recipient))
-            .unwrap_or(0);
-        assert_eq!(
-            loaded_balance, 5,
-            "load_from_file must not mint a deficit to match wallet initial_balance"
-        );
-    }
-
-    #[test]
-    fn test_load_from_file_preserves_sov_supply_and_recipient_count_for_missing_legacy_wallet() {
-        let mut bc = Blockchain::new().unwrap();
-        let wallet_id = Hash::new([0x91; 32]);
-        let wallet_id_hex = hex::encode(wallet_id.as_bytes());
-        bc.wallet_registry.insert(
-            wallet_id_hex.clone(),
-            crate::transaction::WalletTransactionData {
-                wallet_id,
-                wallet_type: "Primary".to_string(),
-                wallet_name: "Missing Legacy Wallet".to_string(),
-                alias: None,
-                public_key: vec![0x92; 32],
-                owner_identity_id: Some(Hash::new([0x93; 32])),
-                seed_commitment: Hash::new([0x94; 32]),
-                created_at: 1_700_000_000,
-                registration_fee: 0,
-                capabilities: 0,
-                initial_balance: 5_000_000,
-            },
-        );
-        bc.wallet_blocks.insert(wallet_id_hex, 0);
-        bc.ensure_sov_token_contract();
-
-        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        let token_before = bc
-            .token_contracts
-            .get(&sov_token_id)
-            .expect("SOV token contract should exist");
-        let recipient_count_before = token_before.balances.len();
-        let total_supply_before = token_before.total_supply;
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let path = tmp.path().join("legacy_supply_equivalence.dat");
-
-        #[allow(deprecated)]
-        bc.save_to_file(&path).expect("save_to_file should succeed");
-
-        #[allow(deprecated)]
-        let loaded = Blockchain::load_from_file(&path).expect("load_from_file should succeed");
-
-        let token_after = loaded
-            .token_contracts
-            .get(&sov_token_id)
-            .expect("SOV token contract should exist after reload");
-        assert_eq!(
-            token_after.total_supply, total_supply_before,
-            "restart must not change total SOV supply when a legacy wallet is missing its balance"
-        );
-        assert_eq!(
-            token_after.balances.len(),
-            recipient_count_before,
-            "restart must not create a new SOV recipient for a legacy wallet missing its balance"
-        );
-    }
-
-    #[test]
-    fn test_load_from_file_preserves_sov_supply_and_recipient_count_for_underfunded_wallet() {
-        let mut bc = Blockchain::new().unwrap();
-        let wallet_id = Hash::new([0xA1; 32]);
-        let wallet_id_hex = hex::encode(wallet_id.as_bytes());
-        let wallet_id_bytes: [u8; 32] = wallet_id.as_bytes().try_into().unwrap();
-        bc.wallet_registry.insert(
-            wallet_id_hex.clone(),
-            crate::transaction::WalletTransactionData {
-                wallet_id,
-                wallet_type: "Primary".to_string(),
-                wallet_name: "Underfunded Legacy Wallet".to_string(),
-                alias: None,
-                public_key: vec![0xA2; 32],
-                owner_identity_id: Some(Hash::new([0xA3; 32])),
-                seed_commitment: Hash::new([0xA4; 32]),
-                created_at: 1_700_000_000,
-                registration_fee: 0,
-                capabilities: 0,
-                initial_balance: 5_000_000,
-            },
-        );
-        bc.wallet_blocks.insert(wallet_id_hex, 0);
-        bc.ensure_sov_token_contract();
-
-        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-        let recipient = Blockchain::wallet_key_for_sov(&wallet_id_bytes);
-        bc.token_contracts
-            .get_mut(&sov_token_id)
-            .expect("SOV token contract should exist")
-            .balances
-            .insert(recipient, 7);
-
-        let token_before = bc
-            .token_contracts
-            .get(&sov_token_id)
-            .expect("SOV token contract should exist");
-        let recipient_count_before = token_before.balances.len();
-        let total_supply_before = token_before.total_supply;
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let path = tmp.path().join("legacy_underfunded_supply_equivalence.dat");
-
-        #[allow(deprecated)]
-        bc.save_to_file(&path).expect("save_to_file should succeed");
-
-        #[allow(deprecated)]
-        let loaded = Blockchain::load_from_file(&path).expect("load_from_file should succeed");
-
-        let token_after = loaded
-            .token_contracts
-            .get(&sov_token_id)
-            .expect("SOV token contract should exist after reload");
-        assert_eq!(
-            token_after.total_supply, total_supply_before,
-            "restart must not increase total SOV supply for an underfunded legacy wallet"
-        );
-        assert_eq!(
-            token_after.balances.len(),
-            recipient_count_before,
-            "restart must not create extra SOV recipients for an underfunded legacy wallet"
         );
     }
 }
@@ -16518,65 +15268,5 @@ mod cbe_genesis_allocation_tests {
             comp_balance_before,
             "compensation pool balance must match after round-trip"
         );
-    }
-
-    #[test]
-    fn test_treasury_wallet_is_canonical_genesis_dao_wallet() {
-        let blockchain = Blockchain::new().expect("create blockchain");
-        let treasury_wallet_id =
-            hex::encode(Blockchain::deterministic_treasury_wallet_id().as_bytes());
-        let treasury = blockchain
-            .wallet_registry
-            .get(&treasury_wallet_id)
-            .expect("treasury wallet must exist");
-
-        assert_eq!(treasury.wallet_type, "DAO");
-        assert_eq!(treasury.wallet_name, "DAO Treasury");
-        assert!(!treasury.public_key.is_empty());
-        assert_ne!(treasury.seed_commitment, Hash::zero());
-        assert_eq!(blockchain.wallet_blocks.get(&treasury_wallet_id), Some(&0));
-        assert_eq!(
-            blockchain.get_dao_treasury_wallet_id(),
-            Some(&treasury_wallet_id)
-        );
-        assert!(blockchain.dao_treasury_wallet_is_canonical());
-        assert!(blockchain.wallet_exists_in_canonical_history(&treasury.wallet_id));
-    }
-
-    #[test]
-    fn test_ensure_treasury_wallet_normalizes_legacy_shape() {
-        let genesis = crate::block::create_genesis_block();
-        let mut blockchain = Blockchain::new_empty_for_genesis(genesis).expect("blockchain");
-        let treasury_wallet_id =
-            hex::encode(Blockchain::deterministic_treasury_wallet_id().as_bytes());
-
-        blockchain.wallet_registry.insert(
-            treasury_wallet_id.clone(),
-            crate::transaction::WalletTransactionData {
-                wallet_id: Blockchain::deterministic_treasury_wallet_id(),
-                wallet_type: "treasury".to_string(),
-                wallet_name: "DAO Treasury".to_string(),
-                alias: None,
-                public_key: Vec::new(),
-                owner_identity_id: None,
-                seed_commitment: Hash::zero(),
-                created_at: 0,
-                registration_fee: 0,
-                capabilities: 0,
-                initial_balance: 0,
-            },
-        );
-        blockchain.wallet_blocks.remove(&treasury_wallet_id);
-
-        blockchain.ensure_treasury_wallet();
-
-        let treasury = blockchain
-            .wallet_registry
-            .get(&treasury_wallet_id)
-            .expect("treasury wallet must exist");
-        assert_eq!(treasury.wallet_type, "DAO");
-        assert!(!treasury.public_key.is_empty());
-        assert_ne!(treasury.seed_commitment, Hash::zero());
-        assert_eq!(blockchain.wallet_blocks.get(&treasury_wallet_id), Some(&0));
     }
 }
