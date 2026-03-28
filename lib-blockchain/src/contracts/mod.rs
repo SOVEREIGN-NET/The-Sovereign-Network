@@ -25,9 +25,9 @@ pub mod dev_grants;
 #[cfg(feature = "contracts")]
 pub mod economics;
 #[cfg(feature = "contracts")]
-pub mod employment;
-#[cfg(feature = "contracts")]
 pub mod emergency_reserve;
+#[cfg(feature = "contracts")]
+pub mod employment;
 #[cfg(feature = "contracts")]
 pub mod executor;
 #[cfg(feature = "contracts")]
@@ -89,6 +89,8 @@ pub use runtime::{
 
 // Re-export all contract-specific types
 #[cfg(feature = "contracts")]
+pub use bonding_curve::AmmPool;
+#[cfg(feature = "contracts")]
 pub use contacts::ContactEntry;
 #[cfg(feature = "contracts")]
 pub use dao_registry::{derive_dao_id, DAOEntry, DAORegistry};
@@ -104,12 +106,12 @@ pub use economics::{
     UBI_ALLOCATION_PERCENT,
 };
 #[cfg(feature = "contracts")]
+pub use emergency_reserve::EmergencyReserve;
+#[cfg(feature = "contracts")]
 pub use employment::{
     ContractAccessType, EconomicPeriod, EmploymentContract, EmploymentRegistry, EmploymentStatus,
     PaymentDetails, ProfitShareResult, TerminationReason,
 };
-#[cfg(feature = "contracts")]
-pub use emergency_reserve::EmergencyReserve;
 #[cfg(feature = "contracts")]
 pub use files::{FileContract, SharedFile};
 #[cfg(feature = "contracts")]
@@ -126,8 +128,6 @@ pub use sov_swap::{
     LiquidityPosition, LpPositionsManager, LpRewardBreakdown, PoolState, SovSwapPool,
     SwapDirection, SwapError, SwapResult,
 };
-#[cfg(feature = "contracts")]
-pub use bonding_curve::AmmPool;
 #[cfg(feature = "contracts")]
 pub use staking::{
     GlobalStakingGuardrails, LaunchedDao, PendingDao, SovDaoStaking, StakingPosition,

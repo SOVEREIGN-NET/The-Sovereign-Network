@@ -214,6 +214,8 @@ async fn start_node_impl(
             "info".to_string()
         },
         data_dir: PathBuf::from("./data"),
+        emergency_restore_from_local: false,
+        allow_emergency_restore_genesis_mismatch: false,
     };
 
     // Load configuration

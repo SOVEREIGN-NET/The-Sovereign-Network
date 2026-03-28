@@ -9,9 +9,7 @@
 //! - TreasuryAllocation   (Bootstrap Council approved SOV transfers)
 
 use lib_blockchain::transaction::{RecordOnRampTradeData, TreasuryAllocationData};
-use lib_blockchain::{
-    Approval, ApprovalDomain, ThresholdApprovalSet, Transaction,
-};
+use lib_blockchain::{Approval, ApprovalDomain, ThresholdApprovalSet, Transaction};
 use lib_crypto::types::signatures::SignatureAlgorithm;
 
 fn build_approval_set(
@@ -104,8 +102,7 @@ pub fn build_record_on_ramp_trade_tx(
     };
 
     let tx = Transaction::new_record_on_ramp_trade(chain_id, data);
-    let bytes =
-        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
+    let bytes = bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
     Ok(hex::encode(bytes))
 }
 
@@ -143,30 +140,23 @@ pub fn build_treasury_allocation_tx(
     };
 
     let tx = Transaction::new_treasury_allocation(chain_id, data);
-    let bytes =
-        bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
+    let bytes = bincode::serialize(&tx).map_err(|e| format!("Failed to serialize: {}", e))?;
     Ok(hex::encode(bytes))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_init_entity_registry_tx, build_record_on_ramp_trade_tx,
-        build_treasury_allocation_tx,
+        build_init_entity_registry_tx, build_record_on_ramp_trade_tx, build_treasury_allocation_tx,
     };
     use lib_blockchain::types::transaction_type::TransactionType;
 
     #[test]
     fn test_build_init_entity_registry_tx_round_trip() {
         // Build with empty approvals (no real signers — just round-trip structure test)
-        let signed_tx = build_init_entity_registry_tx(
-            vec![0x11; 2592],
-            vec![0x22; 2592],
-            1,
-            42,
-            vec![],
-        )
-        .unwrap();
+        let signed_tx =
+            build_init_entity_registry_tx(vec![0x11; 2592], vec![0x22; 2592], 1, 42, vec![])
+                .unwrap();
 
         let tx_bytes = hex::decode(signed_tx).unwrap();
         let tx: lib_blockchain::Transaction = bincode::deserialize(&tx_bytes).unwrap();
@@ -174,7 +164,10 @@ mod tests {
         assert_eq!(tx.transaction_type, TransactionType::InitEntityRegistry);
         assert_eq!(tx.fee, 0);
 
-        let data = tx.init_entity_registry_data().expect("init payload").clone();
+        let data = tx
+            .init_entity_registry_data()
+            .expect("init payload")
+            .clone();
         assert_eq!(data.initialized_at_height, 42);
         assert_eq!(data.cbe_treasury.dilithium_pk, vec![0x11; 2592]);
         assert_eq!(data.nonprofit_treasury.dilithium_pk, vec![0x22; 2592]);
@@ -182,9 +175,15 @@ mod tests {
 
     #[test]
     fn test_build_record_on_ramp_trade_tx_round_trip() {
-        let signed_tx =
-            build_record_on_ramp_trade_tx(1, 7, 1_000_000_000_000_000_000, 500_000_000, 1_700_000_000, vec![])
-                .unwrap();
+        let signed_tx = build_record_on_ramp_trade_tx(
+            1,
+            7,
+            1_000_000_000_000_000_000,
+            500_000_000,
+            1_700_000_000,
+            vec![],
+        )
+        .unwrap();
 
         let tx_bytes = hex::decode(signed_tx).unwrap();
         let tx: lib_blockchain::Transaction = bincode::deserialize(&tx_bytes).unwrap();

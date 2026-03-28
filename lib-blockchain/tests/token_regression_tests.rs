@@ -73,7 +73,19 @@ fn wallet_registration_tx(
         fee: 0,
         signature: test_signature(owner_pubkey),
         memo: Vec::new(),
-        payload: TransactionPayload::Wallet(WalletTransactionData { wallet_id: Hash::new(wallet_id), wallet_type: "Primary".to_string(), wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])), alias: None, public_key: owner_pubkey.dilithium_pk.clone(), owner_identity_id: None, seed_commitment: Hash::zero(), created_at: 1_700_000_000, registration_fee: 0, capabilities: 0, initial_balance, }),
+        payload: TransactionPayload::Wallet(WalletTransactionData {
+            wallet_id: Hash::new(wallet_id),
+            wallet_type: "Primary".to_string(),
+            wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
+            alias: None,
+            public_key: owner_pubkey.dilithium_pk.clone(),
+            owner_identity_id: None,
+            seed_commitment: Hash::zero(),
+            created_at: 1_700_000_000,
+            registration_fee: 0,
+            capabilities: 0,
+            initial_balance,
+        }),
     }
 }
 
@@ -117,7 +129,13 @@ fn token_transfer_tx_with_nonce(
         fee: 0,
         signature: test_signature(sender),
         memo: Vec::new(),
-        payload: TransactionPayload::TokenTransfer(TokenTransferData { token_id, from, to, amount: amount as u128, nonce, }),
+        payload: TransactionPayload::TokenTransfer(TokenTransferData {
+            token_id,
+            from,
+            to,
+            amount: amount as u128,
+            nonce,
+        }),
     }
 }
 
@@ -132,7 +150,11 @@ fn token_mint_tx(signer: &PublicKey, token_id: [u8; 32], to: [u8; 32], amount: u
         fee: 0,
         signature: test_signature(signer),
         memo: Vec::new(),
-        payload: TransactionPayload::TokenMint(TokenMintData { token_id, to, amount: amount as u128, }),
+        payload: TransactionPayload::TokenMint(TokenMintData {
+            token_id,
+            to,
+            amount: amount as u128,
+        }),
     }
 }
 

@@ -210,9 +210,7 @@ fn parse_approval_pairs(raw: &[String]) -> CliResult<Vec<(Vec<u8>, Vec<u8>)>> {
     raw.iter()
         .map(|s| {
             let (pk_hex, sig_hex) = s.split_once(':').ok_or_else(|| {
-                CliError::ConfigError(format!(
-                    "--approval must be <pk_hex>:<sig_hex>, got: {s}"
-                ))
+                CliError::ConfigError(format!("--approval must be <pk_hex>:<sig_hex>, got: {s}"))
             })?;
             let pk = hex::decode(pk_hex).map_err(|_| {
                 CliError::ConfigError(format!("Invalid hex in approval pk: {pk_hex}"))

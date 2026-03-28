@@ -75,36 +75,49 @@ impl MobileAuthHandler {
                 self.handle_challenge(&request.body, &client_ip).await
             }
             (ZhtpMethod::Post, "/api/v1/auth/mobile/verify") => {
-                self.handle_verify(&request.body, &client_ip, &user_agent).await
+                self.handle_verify(&request.body, &client_ip, &user_agent)
+                    .await
             }
             (ZhtpMethod::Get, "/api/v1/auth/mobile/session") => {
-                self.handle_session_info(&request.headers, &client_ip, &user_agent).await
+                self.handle_session_info(&request.headers, &client_ip, &user_agent)
+                    .await
             }
             (ZhtpMethod::Post, "/api/v1/auth/mobile/signout") => {
-                self.handle_signout(&request.headers, &client_ip, &user_agent).await
+                self.handle_signout(&request.headers, &client_ip, &user_agent)
+                    .await
             }
             // Phase 2
             (ZhtpMethod::Post, "/api/v1/auth/mobile/refresh") => {
-                self.handle_refresh(&request.body, &client_ip, &user_agent).await
+                self.handle_refresh(&request.body, &client_ip, &user_agent)
+                    .await
             }
             // Phase 3
             (ZhtpMethod::Post, "/api/v1/auth/delegate") => {
-                self.handle_delegate_issue(&request.body, &request.headers, &client_ip, &user_agent).await
+                self.handle_delegate_issue(&request.body, &request.headers, &client_ip, &user_agent)
+                    .await
             }
-            (ZhtpMethod::Post, path) if path.starts_with("/api/v1/auth/delegate/") && path.ends_with("/revoke") => {
+            (ZhtpMethod::Post, path)
+                if path.starts_with("/api/v1/auth/delegate/") && path.ends_with("/revoke") =>
+            {
                 let cert_id = path
                     .strip_prefix("/api/v1/auth/delegate/")
                     .and_then(|s| s.strip_suffix("/revoke"))
                     .unwrap_or("");
-                self.handle_delegate_revoke(cert_id, &request.body, &request.headers, &client_ip, &user_agent).await
+                self.handle_delegate_revoke(
+                    cert_id,
+                    &request.body,
+                    &request.headers,
+                    &client_ip,
+                    &user_agent,
+                )
+                .await
             }
             (ZhtpMethod::Get, "/api/v1/auth/delegate/list") => {
-                self.handle_delegate_list(&request.headers, &client_ip, &user_agent).await
+                self.handle_delegate_list(&request.headers, &client_ip, &user_agent)
+                    .await
             }
             (ZhtpMethod::Get, path) if path.starts_with("/api/v1/auth/delegate/") => {
-                let cert_id = path
-                    .strip_prefix("/api/v1/auth/delegate/")
-                    .unwrap_or("");
+                let cert_id = path.strip_prefix("/api/v1/auth/delegate/").unwrap_or("");
                 self.handle_delegate_get(cert_id).await
             }
             _ => Ok(json_error(ZhtpStatus::NotFound, "Not found")),
@@ -142,11 +155,10 @@ impl MobileAuthHandler {
         };
 
         // Generate challenge
-        let challenge =
-            match MobileAuthChallenge::generate(capabilities, &self.node_endpoint) {
-                Ok(c) => c,
-                Err(e) => return Ok(json_error(ZhtpStatus::InternalServerError, &e.to_string())),
-            };
+        let challenge = match MobileAuthChallenge::generate(capabilities, &self.node_endpoint) {
+            Ok(c) => c,
+            Err(e) => return Ok(json_error(ZhtpStatus::InternalServerError, &e.to_string())),
+        };
 
         let session_id = challenge.session_id.clone();
         let challenge_nonce = challenge.challenge_nonce.clone();
@@ -207,9 +219,7 @@ impl MobileAuthHandler {
 
         // Retrieve and validate challenge
         let challenge = match self.store.get_challenge(&req.session_id).await {
-            None => {
-                return Ok(json_error(ZhtpStatus::BadRequest, "Challenge not found"))
-            }
+            None => return Ok(json_error(ZhtpStatus::BadRequest, "Challenge not found")),
             Some(c) => c,
         };
 
@@ -241,7 +251,10 @@ impl MobileAuthHandler {
                     &format!("signature_error: {}", e),
                 );
                 self.store.append_audit(entry).await;
-                return Ok(json_error(ZhtpStatus::BadRequest, &format!("Signature error: {}", e)));
+                return Ok(json_error(
+                    ZhtpStatus::BadRequest,
+                    &format!("Signature error: {}", e),
+                ));
             }
         };
 
@@ -265,9 +278,7 @@ impl MobileAuthHandler {
         // Decode identity_id
         let identity_bytes = match hex::decode(&req.identity_hex) {
             Ok(b) => b,
-            Err(_) => {
-                return Ok(json_error(ZhtpStatus::BadRequest, "Invalid identity_hex"))
-            }
+            Err(_) => return Ok(json_error(ZhtpStatus::BadRequest, "Invalid identity_hex")),
         };
         let identity_id = lib_crypto::Hash::from_bytes(&identity_bytes);
 
@@ -325,7 +336,11 @@ impl MobileAuthHandler {
             None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
         };
 
-        match self.store.validate_access_token(&token, client_ip, user_agent).await {
+        match self
+            .store
+            .validate_access_token(&token, client_ip, user_agent)
+            .await
+        {
             Err(e) => {
                 let entry = AuditLogEntry::new(
                     AuditEventKind::SessionBindingViolation,
@@ -363,7 +378,11 @@ impl MobileAuthHandler {
         };
 
         // Validate first (ensure binding matches)
-        if let Err(e) = self.store.validate_access_token(&token, client_ip, user_agent).await {
+        if let Err(e) = self
+            .store
+            .validate_access_token(&token, client_ip, user_agent)
+            .await
+        {
             return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string()));
         }
 
@@ -405,7 +424,11 @@ impl MobileAuthHandler {
             Err(e) => return Ok(json_error(ZhtpStatus::BadRequest, &e.to_string())),
         };
 
-        match self.store.rotate_refresh_token(&req.refresh_token, client_ip, user_agent).await {
+        match self
+            .store
+            .rotate_refresh_token(&req.refresh_token, client_ip, user_agent)
+            .await
+        {
             Err(e) => Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
             Ok(session) => {
                 let entry = AuditLogEntry::new(
@@ -461,7 +484,11 @@ impl MobileAuthHandler {
             Some(t) => t,
             None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
         };
-        let session = match self.store.validate_access_token(&token, client_ip, user_agent).await {
+        let session = match self
+            .store
+            .validate_access_token(&token, client_ip, user_agent)
+            .await
+        {
             Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
             Ok(s) => s,
         };
@@ -563,7 +590,11 @@ impl MobileAuthHandler {
             Some(t) => t,
             None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
         };
-        let session = match self.store.validate_access_token(&token, client_ip, user_agent).await {
+        let session = match self
+            .store
+            .validate_access_token(&token, client_ip, user_agent)
+            .await
+        {
             Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
             Ok(s) => s,
         };
@@ -582,7 +613,8 @@ impl MobileAuthHandler {
             ));
         }
 
-        let req: RevokeRequest = serde_json::from_slice(body).unwrap_or(RevokeRequest { reason: None });
+        let req: RevokeRequest =
+            serde_json::from_slice(body).unwrap_or(RevokeRequest { reason: None });
         let reason = req.reason.as_deref().unwrap_or("delegator_requested");
 
         match self.store.revoke_delegation_cert(cert_id, reason).await {
@@ -618,7 +650,11 @@ impl MobileAuthHandler {
             Some(t) => t,
             None => return Ok(json_error(ZhtpStatus::Unauthorized, "Missing Bearer token")),
         };
-        let session = match self.store.validate_access_token(&token, client_ip, user_agent).await {
+        let session = match self
+            .store
+            .validate_access_token(&token, client_ip, user_agent)
+            .await
+        {
             Err(e) => return Ok(json_error(ZhtpStatus::Unauthorized, &e.to_string())),
             Ok(s) => s,
         };
@@ -683,7 +719,10 @@ fn extract_client_ip(request: &ZhtpRequest) -> String {
 }
 
 fn extract_user_agent(request: &ZhtpRequest) -> String {
-    request.headers.user_agent.clone()
+    request
+        .headers
+        .user_agent
+        .clone()
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -692,8 +731,8 @@ fn parse_capabilities(body: &[u8]) -> anyhow::Result<Vec<Capability>> {
     struct Body {
         capabilities: Vec<Capability>,
     }
-    let b: Body = serde_json::from_slice(body)
-        .map_err(|e| anyhow!("Invalid capabilities body: {}", e))?;
+    let b: Body =
+        serde_json::from_slice(body).map_err(|e| anyhow!("Invalid capabilities body: {}", e))?;
     Ok(b.capabilities)
 }
 
@@ -748,7 +787,10 @@ mod tests {
         assert_eq!(resp.status, ZhtpStatus::Ok);
         let body: Value = serde_json::from_slice(&resp.body).unwrap();
         assert!(body["session_id"].is_string());
-        assert!(body["qr_payload"].as_str().unwrap().starts_with("zhtp://auth"));
+        assert!(body["qr_payload"]
+            .as_str()
+            .unwrap()
+            .starts_with("zhtp://auth"));
     }
 
     // Phase 1 — verify with wrong signature returns Unauthorized
@@ -778,8 +820,7 @@ mod tests {
         let v_resp = h.handle_request(verify_req).await.unwrap();
         // Should be Unauthorized or BadRequest (either is fine — signature invalid)
         assert!(
-            v_resp.status == ZhtpStatus::Unauthorized
-                || v_resp.status == ZhtpStatus::BadRequest,
+            v_resp.status == ZhtpStatus::Unauthorized || v_resp.status == ZhtpStatus::BadRequest,
             "Expected 401 or 400, got {:?}",
             v_resp.status
         );
@@ -806,7 +847,10 @@ mod tests {
     #[tokio::test]
     async fn session_info_no_token_returns_401() {
         let h = make_handler();
-        let resp = h.handle_request(get("/api/v1/auth/mobile/session")).await.unwrap();
+        let resp = h
+            .handle_request(get("/api/v1/auth/mobile/session"))
+            .await
+            .unwrap();
         assert_eq!(resp.status, ZhtpStatus::Unauthorized);
     }
 

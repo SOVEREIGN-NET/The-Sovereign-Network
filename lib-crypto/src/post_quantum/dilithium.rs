@@ -20,6 +20,20 @@ pub fn dilithium5_keypair() -> (Vec<u8>, Vec<u8>) {
     (pk.as_bytes().to_vec(), sk.as_bytes().to_vec())
 }
 
+/// Generate a deterministic Dilithium5 keypair from caller-provided entropy.
+///
+/// This uses the `crystals-dilithium` implementation's optional entropy hook so
+/// consensus/bootstrap code can derive reproducible public keys from protocol
+/// constants without introducing a separate ad hoc derivation scheme.
+pub fn dilithium5_keypair_from_entropy(entropy: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let seed = crate::hashing::hash_blake3(entropy);
+    let keypair = crystals_dilithium::dilithium5::Keypair::generate(Some(&seed));
+    (
+        keypair.public.to_bytes().to_vec(),
+        keypair.secret.to_bytes().to_vec(),
+    )
+}
+
 /// Sign message with Dilithium2
 pub fn dilithium2_sign(message: &[u8], secret_key: &[u8]) -> Result<Vec<u8>> {
     let sk = dilithium2::SecretKey::from_bytes(secret_key)

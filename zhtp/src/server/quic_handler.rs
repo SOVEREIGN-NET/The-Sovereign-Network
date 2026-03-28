@@ -922,32 +922,14 @@ impl QuicHandler {
             initial_balance: welcome_bonus,
         };
 
-        let mint_tx = match crate::runtime::token_utils::build_sov_mint_tx(
-            &wallet_id_bytes,
-            welcome_bonus,
-            format!("SOV_WELCOME_BONUS:{}", peer_did).into_bytes(),
-        )
-        .await
-        {
-            Ok(tx) => Some(tx),
-            Err(e) => {
-                warn!(
-                    "Failed to build SOV welcome mint tx for peer {}: {}",
-                    peer_did, e
-                );
-                None
-            }
-        };
-
         {
             let mut bc_write = blockchain.write().await;
-            bc_write
-                .wallet_registry
-                .insert(wallet_id_hex.clone(), wallet_data);
-            if let Some(tx) = mint_tx {
-                if let Err(e) = bc_write.add_pending_transaction(tx) {
-                    warn!("Failed to enqueue peer welcome mint tx: {}", e);
-                }
+            if let Err(e) = bc_write.register_wallet(wallet_data) {
+                warn!(
+                    "Failed to queue peer welcome wallet registration for {}: {}",
+                    peer_did, e
+                );
+                return;
             }
         }
 
@@ -955,7 +937,7 @@ impl QuicHandler {
             peer_did = %peer_did,
             wallet_id = %wallet_id_hex[..16],
             bonus = SOV_WELCOME_BONUS_SOV,
-            "🎁 Funded new peer wallet with welcome bonus (TokenMint queued)"
+            "🎁 Queued new peer wallet with welcome bonus pending block inclusion"
         );
     }
 

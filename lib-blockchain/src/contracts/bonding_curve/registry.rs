@@ -126,7 +126,11 @@ impl BondingCurveRegistry {
     }
 
     /// Get tokens that can graduate (curve phase + threshold met)
-    pub fn get_ready_to_graduate(&self, current_timestamp: u64, current_block: u64) -> Vec<&BondingCurveToken> {
+    pub fn get_ready_to_graduate(
+        &self,
+        current_timestamp: u64,
+        current_block: u64,
+    ) -> Vec<&BondingCurveToken> {
         self.curve_tokens
             .iter()
             .filter_map(|id| self.tokens.get(id))
@@ -191,7 +195,10 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::bonding_curve::{types::{CurveType, Threshold}, PiecewiseLinearCurve};
+    use crate::contracts::bonding_curve::{
+        types::{CurveType, Threshold},
+        PiecewiseLinearCurve,
+    };
     use crate::integration::crypto_integration::PublicKey;
 
     fn test_token(id: u8, phase: Phase) -> BondingCurveToken {

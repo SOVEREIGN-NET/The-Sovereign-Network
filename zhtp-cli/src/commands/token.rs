@@ -292,7 +292,8 @@ async fn handle_create<O: Output>(
     })?;
     // Use a zero-cost placeholder so that signing_hash() reflects real tx fields
     // before we overwrite it with the actual signature below.
-    let mut tx = Transaction::new_token_creation_with_chain_id(0x03, lib_crypto::Signature::default(), memo);
+    let mut tx =
+        Transaction::new_token_creation_with_chain_id(0x03, lib_crypto::Signature::default(), memo);
     // TokenCreation is validated as a system transaction on the node and must carry zero fee.
     tx.fee = 0;
     tx.signature = keypair
@@ -741,7 +742,10 @@ mod tests {
             .expect("build transfer tx");
 
         assert_eq!(tx.transaction_type, TransactionType::TokenTransfer);
-        let transfer_data = tx.token_transfer_data().cloned().expect("must have transfer data");
+        let transfer_data = tx
+            .token_transfer_data()
+            .cloned()
+            .expect("must have transfer data");
         assert_eq!(transfer_data.token_id, token_id);
         assert_eq!(transfer_data.from, keypair.public_key.key_id);
         assert_eq!(transfer_data.to, to);

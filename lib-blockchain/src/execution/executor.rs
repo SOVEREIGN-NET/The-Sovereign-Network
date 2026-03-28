@@ -39,14 +39,14 @@ use std::sync::Arc;
 use crate::block::Block;
 use crate::storage::{
     Address, Amount, BlockHash, BlockHeight, BlockchainStore, StorageError, TokenId,
+    WalletProjectionRecord,
 };
 use crate::transaction::{
     contract_deployment::ContractDeploymentPayloadV1,
     contract_execution::DecodedContractExecutionMemo, decode_canonical_bonding_curve_tx,
-    envelope_signer_matches_sender, hash_transaction, CanonicalBondingCurveEnvelope,
-    CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION, BONDING_CURVE_SELL_ACTION,
-    BONDING_CURVE_TX_PAYLOAD_LEN, token_creation::TokenCreationPayloadV1,
-    DEFAULT_TOKEN_CREATION_FEE,
+    envelope_signer_matches_sender, hash_transaction, token_creation::TokenCreationPayloadV1,
+    CanonicalBondingCurveEnvelope, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
+    BONDING_CURVE_SELL_ACTION, BONDING_CURVE_TX_PAYLOAD_LEN, DEFAULT_TOKEN_CREATION_FEE,
 };
 use crate::types::TransactionType;
 
@@ -329,6 +329,44 @@ impl<'a> Drop for RollbackGuard<'a> {
 }
 
 impl BlockExecutor {
+    fn canonical_sov_token_id() -> TokenId {
+        TokenId::new(crate::contracts::utils::generate_lib_token_id())
+    }
+
+    fn is_canonical_sov_token(token_id: &[u8; 32]) -> bool {
+        *token_id == [0u8; 32] || *token_id == crate::contracts::utils::generate_lib_token_id()
+    }
+
+    fn sync_canonical_sov_contract_after_mint(
+        &self,
+        mutator: &StateMutator<'_>,
+        recipient: &Address,
+        amount: u128,
+    ) -> Result<(), TxApplyError> {
+        let amount_u64 = u64::try_from(amount).map_err(|_| {
+            TxApplyError::InvalidType("SOV mint amount exceeds u64".to_string())
+        })?;
+        let token_id = Self::canonical_sov_token_id();
+        let mut contract = mutator
+            .get_token_contract(&token_id)?
+            .unwrap_or_else(crate::contracts::TokenContract::new_sov_native);
+        let current_supply = mutator.get_token_supply(&token_id)?.unwrap_or(contract.total_supply);
+        let new_supply = current_supply.checked_add(amount_u64).ok_or_else(|| {
+            TxApplyError::InvalidType("SOV total supply overflow".to_string())
+        })?;
+        let balance = mutator.get_token_balance(&token_id, recipient)?;
+        let recipient_pk = lib_crypto::PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk: Vec::new(),
+            key_id: recipient.0,
+        };
+        contract.total_supply = new_supply;
+        contract.balances.insert(recipient_pk, balance);
+        mutator.put_token_supply(&token_id, new_supply)?;
+        mutator.put_token_contract(&contract)?;
+        Ok(())
+    }
+
     /// Create a new block executor with explicit token creation fee.
     pub fn new_with_token_creation_fee(
         store: Arc<dyn BlockchainStore>,
@@ -1200,8 +1238,8 @@ impl BlockExecutor {
                     TxApplyError::InvalidType("TokenTransfer requires token_transfer_data".into())
                 })?;
 
-                let token = if transfer.is_native() {
-                    TokenId::NATIVE
+                let token = if Self::is_canonical_sov_token(&transfer.token_id) {
+                    Self::canonical_sov_token_id()
                 } else {
                     TokenId::new(transfer.token_id)
                 };
@@ -1605,8 +1643,9 @@ impl BlockExecutor {
         payload: &[u8],
     ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
         // ── 1. Parse ──────────────────────────────────────────────────────────
-        let curve_tx = decode_canonical_bonding_curve_tx(payload)
-            .map_err(|e| TxApplyError::InvalidType(format!("Invalid canonical curve payload: {e}")))?;
+        let curve_tx = decode_canonical_bonding_curve_tx(payload).map_err(|e| {
+            TxApplyError::InvalidType(format!("Invalid canonical curve payload: {e}"))
+        })?;
 
         // Extract common fields for shared pre-validation.
         let (sender, tx_nonce, amount_in_or_cbe, is_buy) = match &curve_tx {
@@ -1683,12 +1722,24 @@ impl BlockExecutor {
             .ok_or_else(|| TxApplyError::InvalidType("nonce overflow".to_string()))?;
 
         match curve_tx {
-            CanonicalBondingCurveTx::Buy(tx) => {
-                self.apply_buy_cbe(mutator, tx.max_price, amount_in_or_cbe, sender, econ, account, next_nonce)
-            }
-            CanonicalBondingCurveTx::Sell(tx) => {
-                self.apply_sell_cbe(mutator, tx.min_payout, amount_in_or_cbe, sender, econ, account, next_nonce)
-            }
+            CanonicalBondingCurveTx::Buy(tx) => self.apply_buy_cbe(
+                mutator,
+                tx.max_price,
+                amount_in_or_cbe,
+                sender,
+                econ,
+                account,
+                next_nonce,
+            ),
+            CanonicalBondingCurveTx::Sell(tx) => self.apply_sell_cbe(
+                mutator,
+                tx.min_payout,
+                amount_in_or_cbe,
+                sender,
+                econ,
+                account,
+                next_nonce,
+            ),
         }
     }
 
@@ -1735,9 +1786,11 @@ impl BlockExecutor {
         // Slippage: effective = amount_in * SCALE / delta_s; use U256 to avoid overflow.
         let effective = U256::from(amount_in)
             .checked_mul(U256::from(SCALE))
-            .ok_or_else(|| TxApplyError::InvalidType(
-                "BUY_CBE: slippage overflow in amount_in * SCALE".to_string(),
-            ))?
+            .ok_or_else(|| {
+                TxApplyError::InvalidType(
+                    "BUY_CBE: slippage overflow in amount_in * SCALE".to_string(),
+                )
+            })?
             / U256::from(delta_s);
         if effective > U256::from(max_price) {
             return Err(TxApplyError::InvalidType(format!(
@@ -1745,20 +1798,28 @@ impl BlockExecutor {
             )));
         }
 
-        econ.s_c = econ.s_c.checked_add(delta_s)
+        econ.s_c = econ
+            .s_c
+            .checked_add(delta_s)
             .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: s_c overflow".to_string()))?;
-        econ.reserve_balance = econ.reserve_balance.checked_add(reserve_credit)
+        econ.reserve_balance = econ
+            .reserve_balance
+            .checked_add(reserve_credit)
             .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: reserve overflow".to_string()))?;
-        econ.treasury_balance = econ.treasury_balance.checked_add(treasury_credit)
+        econ.treasury_balance = econ
+            .treasury_balance
+            .checked_add(treasury_credit)
             .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: treasury overflow".to_string()))?;
         if econ.reserve_balance >= GRAD_THRESHOLD {
             econ.graduated = true;
         }
 
-        account.balance_sov = account.balance_sov.checked_sub(amount_in)
-            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: SOV balance underflow".to_string()))?;
-        account.balance_cbe = account.balance_cbe.checked_add(delta_s)
-            .ok_or_else(|| TxApplyError::InvalidType("BUY_CBE: CBE balance overflow".to_string()))?;
+        account.balance_sov = account.balance_sov.checked_sub(amount_in).ok_or_else(|| {
+            TxApplyError::InvalidType("BUY_CBE: SOV balance underflow".to_string())
+        })?;
+        account.balance_cbe = account.balance_cbe.checked_add(delta_s).ok_or_else(|| {
+            TxApplyError::InvalidType("BUY_CBE: CBE balance overflow".to_string())
+        })?;
         account.next_nonce = next_nonce;
 
         mutator.put_cbe_economic_state(&econ)?;
@@ -1784,8 +1845,9 @@ impl BlockExecutor {
     ) -> Result<CanonicalBondingCurveOutcome, TxApplyError> {
         use crate::contracts::bonding_curve::canonical::payout_for_burn;
 
-        let sov_out = payout_for_burn(amount_cbe, econ.s_c)
-            .map_err(|e| TxApplyError::InvalidType(format!("SELL_CBE: payout_for_burn failed: {e:?}")))?;
+        let sov_out = payout_for_burn(amount_cbe, econ.s_c).map_err(|e| {
+            TxApplyError::InvalidType(format!("SELL_CBE: payout_for_burn failed: {e:?}"))
+        })?;
 
         if sov_out == 0 {
             return Err(TxApplyError::InvalidType(
@@ -1804,37 +1866,42 @@ impl BlockExecutor {
             )));
         }
 
-        econ.s_c = econ.s_c.checked_sub(amount_cbe)
+        econ.s_c = econ
+            .s_c
+            .checked_sub(amount_cbe)
             .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: s_c underflow".to_string()))?;
-        econ.reserve_balance = econ.reserve_balance.checked_sub(sov_out)
+        econ.reserve_balance = econ
+            .reserve_balance
+            .checked_sub(sov_out)
             .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: reserve underflow".to_string()))?;
 
-        account.balance_cbe = account.balance_cbe.checked_sub(amount_cbe)
-            .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: CBE balance underflow".to_string()))?;
-        account.balance_sov = account.balance_sov.checked_add(sov_out)
-            .ok_or_else(|| TxApplyError::InvalidType("SELL_CBE: SOV balance overflow".to_string()))?;
+        account.balance_cbe = account.balance_cbe.checked_sub(amount_cbe).ok_or_else(|| {
+            TxApplyError::InvalidType("SELL_CBE: CBE balance underflow".to_string())
+        })?;
+        account.balance_sov = account.balance_sov.checked_add(sov_out).ok_or_else(|| {
+            TxApplyError::InvalidType("SELL_CBE: SOV balance overflow".to_string())
+        })?;
         account.next_nonce = next_nonce;
 
         mutator.put_cbe_economic_state(&econ)?;
         mutator.put_cbe_account_state(&sender, &account)?;
 
-        Ok(CanonicalBondingCurveOutcome::Sell(BondingCurveSellOutcome {
-            token_id: crate::Blockchain::derive_cbe_token_id_pub(),
-            seller: sender,
-            tokens_sold: amount_cbe,
-            stable_received: sov_out,
-        }))
+        Ok(CanonicalBondingCurveOutcome::Sell(
+            BondingCurveSellOutcome {
+                token_id: crate::Blockchain::derive_cbe_token_id_pub(),
+                seller: sender,
+                tokens_sold: amount_cbe,
+                stable_received: sov_out,
+            },
+        ))
     }
 
     fn canonical_bonding_curve_envelope_from_transaction(
         &self,
         tx: &crate::transaction::Transaction,
     ) -> Result<CanonicalBondingCurveEnvelope, TxApplyError> {
-        let payload: [u8; BONDING_CURVE_TX_PAYLOAD_LEN] = tx
-            .memo
-            .as_slice()
-            .try_into()
-            .map_err(|_| {
+        let payload: [u8; BONDING_CURVE_TX_PAYLOAD_LEN] =
+            tx.memo.as_slice().try_into().map_err(|_| {
                 TxApplyError::InvalidType(format!(
                     "Canonical curve payload must be exactly {} bytes, got {}",
                     BONDING_CURVE_TX_PAYLOAD_LEN,
@@ -1903,8 +1970,8 @@ impl BlockExecutor {
                 })?;
 
                 // Convert to storage types
-                let token = if transfer_data.is_native() {
-                    TokenId::NATIVE
+                let token = if Self::is_canonical_sov_token(&transfer_data.token_id) {
+                    Self::canonical_sov_token_id()
                 } else {
                     TokenId::new(transfer_data.token_id)
                 };
@@ -1954,8 +2021,8 @@ impl BlockExecutor {
                     ));
                 }
 
-                let token = if mint_data.token_id == [0u8; 32] {
-                    TokenId::NATIVE
+                let token = if Self::is_canonical_sov_token(&mint_data.token_id) {
+                    Self::canonical_sov_token_id()
                 } else {
                     TokenId::new(mint_data.token_id)
                 };
@@ -1964,8 +2031,61 @@ impl BlockExecutor {
                 let amount = mint_data.amount;
 
                 tx_apply::apply_token_mint(mutator, &token, &to, amount)?;
+                if token == Self::canonical_sov_token_id() {
+                    self.sync_canonical_sov_contract_after_mint(mutator, &to, amount)?;
+                }
 
                 Ok(TxOutcome::TokenMint(TokenMintOutcome { token, to, amount }))
+            }
+            TransactionType::WalletRegistration => {
+                let wallet_data = tx.wallet_data().ok_or_else(|| {
+                    TxApplyError::InvalidType(
+                        "WalletRegistration requires wallet_data field".to_string(),
+                    )
+                })?;
+                let wallet_id = wallet_data.wallet_id.as_array();
+                mutator.put_wallet_projection(
+                    &wallet_id,
+                    &WalletProjectionRecord {
+                        wallet_data: wallet_data.clone(),
+                        committed_at_height: block_height,
+                    },
+                )?;
+
+                if wallet_data.initial_balance > 0 {
+                    let recipient = Address::new(wallet_data.wallet_id.as_array());
+                    let token = Self::canonical_sov_token_id();
+                    tx_apply::apply_token_mint(
+                        mutator,
+                        &token,
+                        &recipient,
+                        wallet_data.initial_balance as u128,
+                    )?;
+                    self.sync_canonical_sov_contract_after_mint(
+                        mutator,
+                        &recipient,
+                        wallet_data.initial_balance as u128,
+                    )?;
+                }
+
+                Ok(TxOutcome::LegacySystem)
+            }
+            TransactionType::WalletUpdate => {
+                let wallet_data = tx.wallet_data().ok_or_else(|| {
+                    TxApplyError::InvalidType(
+                        "WalletUpdate requires wallet_data field".to_string(),
+                    )
+                })?;
+                let wallet_id = wallet_data.wallet_id.as_array();
+                mutator.put_wallet_projection(
+                    &wallet_id,
+                    &WalletProjectionRecord {
+                        wallet_data: wallet_data.clone(),
+                        committed_at_height: block_height,
+                    },
+                )?;
+
+                Ok(TxOutcome::LegacySystem)
             }
             TransactionType::TokenCreation => {
                 let payload = TokenCreationPayloadV1::decode_memo(&tx.memo).map_err(|e| {
@@ -2063,8 +2183,6 @@ impl BlockExecutor {
             TransactionType::IdentityRegistration
             | TransactionType::IdentityUpdate
             | TransactionType::IdentityRevocation
-            | TransactionType::WalletRegistration
-            | TransactionType::WalletUpdate
             | TransactionType::ValidatorRegistration
             | TransactionType::ValidatorUpdate
             | TransactionType::ValidatorUnregister
@@ -2089,8 +2207,7 @@ impl BlockExecutor {
                 // Type-mismatch guard: reject SELL payloads before full pre-validation.
                 if tx.memo.first() == Some(&BONDING_CURVE_SELL_ACTION) {
                     return Err(TxApplyError::InvalidType(
-                        "Canonical SELL_CBE payload cannot execute as BondingCurveBuy"
-                            .to_string(),
+                        "Canonical SELL_CBE payload cannot execute as BondingCurveBuy".to_string(),
                     ));
                 }
                 let envelope = self.canonical_bonding_curve_envelope_from_transaction(tx)?;
@@ -2099,8 +2216,7 @@ impl BlockExecutor {
                         Ok(TxOutcome::BondingCurveBuy(outcome))
                     }
                     CanonicalBondingCurveOutcome::Sell(_) => Err(TxApplyError::InvalidType(
-                        "Canonical SELL_CBE payload cannot execute as BondingCurveBuy"
-                            .to_string(),
+                        "Canonical SELL_CBE payload cannot execute as BondingCurveBuy".to_string(),
                     )),
                 }
             }
@@ -2108,8 +2224,7 @@ impl BlockExecutor {
                 // Type-mismatch guard: reject BUY payloads before full pre-validation.
                 if tx.memo.first() == Some(&BONDING_CURVE_BUY_ACTION) {
                     return Err(TxApplyError::InvalidType(
-                        "Canonical BUY_CBE payload cannot execute as BondingCurveSell"
-                            .to_string(),
+                        "Canonical BUY_CBE payload cannot execute as BondingCurveSell".to_string(),
                     ));
                 }
                 let envelope = self.canonical_bonding_curve_envelope_from_transaction(tx)?;
@@ -2118,8 +2233,7 @@ impl BlockExecutor {
                         Ok(TxOutcome::BondingCurveSell(outcome))
                     }
                     CanonicalBondingCurveOutcome::Buy(_) => Err(TxApplyError::InvalidType(
-                        "Canonical BUY_CBE payload cannot execute as BondingCurveSell"
-                            .to_string(),
+                        "Canonical BUY_CBE payload cannot execute as BondingCurveSell".to_string(),
                     )),
                 }
             }
@@ -2684,7 +2798,8 @@ mod tests {
 
         // Create a transfer spending the coinbase UTXO (output index 0)
         let spend_tx = create_transfer_tx(coinbase_tx_hash, 0);
-        let block2 = create_block_with_txs(2, funded_block.header.block_hash, vec![spend_tx.clone()]);
+        let block2 =
+            create_block_with_txs(2, funded_block.header.block_hash, vec![spend_tx.clone()]);
 
         // First spend should succeed
         executor.apply_block(&block2).unwrap();
@@ -3324,18 +3439,20 @@ mod tests {
     fn create_dao_proposal_tx(proposal_id: crate::types::Hash) -> Transaction {
         let mut tx = create_legacy_tx(TransactionType::DaoProposal);
         tx.fee = 1_000; // governance tx min fee with FeeParams::for_testing()
-        tx.payload = crate::transaction::TransactionPayload::DaoProposal(crate::transaction::DaoProposalData {
-            proposal_id,
-            proposer: "alice".to_string(),
-            title: "Test Proposal".to_string(),
-            description: "A test governance proposal".to_string(),
-            proposal_type: "parameter_change".to_string(),
-            voting_period_blocks: 100,
-            quorum_required: 51,
-            execution_params: None,
-            created_at: 1000,
-            created_at_height: 1,
-        });
+        tx.payload = crate::transaction::TransactionPayload::DaoProposal(
+            crate::transaction::DaoProposalData {
+                proposal_id,
+                proposer: "alice".to_string(),
+                title: "Test Proposal".to_string(),
+                description: "A test governance proposal".to_string(),
+                proposal_type: "parameter_change".to_string(),
+                voting_period_blocks: 100,
+                quorum_required: 51,
+                execution_params: None,
+                created_at: 1000,
+                created_at_height: 1,
+            },
+        );
         tx
     }
 
@@ -3349,31 +3466,34 @@ mod tests {
         ));
         let mut tx = create_legacy_tx(TransactionType::DaoVote);
         tx.fee = 1_000; // governance tx min fee with FeeParams::for_testing()
-        tx.payload = crate::transaction::TransactionPayload::DaoVote(crate::transaction::DaoVoteData {
-            vote_id,
-            proposal_id,
-            voter: voter.to_string(),
-            vote_choice: vote_choice.to_string(),
-            voting_power: 100,
-            justification: None,
-            timestamp: 2000,
-        });
+        tx.payload =
+            crate::transaction::TransactionPayload::DaoVote(crate::transaction::DaoVoteData {
+                vote_id,
+                proposal_id,
+                voter: voter.to_string(),
+                vote_choice: vote_choice.to_string(),
+                voting_power: 100,
+                justification: None,
+                timestamp: 2000,
+            });
         tx
     }
 
     fn create_dao_execution_tx(proposal_id: crate::types::Hash) -> Transaction {
         let mut tx = create_legacy_tx(TransactionType::DaoExecution);
         tx.fee = 1_000; // governance tx min fee with FeeParams::for_testing()
-        tx.payload = crate::transaction::TransactionPayload::DaoExecution(crate::transaction::DaoExecutionData {
-            proposal_id,
-            executor: "council".to_string(),
-            execution_type: "parameter_change".to_string(),
-            recipient: None,
-            amount: None,
-            executed_at: 3000,
-            executed_at_height: 3,
-            multisig_signatures: vec![],
-        });
+        tx.payload = crate::transaction::TransactionPayload::DaoExecution(
+            crate::transaction::DaoExecutionData {
+                proposal_id,
+                executor: "council".to_string(),
+                execution_type: "parameter_change".to_string(),
+                recipient: None,
+                amount: None,
+                executed_at: 3000,
+                executed_at_height: 3,
+                multisig_signatures: vec![],
+            },
+        );
         tx
     }
 
@@ -3500,7 +3620,9 @@ mod tests {
 
         // Block 1: proposal with a 1-block voting period (expires after height 2)
         let mut proposal_data = create_dao_proposal_tx(proposal_id);
-        if let crate::transaction::TransactionPayload::DaoProposal(ref mut d) = proposal_data.payload {
+        if let crate::transaction::TransactionPayload::DaoProposal(ref mut d) =
+            proposal_data.payload
+        {
             d.voting_period_blocks = 1; // deadline = created_at_height(1) + 1 = height 2
         }
         let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![proposal_data]);
@@ -3679,8 +3801,8 @@ mod tests {
         let executor = BlockExecutor::with_store(store.clone());
 
         let amount_in = 1_000 * SCALE; // generous buy amount
-        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
-            BondingCurveBuyTx {
+        let payload =
+            encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(BondingCurveBuyTx {
                 action: BONDING_CURVE_BUY_ACTION,
                 chain_id: 0x03,
                 nonce: Nonce48::from_u64(0).unwrap(),
@@ -3688,8 +3810,7 @@ mod tests {
                 amount_in,
                 max_price: u128::MAX, // no slippage restriction
                 expected_s_c: 0,
-            },
-        ));
+            }));
 
         let outcome = executor
             .apply_canonical_bonding_curve_tx(&mutator, &payload)
@@ -3759,8 +3880,8 @@ mod tests {
         let executor = BlockExecutor::with_store(store.clone());
 
         // max_price = 1 (1 atomic SOV per CBE) is impossibly cheap → slippage rejection.
-        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
-            BondingCurveBuyTx {
+        let payload =
+            encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(BondingCurveBuyTx {
                 action: BONDING_CURVE_BUY_ACTION,
                 chain_id: 0x03,
                 nonce: Nonce48::from_u64(0).unwrap(),
@@ -3768,8 +3889,7 @@ mod tests {
                 amount_in: 1_000 * SCALE,
                 max_price: 1, // absurdly tight slippage cap
                 expected_s_c: 0,
-            },
-        ));
+            }));
 
         let err = executor
             .apply_canonical_bonding_curve_tx(&mutator, &payload)
@@ -3788,7 +3908,9 @@ mod tests {
         use crate::transaction::{
             encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
         };
-        use lib_types::{BondingCurveAccountState, BondingCurveBuyTx, BondingCurveEconomicState, Nonce48};
+        use lib_types::{
+            BondingCurveAccountState, BondingCurveBuyTx, BondingCurveEconomicState, Nonce48,
+        };
 
         let store = create_test_store();
 
@@ -3827,8 +3949,8 @@ mod tests {
         let executor = BlockExecutor::with_store(store.clone());
 
         // Even a tiny buy (amount_in = 5) yields reserve_credit = 1, tipping GRAD_THRESHOLD.
-        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
-            BondingCurveBuyTx {
+        let payload =
+            encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(BondingCurveBuyTx {
                 action: BONDING_CURVE_BUY_ACTION,
                 chain_id: 0x03,
                 nonce: Nonce48::from_u64(0).unwrap(),
@@ -3836,8 +3958,7 @@ mod tests {
                 amount_in: 100 * SCALE,
                 max_price: u128::MAX,
                 expected_s_c: 0,
-            },
-        ));
+            }));
 
         executor
             .apply_canonical_bonding_curve_tx(&mutator, &payload)
@@ -3928,8 +4049,8 @@ mod tests {
         let mutator = StateMutator::new(store.as_ref());
         let executor = BlockExecutor::with_store(store.clone());
 
-        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(
-            BondingCurveSellTx {
+        let payload =
+            encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(BondingCurveSellTx {
                 action: BONDING_CURVE_SELL_ACTION,
                 chain_id: 0x03,
                 nonce: Nonce48::from_u64(1).unwrap(),
@@ -3937,8 +4058,7 @@ mod tests {
                 amount_cbe: delta_s,
                 min_payout: 0, // no slippage floor
                 expected_s_c: delta_s,
-            },
-        ));
+            }));
 
         let outcome = executor
             .apply_canonical_bonding_curve_tx(&mutator, &payload)
@@ -3973,7 +4093,9 @@ mod tests {
         use crate::transaction::{
             encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_SELL_ACTION,
         };
-        use lib_types::{BondingCurveAccountState, BondingCurveEconomicState, BondingCurveSellTx, Nonce48};
+        use lib_types::{
+            BondingCurveAccountState, BondingCurveEconomicState, BondingCurveSellTx, Nonce48,
+        };
 
         let store = create_test_store();
 
@@ -4009,8 +4131,8 @@ mod tests {
         let mutator = StateMutator::new(store.as_ref());
         let executor = BlockExecutor::with_store(store.clone());
 
-        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(
-            BondingCurveSellTx {
+        let payload =
+            encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(BondingCurveSellTx {
                 action: BONDING_CURVE_SELL_ACTION,
                 chain_id: 0x03,
                 nonce: Nonce48::from_u64(0).unwrap(),
@@ -4018,8 +4140,7 @@ mod tests {
                 amount_cbe: cbe_amount,
                 min_payout: 0,
                 expected_s_c: cbe_amount,
-            },
-        ));
+            }));
 
         let err = executor
             .apply_canonical_bonding_curve_tx(&mutator, &payload)
@@ -4100,8 +4221,8 @@ mod tests {
         let mutator = StateMutator::new(store.as_ref());
         let executor = BlockExecutor::with_store(store.clone());
 
-        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(
-            BondingCurveSellTx {
+        let payload =
+            encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(BondingCurveSellTx {
                 action: BONDING_CURVE_SELL_ACTION,
                 chain_id: 0x03,
                 nonce: Nonce48::from_u64(1).unwrap(),
@@ -4109,8 +4230,7 @@ mod tests {
                 amount_cbe: delta_s,
                 min_payout: u128::MAX, // impossible floor
                 expected_s_c: delta_s,
-            },
-        ));
+            }));
 
         let err = executor
             .apply_canonical_bonding_curve_tx(&mutator, &payload)
@@ -4158,8 +4278,8 @@ mod tests {
         let signer = KeyPair::generate().unwrap();
         let other = KeyPair::generate().unwrap();
 
-        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
-            BondingCurveBuyTx {
+        let payload =
+            encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(BondingCurveBuyTx {
                 action: BONDING_CURVE_BUY_ACTION,
                 chain_id: 0x03,
                 nonce: Nonce48::from_u64(43).unwrap(),
@@ -4167,8 +4287,7 @@ mod tests {
                 amount_in: 1000,
                 max_price: 2000,
                 expected_s_c: 3000,
-            },
-        ));
+            }));
         let envelope = CanonicalBondingCurveEnvelope {
             payload,
             signature: signer.sign(&payload).unwrap(),
@@ -4177,18 +4296,16 @@ mod tests {
         let err = executor
             .apply_canonical_bonding_curve_envelope(&mutator, &envelope)
             .expect_err("mismatched envelope signer must be rejected");
-        assert!(
-            err.to_string()
-                .contains("Canonical curve signer does not match payload sender")
-        );
+        assert!(err
+            .to_string()
+            .contains("Canonical curve signer does not match payload sender"));
     }
 
     #[test]
     fn test_apply_transaction_routes_bonding_curve_buy_to_canonical_memo_lane() {
         use crate::execution::tx_apply::StateMutator;
         use crate::transaction::{
-            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx,
-            BONDING_CURVE_BUY_ACTION,
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_BUY_ACTION,
         };
         use crate::types::transaction_type::TransactionType;
         use lib_crypto::KeyPair;
@@ -4219,8 +4336,8 @@ mod tests {
         let mutator = StateMutator::new(store.as_ref());
         let executor = BlockExecutor::with_store(store.clone());
 
-        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(
-            BondingCurveBuyTx {
+        let payload =
+            encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Buy(BondingCurveBuyTx {
                 action: BONDING_CURVE_BUY_ACTION,
                 chain_id: 0x03,
                 // nonce=0 and expected_s_c=0 pass pre-validation (zero-default state).
@@ -4229,8 +4346,7 @@ mod tests {
                 amount_in: 1000,
                 max_price: u128::MAX, // no slippage restriction — routing test only
                 expected_s_c: 0,
-            },
-        ));
+            }));
         let tx = crate::transaction::Transaction {
             version: crate::transaction::TX_VERSION_V8,
             chain_id: 0x03,
@@ -4259,8 +4375,7 @@ mod tests {
     fn test_apply_transaction_rejects_canonical_action_type_mismatch() {
         use crate::execution::tx_apply::StateMutator;
         use crate::transaction::{
-            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx,
-            BONDING_CURVE_SELL_ACTION,
+            encode_canonical_bonding_curve_tx, CanonicalBondingCurveTx, BONDING_CURVE_SELL_ACTION,
         };
         use crate::types::transaction_type::TransactionType;
         use lib_crypto::KeyPair;
@@ -4272,8 +4387,8 @@ mod tests {
         let executor = BlockExecutor::with_store(store.clone());
         let signer = KeyPair::generate().unwrap();
 
-        let payload = encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(
-            BondingCurveSellTx {
+        let payload =
+            encode_canonical_bonding_curve_tx(&CanonicalBondingCurveTx::Sell(BondingCurveSellTx {
                 action: BONDING_CURVE_SELL_ACTION,
                 chain_id: 0x03,
                 nonce: Nonce48::from_u64(56).unwrap(),
@@ -4281,8 +4396,7 @@ mod tests {
                 amount_cbe: 100,
                 min_payout: 90,
                 expected_s_c: 3000,
-            },
-        ));
+            }));
         let tx = crate::transaction::Transaction {
             version: crate::transaction::TX_VERSION_V8,
             chain_id: 0x03,
@@ -4298,10 +4412,8 @@ mod tests {
         let err = executor
             .apply_transaction(&mutator, &tx, 0, 0)
             .expect_err("mismatched canonical action/type must be rejected");
-        assert!(
-            err.to_string()
-                .contains("Canonical SELL_CBE payload cannot execute as BondingCurveBuy")
-        );
+        assert!(err
+            .to_string()
+            .contains("Canonical SELL_CBE payload cannot execute as BondingCurveBuy"));
     }
-
 }

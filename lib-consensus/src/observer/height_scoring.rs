@@ -136,7 +136,11 @@ pub fn compute_height_score(
     config: &HeightScoringConfig,
 ) -> HeightScore {
     // Count rounds (unique round numbers)
-    let round_count = states.iter().map(|s| s.round).collect::<std::collections::HashSet<_>>().len() as u32;
+    let round_count = states
+        .iter()
+        .map(|s| s.round)
+        .collect::<std::collections::HashSet<_>>()
+        .len() as u32;
 
     // Count timeouts
     let timeout_count = states
@@ -252,19 +256,37 @@ pub fn compute_network_health(scores: &[HeightScore]) -> NetworkHealthSummary {
     }
 
     let total_heights = scores.len();
-    let healthy_count = scores.iter().filter(|s| s.classification == HeightClassification::Healthy).count();
-    let delayed_count = scores.iter().filter(|s| s.classification == HeightClassification::Delayed).count();
-    let stalled_count = scores.iter().filter(|s| s.classification == HeightClassification::Stalled).count();
-    let degraded_count = scores.iter().filter(|s| s.classification == HeightClassification::Degraded).count();
-    let critical_count = scores.iter().filter(|s| s.classification == HeightClassification::Critical).count();
+    let healthy_count = scores
+        .iter()
+        .filter(|s| s.classification == HeightClassification::Healthy)
+        .count();
+    let delayed_count = scores
+        .iter()
+        .filter(|s| s.classification == HeightClassification::Delayed)
+        .count();
+    let stalled_count = scores
+        .iter()
+        .filter(|s| s.classification == HeightClassification::Stalled)
+        .count();
+    let degraded_count = scores
+        .iter()
+        .filter(|s| s.classification == HeightClassification::Degraded)
+        .count();
+    let critical_count = scores
+        .iter()
+        .filter(|s| s.classification == HeightClassification::Critical)
+        .count();
 
     let free_energies: Vec<f64> = scores.iter().map(|s| s.free_energy).collect();
     let average_free_energy = free_energies.iter().sum::<f64>() / total_heights as f64;
-    let max_free_energy: f64 = free_energies.iter().fold(0.0_f64, |a: f64, b: &f64| a.max(*b));
+    let max_free_energy: f64 = free_energies
+        .iter()
+        .fold(0.0_f64, |a: f64, b: &f64| a.max(*b));
 
     let stall_rate = (total_heights - healthy_count) as f64 / total_heights as f64;
 
-    let average_rounds = scores.iter().map(|s| s.round_count as f64).sum::<f64>() / total_heights as f64;
+    let average_rounds =
+        scores.iter().map(|s| s.round_count as f64).sum::<f64>() / total_heights as f64;
 
     // Identify potential partition indicators (critical or degraded heights)
     let partition_indicators: Vec<u64> = scores
@@ -306,7 +328,12 @@ pub fn analyze_trend(scores: &[HeightScore], window_size: usize) -> ConsensusTre
         return ConsensusTrend::Stable;
     }
 
-    let recent: Vec<f64> = scores.iter().rev().take(window_size).map(|s| s.free_energy).collect();
+    let recent: Vec<f64> = scores
+        .iter()
+        .rev()
+        .take(window_size)
+        .map(|s| s.free_energy)
+        .collect();
     let previous: Vec<f64> = scores
         .iter()
         .rev()
@@ -395,7 +422,10 @@ mod tests {
 
     #[test]
     fn delayed_height_with_timeout() {
-        let states = vec![test_state(EncodedConsensusPhase::Propose, TimeClass::TimedOut)];
+        let states = vec![test_state(
+            EncodedConsensusPhase::Propose,
+            TimeClass::TimedOut,
+        )];
         let surprisal = test_surprisal_stats(2.0);
         let config = HeightScoringConfig::default();
 
@@ -508,7 +538,10 @@ mod tests {
             })
             .collect();
 
-        assert!(matches!(analyze_trend(&improving, 3), ConsensusTrend::Improving));
+        assert!(matches!(
+            analyze_trend(&improving, 3),
+            ConsensusTrend::Improving
+        ));
 
         let degrading: Vec<HeightScore> = (0..10)
             .map(|i| HeightScore {
@@ -522,14 +555,25 @@ mod tests {
             })
             .collect();
 
-        assert!(matches!(analyze_trend(&degrading, 3), ConsensusTrend::Degrading));
+        assert!(matches!(
+            analyze_trend(&degrading, 3),
+            ConsensusTrend::Degrading
+        ));
     }
 
     #[test]
     fn classification_severity_ordering() {
-        assert!(HeightClassification::Healthy.severity() < HeightClassification::Delayed.severity());
-        assert!(HeightClassification::Delayed.severity() < HeightClassification::Stalled.severity());
-        assert!(HeightClassification::Stalled.severity() < HeightClassification::Degraded.severity());
-        assert!(HeightClassification::Degraded.severity() < HeightClassification::Critical.severity());
+        assert!(
+            HeightClassification::Healthy.severity() < HeightClassification::Delayed.severity()
+        );
+        assert!(
+            HeightClassification::Delayed.severity() < HeightClassification::Stalled.severity()
+        );
+        assert!(
+            HeightClassification::Stalled.severity() < HeightClassification::Degraded.severity()
+        );
+        assert!(
+            HeightClassification::Degraded.severity() < HeightClassification::Critical.severity()
+        );
     }
 }

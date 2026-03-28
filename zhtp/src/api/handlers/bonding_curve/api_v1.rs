@@ -200,12 +200,12 @@ impl BondingCurveApiHandler {
     /// Get current curve state (supply, reserve, phase)
     async fn handle_state(&self) -> Result<ZhtpResponse> {
         let blockchain = self.blockchain.read().await;
-        
+
         // Get CBE token - first one in registry (primary token)
         let cbe_token = self.get_cbe_token(&blockchain).await?;
-        
+
         let current_band = self.get_current_band(cbe_token.total_supply);
-        
+
         let response = CurveStateResponse {
             token_id: hex::encode(cbe_token.token_id),
             name: cbe_token.name.clone(),
@@ -218,7 +218,7 @@ impl BondingCurveApiHandler {
             current_price_8dec: cbe_token.current_price(),
             current_band,
         };
-        
+
         create_json_response(serde_json::to_value(response)?)
     }
 
@@ -229,18 +229,18 @@ impl BondingCurveApiHandler {
     /// Get current CBE/SOV price
     async fn handle_price(&self) -> Result<ZhtpResponse> {
         let blockchain = self.blockchain.read().await;
-        
+
         let cbe_token = self.get_cbe_token(&blockchain).await?;
         let current_band = self.get_current_band(cbe_token.total_supply);
         let price_8dec = cbe_token.current_price();
-        
+
         let response = PriceResponse {
             cbe_sov_price: price_8dec as f64 / TOKEN_SCALE_18 as f64,
             cbe_sov_price_8dec: price_8dec,
             current_band,
             phase: cbe_token.phase.to_string(),
         };
-        
+
         create_json_response(serde_json::to_value(response)?)
     }
 
@@ -301,7 +301,8 @@ impl BondingCurveApiHandler {
 
         // Calculate reserve/treasury split using canonical constants (2/5 to reserve, 3/5 to treasury).
         // Use u128 for intermediate calculation to prevent overflow on large sov_amount.
-        let to_reserve = req.sov_amount
+        let to_reserve = req
+            .sov_amount
             .checked_mul(RESERVE_SPLIT_NUMERATOR as u128)
             .and_then(|v| v.checked_div(RESERVE_SPLIT_DENOMINATOR as u128))
             .ok_or_else(|| anyhow::anyhow!("Reserve split calculation overflow"))?;
@@ -434,7 +435,10 @@ impl BondingCurveApiHandler {
             if cbe_amount < min_out {
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
-                    format!("Slippage: received {} CBE but minimum is {}", cbe_amount, min_out),
+                    format!(
+                        "Slippage: received {} CBE but minimum is {}",
+                        cbe_amount, min_out
+                    ),
                 ));
             }
         }
@@ -498,7 +502,10 @@ impl BondingCurveApiHandler {
             if sov_amount < min_out {
                 return Ok(create_error_response(
                     ZhtpStatus::BadRequest,
-                    format!("Slippage: received {} SOV but minimum is {}", sov_amount, min_out),
+                    format!(
+                        "Slippage: received {} SOV but minimum is {}",
+                        sov_amount, min_out
+                    ),
                 ));
             }
         }
@@ -525,7 +532,7 @@ impl BondingCurveApiHandler {
             transactions: vec![],
             total_count: 0,
         };
-        
+
         create_json_response(serde_json::to_value(response)?)
     }
 
@@ -536,7 +543,7 @@ impl BondingCurveApiHandler {
     /// Get AMM pool state (post-graduation)
     async fn handle_amm(&self) -> Result<ZhtpResponse> {
         let blockchain = self.blockchain.read().await;
-        
+
         let cbe_token = match self.get_cbe_token(&blockchain).await {
             Ok(t) => t,
             Err(_) => {
@@ -560,7 +567,7 @@ impl BondingCurveApiHandler {
                             } else {
                                 0.0
                             };
-                            
+
                             let response = AmmPoolStateResponse {
                                 exists: true,
                                 pool_id: Some(hex::encode(pool_id)),
@@ -573,13 +580,11 @@ impl BondingCurveApiHandler {
                             };
                             create_json_response(serde_json::to_value(response)?)
                         }
-                        None => {
-                            create_json_response(json!({
-                                "exists": false,
-                                "phase": "AMM",
-                                "message": "Pool ID registered but pool data not found"
-                            }))
-                        }
+                        None => create_json_response(json!({
+                            "exists": false,
+                            "phase": "AMM",
+                            "message": "Pool ID registered but pool data not found"
+                        })),
                     }
                 } else {
                     create_json_response(json!({
@@ -589,20 +594,16 @@ impl BondingCurveApiHandler {
                     }))
                 }
             }
-            Phase::Graduated => {
-                create_json_response(json!({
-                    "exists": false,
-                    "phase": "Graduated",
-                    "message": "Token graduated but AMM pool not yet created"
-                }))
-            }
-            Phase::Curve => {
-                create_json_response(json!({
-                    "exists": false,
-                    "phase": "Curve",
-                    "message": "Token still in bonding curve phase"
-                }))
-            }
+            Phase::Graduated => create_json_response(json!({
+                "exists": false,
+                "phase": "Graduated",
+                "message": "Token graduated but AMM pool not yet created"
+            })),
+            Phase::Curve => create_json_response(json!({
+                "exists": false,
+                "phase": "Curve",
+                "message": "Token still in bonding curve phase"
+            })),
         }
     }
 
@@ -613,7 +614,7 @@ impl BondingCurveApiHandler {
     /// Get CBE token from registry
     async fn get_cbe_token<'a>(&self, blockchain: &'a Blockchain) -> Result<&'a BondingCurveToken> {
         let cbe_symbol = lib_blockchain::contracts::tokens::CBE_SYMBOL;
-        
+
         blockchain
             .bonding_curve_registry
             .get_all()
@@ -673,14 +674,17 @@ impl ZhtpRequestHandler for BondingCurveApiHandler {
         &self,
         request: ZhtpRequest,
     ) -> lib_protocols::zhtp::ZhtpResult<ZhtpResponse> {
-        info!("Bonding Curve API handler: {} {}", request.method, request.uri);
+        info!(
+            "Bonding Curve API handler: {} {}",
+            request.method, request.uri
+        );
 
         let response = match (request.method.clone(), request.uri.as_str()) {
             // State & Price
             (ZhtpMethod::Get, "/api/v1/bonding-curve/state") => self.handle_state().await,
             (ZhtpMethod::Get, "/api/v1/bonding-curve/price") => self.handle_price().await,
             (ZhtpMethod::Get, "/api/v1/bonding-curve/bands") => self.handle_bands().await,
-            
+
             // Quotes
             (ZhtpMethod::Post, "/api/v1/bonding-curve/quote-buy") => {
                 self.handle_quote_buy(request).await
@@ -688,15 +692,15 @@ impl ZhtpRequestHandler for BondingCurveApiHandler {
             (ZhtpMethod::Post, "/api/v1/bonding-curve/quote-sell") => {
                 self.handle_quote_sell(request).await
             }
-            
+
             // Transactions
             (ZhtpMethod::Post, "/api/v1/bonding-curve/buy") => self.handle_buy(request).await,
             (ZhtpMethod::Post, "/api/v1/bonding-curve/sell") => self.handle_sell(request).await,
-            
+
             // History & AMM
             (ZhtpMethod::Get, "/api/v1/bonding-curve/history") => self.handle_history().await,
             (ZhtpMethod::Get, "/api/v1/bonding-curve/amm") => self.handle_amm().await,
-            
+
             _ => Ok(create_error_response(
                 ZhtpStatus::NotFound,
                 format!(

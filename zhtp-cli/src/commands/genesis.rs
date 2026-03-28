@@ -24,7 +24,9 @@ fn cmd_build(config: Option<PathBuf>, output: Option<PathBuf>) -> Result<()> {
         None => lib_blockchain::genesis::GenesisConfig::from_embedded()?,
     };
 
-    let bc = cfg.build_block0().context("Failed to build genesis block")?;
+    let bc = cfg
+        .build_block0()
+        .context("Failed to build genesis block")?;
     let block0 = bc.blocks.first().context("No genesis block")?;
     let hash = block0.header.block_hash;
     let hash_hex = hex::encode(hash.as_bytes());
@@ -85,11 +87,7 @@ fn cmd_export_state(dat_file: Option<PathBuf>, output: PathBuf) -> Result<()> {
 }
 
 /// Merge a state snapshot into genesis.toml, producing a migration-ready genesis config.
-fn cmd_migrate_state(
-    snapshot: PathBuf,
-    config: Option<PathBuf>,
-    output: PathBuf,
-) -> Result<()> {
+fn cmd_migrate_state(snapshot: PathBuf, config: Option<PathBuf>, output: PathBuf) -> Result<()> {
     // Load snapshot
     let snap_json = std::fs::read_to_string(&snapshot)
         .with_context(|| format!("Failed to read snapshot: {}", snapshot.display()))?;
@@ -204,11 +202,23 @@ fn alloc_toml_inline(alloc: &lib_blockchain::genesis::GenesisAllocations) -> Str
 
     for w in &alloc.wallets {
         out.push_str("[[allocations.wallets]]\n");
-        out.push_str(&format!("wallet_id = \"{}\"\n", toml_basic_escape(&w.wallet_id)));
-        out.push_str(&format!("wallet_type = \"{}\"\n", toml_basic_escape(&w.wallet_type)));
-        out.push_str(&format!("public_key = \"{}\"\n", toml_basic_escape(&w.public_key)));
+        out.push_str(&format!(
+            "wallet_id = \"{}\"\n",
+            toml_basic_escape(&w.wallet_id)
+        ));
+        out.push_str(&format!(
+            "wallet_type = \"{}\"\n",
+            toml_basic_escape(&w.wallet_type)
+        ));
+        out.push_str(&format!(
+            "public_key = \"{}\"\n",
+            toml_basic_escape(&w.public_key)
+        ));
         if let Some(ref oid) = w.owner_identity_id {
-            out.push_str(&format!("owner_identity_id = \"{}\"\n", toml_basic_escape(oid)));
+            out.push_str(&format!(
+                "owner_identity_id = \"{}\"\n",
+                toml_basic_escape(oid)
+            ));
         }
         out.push_str(&format!("created_at = {}\n\n", w.created_at));
     }
@@ -220,14 +230,23 @@ fn alloc_toml_inline(alloc: &lib_blockchain::genesis::GenesisAllocations) -> Str
             "display_name = \"{}\"\n",
             toml_basic_escape(&id.display_name)
         ));
-        out.push_str(&format!("public_key = \"{}\"\n", toml_basic_escape(&id.public_key)));
-        out.push_str(&format!("identity_type = \"{}\"\n", toml_basic_escape(&id.identity_type)));
+        out.push_str(&format!(
+            "public_key = \"{}\"\n",
+            toml_basic_escape(&id.public_key)
+        ));
+        out.push_str(&format!(
+            "identity_type = \"{}\"\n",
+            toml_basic_escape(&id.identity_type)
+        ));
         out.push_str(&format!("created_at = {}\n\n", id.created_at));
     }
 
     for c in &alloc.web4_contracts {
         out.push_str("[[allocations.web4_contracts]]\n");
-        out.push_str(&format!("contract_id = \"{}\"\n", toml_basic_escape(&c.contract_id)));
+        out.push_str(&format!(
+            "contract_id = \"{}\"\n",
+            toml_basic_escape(&c.contract_id)
+        ));
         out.push_str(&format!("domain = \"{}\"\n", toml_basic_escape(&c.domain)));
         out.push_str(&format!("owner = \"{}\"\n", toml_basic_escape(&c.owner)));
         out.push_str(&format!("created_at = {}\n", c.created_at));
@@ -237,8 +256,14 @@ fn alloc_toml_inline(alloc: &lib_blockchain::genesis::GenesisAllocations) -> Str
 
     for b in &alloc.sov_balances {
         out.push_str("[[allocations.sov_balances]]\n");
-        out.push_str(&format!("wallet_id = \"{}\"\n", toml_basic_escape(&b.wallet_id)));
-        out.push_str(&format!("public_key = \"{}\"\n", toml_basic_escape(&b.public_key)));
+        out.push_str(&format!(
+            "wallet_id = \"{}\"\n",
+            toml_basic_escape(&b.wallet_id)
+        ));
+        out.push_str(&format!(
+            "public_key = \"{}\"\n",
+            toml_basic_escape(&b.public_key)
+        ));
         out.push_str(&format!("balance = {}\n\n", b.balance));
     }
 

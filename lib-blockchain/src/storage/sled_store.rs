@@ -12,10 +12,11 @@ use sled::{Batch, Db, IVec, Tree};
 use super::{
     keys, AccountState, Address, Amount, BlockHash, BlockHeight, BlockchainStore,
     IdentityConsensus, IdentityMetadata, OutPoint, StorageError, StorageResult, TokenId,
-    TokenStateSnapshot, Utxo,
+    TokenStateSnapshot, Utxo, WalletProjectionRecord,
 };
 use crate::block::Block;
 use crate::contracts::TokenContract;
+use crate::transaction::Transaction;
 
 // =============================================================================
 // TREE NAMES (FIXED - DO NOT CHANGE)
@@ -31,6 +32,7 @@ const TREE_TOKEN_BALANCES: &str = "token_balances";
 const TREE_TOKEN_NONCES: &str = "token_nonces"; // Token transfer nonces for replay protection
 const TREE_TOKEN_CONTRACTS: &str = "token_contracts";
 const TREE_TOKEN_SUPPLY: &str = "token_supply"; // Total supply tracking
+const TREE_WALLETS: &str = "wallets"; // Rebuildable wallet projection: wallet_id -> WalletProjectionRecord
 const TREE_CONTRACT_CODE: &str = "contract_code"; // WASM contract code
 const TREE_CONTRACT_STORAGE: &str = "contract_storage"; // Contract key-value storage
 const TREE_IDENTITIES: &str = "identities"; // Consensus state (participates in state hash)
@@ -39,6 +41,7 @@ const TREE_IDENTITY_BY_OWNER: &str = "identity_owner"; // Index: owner → did_h
 const TREE_BONDING_CURVES: &str = "bonding_curves"; // Bonding curve tokens
 const TREE_BONDING_CURVE_SYMBOLS: &str = "bonding_curve_symbols"; // Index: symbol → token_id
 const TREE_CBE_ACCOUNTS: &str = "cbe_accounts"; // Canonical CBE account states (#1926)
+const TREE_PENDING_TRANSACTIONS: &str = "pending_transactions"; // Non-consensus restart recovery
 const TREE_META: &str = "meta";
 
 /// Sled-based implementation of BlockchainStore
@@ -50,6 +53,7 @@ pub struct SledStore {
     blocks_by_hash: Tree,
     utxos: Tree,
     accounts: Tree,
+    wallets: Tree,
     token_balances: Tree,
     token_nonces: Tree, // Nonce for token transfers (replay protection)
     token_contracts: Tree,
@@ -62,6 +66,7 @@ pub struct SledStore {
     bonding_curves: Tree,        // Bonding curve tokens: token_id → BondingCurveToken
     bonding_curve_symbols: Tree, // Index: symbol → token_id
     cbe_accounts: Tree,          // Canonical CBE account states: key_id → BondingCurveAccountState
+    pending_transactions: Tree,  // Non-consensus mempool recovery state
     meta: Tree,
 
     // Transaction state
@@ -76,6 +81,7 @@ struct PendingBatch {
     blocks_by_hash: Batch,
     utxos: Batch,
     accounts: Batch,
+    wallets: Batch,
     token_balances: Batch,
     token_nonces: Batch, // Nonce for token transfers
     token_contracts: Batch,
@@ -98,6 +104,7 @@ impl PendingBatch {
             blocks_by_hash: Batch::default(),
             utxos: Batch::default(),
             accounts: Batch::default(),
+            wallets: Batch::default(),
             token_balances: Batch::default(),
             token_nonces: Batch::default(),
             token_contracts: Batch::default(),
@@ -159,6 +166,9 @@ impl SledStore {
         let accounts = db
             .open_tree(TREE_ACCOUNTS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let wallets = db
+            .open_tree(TREE_WALLETS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let token_balances = db
             .open_tree(TREE_TOKEN_BALANCES)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -183,6 +193,9 @@ impl SledStore {
         let cbe_accounts = db
             .open_tree(TREE_CBE_ACCOUNTS)
             .map_err(|e| StorageError::Database(e.to_string()))?;
+        let pending_transactions = db
+            .open_tree(TREE_PENDING_TRANSACTIONS)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         let meta = db
             .open_tree(TREE_META)
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -205,6 +218,7 @@ impl SledStore {
             blocks_by_hash,
             utxos,
             accounts,
+            wallets,
             token_balances,
             token_nonces,
             token_contracts,
@@ -217,6 +231,7 @@ impl SledStore {
             bonding_curves,
             bonding_curve_symbols,
             cbe_accounts,
+            pending_transactions,
             meta,
             tx_active: AtomicBool::new(false),
             tx_height: AtomicU64::new(0),
@@ -249,6 +264,92 @@ impl SledStore {
     /// Get direct access to utxos tree (for snapshots)
     pub fn utxos(&self) -> &Tree {
         &self.utxos
+    }
+
+    /// Get direct access to wallets projection tree.
+    pub fn wallets(&self) -> &Tree {
+        &self.wallets
+    }
+
+    /// Load a wallet projection entry by wallet id.
+    pub fn get_wallet_projection(
+        &self,
+        wallet_id: &[u8; 32],
+    ) -> StorageResult<Option<WalletProjectionRecord>> {
+        match self.wallets.get(wallet_id) {
+            Ok(Some(bytes)) => {
+                let record: WalletProjectionRecord = Self::deserialize(&bytes)?;
+                Ok(Some(record))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::Database(e.to_string())),
+        }
+    }
+
+    /// Persist a wallet projection entry inside an active block transaction.
+    pub fn put_wallet_projection(
+        &self,
+        wallet_id: &[u8; 32],
+        record: &WalletProjectionRecord,
+    ) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let value = Self::serialize(record)?;
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.wallets.insert(wallet_id.as_ref(), value);
+        }
+
+        Ok(())
+    }
+
+    /// Delete a wallet projection entry inside an active block transaction.
+    pub fn delete_wallet_projection(&self, wallet_id: &[u8; 32]) -> StorageResult<()> {
+        self.require_transaction()?;
+
+        let mut batch_guard = self.tx_batch.lock().unwrap();
+        if let Some(ref mut batch) = *batch_guard {
+            batch.wallets.remove(wallet_id.as_ref());
+        }
+
+        Ok(())
+    }
+
+    /// Iterate all wallet projection entries.
+    pub fn iter_wallet_projections(&self) -> StorageResult<Vec<([u8; 32], WalletProjectionRecord)>> {
+        let mut entries = Vec::new();
+        for item in self.wallets.iter() {
+            let (key, value) = item.map_err(|e| StorageError::Database(e.to_string()))?;
+            if key.len() != 32 {
+                return Err(StorageError::CorruptedData(
+                    "Invalid wallet projection key length".to_string(),
+                ));
+            }
+            let mut wallet_id = [0u8; 32];
+            wallet_id.copy_from_slice(key.as_ref());
+            let record: WalletProjectionRecord = Self::deserialize(&value)?;
+            entries.push((wallet_id, record));
+        }
+        Ok(entries)
+    }
+
+    /// Replace the wallet projection tree outside block execution.
+    ///
+    /// This is used only for startup recovery of the rebuildable projection.
+    pub fn replace_wallet_projections(
+        &self,
+        records: &[([u8; 32], WalletProjectionRecord)],
+    ) -> StorageResult<()> {
+        let mut batch = Batch::default();
+        self.wallets.clear().map_err(|e| StorageError::Database(e.to_string()))?;
+        for (wallet_id, record) in records {
+            let value = Self::serialize(record)?;
+            batch.insert(wallet_id.as_ref(), value);
+        }
+        self.wallets
+            .apply_batch(batch)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
     }
 
     /// Get direct access to accounts tree (for snapshots)
@@ -355,7 +456,9 @@ impl BlockchainStore for SledStore {
         if let Some(ref mut batch) = *batch_guard {
             // Batch::insert requires Into<IVec> for both K and V (unlike Tree::insert
             // which accepts AsRef<[u8]> for K), so convert fixed-size arrays to slices.
-            batch.blocks_by_height.insert(height_key.as_ref(), block_hash.as_bytes().as_ref());
+            batch
+                .blocks_by_height
+                .insert(height_key.as_ref(), block_hash.as_bytes().as_ref());
             batch.blocks_by_hash.insert(hash_key.as_ref(), block_bytes);
         }
 
@@ -646,6 +749,78 @@ impl BlockchainStore for SledStore {
             .insert(keys::meta::ORACLE_STATE, value)
             .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
+    }
+
+    fn put_pending_transaction(&self, tx: &Transaction) -> StorageResult<()> {
+        let key = tx.hash();
+        let value = Self::serialize(tx)?;
+        self.pending_transactions
+            .insert(key.as_bytes(), value)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn delete_pending_transaction(&self, tx_hash: &[u8; 32]) -> StorageResult<()> {
+        self.pending_transactions
+            .remove(tx_hash)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        self.db
+            .flush()
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn iter_pending_transactions(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = Transaction> + '_>> {
+        let mut results = Vec::new();
+        for result in self.pending_transactions.iter() {
+            match result {
+                Ok((_key, value)) => {
+                    let tx: Transaction = Self::deserialize(&value)?;
+                    results.push(tx);
+                }
+                Err(e) => return Err(StorageError::Database(e.to_string())),
+            }
+        }
+
+        Ok(Box::new(results.into_iter()))
+    }
+
+    fn get_wallet_projection(
+        &self,
+        wallet_id: &[u8; 32],
+    ) -> StorageResult<Option<WalletProjectionRecord>> {
+        SledStore::get_wallet_projection(self, wallet_id)
+    }
+
+    fn put_wallet_projection(
+        &self,
+        wallet_id: &[u8; 32],
+        record: &WalletProjectionRecord,
+    ) -> StorageResult<()> {
+        SledStore::put_wallet_projection(self, wallet_id, record)
+    }
+
+    fn delete_wallet_projection(&self, wallet_id: &[u8; 32]) -> StorageResult<()> {
+        SledStore::delete_wallet_projection(self, wallet_id)
+    }
+
+    fn iter_wallet_projections(
+        &self,
+    ) -> StorageResult<Box<dyn Iterator<Item = ([u8; 32], WalletProjectionRecord)> + '_>> {
+        let entries = SledStore::iter_wallet_projections(self)?;
+        Ok(Box::new(entries.into_iter()))
+    }
+
+    fn replace_wallet_projections(
+        &self,
+        records: &[([u8; 32], WalletProjectionRecord)],
+    ) -> StorageResult<()> {
+        SledStore::replace_wallet_projections(self, records)
     }
 
     // =========================================================================
@@ -1051,12 +1226,24 @@ impl BlockchainStore for SledStore {
             .apply_batch(batch.accounts)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
+        self.wallets
+            .apply_batch(batch.wallets)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
         self.token_balances
             .apply_batch(batch.token_balances)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
+        self.token_nonces
+            .apply_batch(batch.token_nonces)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
         self.token_contracts
             .apply_batch(batch.token_contracts)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        self.token_supply
+            .apply_batch(batch.token_supply)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
         self.identities
@@ -1307,9 +1494,7 @@ impl BlockchainStore for SledStore {
     // Canonical CBE Curve State (#1926)
     // =========================================================================
 
-    fn get_cbe_economic_state(
-        &self,
-    ) -> StorageResult<lib_types::BondingCurveEconomicState> {
+    fn get_cbe_economic_state(&self) -> StorageResult<lib_types::BondingCurveEconomicState> {
         match self.meta.get(keys::meta::CBE_ECONOMIC_STATE) {
             Ok(Some(bytes)) => {
                 let state: lib_types::BondingCurveEconomicState = Self::deserialize(&bytes)?;
@@ -1375,9 +1560,11 @@ impl BlockchainStore for SledStore {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{TxHash, WalletState};
+    use super::super::{TxHash, WalletProjectionRecord, WalletState};
     use super::*;
     use crate::block::{Block, BlockHeader};
+    use crate::integration::crypto_integration::{PublicKey, Signature, SignatureAlgorithm};
+    use crate::transaction::WalletTransactionData;
     use crate::types::{Difficulty, Hash};
 
     fn create_test_block(height: u64, prev_hash: Hash) -> Block {
@@ -1524,6 +1711,54 @@ mod tests {
     }
 
     #[test]
+    fn test_wallet_projection_operations() {
+        let store = SledStore::open_temporary().unwrap();
+        let block0 = create_test_block(0, Hash::default());
+        let wallet_id = [0xabu8; 32];
+        let record = WalletProjectionRecord {
+            wallet_data: WalletTransactionData {
+                wallet_id: Hash::new(wallet_id),
+                wallet_type: "Primary".to_string(),
+                wallet_name: "Projection Wallet".to_string(),
+                alias: Some("wallet-proj".to_string()),
+                public_key: vec![0x11; 32],
+                owner_identity_id: Some(Hash::new([0x22; 32])),
+                seed_commitment: Hash::new([0x33; 32]),
+                created_at: 1234,
+                registration_fee: 10,
+                capabilities: 7,
+                initial_balance: 42,
+            },
+            committed_at_height: 0,
+        };
+
+        store.begin_block(0).unwrap();
+        store.append_block(&block0).unwrap();
+        store.put_wallet_projection(&wallet_id, &record).unwrap();
+        store.commit_block().unwrap();
+
+        let loaded = store.get_wallet_projection(&wallet_id).unwrap().unwrap();
+        assert_eq!(loaded, record);
+
+        let entries = store.iter_wallet_projections().unwrap();
+        assert_eq!(entries, vec![(wallet_id, record.clone())]);
+
+        let block1 = create_test_block(1, block0.header.block_hash);
+        store.begin_block(1).unwrap();
+        store.append_block(&block1).unwrap();
+        store.delete_wallet_projection(&wallet_id).unwrap();
+        store.commit_block().unwrap();
+
+        assert!(store.get_wallet_projection(&wallet_id).unwrap().is_none());
+        assert!(store.iter_wallet_projections().unwrap().is_empty());
+
+        store
+            .replace_wallet_projections(&[(wallet_id, record.clone())])
+            .unwrap();
+        assert_eq!(store.get_wallet_projection(&wallet_id).unwrap(), Some(record));
+    }
+
+    #[test]
     fn test_rollback_discards_changes() {
         let store = SledStore::open_temporary().unwrap();
         let block = create_test_block(0, Hash::default());
@@ -1606,6 +1841,48 @@ mod tests {
         assert!(store.get_block_by_height(1).unwrap().is_some());
         assert!(store.get_block_by_height(2).unwrap().is_some());
         assert!(store.get_block_by_height(3).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_pending_transaction_recovery_storage() {
+        let store = SledStore::open_temporary().unwrap();
+
+        let tx = crate::transaction::Transaction::new_wallet_registration(
+            crate::transaction::WalletTransactionData {
+                wallet_id: Hash::new([0x11; 32]),
+                wallet_type: "primary".to_string(),
+                wallet_name: "Recovery Wallet".to_string(),
+                alias: None,
+                public_key: vec![0x22; 32],
+                owner_identity_id: Some(Hash::new([0x33; 32])),
+                seed_commitment: Hash::new([0x44; 32]),
+                created_at: 1_700_000_000,
+                registration_fee: 0,
+                capabilities: 0,
+                initial_balance: 25,
+            },
+            vec![],
+            Signature {
+                signature: vec![0x55; 32],
+                public_key: PublicKey::new(vec![0x22; 32]),
+                algorithm: SignatureAlgorithm::Dilithium2,
+                timestamp: 1_700_000_000,
+            },
+            b"pending wallet".to_vec(),
+        );
+
+        store.put_pending_transaction(&tx).unwrap();
+        let restored: Vec<_> = store.iter_pending_transactions().unwrap().collect();
+        assert_eq!(restored.len(), 1, "pending transaction should be persisted");
+        assert_eq!(restored[0].hash(), tx.hash(), "restored tx hash must match");
+
+        let tx_hash: [u8; 32] = tx.hash().as_bytes().try_into().unwrap();
+        store.delete_pending_transaction(&tx_hash).unwrap();
+        let after_delete: Vec<_> = store.iter_pending_transactions().unwrap().collect();
+        assert!(
+            after_delete.is_empty(),
+            "pending transaction should be removed from recovery storage"
+        );
     }
 
     // =========================================================================

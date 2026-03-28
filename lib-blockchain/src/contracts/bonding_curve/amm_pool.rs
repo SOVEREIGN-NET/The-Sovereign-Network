@@ -208,7 +208,7 @@ pub fn create_pol_pool_for_graduated_token(
         u64::try_from(initial_sov).map_err(|_| CurveError::Overflow)?,
         initial_cbe,
     )
-        .map_err(map_pol_error_to_curve_error)?;
+    .map_err(map_pol_error_to_curve_error)?;
 
     // Issue #1849: The POL pool fee is hardcoded to POL_FEE_BPS (30 = 0.3%)
     // Unlike SovSwapPool, there is no set_fee_bps - the fee is immutable.
@@ -279,9 +279,9 @@ fn map_pol_error_to_curve_error(err: PolPoolError) -> CurveError {
         PolPoolError::NotInitialized => {
             CurveError::InvalidParameters("Pool not initialized".to_string())
         }
-        PolPoolError::OperationDisabledForPol => CurveError::InvalidParameters(
-            "Operation disabled for POL pool".to_string(),
-        ),
+        PolPoolError::OperationDisabledForPol => {
+            CurveError::InvalidParameters("Operation disabled for POL pool".to_string())
+        }
     }
 }
 
@@ -292,7 +292,9 @@ fn map_pol_error_to_curve_error(err: PolPoolError) -> CurveError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::bonding_curve::{types::Threshold, BondingCurveToken, PiecewiseLinearCurve};
+    use crate::contracts::bonding_curve::{
+        types::Threshold, BondingCurveToken, PiecewiseLinearCurve,
+    };
 
     fn test_pubkey(id: u8) -> PublicKey {
         PublicKey::new(vec![id; 32])
@@ -317,7 +319,9 @@ mod tests {
 
         // Buy tokens to reach graduation threshold
         let buyer = test_pubkey(2);
-        token.buy(buyer, 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token
+            .buy(buyer, 30_000_000_000, 101, 1_600_000_100)
+            .unwrap();
 
         // Graduate the token
         assert!(token.can_graduate(1_600_000_200, 102));
@@ -347,13 +351,18 @@ mod tests {
         assert_eq!(token.amm_pool_id.unwrap(), expected_pool_id);
 
         // Verify reserve and treasury are zeroed after migration (no double-counting)
-        assert_eq!(token.reserve_balance, 0, "reserve_balance must be zeroed after migration");
-        assert_eq!(token.treasury_balance, 0, "treasury_balance must be zeroed after migration");
+        assert_eq!(
+            token.reserve_balance, 0,
+            "reserve_balance must be zeroed after migration"
+        );
+        assert_eq!(
+            token.treasury_balance, 0,
+            "treasury_balance must be zeroed after migration"
+        );
 
         // Verify price continuity: AMM initial price == final curve price
         assert_eq!(
-            creation_result.initial_price,
-            creation_result.final_curve_price,
+            creation_result.initial_price, creation_result.final_curve_price,
             "Price continuity must be maintained"
         );
         assert_eq!(
@@ -377,10 +386,10 @@ mod tests {
         // - PolPool has no remove_liquidity method
         // - PolPool has no lp_token_supply field
         // - skim() and sync() panic
-        
+
         // Verify pool is initialized
         assert!(pool.is_initialized());
-        
+
         // Verify we can read reserves
         let (sov_reserve, token_reserve) = pool.get_reserves().unwrap();
         assert_eq!(sov_reserve as u128, reserve_before);
@@ -422,7 +431,9 @@ mod tests {
         .unwrap();
 
         // Buy, graduate, and create POL pool
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token
+            .buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100)
+            .unwrap();
         token.graduate(1_600_000_200, 102).unwrap();
 
         let (mut pool, _, _) = create_pol_pool_for_graduated_token(
@@ -473,7 +484,9 @@ mod tests {
         )
         .unwrap();
 
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token
+            .buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100)
+            .unwrap();
         token.graduate(1_600_000_200, 102).unwrap();
 
         let (pool, _, _) = create_pol_pool_for_graduated_token(
@@ -507,7 +520,9 @@ mod tests {
         )
         .unwrap();
 
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token
+            .buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100)
+            .unwrap();
         token.graduate(1_600_000_200, 102).unwrap();
 
         let (pool, _, _) = create_pol_pool_for_graduated_token(
@@ -623,7 +638,9 @@ mod tests {
         )
         .unwrap();
 
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token
+            .buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100)
+            .unwrap();
         token.graduate(1_600_000_200, 102).unwrap();
 
         let (mut pool, _, _) = create_pol_pool_for_graduated_token(
@@ -672,7 +689,9 @@ mod tests {
         )
         .unwrap();
 
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token
+            .buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100)
+            .unwrap();
         token.graduate(1_600_000_200, 102).unwrap();
 
         let (mut pool, _, _) = create_pol_pool_for_graduated_token(
@@ -707,7 +726,9 @@ mod tests {
         )
         .unwrap();
 
-        token.buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100).unwrap();
+        token
+            .buy(test_pubkey(2), 30_000_000_000, 101, 1_600_000_100)
+            .unwrap();
         token.graduate(1_600_000_200, 102).unwrap();
 
         let (pool, _, _) = create_pol_pool_for_graduated_token(

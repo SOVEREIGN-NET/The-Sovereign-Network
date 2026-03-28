@@ -10,6 +10,52 @@ use lib_network::client::ZhtpClient;
 const ORACLE_COMMITTEE_PROPOSE_ENDPOINT: &str = "/api/v1/oracle/committee/propose";
 const ORACLE_CONFIG_PROPOSE_ENDPOINT: &str = "/api/v1/oracle/config/propose";
 
+fn build_committee_update_request(
+    members: Vec<String>,
+    activate_epoch: u64,
+    reason: String,
+    pubkeys: Option<Vec<String>>,
+    _title: Option<String>,
+    _voting_period_days: Option<u32>,
+) -> CliResult<serde_json::Value> {
+    if members.is_empty() {
+        return Err(CliError::ConfigError("members cannot be empty".to_string()));
+    }
+
+    let normalized_members = members
+        .iter()
+        .map(|member| parse_hex_32("member", member).map(hex::encode))
+        .collect::<CliResult<Vec<String>>>()?;
+
+    Ok(serde_json::json!({
+        "new_members": normalized_members,
+        "signing_pubkeys": pubkeys.unwrap_or_default(),
+        "activate_at_epoch": activate_epoch,
+        "reason": reason,
+    }))
+}
+
+fn build_config_update_request(
+    epoch_duration: u64,
+    max_source_age: u64,
+    max_deviation_bps: u32,
+    max_price_staleness_epochs: u64,
+    activate_epoch: u64,
+    reason: String,
+    _title: Option<String>,
+    _description: Option<String>,
+    _voting_period_days: Option<u32>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "epoch_duration_secs": epoch_duration,
+        "max_source_age_secs": max_source_age,
+        "max_deviation_bps": max_deviation_bps,
+        "max_price_staleness_epochs": max_price_staleness_epochs,
+        "activate_at_epoch": activate_epoch,
+        "reason": reason,
+    })
+}
+
 pub async fn handle_oracle_command(args: OracleArgs, cli: &ZhtpCli) -> CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_oracle_command_impl(args, cli, &output).await
@@ -31,19 +77,14 @@ async fn handle_oracle_command_impl(
             description: _,
             voting_period_days: _,
         } => {
-            if members.is_empty() {
-                return Err(CliError::ConfigError("members cannot be empty".to_string()));
-            }
-            let normalized_members = members
-                .iter()
-                .map(|m| parse_hex_32("member", m).map(hex::encode))
-                .collect::<CliResult<Vec<String>>>()?;
-            let request = serde_json::json!({
-                "new_members": normalized_members,
-                "signing_pubkeys": pubkeys,
-                "activate_at_epoch": activate_epoch,
-                "reason": reason,
-            });
+            let request = build_committee_update_request(
+                members,
+                activate_epoch,
+                reason,
+                Some(pubkeys),
+                None,
+                None,
+            )?;
             output.info("Bootstrapping oracle committee...")?;
             submit_oracle_request(
                 &client,
@@ -66,14 +107,17 @@ async fn handle_oracle_command_impl(
             description: _,
             voting_period_days: _,
         } => {
-            let request = serde_json::json!({
-                "epoch_duration_secs": epoch_duration,
-                "max_source_age_secs": max_source_age,
-                "max_deviation_bps": max_deviation_bps,
-                "max_price_staleness_epochs": max_price_staleness_epochs,
-                "activate_at_epoch": activate_epoch,
-                "reason": reason,
-            });
+            let request = build_config_update_request(
+                epoch_duration,
+                max_source_age,
+                max_deviation_bps,
+                max_price_staleness_epochs,
+                activate_epoch,
+                reason,
+                None,
+                None,
+                None,
+            );
             output.info("Submitting oracle config update...")?;
             submit_oracle_request(
                 &client,
@@ -216,17 +260,17 @@ mod tests {
         .expect("committee request should build");
 
         assert_eq!(
-            body.get("proposal_type").and_then(|v| v.as_str()),
-            Some("update_oracle_committee")
+            body.get("activate_at_epoch").and_then(|v| v.as_u64()),
+            Some(9)
         );
         assert_eq!(
-            body.get("oracle_committee_members")
+            body.get("new_members")
                 .and_then(|v| v.as_array())
                 .map(|v| v.len()),
             Some(2)
         );
         assert_eq!(
-            body.get("description").and_then(|v| v.as_str()),
+            body.get("reason").and_then(|v| v.as_str()),
             Some("Committee rotation")
         );
     }
@@ -246,17 +290,16 @@ mod tests {
         );
 
         assert_eq!(
-            body.get("proposal_type").and_then(|v| v.as_str()),
-            Some("update_oracle_config")
+            body.get("epoch_duration_secs").and_then(|v| v.as_u64()),
+            Some(600)
         );
         assert_eq!(
-            body.get("oracle_max_deviation_bps")
-                .and_then(|v| v.as_u64()),
+            body.get("max_deviation_bps").and_then(|v| v.as_u64()),
             Some(900)
         );
         assert_eq!(
-            body.get("voting_period_days").and_then(|v| v.as_u64()),
-            Some(7)
+            body.get("activate_at_epoch").and_then(|v| v.as_u64()),
+            Some(9)
         );
     }
 

@@ -645,6 +645,16 @@ pub enum BlockchainAction {
         #[arg(long)]
         tx_hex: String,
     },
+    /// Audit non-canonical wallet state from blockchain.dat and prepare operator-driven migration payloads
+    MigrationAudit {
+        /// Path to blockchain.dat (defaults to ~/.zhtp/data/testnet/blockchain.dat)
+        #[arg(long)]
+        dat_file: Option<std::path::PathBuf>,
+
+        /// Include hex-encoded wallet registration transactions for migratable ghost wallets
+        #[arg(long)]
+        include_tx_hex: bool,
+    },
 }
 
 /// Monitoring commands
@@ -1684,11 +1694,9 @@ pub async fn run_cli() -> Result<()> {
         ZhtpCommand::Curve(args) => commands::curve::handle_curve_command(args.clone(), &cli)
             .await
             .map_err(anyhow::Error::msg),
-        ZhtpCommand::Genesis(args) => {
-            commands::genesis::handle_genesis_command(args.clone(), &cli)
-                .await
-                .map_err(anyhow::Error::msg)
-        }
+        ZhtpCommand::Genesis(args) => commands::genesis::handle_genesis_command(args.clone(), &cli)
+            .await
+            .map_err(anyhow::Error::msg),
         ZhtpCommand::Cbe(args) => commands::cbe::handle_cbe_command(args.clone(), &cli)
             .await
             .map_err(anyhow::Error::msg),
@@ -1903,10 +1911,38 @@ mod tests {
         .expect("genesis migrate-state should parse");
         match parsed.command {
             ZhtpCommand::Genesis(GenesisArgs {
-                command: GenesisCommand::MigrateState { snapshot, output, .. },
+                command:
+                    GenesisCommand::MigrateState {
+                        snapshot, output, ..
+                    },
             }) => {
                 assert_eq!(snapshot.to_str().unwrap(), "state.json");
                 assert_eq!(output.to_str().unwrap(), "genesis-out.toml");
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_blockchain_migration_audit_command() {
+        let parsed = ZhtpCli::try_parse_from([
+            "zhtp-cli",
+            "blockchain",
+            "migration-audit",
+            "--dat-file",
+            "chain.dat",
+        ])
+        .expect("blockchain migration-audit should parse");
+        match parsed.command {
+            ZhtpCommand::Blockchain(BlockchainArgs {
+                action:
+                    BlockchainAction::MigrationAudit {
+                        dat_file,
+                        include_tx_hex,
+                    },
+            }) => {
+                assert_eq!(dat_file.unwrap().to_str().unwrap(), "chain.dat");
+                assert!(!include_tx_hex);
             }
             other => panic!("unexpected command parsed: {other:?}"),
         }

@@ -124,7 +124,13 @@ fn create_token_transfer_tx(
         fee: 0, // Token transfers have 0 fee per Phase-2 rules
         signature: create_dummy_signature(),
         memo: vec![],
-        payload: TransactionPayload::TokenTransfer(TokenTransferData { token_id, from, to, amount, nonce: 0, }),
+        payload: TransactionPayload::TokenTransfer(TokenTransferData {
+            token_id,
+            from,
+            to,
+            amount,
+            nonce: 0,
+        }),
     }
 }
 

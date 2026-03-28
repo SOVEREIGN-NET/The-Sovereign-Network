@@ -35,6 +35,20 @@ pub enum BlockchainEvent {
         success: bool,
     },
 
+    /// Identity registration committed to a block
+    IdentityRegistered {
+        tx_hash: [u8; 32],
+        block_height: u64,
+        identity_data: crate::transaction::IdentityTransactionData,
+    },
+
+    /// Wallet registration committed to a block
+    WalletRegistered {
+        tx_hash: [u8; 32],
+        block_height: u64,
+        wallet_data: crate::transaction::WalletTransactionData,
+    },
+
     /// Contract event emitted
     ContractEventEmitted {
         contract_name: String,
@@ -67,6 +81,12 @@ impl std::fmt::Display for BlockchainEvent {
             }
             BlockchainEvent::TransactionProcessed { tx_hash, .. } => {
                 write!(f, "TransactionProcessed(tx={})", hex::encode(&tx_hash[..8]))
+            }
+            BlockchainEvent::IdentityRegistered { tx_hash, .. } => {
+                write!(f, "IdentityRegistered(tx={})", hex::encode(&tx_hash[..8]))
+            }
+            BlockchainEvent::WalletRegistered { tx_hash, .. } => {
+                write!(f, "WalletRegistered(tx={})", hex::encode(&tx_hash[..8]))
             }
             BlockchainEvent::ContractEventEmitted { block_height, .. } => {
                 write!(f, "ContractEventEmitted(block={})", block_height)

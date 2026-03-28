@@ -3,12 +3,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::api::handlers::constants::{SOV_WELCOME_BONUS, SOV_WELCOME_BONUS_SOV};
 use crate::runtime::node_runtime::NodeRole;
 use crate::runtime::{Component, ComponentHealth, ComponentId, ComponentMessage, ComponentStatus};
 use lib_identity::IdentityManager;
+use lib_crypto::PublicKey;
 
 /// Identity component implementation using lib-identity package
 pub struct IdentityComponent {
@@ -144,23 +145,27 @@ impl Component for IdentityComponent {
         crate::runtime::set_global_identity_manager(identity_manager_arc.clone()).await?;
         info!(" Identity manager registered globally for component access");
 
-        // Bootstrap identities from DHT storage
-        info!("🔄 Bootstrapping identities from DHT storage...");
-        match bootstrap_identities_from_dht(&identity_manager_arc, self.can_mine).await {
+        let blockchain_result = bootstrap_identities_from_blockchain(&identity_manager_arc).await?;
+        info!(
+            "✅ Blockchain bootstrap complete: {} identities, {} wallets reconstructed",
+            blockchain_result.identities_loaded, blockchain_result.wallets_loaded
+        );
+
+        info!("🔄 Enriching identities from local cache projection...");
+        match enrich_identities_from_local_cache(&identity_manager_arc).await {
             Ok(result) => {
                 info!(
-                    "✅ Bootstrap complete: {} identities, {} wallets loaded",
+                    "✅ Local cache enrichment complete: {} identities, {} wallets loaded",
                     result.identities_loaded, result.wallets_loaded
                 );
                 if !result.errors.is_empty() {
                     for err in &result.errors {
-                        debug!("  Bootstrap warning: {}", err);
+                        debug!("  Local cache warning: {}", err);
                     }
                 }
             }
             Err(e) => {
-                // Non-fatal - log and continue
-                info!("⚠️ DHT bootstrap skipped (non-fatal): {}", e);
+                info!("⚠️ Local cache enrichment skipped (non-fatal): {}", e);
             }
         }
 
@@ -317,6 +322,213 @@ pub struct DhtBootstrapResult {
 fn truncate_for_display(s: &str, max_len: usize) -> &str {
     let len = max_len.min(s.len());
     &s[..len]
+}
+
+fn parse_identity_type(identity_type: &str) -> lib_identity::IdentityType {
+    match identity_type.to_ascii_lowercase().as_str() {
+        "human" => lib_identity::IdentityType::Human,
+        "device" => lib_identity::IdentityType::Device,
+        "organization" => lib_identity::IdentityType::Organization,
+        "agent" => lib_identity::IdentityType::Agent,
+        "contract" => lib_identity::IdentityType::Contract,
+        _ => lib_identity::IdentityType::Human,
+    }
+}
+
+fn parse_wallet_type(wallet_type: &str) -> lib_identity::wallets::WalletType {
+    match wallet_type.to_ascii_lowercase().as_str() {
+        "primary" => lib_identity::wallets::WalletType::Primary,
+        "ubi" => lib_identity::wallets::WalletType::UBI,
+        "savings" => lib_identity::wallets::WalletType::Savings,
+        "business" => lib_identity::wallets::WalletType::Business,
+        "stealth" => lib_identity::wallets::WalletType::Stealth,
+        "dao" | "nonprofitdao" | "non_profit_dao" | "non-profit-dao" => {
+            lib_identity::wallets::WalletType::NonProfitDAO
+        }
+        "forprofitdao" | "for_profit_dao" | "for-profit-dao" => {
+            lib_identity::wallets::WalletType::ForProfitDAO
+        }
+        "standard" => lib_identity::wallets::WalletType::Standard,
+        _ => lib_identity::wallets::WalletType::Primary,
+    }
+}
+
+fn reconstruct_identity_manager_from_blockchain_state(
+    identity_manager: &mut IdentityManager,
+    identity_registry: &HashMap<String, lib_blockchain::transaction::IdentityTransactionData>,
+    wallet_registry: &HashMap<String, lib_blockchain::transaction::WalletTransactionData>,
+) -> Result<(u32, u32)> {
+    let mut wallets_by_owner: HashMap<String, Vec<&lib_blockchain::transaction::WalletTransactionData>> =
+        HashMap::new();
+    for wallet in wallet_registry.values() {
+        if let Some(owner_identity_id) = wallet.owner_identity_id {
+            wallets_by_owner
+                .entry(hex::encode(owner_identity_id.as_bytes()))
+                .or_default()
+                .push(wallet);
+        }
+    }
+
+    let mut identities_loaded = 0u32;
+    let mut wallets_loaded = 0u32;
+
+    for identity_data in identity_registry.values() {
+        let public_key = PublicKey::new(identity_data.public_key.clone());
+        let mut identity = lib_identity::ZhtpIdentity::new_external(
+            identity_data.did.clone(),
+            public_key,
+            parse_identity_type(&identity_data.identity_type),
+            "blockchain".to_string(),
+            Some(identity_data.display_name.clone()),
+            identity_data.created_at,
+        )?;
+        identity.did_document_hash =
+            Some(lib_crypto::Hash::from_bytes(identity_data.did_document_hash.as_bytes()));
+        identity.wallet_manager.wallets.clear();
+        identity.wallet_manager.total_balance = 0;
+
+        let identity_id_hex = identity_data.did.strip_prefix("did:zhtp:").unwrap_or("");
+        if let Some(wallets) = wallets_by_owner.get(identity_id_hex) {
+            for wallet_data in wallets {
+                if let Ok(wallet_id) = identity.wallet_manager.add_restored_wallet(
+                    &hex::encode(wallet_data.wallet_id.as_bytes()),
+                    parse_wallet_type(&wallet_data.wallet_type),
+                    wallet_data.created_at,
+                ) {
+                    if let Some(wallet) = identity.wallet_manager.get_wallet_mut(&wallet_id) {
+                        wallet.name = wallet_data.wallet_name.clone();
+                        wallet.alias = wallet_data.alias.clone();
+                        wallet.public_key = wallet_data.public_key.clone();
+                        wallet.seed_commitment =
+                            Some(hex::encode(wallet_data.seed_commitment.as_bytes()));
+                        wallet.balance = wallet_data.initial_balance;
+                    }
+                    wallets_loaded += 1;
+                }
+            }
+        }
+
+        identity_manager.add_identity(identity);
+        identities_loaded += 1;
+    }
+
+    Ok((identities_loaded, wallets_loaded))
+}
+
+async fn bootstrap_identities_from_blockchain(
+    identity_manager: &Arc<RwLock<IdentityManager>>,
+) -> Result<DhtBootstrapResult> {
+    let blockchain_arc = crate::runtime::blockchain_provider::get_global_blockchain()
+        .await
+        .map_err(|e| anyhow::anyhow!("Blockchain not available for canonical identity bootstrap: {}", e))?;
+    let blockchain = blockchain_arc.read().await;
+    let mut manager = identity_manager.write().await;
+    let (identities_loaded, wallets_loaded) = reconstruct_identity_manager_from_blockchain_state(
+        &mut manager,
+        &blockchain.identity_registry,
+        &blockchain.wallet_registry,
+    )?;
+
+    Ok(DhtBootstrapResult {
+        identities_loaded,
+        wallets_loaded,
+        errors: vec![],
+    })
+}
+
+async fn enrich_identities_from_local_cache(
+    identity_manager: &Arc<RwLock<IdentityManager>>,
+) -> Result<DhtBootstrapResult> {
+    use crate::runtime::storage_provider;
+
+    let storage = storage_provider::get_global_storage()
+        .await
+        .map_err(|e| anyhow::anyhow!("Local identity cache unavailable: {}", e))?;
+
+    let mut identities_loaded = 0u32;
+    let mut wallets_loaded = 0u32;
+    let mut errors = Vec::new();
+    let mut guard = storage.write().await;
+    let identity_ids = guard.list_identity_ids().await.unwrap_or_default();
+
+    for identity_id in &identity_ids {
+        let Some(record_bytes) = guard.get_identity_record(identity_id).await? else {
+            continue;
+        };
+        let identity_json: serde_json::Value = match serde_json::from_slice(&record_bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!(
+                    "Failed to parse local cache identity {}: {}",
+                    truncate_for_display(identity_id, 16),
+                    e
+                ));
+                continue;
+            }
+        };
+
+        let did = match identity_json.get("did").and_then(|v| v.as_str()) {
+            Some(did) => did,
+            None => continue,
+        };
+
+        let identity_hash = match lib_crypto::Hash::from_hex(identity_id) {
+            Ok(h) => h,
+            Err(e) => {
+                errors.push(format!(
+                    "Invalid local cache identity id {}: {}",
+                    truncate_for_display(identity_id, 16),
+                    e
+                ));
+                continue;
+            }
+        };
+
+        let mut manager = identity_manager.write().await;
+        let Some(identity) = manager.get_identity_mut(&identity_hash) else {
+            warn!(
+                "Skipping non-canonical local identity cache record {} not present on blockchain",
+                truncate_for_display(identity_id, 16)
+            );
+            continue;
+        };
+
+        if identity.did != did {
+            warn!(
+                "Skipping inconsistent local identity cache record {} due to DID mismatch",
+                truncate_for_display(identity_id, 16)
+            );
+            continue;
+        }
+
+        if let Some(device_id) = identity_json.get("device_id").and_then(|v| v.as_str()) {
+            identity.primary_device = device_id.to_string();
+            if let Ok(node_id) = lib_identity::NodeId::from_did_device(&identity.did, device_id) {
+                identity.node_id = node_id.clone();
+                identity
+                    .device_node_ids
+                    .insert(device_id.to_string(), node_id);
+            }
+        }
+        if let Some(kyber_public_key) = identity_json
+            .get("kyber_public_key")
+            .and_then(|v| v.as_str())
+        {
+            identity.metadata.insert(
+                "kyber_public_key".to_string(),
+                kyber_public_key.to_string(),
+            );
+        }
+
+        identities_loaded += 1;
+        wallets_loaded += identity.wallet_manager.wallets.len() as u32;
+    }
+
+    Ok(DhtBootstrapResult {
+        identities_loaded,
+        wallets_loaded,
+        errors,
+    })
 }
 
 /// Rebuild identity index from backup file (~/.zhtp/backup/identities.json)
@@ -1083,6 +1295,165 @@ async fn bootstrap_identities_from_dht(
 #[cfg(test)]
 mod tests {
     use super::should_run_identity_blockchain_migration;
+    use super::*;
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
+
+    fn test_guard() -> &'static Mutex<()> {
+        static TEST_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+        TEST_GUARD.get_or_init(|| Mutex::new(()))
+    }
+
+    async fn install_test_storage() -> Arc<RwLock<lib_storage::PersistentStorageSystem>> {
+        let temp = tempfile::tempdir().unwrap();
+        let config = create_default_storage_config().unwrap();
+        let storage = lib_storage::UnifiedStorageSystem::new_persistent(config, temp.path())
+            .await
+            .unwrap();
+        let storage = Arc::new(RwLock::new(storage));
+        crate::runtime::storage_provider::set_global_storage(storage.clone())
+            .await
+            .unwrap();
+        storage
+    }
+
+    #[test]
+    fn reconstruct_identity_manager_from_blockchain_state_rebuilds_identity_and_wallets() {
+        let mut manager = IdentityManager::new();
+        let identity_hash = lib_blockchain::Hash::new([0x11; 32]);
+        let did = format!("did:zhtp:{}", hex::encode(identity_hash.as_bytes()));
+
+        let mut identities = HashMap::new();
+        identities.insert(
+            did.clone(),
+            lib_blockchain::transaction::IdentityTransactionData {
+                did: did.clone(),
+                display_name: "Blockchain User".to_string(),
+                public_key: vec![0x22; 32],
+                ownership_proof: vec![],
+                identity_type: "human".to_string(),
+                did_document_hash: lib_blockchain::Hash::new([0x33; 32]),
+                created_at: 1234,
+                registration_fee: 0,
+                dao_fee: 0,
+                controlled_nodes: vec![],
+                owned_wallets: vec![],
+            },
+        );
+
+        let mut wallets = HashMap::new();
+        wallets.insert(
+            hex::encode([0x44; 32]),
+            lib_blockchain::transaction::WalletTransactionData {
+                wallet_id: lib_blockchain::Hash::new([0x44; 32]),
+                wallet_type: "Primary".to_string(),
+                wallet_name: "Primary Wallet".to_string(),
+                alias: Some("primary".to_string()),
+                public_key: vec![0x22; 32],
+                owner_identity_id: Some(identity_hash),
+                seed_commitment: lib_blockchain::Hash::new([0x55; 32]),
+                created_at: 1234,
+                registration_fee: 0,
+                capabilities: 0,
+                initial_balance: 42,
+            },
+        );
+
+        let (identities_loaded, wallets_loaded) =
+            reconstruct_identity_manager_from_blockchain_state(&mut manager, &identities, &wallets)
+                .expect("reconstruction should succeed");
+
+        assert_eq!(identities_loaded, 1);
+        assert_eq!(wallets_loaded, 1);
+
+        let identity = manager
+            .get_identity(&lib_crypto::Hash::from_bytes(&[0x11; 32]))
+            .expect("identity should exist");
+        assert_eq!(identity.did, did);
+        assert_eq!(
+            identity.metadata.get("display_name").map(String::as_str),
+            Some("Blockchain User")
+        );
+        assert_eq!(identity.wallet_manager.wallets.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn enrich_identities_from_local_cache_skips_stale_and_noncanonical_records() {
+        let _guard = test_guard().lock().await;
+        let _storage = install_test_storage().await;
+        let identity_hash = lib_blockchain::Hash::new([0x11; 32]);
+        let did = format!("did:zhtp:{}", hex::encode(identity_hash.as_bytes()));
+        let mut manager = IdentityManager::new();
+
+        let mut identities = HashMap::new();
+        identities.insert(
+            did.clone(),
+            lib_blockchain::transaction::IdentityTransactionData {
+                did: did.clone(),
+                display_name: "Canonical User".to_string(),
+                public_key: vec![0x22; 32],
+                ownership_proof: vec![],
+                identity_type: "human".to_string(),
+                did_document_hash: lib_blockchain::Hash::new([0x33; 32]),
+                created_at: 1234,
+                registration_fee: 0,
+                dao_fee: 0,
+                controlled_nodes: vec![],
+                owned_wallets: vec![],
+            },
+        );
+
+        reconstruct_identity_manager_from_blockchain_state(&mut manager, &identities, &HashMap::new())
+            .expect("blockchain reconstruction should succeed");
+        let manager = Arc::new(RwLock::new(manager));
+
+        let storage = crate::runtime::storage_provider::get_global_storage()
+            .await
+            .expect("global storage should be installed");
+        {
+            let mut guard = storage.write().await;
+            let canonical_identity_id = hex::encode(identity_hash.as_bytes());
+            let inconsistent_record = serde_json::json!({
+                "did": "did:zhtp:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "display_name": "Stale User",
+                "device_id": "stale-device"
+            });
+            guard
+                .store_identity_record(
+                    &canonical_identity_id,
+                    &serde_json::to_vec(&inconsistent_record).unwrap(),
+                )
+                .await
+                .unwrap();
+            guard.add_to_identity_index(&canonical_identity_id).await.unwrap();
+
+            let ghost_identity_id = "aa".repeat(32);
+            let ghost_record = serde_json::json!({
+                "did": format!("did:zhtp:{}", ghost_identity_id),
+                "display_name": "Ghost User",
+                "device_id": "ghost-device"
+            });
+            guard
+                .store_identity_record(&ghost_identity_id, &serde_json::to_vec(&ghost_record).unwrap())
+                .await
+                .unwrap();
+            guard.add_to_identity_index(&ghost_identity_id).await.unwrap();
+        }
+
+        let result = enrich_identities_from_local_cache(&manager)
+            .await
+            .expect("local cache enrichment should succeed");
+
+        assert_eq!(result.identities_loaded, 0);
+
+        let manager = manager.read().await;
+        let identity = manager
+            .get_identity(&lib_crypto::Hash::from_bytes(identity_hash.as_bytes()))
+            .expect("canonical identity should remain present");
+        assert_eq!(identity.did, did);
+        assert_ne!(identity.primary_device, "stale-device");
+        assert_eq!(manager.list_identities().len(), 1);
+    }
 
     #[test]
     fn identity_blockchain_migration_requires_mining_capability() {

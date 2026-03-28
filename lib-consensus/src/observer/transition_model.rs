@@ -19,10 +19,10 @@ const ESTIMATED_STATE_SPACE: usize = 8 * 4 * 4 * 5 * 5; // = 3200
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ConsensusStateKey {
     pub round: u32,
-    pub phase: u8,         // EncodedConsensusPhase as u8
-    pub round_class: u8,   // RoundClass as u8
-    pub time_class: u8,    // TimeClass as u8
-    pub proposal_status: u8, // ProposalStatus as u8
+    pub phase: u8,            // EncodedConsensusPhase as u8
+    pub round_class: u8,      // RoundClass as u8
+    pub time_class: u8,       // TimeClass as u8
+    pub proposal_status: u8,  // ProposalStatus as u8
     pub execution_status: u8, // ExecutionStatus as u8
 }
 
@@ -128,7 +128,11 @@ impl TransitionModel {
             to: to_key,
         };
 
-        let count = self.transition_counts.get(&transition).copied().unwrap_or(0);
+        let count = self
+            .transition_counts
+            .get(&transition)
+            .copied()
+            .unwrap_or(0);
         let total = self.total_outgoing.get(&from_key).copied().unwrap_or(0);
 
         // Additive smoothing: (count + alpha) / (total + alpha * N)
@@ -176,7 +180,10 @@ impl TransitionModel {
             to: to_key,
         };
 
-        self.transition_counts.get(&transition).copied().unwrap_or(0)
+        self.transition_counts
+            .get(&transition)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Get total outgoing transitions from a state.

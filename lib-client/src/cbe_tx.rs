@@ -159,11 +159,8 @@ pub fn build_process_payroll_tx(
     let signer_pk = crate::token_tx::create_public_key(identity.public_key.clone());
     let now = now_secs();
 
-    let mut tx = Transaction::new_process_payroll(
-        chain_id,
-        contract_id,
-        empty_sig(signer_pk.clone()),
-    );
+    let mut tx =
+        Transaction::new_process_payroll(chain_id, contract_id, empty_sig(signer_pk.clone()));
 
     let tx_hash = tx.signing_hash();
     let sig_bytes = crate::identity::sign_message(identity, tx_hash.as_bytes())
