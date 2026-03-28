@@ -202,69 +202,112 @@ impl<'de> Deserialize<'de> for LegacyTransaction {
     }
 }
 
-/// Convert a V1-V7 LegacyTransaction into a V8 Transaction by mapping flat
-/// `Option<FooData>` fields into the `TransactionPayload` enum.
-///
-/// Only the first populated data field wins; the old wire format guaranteed
-/// at most one was Some per transaction.
-impl From<LegacyTransaction> for Transaction {
-    fn from(l: LegacyTransaction) -> Self {
-        let version = l.version;
-        let payload = if let Some(d) = l.token_transfer_data {
-            TransactionPayload::TokenTransfer(d)
-        } else if let Some(d) = l.token_mint_data {
-            TransactionPayload::TokenMint(d)
-        } else if let Some(d) = l.identity_data {
-            TransactionPayload::Identity(d)
-        } else if let Some(d) = l.wallet_data {
-            TransactionPayload::Wallet(d)
-        } else if let Some(d) = l.validator_data {
-            TransactionPayload::Validator(d)
-        } else if let Some(d) = l.dao_proposal_data {
-            TransactionPayload::DaoProposal(d)
-        } else if let Some(d) = l.dao_vote_data {
-            TransactionPayload::DaoVote(d)
-        } else if let Some(d) = l.dao_execution_data {
-            TransactionPayload::DaoExecution(d)
-        } else if let Some(d) = l.ubi_claim_data {
-            TransactionPayload::UbiClaim(d)
-        } else if let Some(d) = l.profit_declaration_data {
-            TransactionPayload::ProfitDeclaration(d)
-        } else if let Some(d) = l.governance_config_data {
-            TransactionPayload::GovernanceConfigUpdate(d)
-        } else if let Some(d) = l.bonding_curve_deploy_data {
-            TransactionPayload::BondingCurveDeploy(d)
-        } else if let Some(d) = l.bonding_curve_buy_data {
-            TransactionPayload::BondingCurveBuy(d)
-        } else if let Some(d) = l.bonding_curve_sell_data {
-            TransactionPayload::BondingCurveSell(d)
-        } else if let Some(d) = l.bonding_curve_graduate_data {
-            TransactionPayload::BondingCurveGraduate(d)
-        } else if let Some(d) = l.oracle_committee_update_data {
-            TransactionPayload::OracleCommitteeUpdate(d)
-        } else if let Some(d) = l.oracle_config_update_data {
-            TransactionPayload::OracleConfigUpdate(d)
-        } else if let Some(d) = l.oracle_attestation_data {
-            TransactionPayload::OracleAttestation(d)
-        } else if let Some(d) = l.cancel_oracle_update_data {
-            TransactionPayload::CancelOracleUpdate(d)
-        } else if let Some(d) = l.init_entity_registry_data {
-            TransactionPayload::InitEntityRegistry(d)
-        } else {
-            TransactionPayload::None
+impl LegacyTransaction {
+    fn into_transaction(self) -> Option<Transaction> {
+        let LegacyTransaction {
+            version,
+            chain_id,
+            transaction_type,
+            inputs,
+            outputs,
+            fee,
+            signature,
+            memo,
+            identity_data,
+            wallet_data,
+            validator_data,
+            dao_proposal_data,
+            dao_vote_data,
+            dao_execution_data,
+            ubi_claim_data,
+            profit_declaration_data,
+            token_transfer_data,
+            token_mint_data,
+            governance_config_data,
+            bonding_curve_deploy_data,
+            bonding_curve_buy_data,
+            bonding_curve_sell_data,
+            bonding_curve_graduate_data,
+            oracle_committee_update_data,
+            oracle_config_update_data,
+            oracle_attestation_data,
+            cancel_oracle_update_data,
+            init_entity_registry_data,
+        } = self;
+
+        let payload = match transaction_type {
+            TransactionType::IdentityRegistration
+            | TransactionType::IdentityUpdate
+            | TransactionType::IdentityRevocation => {
+                identity_data.map(TransactionPayload::Identity)?
+            }
+            TransactionType::WalletRegistration | TransactionType::WalletUpdate => {
+                wallet_data.map(TransactionPayload::Wallet)?
+            }
+            TransactionType::ValidatorRegistration
+            | TransactionType::ValidatorUpdate
+            | TransactionType::ValidatorUnregister => {
+                validator_data.map(TransactionPayload::Validator)?
+            }
+            TransactionType::DaoProposal => {
+                dao_proposal_data.map(TransactionPayload::DaoProposal)?
+            }
+            TransactionType::DaoVote => dao_vote_data.map(TransactionPayload::DaoVote)?,
+            TransactionType::DaoExecution => {
+                dao_execution_data.map(TransactionPayload::DaoExecution)?
+            }
+            TransactionType::UBIClaim => ubi_claim_data.map(TransactionPayload::UbiClaim)?,
+            TransactionType::ProfitDeclaration => {
+                profit_declaration_data.map(TransactionPayload::ProfitDeclaration)?
+            }
+            TransactionType::TokenTransfer => {
+                token_transfer_data.map(TransactionPayload::TokenTransfer)?
+            }
+            TransactionType::TokenMint => token_mint_data.map(TransactionPayload::TokenMint)?,
+            TransactionType::GovernanceConfigUpdate => {
+                governance_config_data.map(TransactionPayload::GovernanceConfigUpdate)?
+            }
+            TransactionType::BondingCurveDeploy => {
+                bonding_curve_deploy_data.map(TransactionPayload::BondingCurveDeploy)?
+            }
+            TransactionType::BondingCurveBuy => {
+                bonding_curve_buy_data.map(TransactionPayload::BondingCurveBuy)?
+            }
+            TransactionType::BondingCurveSell => {
+                bonding_curve_sell_data.map(TransactionPayload::BondingCurveSell)?
+            }
+            TransactionType::BondingCurveGraduate => {
+                bonding_curve_graduate_data.map(TransactionPayload::BondingCurveGraduate)?
+            }
+            TransactionType::UpdateOracleCommittee => {
+                oracle_committee_update_data.map(TransactionPayload::OracleCommitteeUpdate)?
+            }
+            TransactionType::UpdateOracleConfig => {
+                oracle_config_update_data.map(TransactionPayload::OracleConfigUpdate)?
+            }
+            TransactionType::OracleAttestation => {
+                oracle_attestation_data.map(TransactionPayload::OracleAttestation)?
+            }
+            TransactionType::CancelOracleUpdate => {
+                cancel_oracle_update_data.map(TransactionPayload::CancelOracleUpdate)?
+            }
+            TransactionType::InitEntityRegistry => {
+                init_entity_registry_data.map(TransactionPayload::InitEntityRegistry)?
+            }
+            _ => TransactionPayload::None,
         };
 
-        Transaction {
+        Some(Transaction {
             version,
-            chain_id: l.chain_id,
-            transaction_type: l.transaction_type,
-            inputs: l.inputs,
-            outputs: l.outputs,
-            fee: l.fee,
-            signature: l.signature,
-            memo: l.memo,
+            chain_id,
+            transaction_type,
+            inputs,
+            outputs,
+            fee,
+            signature,
+            memo,
             payload,
-        }
+        })
     }
 }
 
@@ -437,7 +480,7 @@ pub fn try_decode_legacy(bytes: &[u8]) -> Option<Transaction> {
     match bincode::deserialize::<LegacyTransaction>(bytes) {
         Ok(legacy) => {
             let version = legacy.version;
-            let tx = Transaction::from(legacy);
+            let tx = legacy.into_transaction()?;
             tracing::warn!(
                 tx_version = version,
                 tx_type = ?tx.transaction_type,
@@ -498,5 +541,42 @@ mod tests {
             }
             other => panic!("unexpected payload: {:?}", other),
         }
+    }
+
+    #[test]
+    fn try_decode_legacy_rejects_missing_expected_payload() {
+        let legacy = LegacyTransactionWire {
+            version: TX_VERSION_V6,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenTransfer,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 7,
+            signature: signature(),
+            memo: b"legacy".to_vec(),
+            identity_data: None,
+            wallet_data: None,
+            validator_data: None,
+            dao_proposal_data: None,
+            dao_vote_data: None,
+            dao_execution_data: None,
+            ubi_claim_data: None,
+            profit_declaration_data: None,
+            token_transfer_data: None,
+            token_mint_data: None,
+            governance_config_data: None,
+            bonding_curve_deploy_data: None,
+            bonding_curve_buy_data: None,
+            bonding_curve_sell_data: None,
+            bonding_curve_graduate_data: None,
+            oracle_committee_update_data: None,
+            oracle_config_update_data: None,
+            oracle_attestation_data: None,
+            cancel_oracle_update_data: None,
+            init_entity_registry_data: None,
+        };
+
+        let bytes = bincode::serialize(&legacy).expect("legacy bytes");
+        assert!(try_decode_legacy(&bytes).is_none());
     }
 }
