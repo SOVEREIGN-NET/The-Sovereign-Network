@@ -431,7 +431,7 @@ pub struct TransactionOutput {
 }
 
 /// Identity transaction data (processed by lib-identity package)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IdentityTransactionData {
     /// Zero-knowledge DID identifier
     pub did: String,
@@ -458,7 +458,7 @@ pub struct IdentityTransactionData {
 }
 
 /// Wallet registration transaction data (processed by lib-identity package)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WalletTransactionData {
     /// Unique wallet identifier (32-byte hash)
     pub wallet_id: Hash,

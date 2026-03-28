@@ -438,54 +438,6 @@ impl IdentityHandler {
                 tracing::warn!("Failed to submit savings wallet to blockchain: {}", e);
             }
 
-            // Persist identity to DHT for fast lookups (derived cache, not source of truth)
-            // This enables stateless API restarts and horizontal scaling
-            let identity_id_str = citizenship_result.identity_id.to_string();
-            match serde_json::to_vec(&citizenship_result) {
-                Ok(identity_data) => {
-                    let mut storage = self.storage_system.write().await;
-
-                    // Store identity record
-                    if let Err(e) = storage
-                        .store_identity_record(&identity_id_str, &identity_data)
-                        .await
-                    {
-                        tracing::warn!("Failed to persist identity to DHT (non-fatal): {}", e);
-                    } else {
-                        tracing::info!(
-                            " Identity {} persisted to DHT cache",
-                            citizenship_result.identity_id
-                        );
-                    }
-
-                    // Add to identity index for bootstrap
-                    if let Err(e) = storage.add_to_identity_index(&identity_id_str).await {
-                        tracing::warn!("Failed to add identity to index (non-fatal): {}", e);
-                    }
-
-                    // Add wallet indexes for the 3 wallets
-                    let primary_wallet_id = citizenship_result.primary_wallet_id.to_string();
-                    let ubi_wallet_id = citizenship_result.ubi_wallet_id.to_string();
-                    let savings_wallet_id = citizenship_result.savings_wallet_id.to_string();
-
-                    for wallet_id in [&primary_wallet_id, &ubi_wallet_id, &savings_wallet_id] {
-                        if let Err(e) = storage
-                            .add_to_wallet_index(&identity_id_str, wallet_id)
-                            .await
-                        {
-                            tracing::warn!(
-                                "Failed to add wallet {} to index (non-fatal): {}",
-                                wallet_id,
-                                e
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to serialize identity for DHT (non-fatal): {}", e);
-                }
-            }
-
             CreateIdentityResponse {
                 status: "citizen_created".to_string(),
                 identity_id: citizenship_result.identity_id.to_string(),
@@ -1754,7 +1706,10 @@ impl IdentityHandler {
             .await
         {
             Ok(hash) => {
-                tracing::info!("⛓️ Identity registered on blockchain: {}", &hash[..16]);
+                tracing::info!(
+                    "⛓️ Identity registration queued on blockchain: {}",
+                    &hash[..16]
+                );
                 Some(hash)
             }
             Err(e) => {
@@ -1763,10 +1718,8 @@ impl IdentityHandler {
             }
         };
 
-        // SOV welcome bonus is credited in-memory by register_wallet() via token_contract.mint().
-        // No separate TokenMint transaction needed.
-
-        // Register wallets in blockchain's wallet_registry (source of truth for balances)
+        // Wallet registrations are queued here; wallet_registry updates and the welcome-bonus
+        // mint happen when the WalletRegistration transactions are committed in a block.
         if let Ok(blockchain_arc) =
             crate::runtime::blockchain_provider::get_global_blockchain().await
         {
@@ -1792,7 +1745,7 @@ impl IdentityHandler {
                 tracing::warn!("Failed to register primary wallet: {}", e);
             } else {
                 tracing::info!(
-                    "💰 Primary wallet registered with {} SOV welcome bonus",
+                    "💰 Primary wallet queued with {} SOV welcome bonus pending block inclusion",
                     SOV_WELCOME_BONUS_SOV
                 );
             }
@@ -1835,66 +1788,35 @@ impl IdentityHandler {
                 tracing::warn!("Failed to register savings wallet: {}", e);
             }
 
-            tracing::info!("✅ All 3 wallets registered in blockchain wallet_registry");
+            tracing::info!("✅ All 3 wallet registrations queued for blockchain inclusion");
         }
 
-        // Persist to DHT for fast lookups
-        let identity_id_str = identity_id.to_string();
-        let identity_record = json!({
-            "did": did,
-            "public_key": req_data.public_key,
-            "kyber_public_key": req_data.kyber_public_key,
-            "node_id": hex::encode(&node_id_bytes),
-            "device_id": req_data.device_id,
-            "display_name": req_data.display_name,
-            "identity_type": req_data.identity_type,
-            "primary_wallet_id": primary_wallet_id,
-            "ubi_wallet_id": ubi_wallet_id,
-            "savings_wallet_id": savings_wallet_id,
-            "created_at": created_at,
-            "registered_at": now,
-        });
-
-        {
-            let mut storage = self.storage_system.write().await;
-
-            // Store identity record
-            if let Err(e) = storage
-                .store_identity_record(&identity_id_str, &serde_json::to_vec(&identity_record)?)
-                .await
-            {
-                tracing::warn!("Failed to persist identity to DHT (non-fatal): {}", e);
-            }
-
-            // Add to identity index for bootstrap
-            if let Err(e) = storage.add_to_identity_index(&identity_id_str).await {
-                tracing::warn!("Failed to add identity to index (non-fatal): {}", e);
-            }
-
-            // Add wallet indexes for the 3 wallets
-            for wallet_id in [&primary_wallet_id, &ubi_wallet_id, &savings_wallet_id] {
-                if let Err(e) = storage
-                    .add_to_wallet_index(&identity_id_str, wallet_id)
-                    .await
-                {
-                    tracing::warn!(
-                        "Failed to add wallet {} to index (non-fatal): {}",
-                        wallet_id,
-                        e
-                    );
-                }
-            }
+        if let Some(ref tx_hash) = blockchain_tx_hash {
+            crate::runtime::blockchain_provider::register_pending_identity_projection(
+                tx_hash,
+                crate::runtime::blockchain_provider::PendingIdentityProjection {
+                    identity_id: identity_id.to_string(),
+                    display_name: req_data.display_name.clone().unwrap_or_default(),
+                    device_id: req_data.device_id.clone(),
+                    node_id: hex::encode(&node_id_bytes),
+                    kyber_public_key: req_data.kyber_public_key.clone(),
+                    primary_wallet_id: primary_wallet_id.clone(),
+                    ubi_wallet_id: ubi_wallet_id.clone(),
+                    savings_wallet_id: savings_wallet_id.clone(),
+                    registered_at: now,
+                },
+            );
         }
 
         tracing::info!(
-            "✅ Client citizen registered: {} with 3 wallets",
+            "✅ Client citizen registration queued: {} with 3 wallets pending block inclusion",
             &did[..32.min(did.len())]
         );
 
         // Return success response with server-derived DID, node_id, and wallet IDs
         // IMPORTANT: Client must use the DID and node_id from this response (server-derived)
         let response_body = json!({
-            "status": "registered",
+            "status": "queued",
             "identity_id": identity_id.to_string(),
             "did": did,
             "node_id": hex::encode(&node_id_bytes),

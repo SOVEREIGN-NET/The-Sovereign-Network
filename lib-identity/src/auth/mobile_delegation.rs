@@ -71,9 +71,7 @@ pub enum Capability {
     /// Read any on-chain balance/state
     ReadBalance,
     /// Submit a transaction bounded by max_amount to allowed recipients
-    SubmitTx {
-        max_amount_tokens: u64,
-    },
+    SubmitTx { max_amount_tokens: u64 },
     /// Participate in DAO governance votes
     VoteGovernance,
     /// Deploy/update Web4 content the identity owns
@@ -133,10 +131,7 @@ pub struct MobileAuthChallenge {
 
 impl MobileAuthChallenge {
     /// Create a new challenge, generate nonce and QR payload
-    pub fn generate(
-        requested_capabilities: Vec<Capability>,
-        node_endpoint: &str,
-    ) -> Result<Self> {
+    pub fn generate(requested_capabilities: Vec<Capability>, node_endpoint: &str) -> Result<Self> {
         let now = now_secs();
 
         // 32-byte CSPRNG nonce — single-use replay protection (hex-encoded for QR/JSON compat)
@@ -438,12 +433,12 @@ impl CrossDeviceSessionBinder {
             .map_err(|e| anyhow!("Invalid challenge nonce hex: {}", e))?;
 
         // Decode supplied Dilithium signature
-        let sig_bytes = hex::decode(signature_hex)
-            .map_err(|e| anyhow!("Invalid signature hex: {}", e))?;
+        let sig_bytes =
+            hex::decode(signature_hex).map_err(|e| anyhow!("Invalid signature hex: {}", e))?;
 
         // Decode Dilithium public key
-        let pk_bytes = hex::decode(public_key_hex)
-            .map_err(|e| anyhow!("Invalid public key hex: {}", e))?;
+        let pk_bytes =
+            hex::decode(public_key_hex).map_err(|e| anyhow!("Invalid public key hex: {}", e))?;
 
         if pk_bytes.len() < MIN_DILITHIUM_PK_BYTES {
             return Err(anyhow!(
@@ -615,9 +610,9 @@ impl MobileAuthStore {
             None => Err(anyhow!("Session not found")),
             Some(s) if s.revoked => Err(anyhow!("Session revoked")),
             Some(s) if !s.is_access_valid() => Err(anyhow!("Session expired")),
-            Some(s) if !s.validate_binding(ip, ua) => {
-                Err(anyhow!("Session binding mismatch (possible hijack attempt)"))
-            }
+            Some(s) if !s.validate_binding(ip, ua) => Err(anyhow!(
+                "Session binding mismatch (possible hijack attempt)"
+            )),
             Some(s) => Ok(s.clone()),
         }
     }
@@ -656,7 +651,8 @@ impl MobileAuthStore {
         }
 
         // Revoke old session
-        self.revoke_session(&access_token, "refresh_rotation").await?;
+        self.revoke_session(&access_token, "refresh_rotation")
+            .await?;
 
         // Issue new session with same capabilities
         self.create_session(
@@ -708,11 +704,7 @@ impl MobileAuthStore {
     }
 
     /// Revoke a delegation certificate (delegator-triggered)
-    pub async fn revoke_delegation_cert(
-        &self,
-        cert_id: &str,
-        reason: &str,
-    ) -> Result<()> {
+    pub async fn revoke_delegation_cert(&self, cert_id: &str, reason: &str) -> Result<()> {
         let mut certs = self.delegation_certs.write().await;
         match certs.get_mut(cert_id) {
             None => Err(anyhow!("Delegation cert not found: {}", cert_id)),
@@ -767,7 +759,8 @@ impl MobileAuthStore {
             // Prune already-dead tokens (no await here — use try_read)
             if let Ok(s) = self.sessions.try_read() {
                 tokens.retain(|t| {
-                    s.get(t).map_or(false, |sess| !sess.revoked && sess.is_access_valid())
+                    s.get(t)
+                        .map_or(false, |sess| !sess.revoked && sess.is_access_valid())
                 });
             }
 
@@ -826,11 +819,9 @@ mod tests {
 
     #[test]
     fn challenge_has_correct_ttl() {
-        let ch = MobileAuthChallenge::generate(
-            vec![Capability::ReadBalance],
-            "http://localhost:9334",
-        )
-        .unwrap();
+        let ch =
+            MobileAuthChallenge::generate(vec![Capability::ReadBalance], "http://localhost:9334")
+                .unwrap();
         let now = now_secs();
         assert!(ch.expires_at > now);
         assert!(ch.expires_at <= now + CHALLENGE_TTL_SECS + 2); // +2s clock leeway
@@ -846,21 +837,17 @@ mod tests {
 
     #[test]
     fn challenge_qr_payload_contains_scheme() {
-        let ch = MobileAuthChallenge::generate(
-            vec![Capability::ReadBalance],
-            "http://localhost:9334",
-        )
-        .unwrap();
+        let ch =
+            MobileAuthChallenge::generate(vec![Capability::ReadBalance], "http://localhost:9334")
+                .unwrap();
         assert!(ch.qr_payload.starts_with(QR_SCHEME));
     }
 
     #[test]
     fn challenge_qr_payload_decodable() {
-        let ch = MobileAuthChallenge::generate(
-            vec![Capability::ReadBalance],
-            "http://localhost:9334",
-        )
-        .unwrap();
+        let ch =
+            MobileAuthChallenge::generate(vec![Capability::ReadBalance], "http://localhost:9334")
+                .unwrap();
         // Strip scheme prefix: zhtp://auth?d=<hex>
         let hex_part = ch
             .qr_payload
@@ -1049,7 +1036,9 @@ mod tests {
         let fetched = store.get_delegation_cert(&cert_id).await.unwrap();
         assert!(fetched.is_active());
         assert!(fetched.grants(&Capability::ReadBalance));
-        assert!(!fetched.grants(&Capability::SubmitTx { max_amount_tokens: 100 }));
+        assert!(!fetched.grants(&Capability::SubmitTx {
+            max_amount_tokens: 100
+        }));
 
         // Revoke
         store

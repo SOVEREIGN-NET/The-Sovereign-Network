@@ -56,7 +56,10 @@ pub struct OraclePriceAttestation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OracleAttestationValidationError {
     EncodeError(String),
-    WrongEpoch { expected: u64, got: u64 },
+    WrongEpoch {
+        expected: u64,
+        got: u64,
+    },
     NonCommitteeSigner([u8; 32]),
     DuplicateSigner([u8; 32]),
     MissingSignerPublicKey([u8; 32]),
@@ -255,10 +258,7 @@ pub enum OracleObserverError {
     /// No finalized price available.
     NoFinalizedPrice,
     /// Price is stale (exceeds max staleness epochs).
-    StalePrice {
-        epoch: u64,
-        max_staleness: u64,
-    },
+    StalePrice { epoch: u64, max_staleness: u64 },
     /// Reserve value calculation overflow.
     CalculationOverflow,
 }
@@ -269,9 +269,15 @@ impl std::fmt::Display for OracleObserverError {
             OracleObserverError::NoFinalizedPrice => {
                 write!(f, "No finalized oracle price available")
             }
-            OracleObserverError::StalePrice { epoch, max_staleness } => {
-                write!(f, "Oracle price is stale (epoch: {}, max_staleness: {})", 
-                    epoch, max_staleness)
+            OracleObserverError::StalePrice {
+                epoch,
+                max_staleness,
+            } => {
+                write!(
+                    f,
+                    "Oracle price is stale (epoch: {}, max_staleness: {})",
+                    epoch, max_staleness
+                )
             }
             OracleObserverError::CalculationOverflow => {
                 write!(f, "Reserve value calculation overflow")
@@ -319,7 +325,10 @@ impl OracleConfig {
         if self.max_source_age_secs < MIN_SOURCE_AGE_SECS {
             return Err(OracleConfigError::InvalidField {
                 field: "max_source_age_secs".to_string(),
-                message: format!("must be >= {} to give validators time to fetch prices", MIN_SOURCE_AGE_SECS),
+                message: format!(
+                    "must be >= {} to give validators time to fetch prices",
+                    MIN_SOURCE_AGE_SECS
+                ),
             });
         }
 
@@ -332,7 +341,10 @@ impl OracleConfig {
         if self.max_deviation_bps > MAX_DEVIATION_BPS {
             return Err(OracleConfigError::InvalidField {
                 field: "max_deviation_bps".to_string(),
-                message: format!("must be <= {} (100%) — higher values defeat price aggregation", MAX_DEVIATION_BPS),
+                message: format!(
+                    "must be <= {} (100%) — higher values defeat price aggregation",
+                    MAX_DEVIATION_BPS
+                ),
             });
         }
 
@@ -998,11 +1010,8 @@ impl OracleState {
                     if winning == attestation.sov_usd_price {
                         // SOV finalized but allow CBE submission; validate fully.
                         if attestation.cbe_usd_price.is_some() {
-                            let cbe_seen_signers: BTreeSet<[u8; 32]> = state
-                                .signer_cbe_prices
-                                .keys()
-                                .copied()
-                                .collect();
+                            let cbe_seen_signers: BTreeSet<[u8; 32]> =
+                                state.signer_cbe_prices.keys().copied().collect();
                             self.validate_attestation(
                                 attestation,
                                 current_epoch,
@@ -1043,7 +1052,9 @@ impl OracleState {
                     if attestation.cbe_usd_price.is_some() {
                         // Allow CBE submission even if SOV already submitted
                         // Check if this validator already submitted CBE price
-                        if let Some(existing_cbe) = state.signer_cbe_prices.get(&attestation.validator_pubkey) {
+                        if let Some(existing_cbe) =
+                            state.signer_cbe_prices.get(&attestation.validator_pubkey)
+                        {
                             if *existing_cbe == attestation.cbe_usd_price.unwrap() {
                                 return Ok(OracleAttestationAdmission::IgnoredDuplicateSigner(
                                     attestation.validator_pubkey,
@@ -1122,12 +1133,8 @@ impl OracleState {
         epoch_state: &OracleEpochState,
     ) -> Result<(), OracleAttestationAdmissionError> {
         // Calculate median of existing prices
-        let existing_prices: Vec<u128> = epoch_state
-            .signer_prices
-            .values()
-            .copied()
-            .collect();
-        
+        let existing_prices: Vec<u128> = epoch_state.signer_prices.values().copied().collect();
+
         if existing_prices.is_empty() {
             return Ok(());
         }
@@ -1185,7 +1192,7 @@ impl OracleState {
         let threshold = self.committee.threshold() as usize;
 
         let epoch_state = self.epoch_state.entry(current_epoch).or_default();
-        
+
         // Track SOV price (only if not already finalized)
         if !epoch_state.finalized {
             epoch_state
@@ -1205,10 +1212,7 @@ impl OracleState {
             epoch_state
                 .signer_cbe_prices
                 .insert(attestation.validator_pubkey, cbe_price);
-            let cbe_signer_set = epoch_state
-                .cbe_price_signers
-                .entry(cbe_price)
-                .or_default();
+            let cbe_signer_set = epoch_state.cbe_price_signers.entry(cbe_price).or_default();
             cbe_signer_set.insert(attestation.validator_pubkey);
 
             // Check if CBE price has reached threshold
@@ -1404,7 +1408,7 @@ impl OracleState {
     // 4. NEVER create or influence prices - only observe/report
     //
     // This aligns with the document's core principle:
-    // > "reliance on internal mechanisms rather than external oracles 
+    // > "reliance on internal mechanisms rather than external oracles
     // >    for price discovery"
 
     /// Issue #1847: Validate graduation threshold for bonding curve tokens.
@@ -1424,19 +1428,22 @@ impl OracleState {
         threshold_usd: u64,
     ) -> Result<bool, OracleObserverError> {
         // Get the latest finalized SOV/USD price
-        let latest_epoch = self.latest_finalized_epoch()
+        let latest_epoch = self
+            .latest_finalized_epoch()
             .ok_or(OracleObserverError::NoFinalizedPrice)?;
-        
-        let finalized_price = self.finalized_price(latest_epoch)
+
+        let finalized_price = self
+            .finalized_price(latest_epoch)
             .ok_or(OracleObserverError::NoFinalizedPrice)?;
 
         // Check if price is fresh (within max staleness)
         let current_epoch = latest_epoch; // Use latest as reference for staleness check
-        let _fresh_price = self.latest_fresh_price(current_epoch)
-            .ok_or(OracleObserverError::StalePrice { 
-                epoch: latest_epoch, 
-                max_staleness: self.config.max_price_staleness_epochs 
-            })?;
+        let _fresh_price =
+            self.latest_fresh_price(current_epoch)
+                .ok_or(OracleObserverError::StalePrice {
+                    epoch: latest_epoch,
+                    max_staleness: self.config.max_price_staleness_epochs,
+                })?;
 
         // Calculate reserve value in USD
         // reserve_value_usd = (reserve_sov / TOKEN_SCALE) * sov_usd_price / USD_PRICE_SCALE
@@ -1488,7 +1495,8 @@ impl OracleState {
         reserve_sov: u64,
         current_epoch: u64,
     ) -> Result<u64, OracleObserverError> {
-        let price = self.latest_fresh_price(current_epoch)
+        let price = self
+            .latest_fresh_price(current_epoch)
             .ok_or(OracleObserverError::NoFinalizedPrice)?;
 
         // reserve_value_usd = (reserve_sov / TOKEN_SCALE) * sov_usd_price / USD_PRICE_SCALE
@@ -2348,9 +2356,11 @@ mod tests {
     #[test]
     fn test_observer_validate_graduation_threshold() {
         let mut state = OracleState::default();
-        
+
         // Set up committee for price finalization
-        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        state
+            .committee
+            .set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
 
         // Finalize a SOV/USD price: $1.00 = 100_000_000
         let epoch_id = state.epoch_id(1_700_000_000);
@@ -2382,7 +2392,9 @@ mod tests {
     #[test]
     fn test_observer_graduation_with_variable_sov_price() {
         let mut state = OracleState::default();
-        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        state
+            .committee
+            .set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
 
         // Test with $2.00 SOV price
         let epoch_id = state.epoch_id(1_700_000_000);
@@ -2402,8 +2414,10 @@ mod tests {
 
         // Test with $0.50 SOV price
         let mut state2 = OracleState::default();
-        state2.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
-        
+        state2
+            .committee
+            .set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+
         let price2 = FinalizedOraclePrice {
             epoch_id: state2.epoch_id(1_700_000_000),
             sov_usd_price: 50_000_000, // $0.50
@@ -2421,7 +2435,9 @@ mod tests {
     #[test]
     fn test_observer_sov_usd_price() {
         let mut state = OracleState::default();
-        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        state
+            .committee
+            .set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
 
         // No price yet
         let current_epoch = state.epoch_id(1_700_000_000);
@@ -2430,14 +2446,20 @@ mod tests {
         // Finalize a price
         let price = FinalizedOraclePrice {
             epoch_id: current_epoch,
-            sov_usd_price: 150_000_000, // $1.50
+            sov_usd_price: 150_000_000,       // $1.50
             cbe_usd_price: Some(200_000_000), // $2.00 CBE
         };
         assert!(state.try_finalize_price(price));
 
         // Should return the price
-        assert_eq!(state.observe_sov_usd_price(current_epoch), Some(150_000_000));
-        assert_eq!(state.observe_cbe_usd_price(current_epoch), Some(200_000_000));
+        assert_eq!(
+            state.observe_sov_usd_price(current_epoch),
+            Some(150_000_000)
+        );
+        assert_eq!(
+            state.observe_cbe_usd_price(current_epoch),
+            Some(200_000_000)
+        );
     }
 
     /// Issue #1847: Test observer returns None for stale prices.
@@ -2445,7 +2467,9 @@ mod tests {
     fn test_observer_rejects_stale_price() {
         let mut state = OracleState::default();
         state.config.max_price_staleness_epochs = 2; // Very short for testing
-        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        state
+            .committee
+            .set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
 
         // Finalize price at epoch 1
         let price = FinalizedOraclePrice {
@@ -2469,7 +2493,9 @@ mod tests {
     #[test]
     fn test_observer_calculate_reserve_value() {
         let mut state = OracleState::default();
-        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        state
+            .committee
+            .set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
 
         let epoch_id = state.epoch_id(1_700_000_000);
         let price = FinalizedOraclePrice {
@@ -2510,16 +2536,18 @@ mod tests {
     fn test_observer_read_only_principle() {
         let mut state = OracleState::default();
         state.config.max_price_staleness_epochs = 2;
-        state.committee.set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        state
+            .committee
+            .set_members_genesis_only(vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
 
         // Observer methods should only return finalized prices
         // They never create or modify prices
-        
+
         let current_epoch = 10;
-        
+
         // Before finalization - no price available
         assert!(state.observe_sov_usd_price(current_epoch).is_none());
-        
+
         // Finalize price through consensus (not observer)
         let price = FinalizedOraclePrice {
             epoch_id: current_epoch,
@@ -2527,11 +2555,17 @@ mod tests {
             cbe_usd_price: Some(150_000_000),
         };
         assert!(state.try_finalize_price(price));
-        
+
         // After finalization - observer can report the price
-        assert_eq!(state.observe_sov_usd_price(current_epoch), Some(100_000_000));
-        assert_eq!(state.observe_cbe_usd_price(current_epoch), Some(150_000_000));
-        
+        assert_eq!(
+            state.observe_sov_usd_price(current_epoch),
+            Some(100_000_000)
+        );
+        assert_eq!(
+            state.observe_cbe_usd_price(current_epoch),
+            Some(150_000_000)
+        );
+
         // Observer methods are read-only and don't modify state
         // At epoch 13 (3 epochs later), price is stale (max_staleness=2)
         assert!(state.observe_sov_usd_price(13).is_none());
@@ -2549,7 +2583,9 @@ pub use migration::{
 // ORACLE-4: Slashing module
 pub mod slashing;
 
-pub use slashing::{CommitteeRemovalEntry, OracleSlashEvent, OracleSlashReason, OracleSlashingConfig};
+pub use slashing::{
+    CommitteeRemovalEntry, OracleSlashEvent, OracleSlashReason, OracleSlashingConfig,
+};
 
 // ORACLE-R6: Protocol version and activation gate
 pub mod protocol;

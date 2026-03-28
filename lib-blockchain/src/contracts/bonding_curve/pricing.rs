@@ -39,10 +39,10 @@ pub const ONE_BILLION_TOKENS: u64 = 1_000_000_000;
 
 /// CBE supply band slopes (Issue #1842), scaled by COMBINED_SCALE
 /// Actual slope_i = BAND_i_SLOPE / COMBINED_SCALE
-pub const BAND_1_SLOPE: u64 = 25_000;   // 2.5e-12
-pub const BAND_2_SLOPE: u64 = 75_000;   // 7.5e-12
-pub const BAND_3_SLOPE: u64 = 150_000;  // 1.5e-11
-pub const BAND_4_SLOPE: u64 = 300_000;  // 3.0e-11
+pub const BAND_1_SLOPE: u64 = 25_000; // 2.5e-12
+pub const BAND_2_SLOPE: u64 = 75_000; // 7.5e-12
+pub const BAND_3_SLOPE: u64 = 150_000; // 1.5e-11
+pub const BAND_4_SLOPE: u64 = 300_000; // 3.0e-11
 
 /// CBE Band 1 base price offset scaled by PRICE_SCALE (0.0003133457 SOV/CBE)
 pub const BAND_1_BASE_OFFSET: i64 = 31_335;
@@ -109,18 +109,24 @@ impl PiecewiseLinearCurve {
         let base_1: i64 = BAND_1_BASE_OFFSET;
 
         // Band 1→2 boundary at BAND_1_END_BILLIONS × 10^9 × 10^8 atomic units
-        let boundary_1: u128 = (BAND_1_END_BILLIONS as u128 * ONE_BILLION_TOKENS as u128) * token_scale as u128;
-        let delta_1 = ((BAND_2_SLOPE as i128 - BAND_1_SLOPE as i128) * boundary_1 as i128) / COMBINED_SCALE as i128;
+        let boundary_1: u128 =
+            (BAND_1_END_BILLIONS as u128 * ONE_BILLION_TOKENS as u128) * token_scale as u128;
+        let delta_1 = ((BAND_2_SLOPE as i128 - BAND_1_SLOPE as i128) * boundary_1 as i128)
+            / COMBINED_SCALE as i128;
         let base_2: i64 = base_1 - delta_1 as i64;
 
         // Band 2→3 boundary at BAND_2_END_BILLIONS
-        let boundary_2: u128 = (BAND_2_END_BILLIONS as u128 * ONE_BILLION_TOKENS as u128) * token_scale as u128;
-        let delta_2 = ((BAND_3_SLOPE as i128 - BAND_2_SLOPE as i128) * boundary_2 as i128) / COMBINED_SCALE as i128;
+        let boundary_2: u128 =
+            (BAND_2_END_BILLIONS as u128 * ONE_BILLION_TOKENS as u128) * token_scale as u128;
+        let delta_2 = ((BAND_3_SLOPE as i128 - BAND_2_SLOPE as i128) * boundary_2 as i128)
+            / COMBINED_SCALE as i128;
         let base_3: i64 = base_2 - delta_2 as i64;
 
         // Band 3→4 boundary at BAND_3_END_BILLIONS
-        let boundary_3: u128 = (BAND_3_END_BILLIONS as u128 * ONE_BILLION_TOKENS as u128) * token_scale as u128;
-        let delta_3 = ((BAND_4_SLOPE as i128 - BAND_3_SLOPE as i128) * boundary_3 as i128) / COMBINED_SCALE as i128;
+        let boundary_3: u128 =
+            (BAND_3_END_BILLIONS as u128 * ONE_BILLION_TOKENS as u128) * token_scale as u128;
+        let delta_3 = ((BAND_4_SLOPE as i128 - BAND_3_SLOPE as i128) * boundary_3 as i128)
+            / COMBINED_SCALE as i128;
         let base_4: i64 = base_3 - delta_3 as i64;
 
         let band_end = |billions: u64| billions * ONE_BILLION_TOKENS * token_scale;
@@ -167,13 +173,14 @@ impl PiecewiseLinearCurve {
     /// Price per token in SOV (8-decimal fixed-point)
     pub fn price_at(&self, supply: u64) -> u128 {
         let band = self.band_for_supply(supply);
-        
+
         // price = base + slope × supply / COMBINED_SCALE
         // Use signed arithmetic, then convert to unsigned
         let supply_scaled = supply as i128;
-        let slope_component = (band.slope as i128).saturating_mul(supply_scaled) / COMBINED_SCALE as i128;
+        let slope_component =
+            (band.slope as i128).saturating_mul(supply_scaled) / COMBINED_SCALE as i128;
         let price = (band.base_offset as i128).saturating_add(slope_component);
-        
+
         price.max(1) as u128 // Ensure non-zero price
     }
 
@@ -202,12 +209,14 @@ impl PiecewiseLinearCurve {
 
             // Price at end of previous band (just before boundary)
             let s_prev = (prev_band.end_supply - 1) as i128;
-            let slope_prev = (prev_band.slope as i128).saturating_mul(s_prev) / COMBINED_SCALE as i128;
+            let slope_prev =
+                (prev_band.slope as i128).saturating_mul(s_prev) / COMBINED_SCALE as i128;
             let price_prev = (prev_band.base_offset as i128) + slope_prev;
 
             // Price at start of current band (at boundary)
             let s_curr = curr_band.start_supply as i128;
-            let slope_curr = (curr_band.slope as i128).saturating_mul(s_curr) / COMBINED_SCALE as i128;
+            let slope_curr =
+                (curr_band.slope as i128).saturating_mul(s_curr) / COMBINED_SCALE as i128;
             let price_curr = (curr_band.base_offset as i128) + slope_curr;
 
             // Allow small rounding error (PRICE_CONTINUITY_TOLERANCE atomic units)
@@ -233,7 +242,7 @@ impl PiecewiseLinearCurve {
         // Simplified: use average price approximation
         let current_price = self.price_at(current_supply);
         let approximate_tokens = (sov_in as u128 * PRICE_SCALE) / current_price.max(1);
-        
+
         approximate_tokens.min((self.max_supply - current_supply) as u128) as u64
     }
 
@@ -247,7 +256,7 @@ impl PiecewiseLinearCurve {
         // Simplified: use average price approximation
         let avg_supply = current_supply - cbe_in / 2;
         let avg_price = self.price_at(avg_supply);
-        
+
         ((cbe_in as u128) * avg_price / PRICE_SCALE) as u64
     }
 }
@@ -261,13 +270,20 @@ mod tests {
         let curve = PiecewiseLinearCurve::cbe_default();
         let price = curve.initial_price();
         // Expected: ~0.0003133457 SOV per CBE = ~31,335 in 8-decimal
-        assert!(price > 30_000 && price < 35_000, "Initial price should be ~31,335, got {}", price);
+        assert!(
+            price > 30_000 && price < 35_000,
+            "Initial price should be ~31,335, got {}",
+            price
+        );
     }
 
     #[test]
     fn test_price_continuity_at_boundaries() {
         let curve = PiecewiseLinearCurve::cbe_default();
-        assert!(curve.verify_continuity(), "Price must be continuous at band boundaries");
+        assert!(
+            curve.verify_continuity(),
+            "Price must be continuous at band boundaries"
+        );
     }
 
     #[test]
@@ -281,18 +297,18 @@ mod tests {
     #[test]
     fn test_band_detection() {
         let curve = PiecewiseLinearCurve::cbe_default();
-        
+
         // Band 1: 0-10B
         assert_eq!(curve.band_index_for_supply(0), 1);
-        
+
         // Band 2: 10B-30B
         let band2_start = 10_000_000_000_000_000_00u64;
         assert_eq!(curve.band_index_for_supply(band2_start), 2);
-        
+
         // Band 3: 30B-60B
         let band3_start = 30_000_000_000_000_000_00u64;
         assert_eq!(curve.band_index_for_supply(band3_start), 3);
-        
+
         // Band 4: 60B-100B
         let band4_start = 60_000_000_000_000_000_00u64;
         assert_eq!(curve.band_index_for_supply(band4_start), 4);

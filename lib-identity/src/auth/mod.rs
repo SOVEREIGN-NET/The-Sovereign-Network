@@ -9,8 +9,8 @@ pub mod password;
 pub mod session;
 
 pub use mobile_delegation::{
-    AuditEventKind, AuditLogEntry, Capability, CrossDeviceSessionBinder,
-    DelegationCertificate, MobileAuthChallenge, MobileAuthStore, MobileDelegatedSession,
+    AuditEventKind, AuditLogEntry, Capability, CrossDeviceSessionBinder, DelegationCertificate,
+    MobileAuthChallenge, MobileAuthStore, MobileDelegatedSession,
 };
 pub use password::{PasswordError, PasswordManager, PasswordStrength, PasswordValidation};
 pub use session::SessionToken;

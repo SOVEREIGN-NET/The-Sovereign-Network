@@ -35,7 +35,10 @@ fn test_cbe_genesis_initialization() {
         "CBE should be initialized at genesis"
     );
 
-    let cbe = blockchain.bonding_curve_registry.get(&cbe_token_id).unwrap();
+    let cbe = blockchain
+        .bonding_curve_registry
+        .get(&cbe_token_id)
+        .unwrap();
     assert_eq!(cbe.name, "CBE Equity");
     assert_eq!(cbe.symbol, CBE_SYMBOL);
     assert_eq!(cbe.phase, Phase::Curve);

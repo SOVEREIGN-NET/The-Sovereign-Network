@@ -9,12 +9,12 @@ use crate::argument_parsing::{CbeAction, CbeArgs, ZhtpCli};
 use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
-use zhtp_client::cbe_tx::{
-    build_create_employment_contract_tx, build_init_cbe_token_tx, build_process_payroll_tx,
-};
 use lib_network::client::ZhtpClient;
 use serde_json::json;
 use std::path::PathBuf;
+use zhtp_client::cbe_tx::{
+    build_create_employment_contract_tx, build_init_cbe_token_tx, build_process_payroll_tx,
+};
 
 fn default_keystore_path() -> CliResult<PathBuf> {
     dirs::home_dir()
@@ -40,8 +40,8 @@ fn load_identity() -> CliResult<zhtp_client::Identity> {
 
 fn parse_hex32(value: &str, field: &str) -> CliResult<[u8; 32]> {
     let s = value.strip_prefix("0x").unwrap_or(value);
-    let bytes = hex::decode(s)
-        .map_err(|_| CliError::ConfigError(format!("{} is not valid hex", field)))?;
+    let bytes =
+        hex::decode(s).map_err(|_| CliError::ConfigError(format!("{} is not valid hex", field)))?;
     bytes
         .try_into()
         .map_err(|_| CliError::ConfigError(format!("{} must be exactly 32 bytes", field)))
@@ -55,21 +55,26 @@ async fn post_tx<O: Output>(
 ) -> CliResult<()> {
     let body = json!({ "signed_tx": signed_tx_hex });
     let client = connect_default(&cli.server).await?;
-    let response = client
-        .post_json(endpoint, &body)
-        .await
-        .map_err(|e| CliError::ApiCallFailed {
-            endpoint: endpoint.to_string(),
-            status: 0,
-            reason: e.to_string(),
-        })?;
+    let response =
+        client
+            .post_json(endpoint, &body)
+            .await
+            .map_err(|e| CliError::ApiCallFailed {
+                endpoint: endpoint.to_string(),
+                status: 0,
+                reason: e.to_string(),
+            })?;
     let resp: serde_json::Value =
         ZhtpClient::parse_json(&response).map_err(|e| CliError::ApiCallFailed {
             endpoint: endpoint.to_string(),
             status: 0,
             reason: format!("Failed to parse response: {}", e),
         })?;
-    if resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if resp
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         output.success("Transaction accepted")?;
     } else {
         let err = resp
@@ -109,11 +114,7 @@ pub async fn handle_cbe_command_with_output<O: Output>(
 
             output.info("Building InitCbeToken transaction...")?;
             let tx_hex = build_init_cbe_token_tx(
-                &identity,
-                comp_key,
-                ops_key,
-                perf_key,
-                strat_key,
+                &identity, comp_key, ops_key, perf_key, strat_key,
                 3, // chain_id = 3 (testnet)
                 height,
             )
@@ -161,9 +162,8 @@ pub async fn handle_cbe_command_with_output<O: Output>(
             let contract_id_bytes = parse_hex32(&contract_id, "--contract-id")?;
 
             output.info("Building ProcessPayroll transaction...")?;
-            let tx_hex =
-                build_process_payroll_tx(&identity, contract_id_bytes, 3) // chain_id = 3
-                    .map_err(|e| CliError::ConfigError(e))?;
+            let tx_hex = build_process_payroll_tx(&identity, contract_id_bytes, 3) // chain_id = 3
+                .map_err(|e| CliError::ConfigError(e))?;
 
             output.info("Submitting to node...")?;
             post_tx(cli, output, "/api/v1/cbe/payroll/process", tx_hex).await

@@ -29,32 +29,40 @@ pub mod types;
 
 // Re-export core types
 pub use amm_pool::{
-    AmmPool,
     create_pol_pool_for_graduated_token,
+    AmmPool,
     AmmPoolCreationResult,
     // Issue #1848: AMM pool creation constants
-    GRADUATED_POOL_FEE_BPS, MINIMUM_AMM_LIQUIDITY,
+    GRADUATED_POOL_FEE_BPS,
+    MINIMUM_AMM_LIQUIDITY,
 };
 pub use canonical::{
-    Band as CanonicalBand, BondingCurveBuyReceipt, BondingCurveBuyTx, BondingCurveSellReceipt,
-    BondingCurveSellTx, BAND_COUNT as CANONICAL_BAND_COUNT, BANDS as CANONICAL_BANDS,
-    MAX_DELTA_S_PER_TX, MAX_GROSS_SOV_PER_TX, MAX_SUPPLY as CANONICAL_MAX_SUPPLY,
-    P_START_0,
-    SCALE as CANONICAL_SCALE, integer_sqrt,
+    integer_sqrt, Band as CanonicalBand, BondingCurveBuyReceipt, BondingCurveBuyTx,
+    BondingCurveSellReceipt, BondingCurveSellTx, BANDS as CANONICAL_BANDS,
+    BAND_COUNT as CANONICAL_BAND_COUNT, MAX_DELTA_S_PER_TX, MAX_GROSS_SOV_PER_TX,
+    MAX_SUPPLY as CANONICAL_MAX_SUPPLY, P_START_0, SCALE as CANONICAL_SCALE,
 };
 // Issue #1849: Re-export POL pool
-pub use pol_pool::{
-    PolPool, PolPoolError, BASIS_POINTS_DENOMINATOR, POL_FEE_BPS,
-    POL_MINIMUM_INITIAL_LIQUIDITY,
-};
 pub use events::{BondingCurveEvent, EventIndexer, InMemoryEventIndexer, ReserveUpdateReason};
+pub use pol_pool::{
+    PolPool, PolPoolError, BASIS_POINTS_DENOMINATOR, POL_FEE_BPS, POL_MINIMUM_INITIAL_LIQUIDITY,
+};
 pub use pricing::PiecewiseLinearCurve;
 pub use registry::{BondingCurveRegistry, RegistryStats};
 pub use token::{BondingCurveToken, RESERVE_SPLIT_DENOMINATOR, RESERVE_SPLIT_NUMERATOR};
 pub use types::{
-    ConfidenceLevel, CurveError, CurveStats, CurveType, Phase, PriceSource, Threshold, Valuation,
+    ConfidenceLevel,
+    CurveError,
+    CurveStats,
+    CurveType,
+    Phase,
+    PriceSource,
+    Threshold,
+    Valuation,
     // Issue #1846: Graduation threshold constants
-    GRADUATION_CONFIRMATION_BLOCKS, GRADUATION_THRESHOLD_USD, MAX_ORACLE_PRICE_AGE_SECONDS,
+    GRADUATION_CONFIRMATION_BLOCKS,
+    GRADUATION_THRESHOLD_USD,
+    MAX_ORACLE_PRICE_AGE_SECONDS,
     USD_PRICE_SCALE,
 };
 

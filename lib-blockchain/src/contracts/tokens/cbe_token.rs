@@ -51,7 +51,8 @@ pub const CBE_TOTAL_SUPPLY: u64 = CBE_TOTAL_SUPPLY_TOKENS * CBE_ATOMS_PER_TOKEN;
 pub const CBE_COMPENSATION_POOL: u64 = (CBE_TOTAL_SUPPLY_TOKENS * 40 / 100) * CBE_ATOMS_PER_TOKEN;
 
 /// Operational treasury: 30 billion CBE × 10^8 atoms (30%)
-pub const CBE_OPERATIONAL_TREASURY: u64 = (CBE_TOTAL_SUPPLY_TOKENS * 30 / 100) * CBE_ATOMS_PER_TOKEN;
+pub const CBE_OPERATIONAL_TREASURY: u64 =
+    (CBE_TOTAL_SUPPLY_TOKENS * 30 / 100) * CBE_ATOMS_PER_TOKEN;
 
 /// Performance incentives: 20 billion CBE × 10^8 atoms (20%)
 pub const CBE_PERFORMANCE_INCENTIVES: u64 =
@@ -691,13 +692,19 @@ mod tests {
 
     #[test]
     fn test_cbe_operational_is_30_percent() {
-        assert_eq!(CBE_OPERATIONAL_TREASURY, 30_000_000_000 * CBE_ATOMS_PER_TOKEN);
+        assert_eq!(
+            CBE_OPERATIONAL_TREASURY,
+            30_000_000_000 * CBE_ATOMS_PER_TOKEN
+        );
         assert_eq!(CBE_OPERATIONAL_TREASURY / (CBE_TOTAL_SUPPLY / 100), 30);
     }
 
     #[test]
     fn test_cbe_performance_is_20_percent() {
-        assert_eq!(CBE_PERFORMANCE_INCENTIVES, 20_000_000_000 * CBE_ATOMS_PER_TOKEN);
+        assert_eq!(
+            CBE_PERFORMANCE_INCENTIVES,
+            20_000_000_000 * CBE_ATOMS_PER_TOKEN
+        );
         assert_eq!(CBE_PERFORMANCE_INCENTIVES / (CBE_TOTAL_SUPPLY / 100), 20);
     }
 

@@ -33,6 +33,8 @@ pub struct CliArgs {
     pub environment: Environment,
     pub log_level: String,
     pub data_dir: PathBuf,
+    pub emergency_restore_from_local: bool,
+    pub allow_emergency_restore_genesis_mismatch: bool,
 }
 
 /// Seed storage configuration (encrypted at rest)

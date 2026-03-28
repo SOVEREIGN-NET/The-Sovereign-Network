@@ -7,8 +7,8 @@ use crate::integration::crypto_integration::{
 };
 use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
 use crate::transaction::core::{
-    IdentityTransactionData, Transaction, TransactionInput, TransactionOutput,
-    TransactionPayload, WalletTransactionData, TX_VERSION_V8,
+    IdentityTransactionData, Transaction, TransactionInput, TransactionOutput, TransactionPayload,
+    WalletTransactionData, TX_VERSION_V8,
 };
 use crate::types::transaction_type::TransactionType;
 use tracing::debug;

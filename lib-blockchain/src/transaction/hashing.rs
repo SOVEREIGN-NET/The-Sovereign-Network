@@ -239,7 +239,6 @@ pub fn hash_for_signature(transaction: &Transaction) -> Hash {
     Hash::new(hash_bytes)
 }
 
-
 /// Implement Hash trait for Transaction
 impl crate::types::hash::Hashable for Transaction {
     fn hash(&self) -> Hash {

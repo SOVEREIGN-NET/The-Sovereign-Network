@@ -20,11 +20,11 @@ pub mod tokenomics;
 // Canonical consensus types (Phase 1)
 pub use primitives::{Address, Amount, BlockHash, BlockHeight, Bps, TokenId, TxHash};
 
-pub use chunk::*;
 pub use bonding_curve::{
     BondingCurveAccountState, BondingCurveBand, BondingCurveBuyReceipt, BondingCurveBuyTx,
     BondingCurveEconomicState, BondingCurveSellReceipt, BondingCurveSellTx, Nonce48,
 };
+pub use chunk::*;
 pub use consensus::{
     ConsensusConfig, ConsensusStep, ConsensusType, FeeDistributionResult, SlashType,
     UsefulWorkType, ValidatorStatus, VoteType, MIN_BFT_VALIDATORS,

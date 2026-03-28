@@ -114,6 +114,8 @@ fn parse_cli_args() -> CliArgs {
         .unwrap_or_else(|| PathBuf::from(".zhtp"));
     let mut mesh_port = None;
     let mut pure_mesh = false;
+    let mut emergency_restore_from_local = false;
+    let mut allow_emergency_restore_genesis_mismatch = false;
 
     // Simple argument parser
     let mut i = 1;
@@ -157,6 +159,14 @@ fn parse_cli_args() -> CliArgs {
                 pure_mesh = true;
                 i += 1;
             }
+            "--emergency-restore-from-local" => {
+                emergency_restore_from_local = true;
+                i += 1;
+            }
+            "--allow-emergency-restore-genesis-mismatch" => {
+                allow_emergency_restore_genesis_mismatch = true;
+                i += 1;
+            }
             "--log-level" => {
                 if i + 1 < args.len() {
                     log_level = args[i + 1].clone();
@@ -176,5 +186,7 @@ fn parse_cli_args() -> CliArgs {
         data_dir,
         mesh_port,
         pure_mesh,
+        emergency_restore_from_local,
+        allow_emergency_restore_genesis_mismatch,
     }
 }

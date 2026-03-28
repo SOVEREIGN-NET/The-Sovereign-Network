@@ -33,8 +33,8 @@ pub use height_scoring::{
 
 // Re-export observer service types
 pub use observer_service::{
-    create_observer_service, create_observer_service_with_config, HeightAnalysis,
-    ObserverHandle, ObserverService, ObserverServiceConfig,
+    create_observer_service, create_observer_service_with_config, HeightAnalysis, ObserverHandle,
+    ObserverService, ObserverServiceConfig,
 };
 
 // Re-export state encoder types

@@ -22,7 +22,8 @@ SSH uses `~/.ssh/config` aliases with `IdentityFile ~/.ssh/kode_ocr.pem`.
 | Sled DB      | `/opt/zhtp/data/testnet/sled/`    |
 | blockchain   | `/opt/zhtp/data/testnet/blockchain.dat` |
 
-> **Note**: `blockchain.dat` is a periodic snapshot and may be stale. The live state is in Sled. The node loads from Sled on startup if Sled is non-empty.
+> **Authority model**: committed chain state in Sled is the standard startup source of truth.
+> `blockchain.dat` is an emergency backup input only. Standard startup must not read it silently.
 
 ## Build
 
@@ -118,7 +119,49 @@ If Sled corrupts (node crashes on startup, deserialization errors):
 ssh zhtp-g3 "systemctl stop zhtp && rm -rf /opt/zhtp/data/testnet/sled && systemctl start zhtp"
 ```
 
-Node will re-sync from peers. `blockchain.dat` is the fallback — but see note above about staleness.
+Node should re-sync from peers and reconstruct canonical state from the chain. Do not treat
+`blockchain.dat` as a normal fallback.
+
+## Emergency Restore
+
+Use emergency restore only when canonical startup cannot proceed and operator recovery from a
+local backup is explicitly required.
+
+Standard startup:
+
+```bash
+ssh zhtp-g3 "systemctl restart zhtp"
+```
+
+Emergency restore from local backup:
+
+```bash
+ssh zhtp-g3 "systemctl stop zhtp"
+ssh zhtp-g3 "/opt/zhtp/zhtp --emergency-restore-from-local"
+```
+
+Emergency restore with explicit incompatible-genesis override:
+
+```bash
+ssh zhtp-g3 \"/opt/zhtp/zhtp --emergency-restore-from-local --allow-emergency-restore-genesis-mismatch\"
+```
+
+Rules:
+
+1. Emergency restore is operator-invoked only. It must not be used for normal restarts.
+2. Prefer peer resync over local backup whenever the node can recover canonically.
+3. If genesis compatibility fails, stop and investigate before using the mismatch override.
+4. After emergency restore, confirm the node catches up to canonical network height before
+   treating it as healthy.
+5. If one validator uses emergency restore, audit the other validators before resuming normal
+   operations.
+
+Required post-restore checks:
+
+```bash
+ssh zhtp-g3 "journalctl -u zhtp -n 200 --no-pager | grep -E 'Emergency restore|genesis hash mismatch|Loaded existing blockchain from SledStore|Ignoring blockchain.dat'"
+./target/release/zhtp-cli -s 91.98.113.188:9334 blockchain tip
+```
 
 ## Nonce Cache
 

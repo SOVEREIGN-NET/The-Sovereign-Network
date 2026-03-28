@@ -4,10 +4,7 @@
 //! - Blockchain restart (save → load round-trip)
 //! - BlockchainImport round-trip (export → import) - requires ORACLE-10 completion
 
-use lib_blockchain::{
-    oracle::OracleConfig,
-    Blockchain,
-};
+use lib_blockchain::{oracle::OracleConfig, Blockchain};
 use tempfile::tempdir;
 
 mod common;

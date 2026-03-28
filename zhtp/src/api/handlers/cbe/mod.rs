@@ -57,8 +57,8 @@ impl CbeHandler {
     }
 
     fn decode_tx(&self, signed_tx: &str) -> Result<Transaction> {
-        let bytes = hex::decode(signed_tx)
-            .map_err(|_| anyhow::anyhow!("signed_tx is not valid hex"))?;
+        let bytes =
+            hex::decode(signed_tx).map_err(|_| anyhow::anyhow!("signed_tx is not valid hex"))?;
         bincode::deserialize(&bytes)
             .map_err(|e| anyhow::anyhow!("signed_tx deserialization failed: {}", e))
     }
@@ -75,7 +75,9 @@ impl CbeHandler {
 
     async fn handle_init(&self, req: ZhtpRequest) -> Result<ZhtpResponse> {
         #[derive(serde::Deserialize)]
-        struct Req { signed_tx: String }
+        struct Req {
+            signed_tx: String,
+        }
 
         let body: Req = serde_json::from_slice(&req.body)
             .map_err(|e| anyhow::anyhow!("invalid request body: {}", e))?;
@@ -121,7 +123,9 @@ impl CbeHandler {
 
     async fn handle_create_employment(&self, req: ZhtpRequest) -> Result<ZhtpResponse> {
         #[derive(serde::Deserialize)]
-        struct Req { signed_tx: String }
+        struct Req {
+            signed_tx: String,
+        }
 
         let body: Req = serde_json::from_slice(&req.body)
             .map_err(|e| anyhow::anyhow!("invalid request body: {}", e))?;
@@ -156,7 +160,9 @@ impl CbeHandler {
 
     async fn handle_process_payroll(&self, req: ZhtpRequest) -> Result<ZhtpResponse> {
         #[derive(serde::Deserialize)]
-        struct Req { signed_tx: String }
+        struct Req {
+            signed_tx: String,
+        }
 
         let body: Req = serde_json::from_slice(&req.body)
             .map_err(|e| anyhow::anyhow!("invalid request body: {}", e))?;
@@ -202,7 +208,10 @@ impl ZhtpRequestHandler for CbeHandler {
             (ZhtpMethod::Post, "/api/v1/cbe/payroll/process") => {
                 self.handle_process_payroll(request).await
             }
-            _ => Ok(err(ZhtpStatus::NotFound, "Unknown CBE endpoint".to_string())),
+            _ => Ok(err(
+                ZhtpStatus::NotFound,
+                "Unknown CBE endpoint".to_string(),
+            )),
         };
 
         match result {

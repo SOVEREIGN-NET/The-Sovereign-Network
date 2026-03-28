@@ -12,7 +12,7 @@
 
 use crate::storage::{
     AccountState, Address, AddressExt, BlockchainStore, IdentityConsensus, IdentityMetadata,
-    OutPoint, TokenId, Utxo, WalletState,
+    OutPoint, TokenId, Utxo, WalletProjectionRecord, WalletState,
 };
 use crate::transaction::{Transaction, TransactionOutput};
 use crate::types::Hash;
@@ -256,9 +256,7 @@ impl<'a> StateMutator<'a> {
     /// Load the global canonical CBE economic state.
     ///
     /// Returns a zero-initialised default on a fresh chain.
-    pub fn get_cbe_economic_state(
-        &self,
-    ) -> TxApplyResult<lib_types::BondingCurveEconomicState> {
+    pub fn get_cbe_economic_state(&self) -> TxApplyResult<lib_types::BondingCurveEconomicState> {
         Ok(self.store.get_cbe_economic_state()?)
     }
 
@@ -547,6 +545,31 @@ impl<'a> StateMutator<'a> {
         let balance_u64 = u64::try_from(balance)
             .map_err(|_| TxApplyError::Storage("token balance exceeds u64::MAX".to_string()))?;
         Ok(balance_u64)
+    }
+
+    /// Read token supply without mutating state.
+    pub fn get_token_supply(&self, token: &TokenId) -> TxApplyResult<Option<u64>> {
+        self.store
+            .get_token_supply(token)
+            .map_err(|e| TxApplyError::Storage(e.to_string()))
+    }
+
+    /// Persist token supply in canonical state storage.
+    pub fn put_token_supply(&self, token: &TokenId, supply: u64) -> TxApplyResult<()> {
+        self.store
+            .put_token_supply(token, supply)
+            .map_err(|e| TxApplyError::Storage(e.to_string()))
+    }
+
+    /// Persist a wallet projection entry in canonical storage.
+    pub fn put_wallet_projection(
+        &self,
+        wallet_id: &[u8; 32],
+        record: &WalletProjectionRecord,
+    ) -> TxApplyResult<()> {
+        self.store
+            .put_wallet_projection(wallet_id, record)
+            .map_err(|e| TxApplyError::Storage(e.to_string()))
     }
 }
 

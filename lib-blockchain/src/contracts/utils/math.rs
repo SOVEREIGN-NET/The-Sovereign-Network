@@ -120,7 +120,10 @@ mod tests {
     #[test]
     fn test_mul_div_floor_u128() {
         assert_eq!(mul_div_floor_u128(10, 3, 4).unwrap(), 7);
-        assert_eq!(scaled_mul_u128(5_000_000_000_000_000_000, 2, 1).unwrap(), 10_000_000_000_000_000_000);
+        assert_eq!(
+            scaled_mul_u128(5_000_000_000_000_000_000, 2, 1).unwrap(),
+            10_000_000_000_000_000_000
+        );
     }
 
     #[test]

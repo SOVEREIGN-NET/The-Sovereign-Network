@@ -24,3 +24,6 @@ This checklist gates release readiness for contract deployment, DAO creation/exe
 - [ ] Project board statuses moved to `Done` for merged items.
 - [ ] Residual risk document reviewed: `docs/release/DAO_READY_RESIDUAL_RISKS.md`.
 - [ ] Rollback owner identified and rollback path verified.
+- [ ] Operator docs updated for standard startup = canonical sled/chain state only.
+- [ ] Emergency restore flow documented with explicit operator invocation and post-restore checks.
+- [ ] `blockchain.dat` documented as emergency backup only, not standard startup fallback.

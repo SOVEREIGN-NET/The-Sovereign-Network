@@ -231,9 +231,7 @@ impl GenesisStateSnapshot {
                 wallet_id: hex::encode(w.wallet_id.as_bytes()),
                 wallet_type: w.wallet_type.clone(),
                 public_key: hex::encode(&w.public_key),
-                owner_identity_id: w
-                    .owner_identity_id
-                    .map(|id| hex::encode(id.as_bytes())),
+                owner_identity_id: w.owner_identity_id.map(|id| hex::encode(id.as_bytes())),
                 created_at: w.created_at,
             })
             .collect();
@@ -360,8 +358,8 @@ impl GenesisConfig {
             BondingCurveToken, CurveType, PiecewiseLinearCurve, Threshold,
         };
         use crate::contracts::tokens::{
-            CbeToken, VestingPool, CBE_NAME, CBE_OPERATIONAL_TREASURY,
-            CBE_PERFORMANCE_INCENTIVES, CBE_STRATEGIC_RESERVES, CBE_SYMBOL,
+            CbeToken, VestingPool, CBE_NAME, CBE_OPERATIONAL_TREASURY, CBE_PERFORMANCE_INCENTIVES,
+            CBE_STRATEGIC_RESERVES, CBE_SYMBOL,
         };
         use crate::integration::crypto_integration::PublicKey;
         use crate::types::Difficulty;
@@ -409,14 +407,10 @@ impl GenesisConfig {
         let mut bc = crate::Blockchain::new_empty_for_genesis(genesis_block)?;
 
         // ── CBE token pool keys ─────────────────────────────────────────────
-        let compensation_key =
-            key_from_hex_or_stub(&self.cbe_token.compensation_pool_key, 0x01);
-        let operational_key =
-            key_from_hex_or_stub(&self.cbe_token.operational_pool_key, 0x02);
-        let performance_key =
-            key_from_hex_or_stub(&self.cbe_token.performance_pool_key, 0x03);
-        let strategic_key =
-            key_from_hex_or_stub(&self.cbe_token.strategic_pool_key, 0x04);
+        let compensation_key = key_from_hex_or_stub(&self.cbe_token.compensation_pool_key, 0x01);
+        let operational_key = key_from_hex_or_stub(&self.cbe_token.operational_pool_key, 0x02);
+        let performance_key = key_from_hex_or_stub(&self.cbe_token.performance_pool_key, 0x03);
+        let strategic_key = key_from_hex_or_stub(&self.cbe_token.strategic_pool_key, 0x04);
 
         // ── initialise CBE token ─────────────────────────────────────────────
         bc.cbe_token = CbeToken::new();
@@ -566,10 +560,12 @@ impl GenesisConfig {
 
         // wallets
         for w in &alloc.wallets {
-            let wallet_id_bytes = hex::decode(&w.wallet_id)
-                .map_err(|e| anyhow::anyhow!("invalid hex in wallet_id '{}': {}", w.wallet_id, e))?;
-            let pk_bytes = hex::decode(&w.public_key)
-                .map_err(|e| anyhow::anyhow!("invalid hex in public_key '{}': {}", w.public_key, e))?;
+            let wallet_id_bytes = hex::decode(&w.wallet_id).map_err(|e| {
+                anyhow::anyhow!("invalid hex in wallet_id '{}': {}", w.wallet_id, e)
+            })?;
+            let pk_bytes = hex::decode(&w.public_key).map_err(|e| {
+                anyhow::anyhow!("invalid hex in public_key '{}': {}", w.public_key, e)
+            })?;
             if wallet_id_bytes.len() != 32 {
                 warn!("Skipping wallet with invalid id: {}", w.wallet_id);
                 continue;
@@ -609,8 +605,13 @@ impl GenesisConfig {
 
         // identities
         for id in &alloc.identities {
-            let pk_bytes = hex::decode(&id.public_key)
-                .map_err(|e| anyhow::anyhow!("invalid hex in identity public_key '{}': {}", id.public_key, e))?;
+            let pk_bytes = hex::decode(&id.public_key).map_err(|e| {
+                anyhow::anyhow!(
+                    "invalid hex in identity public_key '{}': {}",
+                    id.public_key,
+                    e
+                )
+            })?;
             bc.identity_registry.insert(
                 id.did.clone(),
                 IdentityTransactionData {
@@ -652,8 +653,13 @@ impl GenesisConfig {
                 .entry(sov_id)
                 .or_insert_with(crate::contracts::TokenContract::new_sov_native);
             for entry in &alloc.sov_balances {
-                let wallet_id_bytes = hex::decode(&entry.wallet_id)
-                    .map_err(|e| anyhow::anyhow!("invalid hex in sov_balance wallet_id '{}': {}", entry.wallet_id, e))?;
+                let wallet_id_bytes = hex::decode(&entry.wallet_id).map_err(|e| {
+                    anyhow::anyhow!(
+                        "invalid hex in sov_balance wallet_id '{}': {}",
+                        entry.wallet_id,
+                        e
+                    )
+                })?;
                 let key_id = if wallet_id_bytes.len() == 32 {
                     let mut arr = [0u8; 32];
                     arr.copy_from_slice(&wallet_id_bytes);
@@ -743,9 +749,7 @@ fn key_from_hex_or_stub(
 /// Parse a hex-encoded Dilithium5 public key into a `PublicKey`.
 ///
 /// The `key_id` is derived as `blake3(dilithium_pk)`.
-fn key_from_hex(
-    hex_str: &str,
-) -> Result<crate::integration::crypto_integration::PublicKey> {
+fn key_from_hex(hex_str: &str) -> Result<crate::integration::crypto_integration::PublicKey> {
     let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
     let bytes = hex::decode(trimmed).context("Invalid hex in genesis.toml key")?;
     let key_id = lib_crypto::hash_blake3(&bytes);
@@ -775,7 +779,7 @@ fn days_since_unix_epoch(year: u64, month: u64, day: u64) -> u64 {
     let yoe = y - era * 400; // year-of-era [0, 399]
     let doy = (153 * m + 2) / 5 + day - 1; // day-of-year [0, 365]
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // day-of-era [0, 146096]
-    // 719468 = days from 0000-03-01 to 1970-01-01
+                                                     // 719468 = days from 0000-03-01 to 1970-01-01
     era * 146097 + doe - 719468
 }
 
@@ -786,8 +790,7 @@ mod tests {
 
     #[test]
     fn test_from_embedded_parses() {
-        let config =
-            GenesisConfig::from_embedded().expect("embedded genesis.toml should parse");
+        let config = GenesisConfig::from_embedded().expect("embedded genesis.toml should parse");
         assert_eq!(config.chain.chain_id, 1);
         assert_eq!(config.cbe_token.total_supply, 100_000_000_000);
         assert_eq!(config.bootstrap_council.threshold, 3);
@@ -806,7 +809,10 @@ mod tests {
     fn test_build_block0_produces_initialized_cbe_token() {
         let config = GenesisConfig::from_embedded().expect("parse");
         let bc = config.build_block0().expect("build_block0");
-        assert!(bc.cbe_token.is_initialized(), "CBE token must be initialized");
+        assert!(
+            bc.cbe_token.is_initialized(),
+            "CBE token must be initialized"
+        );
         assert_eq!(bc.cbe_token.total_supply(), CBE_TOTAL_SUPPLY);
     }
 

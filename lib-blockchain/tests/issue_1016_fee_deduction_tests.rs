@@ -6,7 +6,9 @@
 use lib_blockchain::block::{Block, BlockHeader};
 use lib_blockchain::contracts::utils::generate_lib_token_id;
 use lib_blockchain::contracts::TokenContract;
-use lib_blockchain::transaction::{Transaction, TransactionInput, TransactionOutput, TransactionPayload};
+use lib_blockchain::transaction::{
+    Transaction, TransactionInput, TransactionOutput, TransactionPayload,
+};
 use lib_blockchain::types::TransactionType;
 use lib_blockchain::types::{Difficulty, Hash};
 use lib_blockchain::Blockchain;

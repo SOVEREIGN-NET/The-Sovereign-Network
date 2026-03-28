@@ -12,7 +12,9 @@ use crate::commands::web4_utils::{connect_default, load_identity_from_keystore};
 use crate::error::{CliError, CliResult};
 use crate::output::Output;
 use lib_blockchain::transaction::{
-    core::{BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData, BondingCurveSellData},
+    core::{
+        BondingCurveBuyData, BondingCurveDeployData, BondingCurveGraduateData, BondingCurveSellData,
+    },
     Transaction,
 };
 use lib_crypto::keypair::KeyPair;
@@ -242,9 +244,9 @@ fn build_signed_curve_graduate_tx(
         b"curve:graduate:v1".to_vec(),
     );
 
-    tx.signature = keypair
-        .sign(tx.signing_hash().as_bytes())
-        .map_err(|e| CliError::ConfigError(format!("Failed to sign BondingCurveGraduate tx: {e}")))?;
+    tx.signature = keypair.sign(tx.signing_hash().as_bytes()).map_err(|e| {
+        CliError::ConfigError(format!("Failed to sign BondingCurveGraduate tx: {e}"))
+    })?;
     Ok(tx)
 }
 
@@ -287,30 +289,39 @@ pub async fn handle_curve_command_with_output<O: Output>(
             token_id,
             stable_amount,
             min_tokens_out,
-        } => handle_buy(
-            cli,
-            output,
-            &token_id,
-            stable_amount.into(),
-            min_tokens_out.map(Into::into),
-        )
-        .await,
+        } => {
+            handle_buy(
+                cli,
+                output,
+                &token_id,
+                stable_amount.into(),
+                min_tokens_out.map(Into::into),
+            )
+            .await
+        }
         CurveAction::Sell {
             token_id,
             token_amount,
             min_stable_out,
-        } => handle_sell(
-            cli,
-            output,
-            &token_id,
-            token_amount.into(),
-            min_stable_out.map(Into::into),
-        )
-        .await,
+        } => {
+            handle_sell(
+                cli,
+                output,
+                &token_id,
+                token_amount.into(),
+                min_stable_out.map(Into::into),
+            )
+            .await
+        }
         CurveAction::Info { token_id } => handle_info(cli, output, &token_id).await,
         CurveAction::Price { token_id } => handle_price(cli, output, &token_id).await,
         CurveAction::CanGraduate { token_id } => handle_can_graduate(cli, output, &token_id).await,
-        CurveAction::Graduate { token_id, pool_id, sov_seed, token_seed } => {
+        CurveAction::Graduate {
+            token_id,
+            pool_id,
+            sov_seed,
+            token_seed,
+        } => {
             handle_graduate(
                 cli,
                 output,
@@ -626,7 +637,10 @@ async fn handle_graduate<O: Output>(
     token_seed: u128,
 ) -> CliResult<()> {
     output.info(&format!("Graduating token to AMM: {}", token_id))?;
-    output.info(&format!("Pool ID: {}, SOV seed: {}, Token seed: {}", pool_id, sov_seed, token_seed))?;
+    output.info(&format!(
+        "Pool ID: {}, SOV seed: {}, Token seed: {}",
+        pool_id, sov_seed, token_seed
+    ))?;
     output.info("Signing graduate transaction with local keypair")?;
 
     let keypair = load_default_keypair()?;

@@ -288,9 +288,7 @@ impl TransactionType {
             TransactionType::TreasuryAllocation => {
                 "Execute governance-approved treasury allocation (CBE treasury → DAO wallet)"
             }
-            TransactionType::InitCbeToken => {
-                "Initialize CBE token contract (one-time)"
-            }
+            TransactionType::InitCbeToken => "Initialize CBE token contract (one-time)",
             TransactionType::CreateEmploymentContract => {
                 "Create employment contract on-chain via EmploymentRegistry"
             }

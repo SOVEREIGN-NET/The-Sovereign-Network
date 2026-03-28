@@ -138,7 +138,8 @@ impl ZhtpClient {
                     if let Some(parent) = nonce_db_path.parent() {
                         std::fs::create_dir_all(parent)?;
                     }
-                    let network_epoch = match crate::handshake::NetworkEpoch::from_global_or_fail() {
+                    let network_epoch = match crate::handshake::NetworkEpoch::from_global_or_fail()
+                    {
                         Ok(epoch) => epoch,
                         Err(_) => {
                             warn!(
@@ -152,7 +153,8 @@ impl ZhtpClient {
                     // sled from a previous run with different genesis), wipe and recreate.
                     // The bootstrap nonce cache is ephemeral — cross-restart replay protection
                     // for bootstrap connections is not a security requirement.
-                    let cache = match NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch) {
+                    let cache = match NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
+                    {
                         Ok(c) => c,
                         Err(e) => {
                             let err_str = e.to_string();
@@ -163,7 +165,9 @@ impl ZhtpClient {
                                 let _ = std::fs::remove_dir_all(&nonce_db_path);
                                 std::fs::create_dir_all(&nonce_db_path)?;
                                 NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
-                                    .context("Failed to open nonce cache after epoch mismatch retry")?
+                                    .context(
+                                        "Failed to open nonce cache after epoch mismatch retry",
+                                    )?
                             } else {
                                 // Don't wipe on lock contention, I/O errors, etc.
                                 return Err(e.into());
@@ -186,7 +190,10 @@ impl ZhtpClient {
             match NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch) {
                 Ok(c) => c,
                 Err(e) if e.to_string().contains("Network epoch mismatch") => {
-                    warn!("Client nonce cache epoch mismatch — clearing and retrying: {}", e);
+                    warn!(
+                        "Client nonce cache epoch mismatch — clearing and retrying: {}",
+                        e
+                    );
                     let _ = std::fs::remove_dir_all(&nonce_db_path);
                     NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
                         .context("Failed to open nonce cache after epoch mismatch clear")?

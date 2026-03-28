@@ -2442,7 +2442,6 @@ impl<'a> StatefulTransactionValidator<'a> {
                 return Err(ValidationError::UnregisteredSender);
             }
         }
-
     }
 
     /// Validate UBI claim transaction with state context (Week 7)

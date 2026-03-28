@@ -3,11 +3,11 @@
 //! Tracks employment contracts with tax, profit-sharing, and voting power integration.
 //! Supports both Public Access (NP DAOs) and Employment (FP DAOs) contract types.
 
-use serde::{Deserialize, Serialize};
-use anyhow::{Result, anyhow};
-use crate::integration::crypto_integration::PublicKey;
 use crate::contracts::utils::integer_sqrt;
+use crate::integration::crypto_integration::PublicKey;
+use anyhow::{anyhow, Result};
 use blake3;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Employment contract access types
@@ -86,18 +86,18 @@ pub struct EmploymentContract {
     pub status: EmploymentStatus,
 
     // Compensation
-    pub compensation_amount: u64,  // In DAO tokens per period
+    pub compensation_amount: u64, // In DAO tokens per period
     pub payment_period: EconomicPeriod,
 
     // Tax and compliance
-    pub tax_rate_basis_points: u16,  // e.g., 2000 = 20%
+    pub tax_rate_basis_points: u16, // e.g., 2000 = 20%
     pub tax_jurisdiction: String,
 
     // Profit sharing
-    pub profit_share_percentage: u16,  // Basis points, e.g., 500 = 5%
+    pub profit_share_percentage: u16, // Basis points, e.g., 500 = 5%
 
     // Governance
-    pub voting_power: u64,  // Based on CBE holdings + tenure
+    pub voting_power: u64, // Based on CBE holdings + tenure
 
     // Lifecycle
     pub start_height: u64,
@@ -127,8 +127,8 @@ pub struct ProfitShareResult {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmploymentRegistry {
     pub contracts: Vec<EmploymentContract>,
-    pub contract_by_sid: HashMap<[u8; 32], Vec<[u8; 32]>>,  // SID → contract IDs
-    pub contract_by_dao: HashMap<[u8; 32], Vec<[u8; 32]>>,  // DAO → contract IDs
+    pub contract_by_sid: HashMap<[u8; 32], Vec<[u8; 32]>>, // SID → contract IDs
+    pub contract_by_dao: HashMap<[u8; 32], Vec<[u8; 32]>>, // DAO → contract IDs
 }
 
 impl EmploymentRegistry {
@@ -169,12 +169,16 @@ impl EmploymentRegistry {
 
         // Validate profit share (max 20%)
         if profit_share_percentage > 2000 {
-            return Err(anyhow!("Profit share cannot exceed 20% (2000 basis points)"));
+            return Err(anyhow!(
+                "Profit share cannot exceed 20% (2000 basis points)"
+            ));
         }
 
         // For Employment contracts, require positive compensation
         if contract_type == ContractAccessType::Employment && compensation_amount == 0 {
-            return Err(anyhow!("Employment contracts require positive compensation"));
+            return Err(anyhow!(
+                "Employment contracts require positive compensation"
+            ));
         }
 
         // Generate contract ID
@@ -220,7 +224,8 @@ impl EmploymentRegistry {
         contract_id: [u8; 32],
         current_height: u64,
     ) -> Result<PaymentDetails> {
-        let contract = self.contracts
+        let contract = self
+            .contracts
             .iter_mut()
             .find(|c| c.contract_id == contract_id)
             .ok_or_else(|| anyhow!("Employment contract not found"))?;
@@ -264,7 +269,8 @@ impl EmploymentRegistry {
         contract_id: [u8; 32],
         dao_profit: u64,
     ) -> Result<ProfitShareResult> {
-        let contract = self.contracts
+        let contract = self
+            .contracts
             .iter()
             .find(|c| c.contract_id == contract_id)
             .ok_or_else(|| anyhow!("Employment contract not found"))?;
@@ -287,7 +293,8 @@ impl EmploymentRegistry {
         cbe_balance: u64,
         current_height: u64,
     ) -> Result<u64> {
-        let contract = self.contracts
+        let contract = self
+            .contracts
             .iter_mut()
             .find(|c| c.contract_id == contract_id)
             .ok_or_else(|| anyhow!("Employment contract not found"))?;
@@ -326,7 +333,8 @@ impl EmploymentRegistry {
         _caller: &PublicKey,
         current_height: u64,
     ) -> Result<()> {
-        let contract = self.contracts
+        let contract = self
+            .contracts
             .iter_mut()
             .find(|c| c.contract_id == contract_id)
             .ok_or_else(|| anyhow!("Employment contract not found"))?;
@@ -375,13 +383,18 @@ impl EmploymentRegistry {
     /// For now, this returns metadata about candidates for archival.
     ///
     /// **Returns:** (count_terminated, count_total)
-    pub fn analyze_archival_candidates(&self, current_height: u64, archive_after_blocks: u64) -> (usize, usize) {
+    pub fn analyze_archival_candidates(
+        &self,
+        current_height: u64,
+        archive_after_blocks: u64,
+    ) -> (usize, usize) {
         let archive_threshold = current_height.saturating_sub(archive_after_blocks);
-        let archival_candidates = self.contracts
+        let archival_candidates = self
+            .contracts
             .iter()
             .filter(|c| {
-                c.status == EmploymentStatus::Terminated &&
-                c.end_height.map_or(false, |h| h < archive_threshold)
+                c.status == EmploymentStatus::Terminated
+                    && c.end_height.map_or(false, |h| h < archive_threshold)
             })
             .count();
 
@@ -390,7 +403,9 @@ impl EmploymentRegistry {
 
     /// Get a specific contract
     pub fn get_contract(&self, contract_id: &[u8; 32]) -> Option<&EmploymentContract> {
-        self.contracts.iter().find(|c| &c.contract_id == contract_id)
+        self.contracts
+            .iter()
+            .find(|c| &c.contract_id == contract_id)
     }
 }
 
@@ -428,11 +443,11 @@ mod tests {
             [1u8; 32],
             test_public_key(2),
             ContractAccessType::Employment,
-            100_00000000,  // 100 tokens per month
+            100_00000000, // 100 tokens per month
             EconomicPeriod::Monthly,
-            2000,  // 20% tax
+            2000, // 20% tax
             "US".to_string(),
-            500,   // 5% profit share
+            500, // 5% profit share
             &test_public_key(3),
             100,
         );
@@ -449,7 +464,7 @@ mod tests {
             [1u8; 32],
             test_public_key(2),
             ContractAccessType::PublicAccess,
-            0,  // No compensation for public access
+            0, // No compensation for public access
             EconomicPeriod::Monthly,
             0,
             "Global".to_string(),
@@ -473,7 +488,7 @@ mod tests {
             ContractAccessType::Employment,
             100_00000000,
             EconomicPeriod::Monthly,
-            6000,  // 60% tax (exceeds limit)
+            6000, // 60% tax (exceeds limit)
             "US".to_string(),
             500,
             &test_public_key(3),
@@ -495,7 +510,7 @@ mod tests {
             EconomicPeriod::Monthly,
             2000,
             "US".to_string(),
-            3000,  // 30% profit share (exceeds limit)
+            3000, // 30% profit share (exceeds limit)
             &test_public_key(3),
             100,
         );
@@ -544,7 +559,7 @@ mod tests {
                 ContractAccessType::Employment,
                 100_00000000,
                 EconomicPeriod::Monthly,
-                0,  // No tax
+                0, // No tax
                 "US".to_string(),
                 500,
                 &test_public_key(3),
@@ -576,7 +591,7 @@ mod tests {
                 EconomicPeriod::Monthly,
                 2000,
                 "US".to_string(),
-                500,  // 5% profit share
+                500, // 5% profit share
                 &test_public_key(3),
                 100,
             )
@@ -645,7 +660,12 @@ mod tests {
             .unwrap();
 
         registry
-            .terminate_contract(contract_id, TerminationReason::Resignation, &test_public_key(3), 200)
+            .terminate_contract(
+                contract_id,
+                TerminationReason::Resignation,
+                &test_public_key(3),
+                200,
+            )
             .unwrap();
 
         let contract = registry.get_contract(&contract_id).unwrap();

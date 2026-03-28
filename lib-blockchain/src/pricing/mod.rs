@@ -132,7 +132,7 @@ pub struct TokenPricingState {
     /// Price history (token_id -> [(timestamp, price)])
     #[serde(default)]
     pub price_history: HashMap<String, Vec<(u64, u128)>>,
-    
+
     // Legacy fields for backward compatibility (Issue #1852 transition)
     /// Deprecated: CBE/USD from oracle (now observer-only)
     #[serde(default)]
@@ -160,7 +160,10 @@ pub enum PricingMode {
     /// Fixed price (SRV)
     Fixed,
     /// Dynamic price (deprecated - no longer used)
-    #[deprecated(since = "Issue #1852", note = "Bonding curve is PRIMARY, oracle is observer-only")]
+    #[deprecated(
+        since = "Issue #1852",
+        note = "Bonding curve is PRIMARY, oracle is observer-only"
+    )]
     Dynamic,
     /// Pre-graduation bonding curve pricing
     PreGraduation,
@@ -233,7 +236,7 @@ impl TokenPricingState {
     pub fn record_price(&mut self, token_id: &str, timestamp: u64, price_cents: u128) {
         let history = self.price_history.entry(token_id.to_string()).or_default();
         history.push((timestamp, price_cents));
-        
+
         // Keep only last 1000 entries
         if history.len() > 1000 {
             history.remove(0);
@@ -242,7 +245,10 @@ impl TokenPricingState {
 
     /// Get price history for a token
     pub fn get_price_history(&self, token_id: &str) -> Vec<(u64, u128)> {
-        self.price_history.get(token_id).cloned().unwrap_or_default()
+        self.price_history
+            .get(token_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     // Issue #1852: Legacy methods for backward compatibility
@@ -263,7 +269,11 @@ impl TokenPricingState {
     }
 
     /// Deprecated: Calculate CBE price components
-    pub fn calculate_cbe_price(&self, _sov_price_8dec: u128, curve_price_sov: u128) -> (u128, PriceComponents) {
+    pub fn calculate_cbe_price(
+        &self,
+        _sov_price_8dec: u128,
+        curve_price_sov: u128,
+    ) -> (u128, PriceComponents) {
         let sov_usd = GENESIS_SRV_8DEC as u128;
         let cbe_usd_8dec = PricingCalculator::calculate_cbe_usd(curve_price_sov, sov_usd);
         let cbe_usd_cents = PricingCalculator::to_cents(cbe_usd_8dec);
@@ -297,7 +307,7 @@ impl TokenPricingState {
     /// Deprecated: Get SOV price components
     pub fn get_sov_components(&self) -> PriceComponents {
         let srv = GENESIS_SRV_8DEC as u128;
-        
+
         PriceComponents {
             srv: Some(srv),
             cbe_usd: None, // Issue #1852: oracle is observer-only
@@ -343,15 +353,15 @@ mod tests {
     #[test]
     fn test_pricing_state_observer_role() {
         let mut state = TokenPricingState::new();
-        
+
         // Initially no observed price
         assert!(state.observed_curve_price.is_none());
         assert_eq!(state.phase, PricingPhase::Curve);
-        
+
         // Observe curve price (from bonding curve, not oracle)
         state.observe_curve_price(31_334_570, 1_700_000_000);
         assert_eq!(state.observed_curve_price, Some(31_334_570));
-        
+
         // Phase transition
         state.transition_to_amm(1_700_000_100);
         assert_eq!(state.phase, PricingPhase::AMM);
@@ -361,10 +371,10 @@ mod tests {
     fn test_calculate_cbe_usd() {
         // CBE/SOV = 60, SOV/USD = $0.05
         // CBE/USD = 60 * 0.05 = $3
-        
+
         let cbe_sov = 60u128 * PRICE_SCALE; // 60
         let sov_usd = 5_000_000u128; // $0.05
-        
+
         let cbe_usd = PricingCalculator::calculate_cbe_usd(cbe_sov, sov_usd);
         assert_eq!(cbe_usd, 300_000_000); // $3
     }
@@ -390,12 +400,12 @@ mod tests {
     #[test]
     fn test_price_history() {
         let mut state = TokenPricingState::new();
-        
+
         // Record some prices
         state.record_price("CBE", 1_700_000_000, 300); // $3.00
         state.record_price("CBE", 1_700_000_100, 310); // $3.10
         state.record_price("CBE", 1_700_000_200, 305); // $3.05
-        
+
         let history = state.get_price_history("CBE");
         assert_eq!(history.len(), 3);
         assert_eq!(history[0], (1_700_000_000, 300));
@@ -406,16 +416,19 @@ mod tests {
     #[test]
     fn test_oracle_observer_only() {
         let state = TokenPricingState::new();
-        
+
         // Oracle does not set prices - only observes.
         // update_cbe_usd_price() and dynamic_pricing_active still exist as deprecated
         // backward-compatibility stubs but do not affect computed prices.
         // The only active price path is observe_curve_price() from the bonding curve.
         assert!(state.observed_curve_price.is_none());
         assert!(!state.dynamic_pricing_active); // deprecated field, always false
-        // Calling the deprecated update method must not change observed_curve_price
+                                                // Calling the deprecated update method must not change observed_curve_price
         let mut state_mut = state;
         state_mut.update_cbe_usd_price(999_000_000, 1, 1_700_000_000);
-        assert!(state_mut.observed_curve_price.is_none(), "oracle update must not set observed price");
+        assert!(
+            state_mut.observed_curve_price.is_none(),
+            "oracle update must not set observed price"
+        );
     }
 }
