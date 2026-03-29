@@ -105,6 +105,10 @@ fn wallet_key(wallet_id: &[u8; 32]) -> PublicKey {
     }
 }
 
+fn funded_recipient_count(token: &lib_blockchain::contracts::TokenContract) -> usize {
+    token.balances.values().filter(|&&balance| balance > 0).count()
+}
+
 #[test]
 fn test_restart_replays_committed_token_state_and_nonces() -> Result<()> {
     let tmp = tempfile::tempdir()?;
@@ -143,7 +147,7 @@ fn test_restart_replays_committed_token_state_and_nonces() -> Result<()> {
         .get(&sov_token_id)
         .expect("SOV token must be reconstructed from committed block replay");
     assert_eq!(token.balance_of(&wallet_key(&sender_wallet)), 8_500);
-    assert_eq!(token.balance_of(&wallet_key(&recipient_wallet)), 1_500);
+    assert_eq!(token.balance_of(&wallet_key(&recipient_wallet)), 1_485);
     assert_eq!(reloaded.get_token_nonce(&sov_token_id, &sender_wallet), 1);
 
     let replay_block = block(
@@ -210,12 +214,80 @@ fn test_cross_node_loads_converge_to_identical_token_state() -> Result<()> {
 
     assert_eq!(token_a.balance_of(&wallet_key(&sender_wallet)), 17_500);
     assert_eq!(token_b.balance_of(&wallet_key(&sender_wallet)), 17_500);
-    assert_eq!(token_a.balance_of(&wallet_key(&recipient_wallet)), 2_500);
-    assert_eq!(token_b.balance_of(&wallet_key(&recipient_wallet)), 2_500);
+    assert_eq!(token_a.balance_of(&wallet_key(&recipient_wallet)), 2_475);
+    assert_eq!(token_b.balance_of(&wallet_key(&recipient_wallet)), 2_475);
     assert_eq!(node_a.get_token_nonce(&sov_token_id, &sender_wallet), 1);
     assert_eq!(node_b.get_token_nonce(&sov_token_id, &sender_wallet), 1);
     assert_eq!(node_a.token_nonces, node_b.token_nonces);
     assert_eq!(node_a.token_contracts.len(), node_b.token_contracts.len());
+
+    Ok(())
+}
+
+#[test]
+fn test_restart_preserves_sov_supply_and_recipient_count() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let store: Arc<dyn BlockchainStore> = Arc::new(SledStore::open(tmp.path())?);
+
+    let signer = test_pubkey(7);
+    let alice_wallet = [0x71u8; 32];
+    let bob_wallet = [0x72u8; 32];
+    let carol_wallet = [0x73u8; 32];
+    let sov_token_id = generate_lib_token_id();
+
+    store.begin_block(0)?;
+    store.append_block(&block(
+        0,
+        vec![
+            wallet_registration_tx(alice_wallet, &signer),
+            wallet_registration_tx(bob_wallet, &test_pubkey(8)),
+            wallet_registration_tx(carol_wallet, &test_pubkey(9)),
+            token_mint_tx(&signer, sov_token_id, alice_wallet, 30_000),
+            token_transfer_tx(&signer, sov_token_id, alice_wallet, bob_wallet, 5_000, 0),
+            token_transfer_tx(&signer, sov_token_id, alice_wallet, carol_wallet, 2_000, 1),
+        ],
+    ))?;
+    store.commit_block()?;
+
+    let before_restart = lib_blockchain::Blockchain::load_from_store(store.clone())?
+        .expect("before restart should load from committed replay");
+    let after_restart = lib_blockchain::Blockchain::load_from_store(store)?
+        .expect("after restart should load from committed replay");
+
+    let before_token = before_restart
+        .token_contracts
+        .get(&sov_token_id)
+        .expect("before restart SOV token should exist");
+    let after_token = after_restart
+        .token_contracts
+        .get(&sov_token_id)
+        .expect("after restart SOV token should exist");
+
+    assert_eq!(
+        before_token.total_supply, 30_000,
+        "committed replay should preserve minted supply"
+    );
+    assert_eq!(
+        after_token.total_supply, before_token.total_supply,
+        "restart must not create or destroy SOV supply"
+    );
+    assert_eq!(
+        funded_recipient_count(after_token),
+        funded_recipient_count(before_token),
+        "restart must not create extra funded SOV recipients"
+    );
+    assert_eq!(
+        after_token.balance_of(&wallet_key(&alice_wallet)),
+        before_token.balance_of(&wallet_key(&alice_wallet))
+    );
+    assert_eq!(
+        after_token.balance_of(&wallet_key(&bob_wallet)),
+        before_token.balance_of(&wallet_key(&bob_wallet))
+    );
+    assert_eq!(
+        after_token.balance_of(&wallet_key(&carol_wallet)),
+        before_token.balance_of(&wallet_key(&carol_wallet))
+    );
 
     Ok(())
 }

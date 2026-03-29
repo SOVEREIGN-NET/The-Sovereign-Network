@@ -6858,12 +6858,14 @@ name = "tools"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "hex",
  "lib-blockchain",
  "lib-crypto",
  "lib-identity",
  "lib-network",
  "lib-protocols",
+ "serde",
  "sled",
 ]
 
