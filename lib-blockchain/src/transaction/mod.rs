@@ -7,6 +7,7 @@ pub mod bonding_curve_codec;
 pub mod contract_deployment;
 pub mod contract_execution;
 pub mod core;
+pub mod legacy;
 pub mod creation;
 pub mod fee;
 pub mod hashing;

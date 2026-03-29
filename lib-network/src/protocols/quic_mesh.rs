@@ -1015,8 +1015,8 @@ impl QuicMeshProtocol {
             loop {
                 match conn.accept_uni().await {
                     Ok(mut stream) => {
-                        match stream.read_to_end(1024 * 1024).await {
-                            // 1MB max
+                        match stream.read_to_end(4 * 1024 * 1024).await {
+                            // 4MB max (consensus proposals include block data up to MAX_BLOCK_SIZE + overhead)
                             Ok(encrypted) => {
                                 match decrypt_data(&encrypted, &session_key) {
                                     Ok(decrypted) => {
@@ -1058,9 +1058,9 @@ impl QuicMeshProtocol {
                                 }
                             }
                             Err(e) => {
-                                debug!(peer = %node_id_hex,
-                                       error = %e,
-                                       "Failed to read UNI stream");
+                                warn!(peer = %node_id_hex,
+                                      error = %e,
+                                      "Failed to read UNI stream (message may exceed size limit)");
                             }
                         }
                     }

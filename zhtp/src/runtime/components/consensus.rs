@@ -1143,8 +1143,14 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
         // as the blockchain difficulty may have been adjusted far above what testnet can mine quickly.
         let mining_config = lib_blockchain::types::mining::get_mining_config_from_env();
 
+        let selected = lib_blockchain::block::creation::select_transactions_for_block(
+            &pending,
+            lib_blockchain::MAX_TRANSACTIONS_PER_BLOCK,
+            lib_blockchain::MAX_BLOCK_SIZE,
+        );
+
         let block = lib_blockchain::block::creation::create_block(
-            pending.clone(),
+            selected,
             previous_hash,
             next_height,
             mining_config.difficulty,
@@ -1159,10 +1165,11 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
             .map_err(|e| format!("Block serialization failed: {}", e))?;
 
         info!(
-            "📦 Providing canonical proposal block at height {} with {} transaction(s) ({} bytes) to consensus",
+            "📦 Providing canonical proposal block at height {} with {} transaction(s) ({} bytes) to consensus ({} pending total)",
             next_height,
-            pending.len(),
-            tx_data.len()
+            mined_block.transactions.len(),
+            tx_data.len(),
+            pending.len()
         );
 
         Ok(tx_data)
