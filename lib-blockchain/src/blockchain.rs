@@ -12386,69 +12386,11 @@ impl Blockchain {
         }
         let backfill_entries = blockchain.collect_sov_backfill_entries();
         if !backfill_entries.is_empty() {
-            info!(
-                "Backfilling SOV balances for {} wallets",
+            warn!(
+                "Legacy blockchain.dat load found {} wallets missing SOV balances; load_from_file \
+                 no longer mints or repairs supply during startup",
                 backfill_entries.len()
             );
-            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-            for (wallet_id_bytes, amount, wallet_id) in &backfill_entries {
-                let recipient_pk = Self::wallet_key_for_sov(wallet_id_bytes);
-                if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
-                    if let Ok(()) = token.mint(&recipient_pk, *amount) {
-                        info!(
-                            "Backfill: credited {} SOV to wallet {}",
-                            amount,
-                            &wallet_id[..16.min(wallet_id.len())]
-                        );
-                    }
-                }
-            }
-        }
-
-        // Fix wallets that were already minted with the wrong (un-scaled) balance.
-        // If a wallet has initial_balance=X*10^8 but token balance is X (un-scaled),
-        // mint the difference to bring it up to the correct amount.
-        {
-            let sov_token_id = crate::contracts::utils::generate_lib_token_id();
-            let mut corrections = 0usize;
-            let wallet_entries: Vec<(String, [u8; 32], u64)> = blockchain
-                .wallet_registry
-                .iter()
-                .filter_map(|(wid, w)| {
-                    if w.initial_balance == 0 {
-                        return None;
-                    }
-                    let bytes = Self::wallet_id_bytes(wid)?;
-                    Some((wid.clone(), bytes, w.initial_balance))
-                })
-                .collect();
-            for (wallet_id, wallet_key, expected) in &wallet_entries {
-                let recipient_pk = Self::wallet_key_for_sov(wallet_key);
-                if let Some(token) = blockchain.token_contracts.get(&sov_token_id) {
-                    let current = token.balance_of(&recipient_pk);
-                    if current > 0 && current < *expected {
-                        let deficit = expected - current;
-                        if let Some(token_mut) = blockchain.token_contracts.get_mut(&sov_token_id) {
-                            if let Ok(()) = token_mut.mint(&recipient_pk, deficit) {
-                                corrections += 1;
-                                info!(
-                                    "Corrected wallet {} balance: {} -> {} atomic units (+{})",
-                                    &wallet_id[..16.min(wallet_id.len())],
-                                    current,
-                                    expected,
-                                    deficit
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            if corrections > 0 {
-                info!(
-                    "Corrected {} wallet balances from legacy un-scaled values",
-                    corrections
-                );
-            }
         }
 
         if let Err(e) = blockchain.process_approved_governance_proposals() {
@@ -14057,6 +13999,82 @@ mod oracle_storage_migration_tests {
             bc2.oracle_state.committee.pending_update().is_some(),
             "pending_update should survive save/load, got: {:?}",
             bc2.oracle_state.committee.pending_update()
+        );
+    }
+
+    #[test]
+    fn load_from_file_does_not_mint_or_repair_sov_balances() {
+        let mut bc = Blockchain::new().unwrap();
+        bc.ensure_sov_token_contract();
+
+        let missing_wallet = [0x41u8; 32];
+        let partial_wallet = [0x42u8; 32];
+        let missing_initial_balance = 500 * 100_000_000;
+        let partial_initial_balance = 700 * 100_000_000;
+        let partial_existing_balance = 125 * 100_000_000;
+
+        for (wallet_id, initial_balance) in [
+            (missing_wallet, missing_initial_balance),
+            (partial_wallet, partial_initial_balance),
+        ] {
+            bc.wallet_registry.insert(
+                hex::encode(wallet_id),
+                crate::transaction::WalletTransactionData {
+                    wallet_id: Hash::new(wallet_id),
+                    wallet_type: "Primary".to_string(),
+                    wallet_name: format!("Wallet-{}", hex::encode(&wallet_id[..4])),
+                    alias: None,
+                    public_key: vec![wallet_id[0]; 32],
+                    owner_identity_id: None,
+                    seed_commitment: Hash::zero(),
+                    created_at: 1_700_000_000,
+                    registration_fee: 0,
+                    capabilities: 0,
+                    initial_balance,
+                },
+            );
+        }
+
+        let sov_token_id = crate::contracts::utils::generate_lib_token_id();
+        let missing_recipient = Blockchain::wallet_key_for_sov(&missing_wallet);
+        let partial_recipient = Blockchain::wallet_key_for_sov(&partial_wallet);
+        {
+            let token = bc
+                .token_contracts
+                .get_mut(&sov_token_id)
+                .expect("SOV token should exist");
+            token
+                .balances
+                .insert(partial_recipient.clone(), partial_existing_balance);
+            token.total_supply = partial_existing_balance;
+        }
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("no_supply_repair.dat");
+
+        #[allow(deprecated)]
+        bc.save_to_file(&path).expect("save should succeed");
+
+        #[allow(deprecated)]
+        let loaded = Blockchain::load_from_file(&path).expect("load should succeed");
+
+        let token = loaded
+            .token_contracts
+            .get(&sov_token_id)
+            .expect("loaded SOV token should exist");
+        assert_eq!(
+            token.balance_of(&missing_recipient),
+            0,
+            "load_from_file must not mint missing balances from wallet metadata"
+        );
+        assert_eq!(
+            token.balance_of(&partial_recipient),
+            partial_existing_balance,
+            "load_from_file must not repair underfunded balances from wallet metadata"
+        );
+        assert_eq!(
+            token.total_supply, partial_existing_balance,
+            "load_from_file must preserve serialized supply without startup repair"
         );
     }
 }
