@@ -2092,7 +2092,10 @@ impl Blockchain {
                     // Replay token transactions from this block to reconstruct balances/nonces.
                     // Token replay is canonical restart state. If replay fails, startup must
                     // fail rather than silently drift into snapshot/blob fallback state.
-                    blockchain.process_token_transactions(&block).map_err(|e| {
+                    let replay_store = blockchain.store.take();
+                    let token_replay = blockchain.process_token_transactions(&block);
+                    blockchain.store = replay_store;
+                    token_replay.map_err(|e| {
                         anyhow::anyhow!(
                             "Token replay error at height {} during load_from_store: {}",
                             height,
@@ -4779,7 +4782,7 @@ impl Blockchain {
     /// no-op when the wallet is already present and linked.
     fn ensure_treasury_wallet(&mut self) {
         // Deterministic ID — identical on every node.
-        let wallet_id_bytes = crate::types::hash::blake3_hash(b"SOV_DAO_TREASURY_V1").as_array();
+        let wallet_id_bytes = Self::deterministic_treasury_wallet_id().as_array();
         let wallet_id_hex = hex::encode(wallet_id_bytes);
 
         // Insert into registry if not present.
@@ -4810,6 +4813,49 @@ impl Blockchain {
             self.dao_treasury_wallet_id = Some(wallet_id_hex);
             info!("🏦 DAO treasury wallet initialized (deterministic bootstrap)");
         }
+    }
+
+    /// Deterministic DAO treasury wallet ID shared by every node.
+    pub fn deterministic_treasury_wallet_id() -> crate::types::Hash {
+        crate::types::hash::blake3_hash(b"SOV_DAO_TREASURY_V1")
+    }
+
+    /// Returns true if a wallet exists in canonical history, either via genesis state
+    /// (`wallet_blocks[id] = 0`) or via a committed WalletRegistration transaction.
+    pub fn wallet_exists_in_canonical_history(&self, wallet_id: &crate::types::Hash) -> bool {
+        let wallet_id_hex = hex::encode(wallet_id.as_bytes());
+        if self.wallet_blocks.get(&wallet_id_hex).copied() == Some(0) {
+            return true;
+        }
+
+        self.blocks.iter().any(|block| {
+            block.transactions.iter().any(|tx| {
+                tx.wallet_data()
+                    .map(|wallet_data| wallet_data.wallet_id == *wallet_id)
+                    .unwrap_or(false)
+            })
+        })
+    }
+
+    /// Return wallets present in local state but absent from committed block history.
+    pub fn collect_noncanonical_wallets(&self) -> Vec<crate::transaction::WalletTransactionData> {
+        let mut wallets: Vec<_> = self
+            .wallet_registry
+            .values()
+            .filter(|wallet| !self.wallet_exists_in_canonical_history(&wallet.wallet_id))
+            .cloned()
+            .collect();
+        wallets.sort_by_key(|wallet| hex::encode(wallet.wallet_id.as_bytes()));
+        wallets
+    }
+
+    /// Returns true when the configured DAO treasury wallet exists in committed block history.
+    pub fn dao_treasury_wallet_is_canonical(&self) -> bool {
+        self.dao_treasury_wallet_id
+            .as_ref()
+            .and_then(|wallet_id_hex| self.wallet_registry.get(wallet_id_hex))
+            .map(|wallet| self.wallet_exists_in_canonical_history(&wallet.wallet_id))
+            .unwrap_or(false)
     }
 
     // =========================================================================

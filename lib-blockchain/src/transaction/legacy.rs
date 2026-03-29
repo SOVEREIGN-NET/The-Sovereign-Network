@@ -579,4 +579,40 @@ mod tests {
         let bytes = bincode::serialize(&legacy).expect("legacy bytes");
         assert!(try_decode_legacy(&bytes).is_none());
     }
+
+    #[test]
+    fn try_decode_legacy_preserves_token_mint_payload() {
+        let tx = Transaction {
+            version: TX_VERSION_V6,
+            chain_id: 0x03,
+            transaction_type: TransactionType::TokenMint,
+            inputs: vec![],
+            outputs: vec![],
+            fee: 0,
+            signature: signature(),
+            memo: b"legacy-mint".to_vec(),
+            payload: TransactionPayload::TokenMint(TokenMintData {
+                token_id: [0x91; 32],
+                to: [0x92; 32],
+                amount: 77,
+            }),
+        };
+
+        let bytes = serialize_legacy_transaction(&tx, false).expect("legacy bytes");
+        let decoded = try_decode_legacy(&bytes).expect("legacy token mint should decode");
+
+        assert_eq!(decoded.version, TX_VERSION_V6);
+        match decoded.payload {
+            TransactionPayload::TokenMint(data) => {
+                assert_eq!(data.amount, 77);
+                assert_eq!(data.to, [0x92; 32]);
+            }
+            other => panic!("unexpected payload: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn try_decode_legacy_rejects_malformed_tuple_bytes() {
+        assert!(try_decode_legacy(&[0x01, 0x02, 0x03]).is_none());
+    }
 }

@@ -389,6 +389,15 @@ fn reconstruct_identity_manager_from_blockchain_state(
             continue;
         }
 
+        let identity_type = parse_identity_type(&identity_data.identity_type);
+        if matches!(identity_type, lib_identity::IdentityType::Device) {
+            debug!(
+                "Skipping blockchain backfill for Device identity {}; handshake path will supply device/node mapping",
+                identity_data.did
+            );
+            continue;
+        }
+
         let public_key = lib_crypto::PublicKey::new(identity_data.public_key.clone());
         let display_name = if identity_data.display_name.is_empty() {
             None
@@ -398,7 +407,7 @@ fn reconstruct_identity_manager_from_blockchain_state(
         let mut identity = lib_identity::ZhtpIdentity::new_external(
             identity_data.did.clone(),
             public_key,
-            parse_identity_type(&identity_data.identity_type),
+            identity_type,
             identity_data
                 .did
                 .trim_start_matches("did:zhtp:")
@@ -1292,5 +1301,36 @@ mod tests {
         assert_eq!(restored_wallets.len(), 1);
         assert_eq!(restored_wallets[0].name, "Primary Wallet");
         assert_eq!(restored_wallets[0].balance, 77);
+    }
+
+    #[test]
+    fn reconstruct_identity_manager_from_blockchain_state_skips_device_identities() {
+        let did = "did:zhtp:2222222222222222222222222222222222222222222222222222222222222222";
+        let mut manager = IdentityManager::new();
+        let mut identities = HashMap::new();
+        identities.insert(
+            did.to_string(),
+            IdentityTransactionData {
+                did: did.to_string(),
+                did_document_hash: Hash::new([0x61; 32]),
+                public_key: vec![0x62; 32],
+                ownership_proof: vec![],
+                identity_type: "Device".to_string(),
+                display_name: "Peer".to_string(),
+                registration_fee: 0,
+                dao_fee: 0,
+                created_at: 1_700_000_100,
+                controlled_nodes: vec![],
+                owned_wallets: vec![],
+            },
+        );
+
+        let (identities_loaded, wallets_loaded) =
+            reconstruct_identity_manager_from_blockchain_state(&mut manager, &identities, &HashMap::new())
+                .expect("device identities should be skipped cleanly");
+
+        assert_eq!(identities_loaded, 0);
+        assert_eq!(wallets_loaded, 0);
+        assert!(manager.list_identities().is_empty());
     }
 }

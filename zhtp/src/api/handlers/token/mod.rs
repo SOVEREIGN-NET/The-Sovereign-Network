@@ -828,23 +828,25 @@ impl TokenHandler {
         tracing::warn!("[FLOW] decode_signed_tx_raw: len={}", signed_tx.len());
         let tx_bytes =
             hex::decode(signed_tx).map_err(|_| anyhow::anyhow!("Invalid signed_tx hex"))?;
-        let wire_version = tx_bytes
-            .get(..4)
-            .and_then(|bytes| bytes.try_into().ok())
-            .map(u32::from_le_bytes)
-            .ok_or_else(|| anyhow::anyhow!("Invalid signed_tx payload: truncated version"))?;
+        let tx: Transaction = bincode::deserialize(&tx_bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))?;
 
-        if wire_version > 0 && wire_version < lib_blockchain::transaction::core::TX_VERSION_V8 {
-            return lib_blockchain::transaction::legacy::try_decode_legacy(&tx_bytes)
+        if tx.version > 0
+            && tx.version < lib_blockchain::transaction::core::TX_VERSION_V8
+            && matches!(tx.payload, lib_blockchain::transaction::TransactionPayload::None)
+        {
+            let upgraded = lib_blockchain::transaction::legacy::try_decode_legacy(&tx_bytes)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
                         "Invalid signed_tx payload: unsupported legacy transaction encoding"
                     )
-                });
+                })?;
+            let mut repaired = tx;
+            repaired.payload = upgraded.payload;
+            return Ok(repaired);
         }
 
-        bincode::deserialize(&tx_bytes)
-            .map_err(|e| anyhow::anyhow!("Invalid signed_tx payload: {}", e))
+        Ok(tx)
     }
 
     async fn submit_to_mempool(&self, tx: Transaction) -> Result<()> {
