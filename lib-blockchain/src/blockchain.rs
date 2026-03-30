@@ -5740,29 +5740,39 @@ impl Blockchain {
                         wallet_id_bytes.copy_from_slice(wallet_data.wallet_id.as_bytes());
                         let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes);
 
-                        let already_has_balance = self
+                        // Compute deficit: mint only what's missing to avoid double-counting
+                        // when register_wallet() already pre-minted in-memory.
+                        let current_balance = self
                             .token_contracts
                             .get(&sov_token_id)
-                            .map(|token| token.balance_of(&recipient_pk) > 0)
-                            .unwrap_or(false);
-
-                        if !already_has_balance {
+                            .map(|token| token.balance_of(&recipient_pk))
+                            .unwrap_or(0);
+                        let deficit = wallet_data
+                            .initial_balance
+                            .saturating_sub(current_balance);
+                        if deficit > 0 {
                             if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
-                                if let Err(e) =
-                                    token.mint(&recipient_pk, wallet_data.initial_balance)
-                                {
+                                if let Err(e) = token.mint(&recipient_pk, deficit) {
                                     warn!(
                                         "Failed to mint {} SOV for wallet {}: {}",
-                                        wallet_data.initial_balance,
+                                        deficit,
                                         &wallet_id_str[..16.min(wallet_id_str.len())],
                                         e
                                     );
-                                } else if let Some(store) = &self.store {
-                                    let store_ref: &dyn crate::storage::BlockchainStore =
-                                        store.as_ref();
-                                    if let Err(e) = store_ref.put_token_contract(token) {
-                                        warn!("Failed to persist SOV token after wallet registration mint: {}", e);
-                                    }
+                                }
+                            }
+                        }
+                        // Always persist to sled on block commit so sled is authoritative,
+                        // even when balance was pre-minted in-memory by register_wallet().
+                        if let Some(store) = &self.store {
+                            if let Some(token) = self.token_contracts.get(&sov_token_id) {
+                                let store_ref: &dyn crate::storage::BlockchainStore =
+                                    store.as_ref();
+                                if let Err(e) = store_ref.put_token_contract(token) {
+                                    warn!(
+                                        "Failed to persist SOV token after wallet registration mint: {}",
+                                        e
+                                    );
                                 }
                             }
                         }

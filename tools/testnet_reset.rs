@@ -121,8 +121,12 @@ fn main() -> Result<()> {
     }
 
     for wallet_data in &wallets {
+        // Zero initial_balance: SOV is minted separately in block 2 via TokenMint txs.
+        // This prevents double-minting when process_wallet_transactions() runs.
+        let mut wd = wallet_data.clone();
+        wd.initial_balance = 0;
         let tx = Transaction::new_wallet_registration(
-            wallet_data.clone(),
+            wd,
             vec![],
             system_signature(),
             b"testnet-reset-wallet".to_vec(),
