@@ -4,7 +4,7 @@
 /// creates a brand-new sled with a minimal chain:
 ///   Block 0: genesis (empty)
 ///   Block 1: all IdentityRegistration + WalletRegistration txns
-///   Block 2: TokenMint for each wallet at 5,000 SOV
+///   Block 2: TokenMint for each PRIMARY wallet at 5,000 SOV
 ///
 /// Usage:
 ///   testnet_reset <source_sled_path> <output_sled_path>
@@ -137,13 +137,21 @@ fn main() -> Result<()> {
     let block1 = build_block(1, block1_txns)?;
     write_block(&out_store, block1)?;
 
-    // ── 5. Block 2: TokenMint 5,000 SOV per wallet ────────────────────────
-    println!("Writing Block 2 ({} SOV mints at 5,000 SOV each)...", wallets.len());
+    // ── 5. Block 2: TokenMint 5,000 SOV per PRIMARY wallet only ──────────
+    // Only Primary wallets receive the welcome bonus.
+    // UBI, Savings, and other wallet types start at 0 SOV.
+    let primary_wallets: Vec<&WalletTransactionData> = wallets
+        .iter()
+        .filter(|w| w.wallet_type.eq_ignore_ascii_case("primary"))
+        .collect();
+
+    println!("Writing Block 2 ({} primary wallet SOV mints at 5,000 SOV each)...", primary_wallets.len());
+    println!("  (Skipping {} non-primary wallets)", wallets.len() - primary_wallets.len());
 
     let sov_token_id = generate_lib_token_id();
     let mut mint_txns: Vec<Transaction> = Vec::new();
 
-    for wallet_data in &wallets {
+    for wallet_data in &primary_wallets {
         let wallet_id_bytes: [u8; 32] = wallet_data
             .wallet_id
             .as_bytes()
@@ -168,12 +176,13 @@ fn main() -> Result<()> {
     write_block(&out_store, block2)?;
 
     // ── 6. Summary ────────────────────────────────────────────────────────
-    let total_sov = wallets.len() as u128 * SOV_PER_WALLET;
+    let total_sov = primary_wallets.len() as u128 * SOV_PER_WALLET;
     println!();
     println!("=== RESET COMPLETE ===");
     println!("  Blocks written:         3 (height 0–2)");
     println!("  Identities:             {}", identities.len());
-    println!("  Wallets:                {}", wallets.len());
+    println!("  Wallets (all types):    {}", wallets.len());
+    println!("  Primary wallets minted: {}", primary_wallets.len());
     println!("  Total SOV minted:       {} SOV", total_sov / 100_000_000);
     println!("  Output sled:            {}", output_path.display());
     println!();
