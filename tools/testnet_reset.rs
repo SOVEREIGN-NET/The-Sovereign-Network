@@ -30,6 +30,8 @@ use std::sync::Arc;
 use blake3;
 
 const SOV_PER_WALLET: u128 = 500_000_000_000; // 5,000 SOV × 10^8
+/// Canonical wallet type string for Primary wallets (matches WalletType::Primary serialization).
+const PRIMARY_WALLET_TYPE: &str = "Primary";
 const MAX_TRANSACTIONS_PER_BLOCK: usize = 4096;
 const TARGET_BLOCK_TIME: u64 = 10; // seconds
 
@@ -160,10 +162,10 @@ fn main() -> Result<()> {
         );
         block1_txns.push(tx);
     }
-    
+
     // Validate we have at least one primary wallet for SOV distribution
     let primary_count = wallets.iter()
-        .filter(|w| w.wallet_type.eq_ignore_ascii_case("primary"))
+        .filter(|w| w.wallet_type.eq_ignore_ascii_case(PRIMARY_WALLET_TYPE))
         .count();
     if primary_count == 0 {
         return Err(anyhow::anyhow!(
@@ -179,7 +181,7 @@ fn main() -> Result<()> {
     // UBI, Savings, and other wallet types start at 0 SOV.
     let primary_wallets: Vec<&WalletTransactionData> = wallets_sorted
         .iter()
-        .filter(|w| w.wallet_type.eq_ignore_ascii_case("primary"))
+        .filter(|w| w.wallet_type.eq_ignore_ascii_case(PRIMARY_WALLET_TYPE))
         .collect();
 
     println!("Writing Block 2 ({} primary wallet SOV mints at 5,000 SOV each)...", primary_wallets.len());
@@ -238,7 +240,7 @@ fn main() -> Result<()> {
 fn build_block(height: u64, prev_block: &Block, transactions: Vec<Transaction>) -> Result<Block> {
     let prev_hash = prev_block.hash();
     let prev_timestamp = prev_block.header.timestamp;
-    
+
     BlockBuilder::new(prev_hash, height, Difficulty::default())
         .version(lib_blockchain::BLOCKCHAIN_VERSION)
         .timestamp(prev_timestamp + TARGET_BLOCK_TIME)
