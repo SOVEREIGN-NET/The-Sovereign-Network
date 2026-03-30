@@ -84,6 +84,8 @@ pub struct PartialConsensusConfig {
     /// yet listed on any exchange.
     #[serde(default)]
     pub oracle_mock_sov_usd_price: Option<u64>,
+    #[serde(default)]
+    pub council: Option<lib_blockchain::dao::CouncilBootstrapConfig>,
 }
 
 /// Partial blockchain configuration (matches [blockchain_config] section)
@@ -1163,6 +1165,15 @@ pub async fn aggregate_all_package_configs(config_path: &Path) -> Result<NodeCon
                         }
                         if let Some(price) = consensus.oracle_mock_sov_usd_price {
                             config.consensus_config.oracle_mock_sov_usd_price = Some(price);
+                        }
+                        if let Some(council) = consensus.council {
+                            if !council.members.is_empty() {
+                                tracing::info!(
+                                    "Loaded {} council member(s) from [consensus_config.council] section",
+                                    council.members.len()
+                                );
+                                config.consensus_config.council = council;
+                            }
                         }
                     }
 

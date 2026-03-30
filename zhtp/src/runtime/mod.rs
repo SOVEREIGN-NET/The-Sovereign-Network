@@ -1787,14 +1787,20 @@ impl RuntimeOrchestrator {
                             self.config.allow_emergency_restore_genesis_mismatch,
                         )?;
                         if !restored {
-                            return Err(anyhow::anyhow!(
-                                "Oracle committee missing after canonical Sled load and no compatible emergency backup was restored"
-                            ));
+                            warn!(
+                                "⚠️  Oracle committee missing after canonical Sled load and no compatible emergency backup was restored. \
+                                 Will attempt bootstrap from validator registry during startup."
+                            );
                         }
                     } else {
-                        return Err(anyhow::anyhow!(
-                            "Oracle committee missing after canonical Sled load. Standard startup refuses blockchain.dat fallback; use --emergency-restore-from-local to attempt explicit local recovery."
-                        ));
+                        // Oracle state is not persisted in the reset/genesis sled — it will be
+                        // bootstrapped from the validator registry during startup_sequence.
+                        // Do not hard-fail here: the bootstrap at ensure_oracle_committee_bootstrapped()
+                        // handles this case for fresh chains and post-reset nodes.
+                        warn!(
+                            "⚠️  Oracle committee missing after canonical Sled load. \
+                             Will bootstrap from validator registry during startup."
+                        );
                     }
                 } else {
                     info!(
