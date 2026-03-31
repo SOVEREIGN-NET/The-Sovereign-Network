@@ -316,8 +316,8 @@ impl ZhtpIdentity {
         let mut device_node_ids = HashMap::new();
         device_node_ids.insert(device_id.clone(), node_id.clone());
 
-        // Create wallet manager with a Primary wallet for observed identities
-        // This ensures they can participate in domain registration and other Web4 operations
+        // Create wallet manager with a Primary wallet for observed identities.
+        // Observed identities are remote peers, not local users — no welcome bonus.
         let mut wallet_manager = crate::wallets::WalletManager::new(id.clone());
 
         // Create Primary wallet using identity's ID as wallet ID
@@ -326,7 +326,7 @@ impl ZhtpIdentity {
             wallet_type: crate::wallets::WalletType::Primary,
             name: "Primary Wallet".to_string(),
             alias: None,
-            balance: SOV_WELCOME_BONUS_SOV.saturating_mul(SOV_ATOMIC_UNITS), // Welcome bonus (atomic units)
+            balance: 0, // Observed identities have no welcome bonus; actual balance lives in blockchain state
             staked_balance: 0,
             pending_rewards: 0,
             owner_id: Some(id.clone()),
@@ -348,12 +348,6 @@ impl ZhtpIdentity {
         wallet_manager
             .wallets
             .insert(primary_wallet.id.clone(), primary_wallet);
-
-        tracing::info!(
-            "🎁 Created Primary wallet with {} SOV welcome bonus for observed identity {}",
-            SOV_WELCOME_BONUS_SOV,
-            &id_hex[..16.min(id_hex.len())]
-        );
 
         Ok(ZhtpIdentity {
             id: id.clone(),
