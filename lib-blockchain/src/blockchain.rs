@@ -15173,6 +15173,71 @@ mod cbe_genesis_allocation_tests {
     }
 
     #[test]
+    fn test_sov_wallet_registration_deficit_minting() {
+        use crate::types::transaction_type::TransactionType;
+        use crate::contracts::utils::generate_lib_token_id;
+        
+        let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+        let sov_token_id = generate_lib_token_id();
+        blockchain.ensure_sov_token_contract();
+        
+        // Create a wallet with pre-minted balance (simulating register_wallet() pre-mint)
+        let wallet_id = "test-wallet-1";
+        let mut wallet_id_bytes = [0u8; 32];
+        wallet_id_bytes.copy_from_slice(wallet_id.as_bytes());
+        let recipient_pk = Blockchain::wallet_key_for_sov(&wallet_id_bytes);
+        
+        // Pre-mint 3000 SOV (simulating register_wallet() behavior)
+        if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+            token.mint(&recipient_pk, 3000).expect("Pre-mint should succeed");
+        }
+        
+        let current_balance = blockchain
+            .token_contracts
+            .get(&sov_token_id)
+            .map(|token| token.balance_of(&recipient_pk))
+            .unwrap_or(0);
+        assert_eq!(current_balance, 3000, "Pre-minted balance should be 3000");
+        
+        // Create wallet registration transaction with initial_balance = 5000
+        let wallet_data = crate::transaction::WalletData {
+            wallet_id: wallet_id.to_string(),
+            wallet_type: "primary".to_string(),
+            initial_balance: 5000,
+            staked_balance: 0,
+            pending_rewards: 0,
+            owner_id: Some(wallet_id.to_string()),
+            metadata: None,
+        };
+        
+        let tx = Transaction::new_wallet_registration(
+            wallet_data,
+            vec![],
+            crate::integration::crypto_integration::Signature::default(),
+            b"test".to_vec(),
+        );
+        
+        let block = Block::new(
+            1,
+            blockchain.blocks.last().unwrap().hash(),
+            vec![tx],
+            blockchain.difficulty_config.clone(),
+        );
+        
+        // Process the block
+        blockchain.process_wallet_transactions(&block).expect("Should process successfully");
+        
+        // Verify only deficit (2000) was minted
+        let final_balance = blockchain
+            .token_contracts
+            .get(&sov_token_id)
+            .map(|token| token.balance_of(&recipient_pk))
+            .unwrap_or(0);
+        
+        assert_eq!(final_balance, 5000, "Final balance should be 5000 (3000 pre-minted + 2000 deficit)");
+    }
+
+    #[test]
     fn test_cbe_vesting_schedules_created() {
         let blockchain = Blockchain::new().expect("Failed to create blockchain");
 

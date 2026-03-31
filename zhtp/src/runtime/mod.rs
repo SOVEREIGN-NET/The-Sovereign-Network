@@ -1048,7 +1048,7 @@ impl RuntimeOrchestrator {
                                     e
                                 )
                             })?;
-                    // Handle 0x prefix for consensus key (Copilot fix)
+                    // Handle 0x prefix for consensus key (ref: commit 124ff65d)
                     let consensus_key = crate::runtime::components::consensus::decode_bootstrap_consensus_key(&bootstrap.consensus_key)
                         .ok_or_else(|| {
                             anyhow::anyhow!(
@@ -1057,7 +1057,7 @@ impl RuntimeOrchestrator {
                             )
                         })?;
 
-                    // Validate network address (Copilot fix)
+                    // Validate network address (ref: commit 124ff65d)
                     let network_address = bootstrap.endpoints.first().ok_or_else(|| {
                         anyhow::anyhow!(
                             "Bootstrap validator {} must have at least one endpoint configured",

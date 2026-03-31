@@ -133,6 +133,16 @@ fn main() -> Result<()> {
         );
         block1_txns.push(tx);
     }
+    
+    // Validate we have at least one primary wallet for SOV distribution
+    let primary_count = wallets.iter()
+        .filter(|w| w.wallet_type.eq_ignore_ascii_case("primary"))
+        .count();
+    if primary_count == 0 {
+        return Err(anyhow::anyhow!(
+            "No primary wallets found. At least one primary wallet is required for SOV distribution."
+        ));
+    }
 
     let block1 = build_block(1, block1_txns)?;
     write_block(&out_store, block1)?;
