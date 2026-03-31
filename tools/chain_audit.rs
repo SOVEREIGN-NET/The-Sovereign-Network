@@ -144,6 +144,19 @@ fn main() -> Result<()> {
     println!("  identity_registry entries:  {}", bc.identity_registry.len());
     println!("  wallet_registry entries:    {}", bc.wallet_registry.len());
 
+    println!();
+    println!("=== IDENTITY → WALLET MAPPING ===");
+    let mut sorted_ids: Vec<_> = bc.identity_registry.values().collect();
+    sorted_ids.sort_by(|a, b| a.did.cmp(&b.did));
+    for id in &sorted_ids {
+        println!("  SID:     {}", id.did);
+        println!("  name:    {}", id.display_name);
+        for w in &id.owned_wallets {
+            println!("  wallet:  {}", w);
+        }
+        println!();
+    }
+
     let sov_id = lib_blockchain::contracts::utils::generate_lib_token_id();
     let sov_balance_count = bc.token_contracts
         .get(&sov_id)

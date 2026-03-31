@@ -5740,29 +5740,39 @@ impl Blockchain {
                         wallet_id_bytes.copy_from_slice(wallet_data.wallet_id.as_bytes());
                         let recipient_pk = Self::wallet_key_for_sov(&wallet_id_bytes);
 
-                        let already_has_balance = self
+                        // Compute deficit: mint only what's missing to avoid double-counting
+                        // when register_wallet() already pre-minted in-memory.
+                        let current_balance = self
                             .token_contracts
                             .get(&sov_token_id)
-                            .map(|token| token.balance_of(&recipient_pk) > 0)
-                            .unwrap_or(false);
-
-                        if !already_has_balance {
+                            .map(|token| token.balance_of(&recipient_pk))
+                            .unwrap_or(0);
+                        let deficit = wallet_data
+                            .initial_balance
+                            .saturating_sub(current_balance);
+                        if deficit > 0 {
                             if let Some(token) = self.token_contracts.get_mut(&sov_token_id) {
-                                if let Err(e) =
-                                    token.mint(&recipient_pk, wallet_data.initial_balance)
-                                {
+                                if let Err(e) = token.mint(&recipient_pk, deficit) {
                                     warn!(
                                         "Failed to mint {} SOV for wallet {}: {}",
-                                        wallet_data.initial_balance,
+                                        deficit,
                                         &wallet_id_str[..16.min(wallet_id_str.len())],
                                         e
                                     );
-                                } else if let Some(store) = &self.store {
-                                    let store_ref: &dyn crate::storage::BlockchainStore =
-                                        store.as_ref();
-                                    if let Err(e) = store_ref.put_token_contract(token) {
-                                        warn!("Failed to persist SOV token after wallet registration mint: {}", e);
-                                    }
+                                }
+                            }
+                        }
+                        // Always persist to sled on block commit so sled is authoritative,
+                        // even when balance was pre-minted in-memory by register_wallet().
+                        if let Some(store) = &self.store {
+                            if let Some(token) = self.token_contracts.get(&sov_token_id) {
+                                let store_ref: &dyn crate::storage::BlockchainStore =
+                                    store.as_ref();
+                                if let Err(e) = store_ref.put_token_contract(token) {
+                                    warn!(
+                                        "Failed to persist SOV token after wallet registration mint: {}",
+                                        e
+                                    );
                                 }
                             }
                         }
@@ -15160,6 +15170,71 @@ mod cbe_genesis_allocation_tests {
             blockchain.cbe_token.balance_of(&strategic_addr),
             CBE_STRATEGIC_RESERVES
         );
+    }
+
+    #[test]
+    fn test_sov_wallet_registration_deficit_minting() {
+        use crate::types::transaction_type::TransactionType;
+        use crate::contracts::utils::generate_lib_token_id;
+        
+        let mut blockchain = Blockchain::new().expect("Failed to create blockchain");
+        let sov_token_id = generate_lib_token_id();
+        blockchain.ensure_sov_token_contract();
+        
+        // Create a wallet with pre-minted balance (simulating register_wallet() pre-mint)
+        let wallet_id = "test-wallet-1";
+        let mut wallet_id_bytes = [0u8; 32];
+        wallet_id_bytes.copy_from_slice(wallet_id.as_bytes());
+        let recipient_pk = Blockchain::wallet_key_for_sov(&wallet_id_bytes);
+        
+        // Pre-mint 3000 SOV (simulating register_wallet() behavior)
+        if let Some(token) = blockchain.token_contracts.get_mut(&sov_token_id) {
+            token.mint(&recipient_pk, 3000).expect("Pre-mint should succeed");
+        }
+        
+        let current_balance = blockchain
+            .token_contracts
+            .get(&sov_token_id)
+            .map(|token| token.balance_of(&recipient_pk))
+            .unwrap_or(0);
+        assert_eq!(current_balance, 3000, "Pre-minted balance should be 3000");
+        
+        // Create wallet registration transaction with initial_balance = 5000
+        let wallet_data = crate::transaction::WalletData {
+            wallet_id: wallet_id.to_string(),
+            wallet_type: "primary".to_string(),
+            initial_balance: 5000,
+            staked_balance: 0,
+            pending_rewards: 0,
+            owner_id: Some(wallet_id.to_string()),
+            metadata: None,
+        };
+        
+        let tx = Transaction::new_wallet_registration(
+            wallet_data,
+            vec![],
+            crate::integration::crypto_integration::Signature::default(),
+            b"test".to_vec(),
+        );
+        
+        let block = Block::new(
+            1,
+            blockchain.blocks.last().unwrap().hash(),
+            vec![tx],
+            blockchain.difficulty_config.clone(),
+        );
+        
+        // Process the block
+        blockchain.process_wallet_transactions(&block).expect("Should process successfully");
+        
+        // Verify only deficit (2000) was minted
+        let final_balance = blockchain
+            .token_contracts
+            .get(&sov_token_id)
+            .map(|token| token.balance_of(&recipient_pk))
+            .unwrap_or(0);
+        
+        assert_eq!(final_balance, 5000, "Final balance should be 5000 (3000 pre-minted + 2000 deficit)");
     }
 
     #[test]

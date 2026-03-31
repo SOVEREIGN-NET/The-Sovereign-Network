@@ -15,6 +15,10 @@ path = "chain_audit.rs"
 name = "sled_migration"
 path = "sled_migration.rs"
 
+[[bin]]
+name = "testnet_reset"
+path = "testnet_reset.rs"
+
 [dependencies]
 lib-identity = { path = "../lib-identity" }
 lib-protocols = { path = "../lib-protocols" }

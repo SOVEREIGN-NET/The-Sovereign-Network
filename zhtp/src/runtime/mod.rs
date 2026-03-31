@@ -1048,7 +1048,7 @@ impl RuntimeOrchestrator {
                                     e
                                 )
                             })?;
-                    // Handle 0x prefix for consensus key (Copilot fix)
+                    // Handle 0x prefix for consensus key (ref: commit 124ff65d)
                     let consensus_key = crate::runtime::components::consensus::decode_bootstrap_consensus_key(&bootstrap.consensus_key)
                         .ok_or_else(|| {
                             anyhow::anyhow!(
@@ -1057,7 +1057,7 @@ impl RuntimeOrchestrator {
                             )
                         })?;
 
-                    // Validate network address (Copilot fix)
+                    // Validate network address (ref: commit 124ff65d)
                     let network_address = bootstrap.endpoints.first().ok_or_else(|| {
                         anyhow::anyhow!(
                             "Bootstrap validator {} must have at least one endpoint configured",
@@ -1787,14 +1787,20 @@ impl RuntimeOrchestrator {
                             self.config.allow_emergency_restore_genesis_mismatch,
                         )?;
                         if !restored {
-                            return Err(anyhow::anyhow!(
-                                "Oracle committee missing after canonical Sled load and no compatible emergency backup was restored"
-                            ));
+                            warn!(
+                                "⚠️  Oracle committee missing after canonical Sled load and no compatible emergency backup was restored. \
+                                 Will attempt bootstrap from validator registry during startup."
+                            );
                         }
                     } else {
-                        return Err(anyhow::anyhow!(
-                            "Oracle committee missing after canonical Sled load. Standard startup refuses blockchain.dat fallback; use --emergency-restore-from-local to attempt explicit local recovery."
-                        ));
+                        // Oracle state is not persisted in the reset/genesis sled — it will be
+                        // bootstrapped from the validator registry during startup_sequence.
+                        // Do not hard-fail here: the bootstrap at ensure_oracle_committee_bootstrapped()
+                        // handles this case for fresh chains and post-reset nodes.
+                        warn!(
+                            "⚠️  Oracle committee missing after canonical Sled load. \
+                             Will bootstrap from validator registry during startup."
+                        );
                     }
                 } else {
                     info!(
