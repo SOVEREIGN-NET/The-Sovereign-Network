@@ -14,8 +14,9 @@
 
 use anyhow::Result;
 use lib_blockchain::{
-    block::{Block, BlockBuilder, create_genesis_block},
+    block::{Block, BlockBuilder},
     contracts::utils::generate_lib_token_id,
+    genesis::GenesisConfig,
     storage::{BlockchainStore, SledStore},
     transaction::{
         Transaction, TokenMintData,
@@ -26,16 +27,24 @@ use lib_blockchain::{
 use lib_crypto::types::{PublicKey, Signature, SignatureAlgorithm};
 use std::path::PathBuf;
 use std::sync::Arc;
+use blake3;
 
 const SOV_PER_WALLET: u128 = 500_000_000_000; // 5,000 SOV × 10^8
+const MAX_TRANSACTIONS_PER_BLOCK: usize = 4096;
+const TARGET_BLOCK_TIME: u64 = 10; // seconds
 
 fn system_signature() -> Signature {
+    // Construct a placeholder Dilithium public key and derive the key_id as blake3(dilithium_pk)
+    let dilithium_pk = vec![0u8; 1312];
+    let key_id_hash = blake3::hash(&dilithium_pk);
+    let key_id: [u8; 32] = *key_id_hash.as_bytes();
+
     Signature {
         signature: vec![0xAA; 64],
         public_key: PublicKey {
-            dilithium_pk: vec![0u8; 1312],
+            dilithium_pk,
             kyber_pk: vec![],
-            key_id: [0u8; 32],
+            key_id,
         },
         algorithm: SignatureAlgorithm::Dilithium2,
         timestamp: 0,
@@ -101,16 +110,34 @@ fn main() -> Result<()> {
 
     // ── 3. Block 0: genesis ───────────────────────────────────────────────
     println!("Writing Block 0 (genesis)...");
-    let genesis = create_genesis_block();
+    // Use canonical genesis from embedded config to ensure compatibility
+    let genesis_config = GenesisConfig::from_embedded()?;
+    let genesis = genesis_config.build_block0()?;
     write_block(&out_store, genesis)?;
 
     // ── 4. Block 1: identity + wallet registrations ───────────────────────
     println!("Writing Block 1 ({} identities + {} wallets)...",
         identities.len(), wallets.len());
 
+    // Ensure deterministic ordering: sort identities by DID and wallets by wallet_id
+    let mut identities_sorted = identities.clone();
+    let mut wallets_sorted = wallets.clone();
+    identities_sorted.sort_by(|a, b| a.did.cmp(&b.did));
+    wallets_sorted.sort_by(|a, b| a.wallet_id.cmp(&b.wallet_id));
+
+    // Validate counts/sizes and fail fast with clear error
+    let total_registrations = identities_sorted.len().saturating_add(wallets_sorted.len());
+    if total_registrations > MAX_TRANSACTIONS_PER_BLOCK {
+        return Err(anyhow::anyhow!(
+            "Too many identity+wallet registrations for a single block: {} > MAX_TRANSACTIONS_PER_BLOCK ({})",
+            total_registrations,
+            MAX_TRANSACTIONS_PER_BLOCK
+        ));
+    }
+
     let mut block1_txns: Vec<Transaction> = Vec::new();
 
-    for id_data in &identities {
+    for id_data in &identities_sorted {
         let tx = Transaction::new_identity_registration(
             id_data.clone(),
             vec![],
@@ -120,7 +147,7 @@ fn main() -> Result<()> {
         block1_txns.push(tx);
     }
 
-    for wallet_data in &wallets {
+    for wallet_data in &wallets_sorted {
         // Zero initial_balance: SOV is minted separately in block 2 via TokenMint txs.
         // This prevents double-minting when process_wallet_transactions() runs.
         let mut wd = wallet_data.clone();
@@ -144,19 +171,19 @@ fn main() -> Result<()> {
         ));
     }
 
-    let block1 = build_block(1, block1_txns)?;
+    let block1 = build_block(1, &genesis, block1_txns)?;
     write_block(&out_store, block1)?;
 
     // ── 5. Block 2: TokenMint 5,000 SOV per PRIMARY wallet only ──────────
     // Only Primary wallets receive the welcome bonus.
     // UBI, Savings, and other wallet types start at 0 SOV.
-    let primary_wallets: Vec<&WalletTransactionData> = wallets
+    let primary_wallets: Vec<&WalletTransactionData> = wallets_sorted
         .iter()
         .filter(|w| w.wallet_type.eq_ignore_ascii_case("primary"))
         .collect();
 
     println!("Writing Block 2 ({} primary wallet SOV mints at 5,000 SOV each)...", primary_wallets.len());
-    println!("  (Skipping {} non-primary wallets)", wallets.len() - primary_wallets.len());
+    println!("  (Skipping {} non-primary wallets)", wallets_sorted.len() - primary_wallets.len());
 
     let sov_token_id = generate_lib_token_id();
     let mut mint_txns: Vec<Transaction> = Vec::new();
@@ -182,7 +209,7 @@ fn main() -> Result<()> {
         mint_txns.push(tx);
     }
 
-    let block2 = build_block(2, mint_txns)?;
+    let block2 = build_block(2, &block1, mint_txns)?;
     write_block(&out_store, block2)?;
 
     // ── 6. Summary ────────────────────────────────────────────────────────
@@ -200,7 +227,7 @@ fn main() -> Result<()> {
     println!("  1. Stop all 4 nodes");
     println!("  2. rsync {} to each node:", output_path.display());
     println!("     for node in zhtp-g1 zhtp-g2 zhtp-g3 zhtp-g4; do");
-    println!("       rsync -az --delete {} $node:/opt/zhtp/data/testnet/sled", output_path.display());
+    println!("       rsync -az --delete {}/ $node:/opt/zhtp/data/testnet/sled/", output_path.display());
     println!("     done");
     println!("  3. Restart all nodes");
 
@@ -208,11 +235,13 @@ fn main() -> Result<()> {
 }
 
 /// Build a block at a given height from a list of transactions.
-fn build_block(height: u64, transactions: Vec<Transaction>) -> Result<Block> {
-    let prev_hash = Hash::default();
+fn build_block(height: u64, prev_block: &Block, transactions: Vec<Transaction>) -> Result<Block> {
+    let prev_hash = prev_block.hash();
+    let prev_timestamp = prev_block.header.timestamp;
+    
     BlockBuilder::new(prev_hash, height, Difficulty::default())
-        .version(8)
-        .timestamp(lib_blockchain::GENESIS_TIMESTAMP + height)
+        .version(lib_blockchain::BLOCKCHAIN_VERSION)
+        .timestamp(prev_timestamp + TARGET_BLOCK_TIME)
         .transactions(transactions)
         .build()
 }
