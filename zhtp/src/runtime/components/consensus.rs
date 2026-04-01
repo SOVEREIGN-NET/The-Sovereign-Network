@@ -896,11 +896,42 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
 
         let mut blockchain = blockchain_arc.write().await;
 
-        // Check if block at this height already exists (idempotent)
+        // Check if block at this height already exists (idempotent).
+        // CRITICAL: verify the stored block is the one BFT actually finalized.
+        // If catch-up raced and wrote a different block first, detect it here and
+        // wipe sled so systemd restarts us with a clean state rather than silently
+        // chaining on the wrong block for the next height.
         if blockchain.height >= proposal.height && proposal.height > 0 {
+            let committed_block_for_check: lib_blockchain::Block =
+                bincode::deserialize(&proposal.block_data).map_err(|e| {
+                    anyhow::anyhow!("Failed to deserialize block for hash check: {}", e)
+                })?;
+            let bft_hash = committed_block_for_check.hash().as_array();
+            if let Some(ref store) = blockchain.store {
+                if let Ok(Some(stored_hash)) = store.get_block_hash_by_height(proposal.height) {
+                    if stored_hash.0 != bft_hash {
+                        let sled_path = std::path::Path::new(
+                            &self.environment.data_directory(),
+                        )
+                        .join("sled");
+                        error!(
+                            "CHAIN DIVERGENCE at height {}: sled has {}, BFT finalized {}. \
+                             Wiping sled at {:?} and restarting.",
+                            proposal.height,
+                            hex::encode(&stored_hash.0[..8]),
+                            hex::encode(&bft_hash[..8]),
+                            sled_path,
+                        );
+                        if let Err(e) = std::fs::remove_dir_all(&sled_path) {
+                            error!("Failed to wipe sled: {}", e);
+                        }
+                        std::process::exit(1);
+                    }
+                }
+            }
             info!(
-                "Block at height {} already exists (current height: {}), skipping commit",
-                proposal.height, blockchain.height
+                "Block at height {} already exists with matching hash, skipping commit",
+                proposal.height
             );
             return Ok(());
         }

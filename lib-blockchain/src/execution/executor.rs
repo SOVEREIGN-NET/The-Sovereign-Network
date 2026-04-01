@@ -1176,9 +1176,10 @@ impl BlockExecutor {
             TransactionType::TokenTransfer => return Ok(()), // Phase 2: subsidized
             TransactionType::TokenMint => return Ok(()), // Phase 2: system mint
             TransactionType::TokenCreation => {
-                if tx.fee != self.token_creation_fee {
+                // Accept fee=0 (subsidized/system creation) or fee==token_creation_fee (standard).
+                if tx.fee != 0 && tx.fee != self.token_creation_fee {
                     return Err(TxApplyError::InvalidType(format!(
-                        "TokenCreation transaction fee must equal {}",
+                        "TokenCreation transaction fee must equal 0 or {}",
                         self.token_creation_fee
                     )));
                 }

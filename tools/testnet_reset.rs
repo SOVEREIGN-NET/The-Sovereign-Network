@@ -162,7 +162,7 @@ fn main() -> Result<()> {
         );
         block1_txns.push(tx);
     }
-
+    
     // Validate we have at least one primary wallet for SOV distribution
     let primary_count = wallets.iter()
         .filter(|w| w.wallet_type.eq_ignore_ascii_case(PRIMARY_WALLET_TYPE))
@@ -240,7 +240,7 @@ fn main() -> Result<()> {
 fn build_block(height: u64, prev_block: &Block, transactions: Vec<Transaction>) -> Result<Block> {
     let prev_hash = prev_block.hash();
     let prev_timestamp = prev_block.header.timestamp;
-
+    
     BlockBuilder::new(prev_hash, height, Difficulty::default())
         .version(lib_blockchain::BLOCKCHAIN_VERSION)
         .timestamp(prev_timestamp + TARGET_BLOCK_TIME)

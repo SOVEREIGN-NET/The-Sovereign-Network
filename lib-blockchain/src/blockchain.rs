@@ -4042,13 +4042,28 @@ impl Blockchain {
 
     /// Add a transaction to the pending pool
     pub fn add_pending_transaction(&mut self, transaction: Transaction) -> Result<()> {
-        tracing::debug!(
-            "[FLOW] add_pending_transaction: tx_hash={}, size={}, fee={}",
-            hex::encode(transaction.hash().as_bytes()),
-            transaction.size(),
-            transaction.fee
-        );
+        let tx_type = transaction.transaction_type;
         self.verify_and_enqueue_transaction(transaction.clone())?;
+        match tx_type {
+            TransactionType::TokenTransfer | TransactionType::TokenMint | TransactionType::TokenCreation => {
+                info!(
+                    "[token/transfer] mempool accepted: type={:?} tx={} size={} fee={}",
+                    tx_type,
+                    &hex::encode(transaction.hash().as_bytes())[..8],
+                    transaction.size(),
+                    transaction.fee,
+                );
+            }
+            _ => {
+                tracing::debug!(
+                    "mempool accepted: type={:?} tx={} size={} fee={}",
+                    tx_type,
+                    &hex::encode(transaction.hash().as_bytes())[..8],
+                    transaction.size(),
+                    transaction.fee,
+                );
+            }
+        }
 
         // Broadcast new transaction to mesh network (locally-originated only)
         if let Some(ref sender) = self.broadcast_sender {
@@ -6800,11 +6815,31 @@ impl Blockchain {
                     // Increment nonce after successful transfer
                     *self.token_nonces.entry(nonce_key).or_insert(0) += 1;
 
+                    let token_label = if is_sov {
+                        "SOV".to_string()
+                    } else if is_cbe {
+                        "CBE".to_string()
+                    } else {
+                        hex::encode(&token_id[..4])
+                    };
+                    info!(
+                        "[token/transfer] committed: token={} from={} to={} amount={} fee={} net={} nonce={} height={} tx={}",
+                        token_label,
+                        hex::encode(&transfer.from[..4]),
+                        hex::encode(&transfer.to[..4]),
+                        amount_u64,
+                        fee_amount,
+                        net_amount,
+                        transfer.nonce,
+                        block.height(),
+                        hex::encode(&tx_hash[..4]),
+                    );
+
                     if let Some(store) = &self.store {
                         if let Some(token) = self.token_contracts.get(&token_id) {
                             let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                             if let Err(e) = store_ref.put_token_contract(token) {
-                                warn!("Failed to persist token contract after transfer: {}", e);
+                                warn!("[token/transfer] failed to persist token contract: height={} token={} err={}", block.height(), token_label, e);
                             }
                         }
                     }
