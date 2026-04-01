@@ -295,6 +295,10 @@ pub struct BlockExecutor {
     /// Used during catch-up sync to replay already-committed peer blocks
     /// whose transactions were valid under older fee rules.
     skip_fee_validation: bool,
+    /// When true, skip previous-block-hash validation during header checks.
+    /// Used during trusted peer import (bootstrap/catch-up sync) where BFT
+    /// consensus has already guaranteed chain validity.
+    skip_prev_hash_validation: bool,
 }
 
 /// Scope guard that ensures rollback_block is called if not disarmed.
@@ -380,6 +384,7 @@ impl BlockExecutor {
             limits,
             token_creation_fee,
             skip_fee_validation: false,
+            skip_prev_hash_validation: false,
         }
     }
 
@@ -413,15 +418,16 @@ impl BlockExecutor {
     pub fn new_trusted_replay_with_token_creation_fee(
         store: Arc<dyn BlockchainStore>,
         fee_model: FeeModelV2,
-        limits: BlockLimits,
+        _limits: BlockLimits,
         token_creation_fee: u64,
     ) -> Self {
         Self {
             store,
             fee_model,
-            limits,
+            limits: BlockLimits::for_trusted_replay(),
             token_creation_fee,
             skip_fee_validation: true,
+            skip_prev_hash_validation: true,
         }
     }
 
@@ -434,26 +440,29 @@ impl BlockExecutor {
             limits,
             token_creation_fee: config.token_creation_fee,
             skip_fee_validation: false,
+            skip_prev_hash_validation: false,
         }
     }
 
     /// Create with legacy ExecutorConfig for trusted peer block replay.
     ///
-    /// Identical to `from_config` but sets `skip_fee_validation = true`.
+    /// Identical to `from_config` but sets `skip_fee_validation = true` and
+    /// `skip_prev_hash_validation = true`.
     /// Use this when importing already-committed peer blocks during catch-up
     /// sync; those blocks passed consensus and must be applied regardless of
-    /// the local fee schedule.
+    /// the local fee schedule or any legacy genesis hash inconsistencies.
     pub fn from_config_trusted_replay(
         store: Arc<dyn BlockchainStore>,
         config: ExecutorConfig,
     ) -> Self {
-        let (fee_model, limits) = config.to_fee_model_and_limits();
+        let (fee_model, _limits) = config.to_fee_model_and_limits();
         Self {
             store,
             fee_model,
-            limits,
+            limits: BlockLimits::for_trusted_replay(),
             token_creation_fee: config.token_creation_fee,
             skip_fee_validation: true,
+            skip_prev_hash_validation: true,
         }
     }
 
@@ -552,8 +561,12 @@ impl BlockExecutor {
             });
         }
 
-        // Previous hash must match (except for genesis)
-        if block_height > 0 {
+        // Previous hash must match (except for genesis).
+        // Skip during trusted peer replay: BFT consensus already validated
+        // the chain. The importing node may have committed genesis with a
+        // different block_hash than what the peer stored when it built block 1,
+        // so re-validating would incorrectly reject an otherwise valid chain.
+        if block_height > 0 && !self.skip_prev_hash_validation {
             self.validate_previous_hash(block, block_height)?;
         }
 

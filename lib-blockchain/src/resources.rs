@@ -43,6 +43,20 @@ impl BlockLimits {
             max_tx_count: u32::MAX,
         }
     }
+
+    /// Create limits suitable for trusted peer replay (no size restrictions).
+    ///
+    /// Blocks imported from a trusted peer have already passed consensus;
+    /// applying local size limits would reject valid historical blocks.
+    pub fn for_trusted_replay() -> Self {
+        Self {
+            max_payload_bytes: u64::MAX,
+            max_witness_bytes: u64::MAX,
+            max_verify_units: u64::MAX,
+            max_state_write_bytes: u64::MAX,
+            max_tx_count: u32::MAX,
+        }
+    }
 }
 
 /// Accumulates resource usage during block execution.
