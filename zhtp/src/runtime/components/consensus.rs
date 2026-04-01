@@ -755,15 +755,33 @@ async fn catchup_sync_from_peer(
         .ok_or_else(|| anyhow::anyhow!("blockchain not available during catch-up sync"))?;
     drop(slot);
 
-    let mut cursor = our_height;
+    // When local sled has no genesis yet (fresh/wiped node), we must fetch from
+    // block 0 — otherwise block 1's prev_hash check will fail against zeros.
+    // This mirrors the logic in try_initial_sync_from_peer (runtime/mod.rs).
+    let no_genesis_in_sled = {
+        let bc = blockchain_arc.read().await;
+        bc.store
+            .as_ref()
+            .map(|s| s.get_block_by_height(0).ok().flatten().is_none())
+            .unwrap_or(false)
+    };
+    let first_fetch = if no_genesis_in_sled { 0u64 } else { our_height + 1 };
+    if no_genesis_in_sled {
+        info!(
+            "⬇️  Catch-up: sled has no genesis — will fetch from block 0 (peer tip={})",
+            tip.height
+        );
+    }
+
+    let mut next_start = first_fetch;
     let mut total_applied = 0usize;
     let mut pages = 0usize;
     const MAX_BLOCKS_PER_PAGE: u64 = 50;
     const MAX_PAGES_PER_SYNC: usize = 80;
 
-    while cursor < tip.height && pages < MAX_PAGES_PER_SYNC {
-        let start = cursor + 1;
-        let end = tip.height.min(cursor + MAX_BLOCKS_PER_PAGE);
+    while next_start <= tip.height && pages < MAX_PAGES_PER_SYNC {
+        let start = next_start;
+        let end = tip.height.min(start.saturating_add(MAX_BLOCKS_PER_PAGE - 1));
 
         info!(
             "⬇️  Catch-up: fetching blocks {}-{} from {} (peer tip={})",
@@ -796,7 +814,9 @@ async fn catchup_sync_from_peer(
         for block in blocks {
             let height = block.height();
             let mut bc = blockchain_arc.write().await;
-            if height <= bc.height {
+            // Skip blocks strictly below our tip. Allow height == bc.height only
+            // for genesis (height 0): a fresh sled needs the canonical block 0 applied.
+            if height < bc.height || (height == bc.height && height > 0) {
                 drop(bc);
                 continue;
             }
@@ -827,10 +847,10 @@ async fn catchup_sync_from_peer(
         }
 
         let h_now = blockchain_arc.read().await.height;
-        if applied_in_page == 0 || h_now <= cursor {
+        if applied_in_page == 0 || h_now < next_start {
             break;
         }
-        cursor = h_now;
+        next_start = h_now + 1;
         pages += 1;
     }
 
