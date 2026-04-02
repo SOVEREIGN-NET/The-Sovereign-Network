@@ -510,11 +510,19 @@ impl ZhtpIdentity {
         let citizenship_verified = false;
         let dao_voting_power = 1;
 
-        // Step 13: Placeholder ownership proof (to be replaced with SignaturePopV1 in ADR-0003)
-        // TODO: Implement real SignaturePopV1 when ADR-0003 V1 proofs land.
+        // Step 13: Proof of Possession — Dilithium signature over the DID.
+        // Proves the registrant controls the private key corresponding to the
+        // public key embedded in the DID, without revealing the private key.
+        let pop_keypair = lib_crypto::KeyPair {
+            public_key: public_key.clone(),
+            private_key: private_key.clone(),
+        };
+        let pop_signature = pop_keypair
+            .sign(did.as_bytes())
+            .map_err(|e| anyhow!("Failed to generate ownership proof signature: {}", e))?;
         let ownership_proof = ZeroKnowledgeProof {
-            proof_system: "dilithium-pop-placeholder-v0".to_string(),
-            proof_data: b"TODO:SignaturePopV1".to_vec(),
+            proof_system: "dilithium-pop-v1".to_string(),
+            proof_data: pop_signature.signature,
             public_inputs: did.as_bytes().to_vec(),
             verification_key: public_key.dilithium_pk.clone(),
             plonky2_proof: None,
