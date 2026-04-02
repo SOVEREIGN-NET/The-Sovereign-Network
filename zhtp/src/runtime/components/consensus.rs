@@ -1753,22 +1753,32 @@ impl Component for ConsensusComponent {
             info!("🛡️ BFT-only mode: Full consensus validation required (minimum 4 validators)");
         }
 
-        // Create broadcaster - use ConsensusMeshBroadcaster if mesh router is available,
-        // otherwise fall back to NoOpBroadcaster (single-node mode)
-        let broadcaster: Arc<dyn ConsensusMessageBroadcaster> = match get_global_mesh_router().await
-        {
-            Ok(mesh_router) => {
-                info!("🌐 Mesh router available - enabling multi-node consensus broadcasting");
-                Arc::new(ConsensusMeshBroadcaster::new(mesh_router))
-            }
-            Err(e) => {
-                warn!(
-                    "⚠️ Mesh router not available: {} - consensus will run in single-node mode",
-                    e
-                );
-                Arc::new(NoOpBroadcaster)
-            }
-        };
+        // Create broadcaster — requires the mesh router set by Protocols component.
+        // Protocols.start() is awaited before Consensus.start() in startup_sequence,
+        // so the mesh router is guaranteed to be available here unless Protocols failed.
+        // Development mode allows NoOpBroadcaster for single-node local testing.
+        let broadcaster: Arc<dyn ConsensusMessageBroadcaster> =
+            match get_global_mesh_router().await {
+                Ok(mesh_router) => {
+                    info!("Mesh router available — multi-node consensus broadcasting enabled");
+                    Arc::new(ConsensusMeshBroadcaster::new(mesh_router))
+                }
+                Err(e) if is_development => {
+                    warn!(
+                        "Mesh router not available: {} — development mode, using NoOpBroadcaster",
+                        e
+                    );
+                    Arc::new(NoOpBroadcaster)
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Mesh router not available: {}. \
+                         BFT consensus requires a working broadcaster to reach quorum. \
+                         Ensure the Protocols component started successfully before Consensus.",
+                        e
+                    ));
+                }
+            };
 
         let mut consensus_engine = lib_consensus::init_consensus(config, broadcaster)?;
         let (liveness_tx, mut liveness_rx) = tokio::sync::mpsc::unbounded_channel();
