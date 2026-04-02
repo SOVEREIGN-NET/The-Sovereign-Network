@@ -1248,6 +1248,26 @@ impl lib_consensus::types::ConsensusBlockchainProvider for ConsensusBlockchainAd
         }
         false
     }
+
+    async fn decode_block_data(
+        &self,
+        block_data: &[u8],
+    ) -> Result<(u32, u64), Box<dyn std::error::Error + Send + Sync>> {
+        if block_data.is_empty() {
+            return Ok((0, 0));
+        }
+        match bincode::deserialize::<lib_blockchain::block::Block>(block_data) {
+            Ok(block) => {
+                let count = block.transactions.len() as u32;
+                let fees: u64 = block.transactions.iter().map(|tx| tx.fee).sum();
+                Ok((count, fees))
+            }
+            Err(_) => {
+                // block_data may be the text fallback format from tests ("empty_block:...")
+                Ok((0, 0))
+            }
+        }
+    }
 }
 
 /// Consensus component implementation using lib-consensus package

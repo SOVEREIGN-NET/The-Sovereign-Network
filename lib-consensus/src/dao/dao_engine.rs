@@ -884,18 +884,20 @@ impl DaoEngine {
         Vec::new()
     }
 
-    /// Get current block height (would be injected from blockchain state)
+    /// Get current block height estimated from elapsed time since ZHTP genesis.
+    ///
+    /// This is an approximation used only for proposal metadata (non-consensus-critical).
+    /// The consensus engine and runtime should inject the real height wherever it matters.
     fn get_current_block_height(&self) -> u64 {
-        // In production, this would be injected from the consensus engine
-        // For now, use a timestamp-based approximation
-        let genesis_timestamp = 1672531200; // Jan 1, 2023
+        const ZHTP_GENESIS_TIMESTAMP: u64 = 1761955200; // 2025-11-01T00:00:00Z
+        const BLOCK_TIME_SECS: u64 = 6;
         let current_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
-        let seconds_elapsed = current_timestamp.saturating_sub(genesis_timestamp);
-        let estimated_height = seconds_elapsed / 6; // Assuming 6 second block times
-        estimated_height
+        current_timestamp
+            .saturating_sub(ZHTP_GENESIS_TIMESTAMP)
+            / BLOCK_TIME_SECS
     }
 
     /// Calculate total eligible voting power in the network

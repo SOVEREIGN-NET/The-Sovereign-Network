@@ -942,9 +942,9 @@ impl ConsensusEngine {
                 .calculate_round_rewards(&self.validator_manager, self.current_round.height)?;
             self.reward_calculator.distribute_rewards(&reward_round)?;
 
-            // Collect and distribute fees from block (Week 7 integration)
-            // Mirrors reward distribution pattern - happens at block finalization
-            let block_metadata = self.extract_block_metadata(&proposal);
+            // Collect and distribute fees from block.
+            // Mirrors reward distribution pattern - happens at block finalization.
+            let block_metadata = self.extract_block_metadata(&proposal).await;
             if let Err(e) = self.collect_and_distribute_fees(&block_metadata) {
                 tracing::warn!("Error collecting fees for block {}: {}", proposal.height, e);
                 // Non-critical: Fee collection failure does NOT block consensus
@@ -1069,48 +1069,31 @@ impl ConsensusEngine {
         Ok(())
     }
 
-    /// Extract block metadata from a consensus proposal
+    /// Extract block metadata from a consensus proposal.
     ///
-    /// Creates BlockMetadata structure for fee tracking.
-    /// Week 7: Uses simulated fees (production will extract from actual transactions)
-    ///
-    /// **NOTE**: Temporary stub for transaction_count. Will be replaced with actual
-    /// transaction count extraction in Week 10 when full transaction execution is integrated.
-    fn extract_block_metadata(&self, proposal: &ConsensusProposal) -> BlockMetadata {
-        let simulated_fees = self.simulate_block_fees(proposal.height);
+    /// Asks the blockchain provider to decode the opaque `block_data` bytes so that
+    /// the actual transaction count and fee sum can be recorded in `BlockMetadata`.
+    /// Falls back to `(0, 0)` when no provider is configured or decoding fails
+    /// (e.g. empty blocks or the text fallback format used in tests).
+    async fn extract_block_metadata(&self, proposal: &ConsensusProposal) -> BlockMetadata {
+        let (transaction_count, total_fees_collected) =
+            if let Some(ref provider) = self.blockchain_provider {
+                provider
+                    .decode_block_data(&proposal.block_data)
+                    .await
+                    .unwrap_or((0, 0))
+            } else {
+                (0, 0)
+            };
 
         BlockMetadata {
             height: proposal.height,
-            // REMOVED: Wall-clock timestamp (nondeterministic)
-            // Use deterministic value derived from block height for consensus ordering
+            // Use height as a deterministic timestamp for consensus ordering.
+            // Wall-clock timestamps are nondeterministic and must not appear here.
             timestamp: proposal.height as i64,
-            transaction_count: 0, // Temporary stub - will be replaced in Week 10
-            total_fees_collected: simulated_fees,
+            transaction_count,
+            total_fees_collected,
             proposer: proposal.proposer.clone(),
-        }
-    }
-
-    /// Simulate block fees for Week 7 testing
-    ///
-    /// Production implementation will extract fees from actual transactions.
-    /// This stub provides deterministic simulated fees for testing fee collection.
-    ///
-    /// **NOTE**: This is temporary simulation logic. Will be replaced with actual
-    /// transaction fee extraction in Week 10 when full transaction execution is integrated.
-    fn simulate_block_fees(&self, height: u64) -> u64 {
-        // Genesis block (height 0) has no transaction fees
-        if height == 0 {
-            return 0;
-        }
-
-        // Simulate realistic fee distribution for non-genesis blocks:
-        // - Every 10th block: 10,000 tokens (large block)
-        // - Blocks 1-7: 1,000 tokens each (normal blocks)
-        // - Blocks 8-9: 100 tokens each (small blocks)
-        match height % 10 {
-            0 => 10_000,    // Large block
-            1..=7 => 1_000, // Normal blocks
-            _ => 100,       // Small blocks
         }
     }
 

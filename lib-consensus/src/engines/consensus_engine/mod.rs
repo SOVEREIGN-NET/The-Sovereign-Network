@@ -163,7 +163,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lib_crypto::{Hash, KeyPair};
 use lib_identity::IdentityId;
@@ -309,8 +309,10 @@ impl RoundTimer {
             ConsensusStep::Propose => self.proposal_timeout,
             ConsensusStep::PreVote => self.prevote_timeout,
             ConsensusStep::PreCommit => self.precommit_timeout,
-            // For now, reuse the precommit timeout for commit, and proposal timeout for a new round.
-            // Both values are derived from ConsensusConfig.
+            // Commit: brief broadcast window after 2/3+1 precommits — reuse precommit timeout.
+            // NewRound: full proposal timeout to give the new proposer time to broadcast.
+            // Both are derived from ConsensusConfig; add separate config knobs if operators
+            // need independent tuning for these phases.
             ConsensusStep::Commit => self.precommit_timeout,
             ConsensusStep::NewRound => self.proposal_timeout,
         };
@@ -480,6 +482,9 @@ pub struct ConsensusEngine {
     /// indicating that the local blockchain is behind peer nodes.  The trigger
     /// fires a background block-download task in the runtime layer.
     catch_up_sync_trigger: Option<Arc<dyn crate::types::CatchUpSyncTrigger>>,
+    /// Unix timestamp (seconds) when this consensus engine instance was created.
+    /// Used to compute node uptime for work proofs.
+    engine_start_time: u64,
 }
 
 impl ConsensusEngine {
@@ -514,6 +519,11 @@ impl ConsensusEngine {
 
         let round_timer = RoundTimer::new(&config);
 
+        let engine_start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         Ok(Self {
             validator_identity: None,
             validator_manager,
@@ -543,6 +553,7 @@ impl ConsensusEngine {
             blockchain_provider: None,
             block_commit_callback: None,
             catch_up_sync_trigger: None,
+            engine_start_time,
         })
     }
 
@@ -727,29 +738,10 @@ impl ConsensusEngine {
     ///
     /// `Some(IdentityId)` if there is at least one validator, `None` if the validator
     /// set is empty (should not happen in normal operation).
-    /// NOTE: This method duplicates the selection logic in `ValidatorManager::select_proposer`.
-    /// TODO: Consolidate by delegating to `self.validator_manager.get_proposer_for_round(height, round)`
-    /// once the return type (IdentityId vs &Validator) difference is resolved.
     pub fn compute_proposer_for_round(&self, height: u64, round: u32) -> Option<IdentityId> {
-        let mut validators: Vec<IdentityId> = self
-            .validator_manager
-            .get_active_validators()
-            .iter()
+        self.validator_manager
+            .select_proposer(height, round)
             .map(|v| v.identity.clone())
-            .collect();
-
-        if validators.is_empty() {
-            return None;
-        }
-
-        // Sort by identity bytes for determinism across all nodes.
-        validators.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
-
-        let n = validators.len() as u64;
-        let index = (height.wrapping_add(round as u64)) % n;
-
-        // No assertion needed: modulo guarantees index in bounds.
-        Some(validators[index as usize].clone())
     }
 
     /// Get current validator count
