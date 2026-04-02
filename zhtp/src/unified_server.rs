@@ -1883,6 +1883,6 @@ struct BlockchainIdentityRegistryVerifier {
 impl IdentityRegistryVerifier for BlockchainIdentityRegistryVerifier {
     async fn is_registered(&self, did: &str) -> Result<bool> {
         let bc = self.blockchain.read().await;
-        Ok(bc.identity_registry.contains_key(did))
+        Ok(bc.identity_registry.contains_key(did) || bc.validator_registry.contains_key(did))
     }
 }
