@@ -496,7 +496,7 @@ impl OracleComponent {
                         debug!(
                             "🔮 Oracle: strict spec mode - submitting attestation as transaction"
                         );
-                        Self::submit_attestation_transaction(&attestation).await;
+                        Self::submit_attestation_transaction(&attestation, &blockchain).await;
                     } else {
                         // Legacy mode: Gossip and process directly
                         Self::gossip_attestation(&attestation).await;
@@ -586,19 +586,53 @@ impl OracleComponent {
 
     /// Submit an attestation as a transaction in strict spec mode.
     ///
-    /// ORACLE-R3: In strict spec mode, attestations must go through the canonical
-    /// transaction/block path rather than direct gossip processing.
-    ///
-    /// TODO: Implement transaction creation and mempool submission
-    async fn submit_attestation_transaction(_attestation: &OraclePriceAttestation) {
-        // This is a placeholder for the full implementation.
-        // In the full implementation, this would:
-        // 1. Create an OracleAttestation transaction
-        // 2. Sign it with the validator's key
-        // 3. Submit it to the mempool
-        // 4. The transaction will be included in a block and processed through
-        //    the canonical path in Blockchain.process_oracle_attestation_transactions()
-        info!("🔮 Oracle: submitting attestation as transaction (TODO: implement)");
+    /// ORACLE-R3: In strict spec mode, attestations go through the canonical
+    /// transaction/block path. The transaction is added to the local mempool
+    /// and will be included in a future block by the proposer.
+    async fn submit_attestation_transaction(
+        attestation: &OraclePriceAttestation,
+        blockchain: &Arc<RwLock<Blockchain>>,
+    ) {
+        use lib_blockchain::transaction::core::{Transaction, TransactionPayload, TX_VERSION_V8};
+        use lib_blockchain::transaction::oracle_governance::OracleAttestationData;
+        use lib_blockchain::types::transaction_type::TransactionType;
+
+        let attestation_data = OracleAttestationData {
+            epoch_id: attestation.epoch_id,
+            sov_usd_price: attestation.sov_usd_price,
+            cbe_usd_price: attestation.cbe_usd_price,
+            timestamp: attestation.timestamp,
+            validator_pubkey: attestation.validator_pubkey,
+            signature: attestation.signature.clone(),
+        };
+
+        let tx = Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03,
+            transaction_type: TransactionType::OracleAttestation,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature: lib_crypto::Signature::default(),
+            memo: Vec::new(),
+            payload: TransactionPayload::OracleAttestation(attestation_data),
+        };
+
+        let mut bc = blockchain.write().await;
+        match bc.add_pending_transaction(tx) {
+            Ok(()) => {
+                info!(
+                    "Oracle attestation submitted to mempool (epoch={})",
+                    attestation.epoch_id
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Oracle attestation mempool submission failed (epoch={}): {}",
+                    attestation.epoch_id, e
+                );
+            }
+        }
     }
 }
 
