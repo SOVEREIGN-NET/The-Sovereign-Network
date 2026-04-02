@@ -565,23 +565,23 @@ async fn run_catch_up_sync_task(
 
             if consecutive_wrong_chain_rounds >= WRONG_CHAIN_WIPE_THRESHOLD {
                 // Unrecoverable fork: our local chain state diverged from every
-                // ahead peer we can reach. Wipe the sled store and exit so systemd
-                // restarts us — on restart the node will sync the canonical chain
-                // from peers from block 0.
+                // ahead peer we can reach. HALT consensus and alert the operator.
+                // DO NOT wipe sled — data destruction caused total chain loss in the
+                // Apr 2 2026 incident. The operator must manually investigate and
+                // decide whether to resync from a peer or restore from backup.
                 error!(
-                    "❌ UNRECOVERABLE FORK at height {}: {} consecutive round(s) of hash \
-                    mismatch from {} ahead peer(s). Wiping sled at {:?} and restarting.",
+                    "CHAIN FORK DETECTED at height {}: {} consecutive round(s) of hash \
+                    mismatch from {} ahead peer(s). Consensus HALTED. \
+                    Sled preserved at {:?} for operator investigation. \
+                    To recover: stop the node, rsync sled from an authoritative peer, restart.",
                     from_height + 1,
                     consecutive_wrong_chain_rounds,
                     ahead_peers_rejecting,
                     sled_path,
                 );
-                if let Err(e) = std::fs::remove_dir_all(&sled_path) {
-                    error!("Failed to wipe sled at {:?}: {}", sled_path, e);
-                } else {
-                    info!("🗑️  Sled wiped at {:?}", sled_path);
-                }
-                std::process::exit(1);
+                // Halt the sync loop — do not wipe, do not exit.
+                // The node stays running (API accessible) but stops syncing.
+                break;
             }
         } else {
             // No hash mismatches this round — reset.
@@ -689,22 +689,23 @@ async fn catchup_sync_from_peer(
     use anyhow::Context;
     use lib_network::client::{ZhtpClient, ZhtpClientConfig};
 
-    // Build a short-lived bootstrap identity for this sync connection.
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let temp_identity = lib_identity::ZhtpIdentity::new_unified(
-        lib_identity::IdentityType::Device,
-        None,
-        None,
-        &format!("catchup-sync-{}", ts),
-        None,
-    )
-    .context("failed to create temp identity for catch-up sync")?;
+    // Use the node's real identity so the peer's IdentityRegistryVerifier
+    // accepts the connection. A temporary identity would be rejected because
+    // it's not registered on-chain.
+    let identity_manager = crate::runtime::get_global_identity_manager()
+        .await
+        .context("catch-up sync: identity manager not available")?;
+    let mgr = identity_manager.read().await;
+    let identities = mgr.list_identities();
+    let node_identity = identities
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("catch-up sync: no identity available"))?
+        .clone();
+    drop(mgr);
 
     let mut client = ZhtpClient::new_bootstrap_with_config(
-        temp_identity,
+        node_identity,
         ZhtpClientConfig {
             allow_bootstrap: true,
         },
@@ -918,9 +919,9 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
 
         // Check if block at this height already exists (idempotent).
         // CRITICAL: verify the stored block is the one BFT actually finalized.
-        // If catch-up raced and wrote a different block first, detect it here and
-        // wipe sled so systemd restarts us with a clean state rather than silently
-        // chaining on the wrong block for the next height.
+        // If catch-up raced and wrote a different block first, reject the commit
+        // and return an error. Sled is preserved for operator forensics — never
+        // auto-wiped (Apr 2 2026 incident postmortem).
         if blockchain.height >= proposal.height && proposal.height > 0 {
             let committed_block_for_check: lib_blockchain::Block =
                 bincode::deserialize(&proposal.block_data).map_err(|e| {
@@ -930,24 +931,26 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
             if let Some(ref store) = blockchain.store {
                 if let Ok(Some(stored_hash)) = store.get_block_hash_by_height(proposal.height) {
                     if stored_hash.0 != bft_hash {
-                        let sled_path = std::path::Path::new(
-                            &self.environment.data_directory(),
-                        )
-                        .join("sled");
+                        // CRITICAL: Do NOT wipe sled or exit. The Apr 2 2026 incident
+                        // showed that auto-wiping destroys the node's chain state,
+                        // isolates it from the network, and can cause quorum loss.
+                        // Instead: reject this commit and return an error so the
+                        // consensus engine knows something is wrong. The operator
+                        // must investigate the divergence manually.
                         error!(
                             "CHAIN DIVERGENCE at height {}: sled has {}, BFT finalized {}. \
-                             Wiping sled at {:?} and restarting.",
+                             Rejecting commit. Operator must investigate — \
+                             sled preserved for forensics.",
                             proposal.height,
                             hex::encode(&stored_hash.0[..8]),
                             hex::encode(&bft_hash[..8]),
-                            sled_path,
                         );
-                        if let Err(e) = std::fs::remove_dir_all(&sled_path) {
-                            error!("Failed to wipe sled: {}", e);
-                        }
-                        // Flush tracing before exit so the divergence log reaches journalctl.
-                        drop(tracing::dispatcher::get_default(|d| d.clone()));
-                        std::process::exit(1);
+                        return Err(format!(
+                            "Chain divergence at height {}: sled block {} != BFT block {}",
+                            proposal.height,
+                            hex::encode(&stored_hash.0[..8]),
+                            hex::encode(&bft_hash[..8]),
+                        ).into());
                     }
                 }
             }
@@ -1058,27 +1061,8 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                     proposal.height
                 );
 
-                // Auto-persist blockchain after BFT commit (legacy mode only)
-                if blockchain.get_store().is_none() {
-                    blockchain.increment_persist_counter();
-                    let persist_path_str = self.environment.blockchain_data_path();
-                    let persist_path = std::path::Path::new(&persist_path_str);
-                    #[allow(deprecated)]
-                    match blockchain.save_to_file(persist_path) {
-                        Ok(()) => {
-                            blockchain.mark_persisted();
-                            info!("💾 Blockchain auto-persisted after BFT commit");
-                        }
-                        Err(e) => {
-                            warn!(
-                                "⚠️ Failed to auto-persist blockchain after BFT commit: {}",
-                                e
-                            );
-                        }
-                    }
-                } else {
-                    info!("💾 Blockchain persisted via store after BFT commit");
-                }
+                // Sled store handles persistence automatically on block commit.
+                // Legacy save_to_file path removed — sled is the canonical store.
 
                 // Release the write lock before doing ZK proof generation and DHT indexing.
                 // These are non-critical background operations that must not block consensus.
@@ -2008,31 +1992,33 @@ impl Component for ConsensusComponent {
         consensus_engine.set_block_commit_callback(Arc::new(block_committer));
         info!("🔗 Block commit callback wired to consensus engine");
 
-        // Store reference to engine (for validator manager access)
-        // Note: The engine is moved into the consensus loop task
-        *self.consensus_engine.write().await = None; // Engine is now owned by the loop task
+        // Wire a validator update channel so the periodic re-sync task can push
+        // validator set changes into the running consensus loop without direct
+        // engine access (the engine is moved into the spawned loop task).
+        let (validator_update_tx, validator_update_rx) =
+            tokio::sync::mpsc::channel::<lib_consensus::ValidatorSetUpdate>(4);
+        consensus_engine.set_validator_update_receiver(validator_update_rx);
 
-        // Spawn the consensus loop as a background task
-        // This is the main BFT state machine driver
+        // Engine is moved into the spawned loop — not accessible externally.
+        *self.consensus_engine.write().await = None;
+
+        // Spawn the consensus loop as a background task.
         tokio::spawn(async move {
             info!("🚀 Starting BFT consensus loop...");
             match consensus_engine.run_consensus_loop().await {
-                Ok(()) => {
-                    info!("Consensus loop exited normally");
-                }
-                Err(e) => {
-                    error!("Consensus loop exited with error: {}", e);
-                }
+                Ok(()) => info!("Consensus loop exited normally"),
+                Err(e) => error!("Consensus loop exited with error: {}", e),
             }
         });
 
         // Spawn periodic validator re-sync background task.
         // Every 10 s, refresh ValidatorManager from blockchain.validator_registry so
         // newly-mined ValidatorRegistration transactions are picked up without restart.
+        // Periodic validator re-sync: every 10s, read validators from blockchain
+        // and push updates through the channel to the consensus loop.
         {
             let blockchain_slot = self.blockchain.clone();
             let validator_manager = self.validator_manager.clone();
-            let consensus_engine = self.consensus_engine.clone();
             let local_id = self.local_validator_identity.clone();
             let local_kp = self.local_validator_keypair.clone();
             let can_validate = self.node_role.can_validate();
@@ -2048,7 +2034,6 @@ impl Component for ConsensusComponent {
                     };
                     drop(slot);
 
-                    // Clone validators out of the read guard so the guard can be dropped
                     let active_validators: Vec<lib_blockchain::ValidatorInfo> = {
                         let bc = blockchain_arc.read().await;
                         bc.get_active_validators()
@@ -2066,39 +2051,60 @@ impl Component for ConsensusComponent {
                         .map(|v| BlockchainValidatorAdapter(v.clone()))
                         .collect();
 
+                    // Sync into the external validator manager (for API queries).
                     let result = {
                         let mut vm = validator_manager.write().await;
-                        vm.sync_from_validator_list(adapters)
+                        vm.sync_from_validator_list(adapters.clone())
                     };
                     match result {
-                        Ok((added, skipped)) => {
+                        Ok((added, _skipped)) => {
                             if added > 0 {
-                                info!("🔄 Periodic validator sync: {} new validator(s) added from blockchain ({} already present)", added, skipped);
-                            }
-                            // Always sync into the running consensus engine so that validators
-                            // seeded at startup (with placeholder keys) get replaced by real
-                            // on-chain keys, and so the engine activates BFT mode.
-                            let mut engine_guard = consensus_engine.write().await;
-                            if let Some(engine) = engine_guard.as_mut() {
-                                let adapters2: Vec<BlockchainValidatorAdapter> = active_validators
-                                    .iter()
-                                    .map(|v| BlockchainValidatorAdapter(v.clone()))
-                                    .collect();
-                                if let Err(e) = engine.sync_validators_from_list(adapters2) {
-                                    warn!("Periodic consensus engine validator sync failed: {}", e);
-                                } else if can_validate {
-                                    if let Some(id) = local_id.read().await.clone() {
-                                        let _ = engine.set_local_validator_identity(id);
-                                        if let Some(kp) = local_kp.read().await.clone() {
-                                            let _ = engine.set_validator_keypair(kp);
-                                        }
-                                    }
-                                }
+                                info!("Periodic validator sync: {} new validator(s) from blockchain", added);
                             }
                         }
                         Err(e) => {
                             warn!("Periodic validator manager sync failed: {}", e);
+                            continue;
                         }
+                    }
+
+                    // Push update to the consensus loop via channel.
+                    let local_identity = if can_validate {
+                        local_id.read().await.clone()
+                    } else {
+                        None
+                    };
+                    let local_keypair = if can_validate {
+                        local_kp.read().await.clone()
+                    } else {
+                        None
+                    };
+                    let entries: Vec<lib_consensus::engines::consensus_engine::ValidatorUpdateEntry> =
+                        active_validators.iter().map(|v| {
+                            let identity_hex = v.identity_id.strip_prefix("did:zhtp:").unwrap_or(&v.identity_id);
+                            let identity_id = if let Ok(bytes) = hex::decode(identity_hex) {
+                                if bytes.len() >= 32 {
+                                    lib_crypto::Hash::from_bytes(&bytes[..32])
+                                } else {
+                                    lib_crypto::Hash(lib_crypto::hash_blake3(v.identity_id.as_bytes()))
+                                }
+                            } else {
+                                lib_crypto::Hash(lib_crypto::hash_blake3(v.identity_id.as_bytes()))
+                            };
+                            lib_consensus::engines::consensus_engine::ValidatorUpdateEntry {
+                                identity_id,
+                                stake: v.stake,
+                                consensus_key: v.consensus_key.clone(),
+                            }
+                        }).collect();
+                    let update = lib_consensus::ValidatorSetUpdate {
+                        entries,
+                        local_identity,
+                        local_keypair,
+                    };
+                    if validator_update_tx.send(update).await.is_err() {
+                        warn!("Validator update channel closed — consensus loop may have exited");
+                        break;
                     }
                 }
             });

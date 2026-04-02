@@ -2738,27 +2738,26 @@ impl Blockchain {
         self.process_and_commit_block(block).await
     }
 
-    /// Apply a block received via catch-up sync, bypassing fee validation.
+    /// Apply a block received via catch-up sync from a peer.
     ///
-    /// These blocks were already committed by a quorum of peers.  We must
-    /// replay them exactly as-is regardless of the current fee schedule.
+    /// Skips fee validation (old blocks may use different fee rules) but
+    /// VALIDATES prev-hash to ensure chain continuity. A malicious peer
+    /// cannot inject forked state through this path.
     ///
     /// # Invariant BFT-A-1952
     ///
     /// This function is a **catch-up sync path only**. It MUST NOT be called from the live
-    /// validator block-reception path. It is permissible only when a validator has fallen
-    /// significantly behind peers and needs to replay previously-committed blocks to re-sync.
+    /// validator block-reception path.
     pub async fn apply_block_trusted_for_sync(&mut self, block: Block) -> Result<()> {
         if let Some(ref exec_arc) = self.executor {
-            // Build a temporary fee-skipping executor sharing the same store.
             use crate::execution::executor::BlockExecutor;
-            let trusted_exec = std::sync::Arc::new(BlockExecutor::new_trusted_replay(
+            let catchup_exec = std::sync::Arc::new(BlockExecutor::new_catchup_sync(
                 std::sync::Arc::clone(exec_arc.store()),
                 exec_arc.fee_model().clone(),
                 Default::default(),
             ));
-            // Temporarily swap in the trusted executor, apply, restore.
-            let original = self.executor.replace(trusted_exec);
+            // Temporarily swap in the catchup executor, apply, restore.
+            let original = self.executor.replace(catchup_exec);
             let result = self.process_and_commit_block(block).await;
             self.executor = original;
             result

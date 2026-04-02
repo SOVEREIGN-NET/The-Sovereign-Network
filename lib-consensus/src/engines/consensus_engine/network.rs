@@ -24,6 +24,7 @@ impl ConsensusEngine {
         let mut message_rx = self.message_rx.take().ok_or_else(|| {
             ConsensusError::ValidatorError("Message receiver not set".to_string())
         })?;
+        let mut validator_update_rx = self.validator_update_rx.take();
 
         // Sync consensus height with blockchain before starting
         // This ensures we start at the correct height after bootstrap mode
@@ -440,6 +441,38 @@ impl ConsensusEngine {
                         last_height_advance_secs = current_time;
                     }
                 }
+
+                // Validator set update from runtime
+                Some(update) = recv_validator_update(&mut validator_update_rx) => {
+                    let mut added = 0usize;
+                    for entry in &update.entries {
+                        if !self.validator_manager.is_validator(&entry.identity_id) {
+                            if let Err(e) = self.validator_manager.register_validator(
+                                entry.identity_id.clone(),
+                                entry.stake,
+                                0,
+                                entry.consensus_key.clone(),
+                                Vec::new(),
+                                Vec::new(),
+                                0,
+                            ) {
+                                tracing::warn!("Validator register failed for {}: {}", entry.identity_id, e);
+                            } else {
+                                added += 1;
+                            }
+                        }
+                    }
+                    if added > 0 {
+                        tracing::info!("Validator set updated from runtime: {} new", added);
+                    }
+                    if let Some(id) = update.local_identity {
+                        let _ = self.set_local_validator_identity(id);
+                    }
+                    if let Some(kp) = update.local_keypair {
+                        let _ = self.set_validator_keypair(kp);
+                    }
+                    self.snapshot_validator_set(self.current_round.height);
+                }
             }
         }
 
@@ -550,5 +583,16 @@ impl ConsensusEngine {
             }
         }
         Ok(())
+    }
+}
+
+/// Helper for `tokio::select!`: receives from the validator update channel if present,
+/// or pends forever if no channel is configured.
+async fn recv_validator_update(
+    rx: &mut Option<tokio::sync::mpsc::Receiver<super::ValidatorSetUpdate>>,
+) -> Option<super::ValidatorSetUpdate> {
+    match rx.as_mut() {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
     }
 }

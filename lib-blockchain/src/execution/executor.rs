@@ -397,11 +397,28 @@ impl BlockExecutor {
         Self::new_with_token_creation_fee(store, fee_model, limits, DEFAULT_TOKEN_CREATION_FEE)
     }
 
-    /// Create a block executor that skips fee validation.
+    /// Create a block executor for catch-up sync: skips fee validation but
+    /// VALIDATES prev-hash to ensure chain continuity from peer blocks.
+    pub fn new_catchup_sync(
+        store: Arc<dyn BlockchainStore>,
+        fee_model: FeeModelV2,
+        limits: BlockLimits,
+    ) -> Self {
+        Self {
+            store,
+            fee_model,
+            limits: BlockLimits::for_trusted_replay(),
+            token_creation_fee: DEFAULT_TOKEN_CREATION_FEE,
+            skip_fee_validation: true,
+            skip_prev_hash_validation: false, // MUST validate chain continuity
+        }
+    }
+
+    /// Create a block executor that skips fee validation AND prev-hash validation.
     ///
-    /// Use ONLY for replaying already-committed peer blocks during catch-up
-    /// sync.  These blocks were accepted by consensus and must be applied
-    /// regardless of the current fee schedule.
+    /// Use ONLY for replaying already-committed blocks from a trusted source
+    /// (e.g. initial bootstrap from genesis). For catch-up sync from peers,
+    /// use `new_catchup_sync` which validates prev-hash.
     pub fn new_trusted_replay(
         store: Arc<dyn BlockchainStore>,
         fee_model: FeeModelV2,
