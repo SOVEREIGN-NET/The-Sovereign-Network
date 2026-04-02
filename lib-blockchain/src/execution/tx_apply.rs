@@ -554,6 +554,18 @@ impl<'a> StateMutator<'a> {
             .map_err(|e| TxApplyError::Storage(e.to_string()))
     }
 
+    /// Persist a token balance for the given address in canonical state storage.
+    pub fn set_token_balance(
+        &self,
+        token: &TokenId,
+        addr: &Address,
+        balance: u64,
+    ) -> TxApplyResult<()> {
+        self.store
+            .set_token_balance(token, addr, balance as u128)
+            .map_err(|e| TxApplyError::Storage(e.to_string()))
+    }
+
     /// Persist token supply in canonical state storage.
     pub fn put_token_supply(&self, token: &TokenId, supply: u64) -> TxApplyResult<()> {
         self.store
