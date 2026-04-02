@@ -552,11 +552,13 @@ impl MeshMessageHandler {
                     .await?;
             }
             ZhtpMeshMessage::ValidatorMessage(msg) => {
-                // Prefer raw sender (ValidatorProtocol middleware) over direct consensus sender
+                // ValidatorMessages MUST go through ValidatorProtocol middleware for
+                // signature verification before reaching the consensus engine.
+                // No fallback path — unverified consensus messages are never forwarded.
                 if let Some(ref raw_tx) = self.raw_validator_message_sender {
                     match raw_tx.send(msg).await {
                         Ok(()) => {
-                            debug!("✅ ValidatorMessage forwarded to ValidatorProtocol middleware from peer {:?}",
+                            debug!("ValidatorMessage forwarded to ValidatorProtocol middleware from peer {:?}",
                                 hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
                             );
                         }
@@ -566,26 +568,9 @@ impl MeshMessageHandler {
                             );
                         }
                     }
-                } else if let Some(ref consensus_tx) = self.consensus_message_sender {
-                    // Fallback: forward directly to consensus engine if sender is wired
-                    let consensus_msg = convert_network_to_consensus_message(&msg);
-
-                    match consensus_tx.send(consensus_msg).await {
-                        Ok(()) => {
-                            debug!(
-                                "✅ ValidatorMessage forwarded to consensus engine from peer {:?}",
-                                hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
-                            );
-                        }
-                        Err(e) => {
-                            warn!("Failed to forward ValidatorMessage to consensus: {} (consensus may be stopped)",
-                                e
-                            );
-                        }
-                    }
                 } else {
-                    debug!(
-                        "Received ValidatorMessage but no consensus sender wired (peer {:?})",
+                    warn!(
+                        "Dropping ValidatorMessage from peer {:?}: no ValidatorProtocol middleware wired (signature verification required)",
                         hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
                     );
                 }
@@ -1508,20 +1493,48 @@ impl MeshMessageHandler {
         key: Vec<u8>,
         value: Vec<u8>,
         ttl: u64,
-        _signature: Vec<u8>,
+        signature: Vec<u8>,
     ) -> Result<()> {
+        let peer_id_hex = hex::encode(&requester.key_id[0..8.min(requester.key_id.len())]);
+
         info!(
-            "DHT Store request from {:?}: key={} bytes, value={} bytes, ttl={}",
-            requester,
+            "DHT Store request from {}: key={} bytes, value={} bytes, ttl={}",
+            peer_id_hex,
             key.len(),
             value.len(),
             ttl
         );
 
+        // Verify signature over (requester.key_id || key || value)
+        let mut signed_data =
+            Vec::with_capacity(requester.key_id.len() + key.len() + value.len());
+        signed_data.extend_from_slice(&requester.key_id);
+        signed_data.extend_from_slice(&key);
+        signed_data.extend_from_slice(&value);
+
+        let sig = lib_crypto::Signature::from_bytes_with_key(&signature, requester.clone());
+        match requester.verify(&signed_data, &sig) {
+            Ok(true) => {
+                debug!("DHT Store signature verified from peer {}", peer_id_hex);
+            }
+            Ok(false) => {
+                warn!(
+                    "DHT Store signature verification FAILED from peer {}",
+                    peer_id_hex
+                );
+                return Err(anyhow!("Invalid DHT Store signature"));
+            }
+            Err(e) => {
+                warn!(
+                    "DHT Store signature verification error from peer {}: {}",
+                    peer_id_hex, e
+                );
+                return Err(anyhow!("DHT Store signature verification error: {}", e));
+            }
+        }
+
         // DHT storage operations should be implemented at the application layer
         // through ZkDHTIntegration. This handler just logs the request.
-        // In a full implementation, this would forward to the local DHT node.
-
         warn!("DHT Store: Application layer should implement through ZkDHTIntegration");
         Ok(())
     }
@@ -1792,6 +1805,7 @@ impl MeshMessageHandler {
 /// The network layer uses `lib_consensus::validators::ValidatorMessage` (the wire format),
 /// while the consensus engine uses `lib_consensus::types::ValidatorMessage` (the internal format).
 /// This function bridges the two representations.
+#[allow(dead_code)]
 fn convert_network_to_consensus_message(
     msg: &lib_consensus::validators::ValidatorMessage,
 ) -> lib_consensus::types::ValidatorMessage {
