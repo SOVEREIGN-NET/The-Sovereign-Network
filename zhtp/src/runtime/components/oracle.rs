@@ -606,9 +606,16 @@ impl OracleComponent {
             signature: attestation.signature.clone(),
         };
 
+        // Derive chain_id from runtime configuration via the ZHTP_CHAIN_ID environment
+        // variable, falling back to the legacy dev-chain id (0x03) if not set or invalid.
+        let chain_id = std::env::var("ZHTP_CHAIN_ID")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0x03);
+
         let tx = Transaction {
             version: TX_VERSION_V8,
-            chain_id: 0x03,
+            chain_id,
             transaction_type: TransactionType::OracleAttestation,
             inputs: Vec::new(),
             outputs: Vec::new(),
