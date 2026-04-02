@@ -32,7 +32,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 // Import from libraries (no circular dependencies!)
-use lib_network::protocols::quic_mesh::QuicMeshProtocol;
+use lib_network::protocols::quic_mesh::{IdentityRegistryVerifier, QuicMeshProtocol};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 
 // Import new QUIC handler for native ZHTP-over-QUIC
@@ -717,7 +717,18 @@ impl ZhtpUnifiedServer {
         // Inject message handler into QUIC protocol
         info!(" [QUIC] Injecting message handler into QUIC protocol");
         quic_mesh.set_message_handler(Arc::new(RwLock::new(message_handler)));
-        info!("✅ [QUIC] MeshMessageHandler injected into QUIC protocol for blockchain sync");
+        info!(" [QUIC] MeshMessageHandler injected into QUIC protocol");
+
+        // Inject on-chain identity registry verifier for Sybil resistance.
+        // Peers whose DID is not in the blockchain identity_registry are rejected.
+        if let Ok(blockchain) = crate::runtime::blockchain_provider::get_global_blockchain().await {
+            quic_mesh.set_identity_registry_verifier(Arc::new(
+                BlockchainIdentityRegistryVerifier { blockchain },
+            ));
+            info!(" [QUIC] On-chain identity registry verifier injected");
+        } else {
+            warn!(" [QUIC] Blockchain not available — on-chain identity verification disabled");
+        }
 
         // IMPORTANT: Don't call start_receiving() here!
         // QuicHandler.accept_loop() is now the SOLE entry point for all QUIC connections
@@ -1862,5 +1873,18 @@ impl ZhtpUnifiedServer {
             "server_id": self.server_id,
             "status": "active"
         }))
+    }
+}
+
+/// On-chain identity registry verifier backed by the blockchain's identity_registry.
+struct BlockchainIdentityRegistryVerifier {
+    blockchain: Arc<RwLock<Blockchain>>,
+}
+
+#[async_trait::async_trait]
+impl IdentityRegistryVerifier for BlockchainIdentityRegistryVerifier {
+    async fn is_registered(&self, did: &str) -> Result<bool> {
+        let bc = self.blockchain.read().await;
+        Ok(bc.identity_registry.contains_key(did))
     }
 }

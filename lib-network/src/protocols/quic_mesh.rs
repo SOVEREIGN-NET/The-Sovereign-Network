@@ -109,6 +109,18 @@ impl Default for QuicTrustMode {
     }
 }
 
+/// Verifier for on-chain identity registration.
+///
+/// Injected by the application layer (zhtp) to check whether a peer's DID
+/// exists in the blockchain identity registry. Peers not registered on-chain
+/// are rejected during the QUIC handshake.
+#[async_trait]
+pub trait IdentityRegistryVerifier: Send + Sync {
+    /// Check whether the given DID is registered in the on-chain identity registry.
+    /// Returns `Ok(true)` if registered, `Ok(false)` if not, `Err` on lookup failure.
+    async fn is_registered(&self, did: &str) -> Result<bool>;
+}
+
 /// QUIC mesh protocol with UHP authentication and PQC encryption layer
 pub struct QuicMeshProtocol {
     /// QUIC endpoint (handles all connections)
@@ -138,6 +150,11 @@ pub struct QuicMeshProtocol {
 
     /// Message handler for processing received messages
     pub message_handler: Option<Arc<RwLock<MeshMessageHandler>>>,
+
+    /// On-chain identity registry verifier (injected by application layer).
+    /// When set, the QUIC handshake rejects peers whose DID is not registered
+    /// in the blockchain identity registry.
+    pub identity_registry_verifier: Option<Arc<dyn IdentityRegistryVerifier>>,
 }
 
 /// QUIC connection with UHP-verified identity and PQC encryption
@@ -385,6 +402,7 @@ impl QuicMeshProtocol {
             trust_mode: QuicTrustMode::Pinned, // Default to Pinned mode
             verifier,
             message_handler: None,
+            identity_registry_verifier: None,
         })
     }
 
@@ -401,6 +419,12 @@ impl QuicMeshProtocol {
     /// Set the message handler for processing received messages
     pub fn set_message_handler(&mut self, handler: Arc<RwLock<MeshMessageHandler>>) {
         self.message_handler = Some(handler);
+    }
+
+    /// Set the on-chain identity registry verifier.
+    /// When set, peers whose DID is not in the identity registry are rejected.
+    pub fn set_identity_registry_verifier(&mut self, verifier: Arc<dyn IdentityRegistryVerifier>) {
+        self.identity_registry_verifier = Some(verifier);
     }
 
     /// Set TLS trust policy for QUIC client connections
@@ -593,6 +617,37 @@ impl QuicMeshProtocol {
             }
         }
 
+        // === On-Chain Identity Registry Verification ===
+        // Reject peers whose DID is not registered in the blockchain identity registry.
+        if let Some(ref verifier) = self.identity_registry_verifier {
+            let peer_did = &handshake_result.verified_peer.identity.did;
+            match verifier.is_registered(peer_did).await {
+                Ok(true) => {
+                    debug!(peer_did = %peer_did, "On-chain identity verified");
+                }
+                Ok(false) => {
+                    warn!(
+                        peer_did = %peer_did,
+                        "Rejecting peer: DID not registered in identity registry"
+                    );
+                    connection.close(4u32.into(), b"identity_not_registered");
+                    return Err(anyhow!(
+                        "Peer DID {} not registered in identity registry",
+                        peer_did
+                    ));
+                }
+                Err(e) => {
+                    warn!(
+                        peer_did = %peer_did,
+                        error = %e,
+                        "Identity registry lookup failed — rejecting peer"
+                    );
+                    connection.close(5u32.into(), b"identity_lookup_failed");
+                    return Err(anyhow!("Identity registry lookup failed: {}", e));
+                }
+            }
+        }
+
         // Create PeerConnection from verified handshake result
         let now_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -742,6 +797,26 @@ impl QuicMeshProtocol {
                     "Dilithium PK mismatch for bootstrap peer {:?}",
                     hex::encode(&peer_node_id[..8])
                 ));
+            }
+        }
+
+        // === On-Chain Identity Registry Verification (bootstrap peer) ===
+        if let Some(ref verifier) = self.identity_registry_verifier {
+            let peer_did = &handshake_result.verified_peer.identity.did;
+            match verifier.is_registered(peer_did).await {
+                Ok(true) => {
+                    debug!(peer_did = %peer_did, "Bootstrap peer on-chain identity verified");
+                }
+                Ok(false) => {
+                    warn!(peer_did = %peer_did, "Rejecting bootstrap peer: DID not registered");
+                    connection.close(4u32.into(), b"identity_not_registered");
+                    return Err(anyhow!("Bootstrap peer DID {} not registered", peer_did));
+                }
+                Err(e) => {
+                    warn!(peer_did = %peer_did, error = %e, "Identity registry lookup failed for bootstrap peer");
+                    connection.close(5u32.into(), b"identity_lookup_failed");
+                    return Err(anyhow!("Identity registry lookup failed: {}", e));
+                }
             }
         }
 
@@ -1133,6 +1208,7 @@ impl QuicMeshProtocol {
         let message_handler = self.message_handler.clone();
         let identity = Arc::clone(&self.identity);
         let handshake_ctx = self.handshake_ctx.clone();
+        let registry_verifier = self.identity_registry_verifier.clone();
 
         // Task: Accept new incoming connections, handshake, register, spawn receive loop
         tokio::spawn(async move {
@@ -1143,6 +1219,7 @@ impl QuicMeshProtocol {
                         let handler = message_handler.clone();
                         let identity = Arc::clone(&identity);
                         let ctx = handshake_ctx.clone();
+                        let reg_verifier = registry_verifier.clone();
 
                         tokio::spawn(async move {
                             match incoming.await {
@@ -1218,6 +1295,26 @@ impl QuicMeshProtocol {
                                             error!(error = %e, "Dilithium PK mismatch");
                                             connection.close(3u32.into(), b"dilithium_pk_mismatch");
                                             return;
+                                        }
+                                    }
+
+                                    // === On-Chain Identity Registry Verification (incoming) ===
+                                    if let Some(ref verifier) = reg_verifier {
+                                        let peer_did = &handshake_result.verified_peer.identity.did;
+                                        match verifier.is_registered(peer_did).await {
+                                            Ok(true) => {
+                                                debug!(peer_did = %peer_did, "Incoming peer on-chain identity verified");
+                                            }
+                                            Ok(false) => {
+                                                warn!(peer_did = %peer_did, "Rejecting incoming peer: DID not registered");
+                                                connection.close(4u32.into(), b"identity_not_registered");
+                                                return;
+                                            }
+                                            Err(e) => {
+                                                warn!(peer_did = %peer_did, error = %e, "Identity registry lookup failed");
+                                                connection.close(5u32.into(), b"identity_lookup_failed");
+                                                return;
+                                            }
                                         }
                                     }
 
