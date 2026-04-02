@@ -70,9 +70,9 @@ Use the built-in network commands as a lightweight harness for device-to-device 
 There is no CLI or API endpoint that sends `ValidatorMessage` directly.
 
 What exists today:
-- `lib-network` defines `MessageBroadcaster`, wired into `lib-consensus` via `ConsensusMeshBroadcaster`.
-- `lib-consensus` has `ValidatorProtocol::broadcast_message()` connected to `QuicValidatorTransport`, which sends signed messages over the QUIC mesh via `send_to_peer()`.
-- `ValidatorProtocol` is wired at consensus startup with the mesh router's QUIC protocol.
+- `lib-consensus` defines the `MessageBroadcaster` trait. `zhtp` provides `ConsensusMeshBroadcaster` (in `zhtp/src/runtime/components/consensus.rs`) as the adapter that bridges consensus broadcasting over the QUIC mesh.
+- `lib-consensus` defines `ValidatorNetworkTransport`. `zhtp` provides `QuicValidatorTransport` as the adapter, wired into `ValidatorProtocol` at consensus startup.
+- `ValidatorProtocol::broadcast_message()` sends signed messages via `QuicValidatorTransport`, which calls `send_to_peer()` on the QUIC mesh.
 
 Implication:
 - Validator messages are broadcast to peers automatically during consensus rounds.
