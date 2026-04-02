@@ -32,7 +32,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 // Import from libraries (no circular dependencies!)
-use lib_network::protocols::quic_mesh::QuicMeshProtocol;
+use lib_network::protocols::quic_mesh::{IdentityRegistryVerifier, QuicMeshProtocol};
 use lib_protocols::zhtp::ZhtpRequestHandler;
 
 // Import new QUIC handler for native ZHTP-over-QUIC
@@ -419,7 +419,7 @@ impl ZhtpUnifiedServer {
         // Initialize QUIC mesh protocol (uses configurable QUIC port to avoid conflicts)
         // QUIC is now REQUIRED (not optional) for all networking
         info!(" [UNIFIED_SERVER] Calling init_quic_mesh()");
-        let quic_mesh = Self::init_quic_mesh(quic_port, server_id)
+        let quic_mesh = Self::init_quic_mesh(quic_port, server_id, blockchain.clone())
             .await
             .context("Failed to initialize QUIC mesh protocol - QUIC is required")?;
         info!(
@@ -596,7 +596,7 @@ impl ZhtpUnifiedServer {
     }
 
     /// Initialize QUIC mesh protocol with configurable port
-    async fn init_quic_mesh(quic_port: u16, server_id: Uuid) -> Result<QuicMeshProtocol> {
+    async fn init_quic_mesh(quic_port: u16, server_id: Uuid, blockchain: Arc<RwLock<Blockchain>>) -> Result<QuicMeshProtocol> {
         info!(" [QUIC] Parsing bind address for port {}", quic_port);
         let bind_addr: std::net::SocketAddr = format!("0.0.0.0:{}", quic_port)
             .parse()
@@ -717,7 +717,16 @@ impl ZhtpUnifiedServer {
         // Inject message handler into QUIC protocol
         info!(" [QUIC] Injecting message handler into QUIC protocol");
         quic_mesh.set_message_handler(Arc::new(RwLock::new(message_handler)));
-        info!("✅ [QUIC] MeshMessageHandler injected into QUIC protocol for blockchain sync");
+        info!(" [QUIC] MeshMessageHandler injected into QUIC protocol");
+
+        // Inject on-chain identity registry verifier for Sybil resistance.
+        // Uses the blockchain instance passed in at server construction — no global lookup,
+        // so there is no fail-open risk if the global provider happens to lag behind.
+        // Peers whose DID is not in the blockchain identity_registry are rejected.
+        quic_mesh.set_identity_registry_verifier(Arc::new(
+            BlockchainIdentityRegistryVerifier { blockchain },
+        ));
+        info!(" [QUIC] On-chain identity registry verifier injected");
 
         // IMPORTANT: Don't call start_receiving() here!
         // QuicHandler.accept_loop() is now the SOLE entry point for all QUIC connections
@@ -1862,5 +1871,18 @@ impl ZhtpUnifiedServer {
             "server_id": self.server_id,
             "status": "active"
         }))
+    }
+}
+
+/// On-chain identity registry verifier backed by the blockchain's identity_registry.
+struct BlockchainIdentityRegistryVerifier {
+    blockchain: Arc<RwLock<Blockchain>>,
+}
+
+#[async_trait::async_trait]
+impl IdentityRegistryVerifier for BlockchainIdentityRegistryVerifier {
+    async fn is_registered(&self, did: &str) -> Result<bool> {
+        let bc = self.blockchain.read().await;
+        Ok(bc.identity_registry.contains_key(did))
     }
 }
