@@ -1,3 +1,4 @@
+use crate::routing::kb::ls_comparator::ls_compare;
 use crate::utils::node::Node;
 
 pub const MAX_BUCKET_SIZE: usize = 5;
@@ -23,6 +24,7 @@ impl MBucket {
     pub fn insert(&mut self, n: Node) {
         if let Some(node) = self.nodes.iter_mut().find(|c| n.eq(c)) {
             node.seen();
+            self.nodes.sort_by(|a, b| ls_compare(a, b));
         } else if self.nodes.len() >= MAX_BUCKET_SIZE {
             // Bucket full — try to evict a stale cache entry.
             if let Some(node) = self.cache.iter_mut().find(|c| n.eq(c)) {
@@ -46,6 +48,7 @@ impl MBucket {
             }
         } else {
             self.nodes.push(n);
+            self.nodes.sort_by(|a, b| ls_compare(a, b));
         }
     }
 
