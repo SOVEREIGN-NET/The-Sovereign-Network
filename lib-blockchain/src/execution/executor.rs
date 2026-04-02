@@ -798,6 +798,9 @@ impl BlockExecutor {
                     // Should not happen - coinbase filtered out
                     unreachable!("Coinbase should not be in non-coinbase pass");
                 }
+                TxOutcome::TreasuryAllocation => {
+                    summary.balance_changes += 2; // source debit + destination credit
+                }
                 TxOutcome::LegacySystem => {
                     // No state changes for legacy system transactions.
                 }
@@ -1840,18 +1843,11 @@ impl BlockExecutor {
         mutator.put_cbe_account_state(&sender, &account)?;
 
         // Wire SOV ledger: debit sender's actual SOV token balance.
-        let sov_token_id = Self::canonical_sov_token_id();
-        let sender_addr = Address::new(sender);
-        let sov_balance = mutator.get_token_balance(&sov_token_id, &sender_addr)?;
-        let amount_in_u64 = u64::try_from(amount_in)
-            .map_err(|_| TxApplyError::InvalidType("BUY_CBE: amount_in exceeds u64".into()))?;
-        let new_balance = sov_balance.checked_sub(amount_in_u64).ok_or_else(|| {
-            TxApplyError::InvalidType(format!(
-                "BUY_CBE: SOV ledger underflow (have={}, need={})",
-                sov_balance, amount_in_u64
-            ))
-        })?;
-        mutator.set_token_balance(&sov_token_id, &sender_addr, new_balance)?;
+        mutator.debit_token(
+            &Self::canonical_sov_token_id(),
+            &Address::new(sender),
+            amount_in,
+        )?;
 
         Ok(CanonicalBondingCurveOutcome::Buy(BondingCurveBuyOutcome {
             token_id: crate::Blockchain::derive_cbe_token_id_pub(),
@@ -1915,15 +1911,11 @@ impl BlockExecutor {
         mutator.put_cbe_account_state(&sender, &account)?;
 
         // Wire SOV ledger: credit seller's actual SOV token balance.
-        let sov_token_id = Self::canonical_sov_token_id();
-        let sender_addr = Address::new(sender);
-        let sov_balance = mutator.get_token_balance(&sov_token_id, &sender_addr)?;
-        let sov_out_u64 = u64::try_from(sov_out)
-            .map_err(|_| TxApplyError::InvalidType("SELL_CBE: sov_out exceeds u64".into()))?;
-        let new_balance = sov_balance.checked_add(sov_out_u64).ok_or_else(|| {
-            TxApplyError::InvalidType("SELL_CBE: SOV ledger overflow".to_string())
-        })?;
-        mutator.set_token_balance(&sov_token_id, &sender_addr, new_balance)?;
+        mutator.credit_token(
+            &Self::canonical_sov_token_id(),
+            &Address::new(sender),
+            sov_out,
+        )?;
 
         Ok(CanonicalBondingCurveOutcome::Sell(
             BondingCurveSellOutcome {
@@ -1953,26 +1945,12 @@ impl BlockExecutor {
             }
         };
 
-        let sov_token_id = Self::canonical_sov_token_id();
-        let source = Address::new(data.source_treasury_key_id);
-        let destination = Address::new(data.destination_key_id);
-
-        // Debit source treasury
-        let source_balance = mutator.get_token_balance(&sov_token_id, &source)?;
-        let new_source = source_balance.checked_sub(data.amount).ok_or_else(|| {
-            TxApplyError::InvalidType(format!(
-                "TreasuryAllocation: source underflow (have={}, need={})",
-                source_balance, data.amount
-            ))
-        })?;
-        mutator.set_token_balance(&sov_token_id, &source, new_source)?;
-
-        // Credit destination wallet
-        let dest_balance = mutator.get_token_balance(&sov_token_id, &destination)?;
-        let new_dest = dest_balance.checked_add(data.amount).ok_or_else(|| {
-            TxApplyError::InvalidType("TreasuryAllocation: destination overflow".to_string())
-        })?;
-        mutator.set_token_balance(&sov_token_id, &destination, new_dest)?;
+        mutator.transfer_token(
+            &Self::canonical_sov_token_id(),
+            &Address::new(data.source_treasury_key_id),
+            &Address::new(data.destination_key_id),
+            data.amount as u128,
+        )?;
 
         tracing::info!(
             "TreasuryAllocation: {} SOV from {} to {} (proposal={})",
@@ -2353,7 +2331,7 @@ impl BlockExecutor {
 
             TransactionType::TreasuryAllocation => {
                 self.apply_treasury_allocation(mutator, tx)?;
-                Ok(TxOutcome::LegacySystem)
+                Ok(TxOutcome::TreasuryAllocation)
             }
 
             // Coinbase is routed through apply_coinbase_with_fees, never here.
@@ -2440,6 +2418,8 @@ enum TxOutcome {
     /// Oracle attestation outcome (ORACLE-R3: Canonical Path)
     OracleAttestation(OracleAttestationOutcome),
     Coinbase(CoinbaseOutcome),
+    /// Treasury allocation: SOV transferred from source treasury to destination wallet.
+    TreasuryAllocation,
     /// Legacy system transaction types (IdentityRegistration, WalletRegistration, etc.)
     /// accepted as no-ops by the Phase-2 executor for backwards compatibility.
     LegacySystem,
@@ -4537,13 +4517,15 @@ mod tests {
     // SOV Ledger Wiring Tests (#1896)
     // =========================================================================
 
-    /// Helper: seed SOV balance for an address in the test store (outside block tx).
-    fn seed_sov_balance(store: &Arc<dyn BlockchainStore>, key_id: [u8; 32], amount: u64) {
+    /// Helper: seed SOV balance inside a block-scoped write at the given height.
+    fn seed_sov_balance(store: &Arc<dyn BlockchainStore>, key_id: [u8; 32], amount: u64, block_height: u64, prev_hash: Hash) {
         let token_id = TokenId::new(crate::contracts::utils::generate_lib_token_id());
         let addr = Address::new(key_id);
-        store
-            .force_set_token_balances(&[(token_id, addr, amount as u128)])
-            .unwrap();
+        let block = create_block_at_height(block_height, prev_hash);
+        store.begin_block(block_height).unwrap();
+        store.set_token_balance(&token_id, &addr, amount as u128).unwrap();
+        store.append_block(&block).unwrap();
+        store.commit_block().unwrap();
     }
 
     /// Helper: read SOV balance for an address from the test store.
@@ -4565,8 +4547,9 @@ mod tests {
         let dest_key = [0xBB; 32];
         let amount = 5_000u64;
 
-        // Seed source treasury with SOV
-        seed_sov_balance(&store, source_key, 10_000);
+        // Seed source treasury with SOV at block height 1
+        seed_sov_balance(&store, source_key, 10_000, 1, genesis.header.block_hash);
+        let block1_hash = store.get_block_hash_by_height(1).unwrap().unwrap();
 
         let data = crate::transaction::core::TreasuryAllocationData {
             source_treasury_key_id: source_key,
@@ -4589,8 +4572,8 @@ mod tests {
             payload: crate::transaction::core::TransactionPayload::TreasuryAllocation(data),
         };
 
-        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
-        executor.apply_block(&block1).unwrap();
+        let block2 = create_block_with_txs(2, Hash::new(block1_hash.0), vec![tx]);
+        executor.apply_block(&block2).unwrap();
 
         assert_eq!(read_sov_balance(&store, source_key), 5_000);
         assert_eq!(read_sov_balance(&store, dest_key), 5_000);
@@ -4608,7 +4591,8 @@ mod tests {
         let dest_key = [0xBB; 32];
 
         // Source has only 1_000 but allocation requests 5_000
-        seed_sov_balance(&store, source_key, 1_000);
+        seed_sov_balance(&store, source_key, 1_000, 1, genesis.header.block_hash);
+        let block1_hash = store.get_block_hash_by_height(1).unwrap().unwrap();
 
         let data = crate::transaction::core::TreasuryAllocationData {
             source_treasury_key_id: source_key,
@@ -4631,8 +4615,8 @@ mod tests {
             payload: crate::transaction::core::TransactionPayload::TreasuryAllocation(data),
         };
 
-        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
-        let result = executor.apply_block(&block1);
+        let block2 = create_block_with_txs(2, Hash::new(block1_hash.0), vec![tx]);
+        let result = executor.apply_block(&block2);
         assert!(result.is_err(), "Should reject treasury allocation with insufficient balance");
     }
 
@@ -4650,12 +4634,13 @@ mod tests {
         let buyer_key = signer.public_key.key_id;
         let amount_in: u128 = 1_000;
 
-        // Seed buyer SOV in the token ledger (outside block tx).
-        seed_sov_balance(&store, buyer_key, amount_in as u64);
-
-        // Block 0: seed bonding curve account state.
+        // Block 0: seed SOV balance + bonding curve account state together.
         store.begin_block(0).unwrap();
         {
+            let sov_token_id = TokenId::new(crate::contracts::utils::generate_lib_token_id());
+            let addr = Address::new(buyer_key);
+            store.set_token_balance(&sov_token_id, &addr, amount_in).unwrap();
+
             let seed = StateMutator::new(store.as_ref());
             seed.put_cbe_account_state(
                 &buyer_key,
