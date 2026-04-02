@@ -29,6 +29,9 @@ pub trait DhtBackend: Send + Sync {
     /// Remove all expired entries. Returns count of removed entries.
     async fn cleanup_expired(&self) -> Result<usize>;
 
+    /// Remove all entries (expired and non-expired).
+    async fn clear_all(&self) -> Result<()>;
+
     /// Total number of stored keys.
     async fn key_count(&self) -> usize;
 
@@ -102,6 +105,11 @@ impl DhtBackend for InMemoryDhtBackend {
         let now = now_secs();
         entries.retain(|_, e| now <= e.expires_at);
         Ok(before - entries.len())
+    }
+
+    async fn clear_all(&self) -> Result<()> {
+        self.entries.write().await.clear();
+        Ok(())
     }
 
     async fn key_count(&self) -> usize {

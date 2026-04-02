@@ -466,13 +466,18 @@ impl ZhtpUnifiedServer {
         let dht_node_id_bytes: [u8; 32] = identity_manager.read().await.list_identities()
             .first()
             .map(|id| *id.node_id.as_bytes())
-            .unwrap_or([0u8; 32]);
+            .ok_or_else(|| anyhow::anyhow!("DHT persistent backend requires a configured identity"))?;
         let storage_node_id = lib_types::NodeId::from_bytes(dht_node_id_bytes);
-        let dht_integration = match crate::integration::dht_persistent_backend::PersistentDhtBackend::open(
-            storage_node_id,
-            10_000_000_000, // 10 GB
-            dht_path,
-        ) {
+        let dht_integration = match std::fs::create_dir_all(dht_path)
+            .and_then(|_| Ok(()))
+            .map_err(anyhow::Error::from)
+            .and_then(|_| {
+                crate::integration::dht_persistent_backend::PersistentDhtBackend::open(
+                    storage_node_id,
+                    10_000_000_000,
+                    dht_path,
+                )
+            }) {
             Ok(backend) => {
                 info!(" DHT persistent backend initialized (sled)");
                 lib_network::dht::ZkDHTIntegration::with_backend(

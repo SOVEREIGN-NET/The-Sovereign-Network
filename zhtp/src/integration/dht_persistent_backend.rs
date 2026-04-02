@@ -32,9 +32,18 @@ impl PersistentDhtBackend {
 
 #[async_trait]
 impl DhtBackend for PersistentDhtBackend {
-    async fn store(&self, key: &str, value: Vec<u8>, _ttl_secs: u64) -> Result<()> {
+    async fn store(&self, key: &str, value: Vec<u8>, ttl_secs: u64) -> Result<()> {
         let mut storage = self.storage.lock().await;
-        storage.store(key.to_string(), value, None).await
+        storage.store(key.to_string(), value, None).await?;
+        if ttl_secs > 0 {
+            let expiry = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                + ttl_secs;
+            storage.set_expiry(key, expiry).await?;
+        }
+        Ok(())
     }
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
@@ -51,6 +60,16 @@ impl DhtBackend for PersistentDhtBackend {
     async fn cleanup_expired(&self) -> Result<usize> {
         let mut storage = self.storage.lock().await;
         storage.cleanup_expired().await
+    }
+
+    async fn clear_all(&self) -> Result<()> {
+        let mut storage = self.storage.lock().await;
+        // Remove all keys by collecting them first, then removing each.
+        let keys: Vec<String> = storage.keys_with_prefix("")?;
+        for key in &keys {
+            let _ = storage.remove(key).await;
+        }
+        Ok(())
     }
 
     async fn key_count(&self) -> usize {

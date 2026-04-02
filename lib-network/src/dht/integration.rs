@@ -137,10 +137,11 @@ impl ZkDHTIntegration {
         // Store via backend
         self.backend.store(&key, content.clone(), ttl_secs).await?;
 
-        // Replicate to nearest peers if transport available
+        // Replicate to peers closest to the content key in DHT keyspace.
+        let key_hash = lib_crypto::hash_blake3(key.as_bytes());
         let transport_guard = self.transport.read().await;
         if let Some(ref transport) = *transport_guard {
-            let closest = self.find_closest_peers(&self.local_node_id, 3).await;
+            let closest = self.find_closest_peers(&key_hash, 3).await;
             let mut replicated = 0usize;
             for peer in &closest {
                 match transport.send_store(peer, &key, &content, ttl_secs).await {
@@ -165,10 +166,11 @@ impl ZkDHTIntegration {
             return Ok(Some(value));
         }
 
-        // Query nearest peers if transport available
+        // Query peers closest to the content key in DHT keyspace.
+        let key_hash = lib_crypto::hash_blake3(key.as_bytes());
         let transport_guard = self.transport.read().await;
         if let Some(ref transport) = *transport_guard {
-            let closest = self.find_closest_peers(&self.local_node_id, 3).await;
+            let closest = self.find_closest_peers(&key_hash, 3).await;
             for peer in &closest {
                 match transport.query_content(peer, key).await {
                     Ok(Some(value)) => {
@@ -214,12 +216,9 @@ impl ZkDHTIntegration {
         })
     }
 
-    /// Clear cache.
+    /// Clear all stored content.
     pub async fn clear_cache(&self) -> Result<()> {
-        // InMemoryDhtBackend doesn't expose a clear method, but cleanup_expired
-        // with a zero-TTL store cycle achieves the same. For now, we rely on the
-        // backend's cleanup_expired.
-        self.cleanup_expired().await?;
+        self.backend.clear_all().await?;
         info!("DHT content cache cleared");
         Ok(())
     }
@@ -311,8 +310,9 @@ impl ZkDHTIntegration {
             }
         };
 
+        let key_hash = lib_crypto::hash_blake3(key.as_bytes());
         let closest_peers = self
-            .find_closest_peers(&self.local_node_id, replication_factor as usize)
+            .find_closest_peers(&key_hash, replication_factor as usize)
             .await;
 
         let mut replicated_count = 0u8;

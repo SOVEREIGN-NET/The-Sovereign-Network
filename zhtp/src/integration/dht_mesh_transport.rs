@@ -1,25 +1,31 @@
 //! Mesh-based DHT network transport.
 //!
 //! Implements `DhtNetworkTransport` using the QUIC mesh to send DHT store
-//! requests and content queries to peers.
+//! requests to peers. Remote content queries are not yet supported (requires
+//! a request/response channel wired through DhtFindValueResponse).
 
 use anyhow::Result;
 use async_trait::async_trait;
 use lib_network::dht::integration::{DhtNetworkTransport, DhtPeerInfo};
 use lib_network::types::mesh_message::ZhtpMeshMessage;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::unified_server::MeshRouter;
 
 /// DHT network transport over QUIC mesh.
 pub struct MeshDhtNetworkTransport {
     mesh_router: Arc<MeshRouter>,
+    /// Local node's public key for populating DhtStore requester field.
+    local_node_key_id: [u8; 32],
 }
 
 impl MeshDhtNetworkTransport {
-    pub fn new(mesh_router: Arc<MeshRouter>) -> Self {
-        Self { mesh_router }
+    pub fn new(mesh_router: Arc<MeshRouter>, local_node_key_id: [u8; 32]) -> Self {
+        Self {
+            mesh_router,
+            local_node_key_id,
+        }
     }
 }
 
@@ -38,17 +44,19 @@ impl DhtNetworkTransport for MeshDhtNetworkTransport {
             None => return Err(anyhow::anyhow!("QUIC protocol not available for DHT store")),
         };
 
+        // Use local node's key_id as requester so the receiver can route ACKs
+        // and verify the signature. QUIC+UHP provides transport-layer auth.
         let msg = ZhtpMeshMessage::DhtStore {
             requester: lib_crypto::PublicKey {
                 dilithium_pk: Vec::new(),
                 kyber_pk: Vec::new(),
-                key_id: peer.node_id,
+                key_id: self.local_node_key_id,
             },
             request_id: rand::random(),
             key: key.as_bytes().to_vec(),
             value: value.to_vec(),
             ttl: ttl_secs,
-            signature: Vec::new(), // Signed at transport layer by QUIC+UHP
+            signature: Vec::new(), // Transport-layer auth via QUIC+UHP
         };
 
         quic.send_to_peer(&peer.node_id, msg).await?;
@@ -56,39 +64,10 @@ impl DhtNetworkTransport for MeshDhtNetworkTransport {
         Ok(())
     }
 
-    async fn query_content(&self, peer: &DhtPeerInfo, key: &str) -> Result<Option<Vec<u8>>> {
-        let quic_guard = self.mesh_router.quic_protocol.read().await;
-        let quic = match quic_guard.as_ref() {
-            Some(q) => q,
-            None => return Err(anyhow::anyhow!("QUIC protocol not available for DHT query")),
-        };
-
-        let msg = ZhtpMeshMessage::DhtFindValue {
-            requester: lib_crypto::PublicKey {
-                dilithium_pk: Vec::new(),
-                kyber_pk: Vec::new(),
-                key_id: peer.node_id,
-            },
-            request_id: rand::random(),
-            key: key.as_bytes().to_vec(),
-            max_hops: 3,
-        };
-
-        // Send the query — response will come back asynchronously via message handler.
-        // For now this is fire-and-forget; a full implementation would use a response
-        // channel with timeout. The content will be cached when the DhtFindValueResponse
-        // arrives via the message handler.
-        match quic.send_to_peer(&peer.node_id, msg).await {
-            Ok(()) => {
-                debug!("DHT query sent to peer {:?} for key {}", &peer.node_id[..4], key);
-            }
-            Err(e) => {
-                warn!("DHT query to peer {:?} failed: {}", &peer.node_id[..4], e);
-            }
-        }
-
-        // Async response not yet wired — returns None.
-        // Content arrives via DhtFindValueResponse in the message handler.
+    async fn query_content(&self, _peer: &DhtPeerInfo, _key: &str) -> Result<Option<Vec<u8>>> {
+        // Remote content queries require a request/response channel wired through
+        // DhtFindValueResponse in the message handler. Until that's implemented,
+        // return None so fetch_content only checks local storage + replication.
         Ok(None)
     }
 }
