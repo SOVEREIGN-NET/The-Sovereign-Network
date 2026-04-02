@@ -4047,7 +4047,7 @@ impl Blockchain {
         match tx_type {
             TransactionType::TokenTransfer | TransactionType::TokenMint | TransactionType::TokenCreation => {
                 info!(
-                    "[token/transfer] mempool accepted: type={:?} tx={} size={} fee={}",
+                    "[token/mempool] accepted: type={:?} tx={} size={} fee={}",
                     tx_type,
                     &hex::encode(transaction.hash().as_bytes())[..8],
                     transaction.size(),
@@ -15219,9 +15219,8 @@ mod cbe_genesis_allocation_tests {
         blockchain.ensure_sov_token_contract();
         
         // Create a wallet with pre-minted balance (simulating register_wallet() pre-mint)
-        let wallet_id = "test-wallet-1";
         let mut wallet_id_bytes = [0u8; 32];
-        wallet_id_bytes.copy_from_slice(wallet_id.as_bytes());
+        wallet_id_bytes[..13].copy_from_slice(b"test-wallet-1");
         let recipient_pk = Blockchain::wallet_key_for_sov(&wallet_id_bytes);
         
         // Pre-mint 3000 SOV (simulating register_wallet() behavior)
@@ -15237,29 +15236,34 @@ mod cbe_genesis_allocation_tests {
         assert_eq!(current_balance, 3000, "Pre-minted balance should be 3000");
         
         // Create wallet registration transaction with initial_balance = 5000
-        let wallet_data = crate::transaction::WalletData {
-            wallet_id: wallet_id.to_string(),
-            wallet_type: "primary".to_string(),
+        let wallet_data = crate::transaction::core::WalletTransactionData {
+            wallet_id: Hash::new(wallet_id_bytes),
+            wallet_type: "Primary".to_string(),
+            wallet_name: "Test Wallet".to_string(),
+            alias: None,
+            public_key: vec![0u8; 32],
+            owner_identity_id: None,
+            seed_commitment: Hash::default(),
+            created_at: 0,
+            registration_fee: 0,
+            capabilities: 0,
             initial_balance: 5000,
-            staked_balance: 0,
-            pending_rewards: 0,
-            owner_id: Some(wallet_id.to_string()),
-            metadata: None,
         };
-        
+
         let tx = Transaction::new_wallet_registration(
             wallet_data,
             vec![],
             crate::integration::crypto_integration::Signature::default(),
             b"test".to_vec(),
         );
-        
-        let block = Block::new(
-            1,
-            blockchain.blocks.last().unwrap().hash(),
-            vec![tx],
-            blockchain.difficulty_config.clone(),
-        );
+
+        let prev_hash = blockchain.blocks.last().unwrap().hash();
+        let block = crate::block::BlockBuilder::new(prev_hash, 1, crate::types::Difficulty::default())
+            .version(1)
+            .timestamp(1001)
+            .transactions(vec![tx])
+            .build()
+            .expect("block build should succeed");
         
         // Process the block
         blockchain.process_wallet_transactions(&block).expect("Should process successfully");

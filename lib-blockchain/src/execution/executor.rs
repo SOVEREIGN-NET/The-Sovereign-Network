@@ -3205,6 +3205,32 @@ mod tests {
     }
 
     #[test]
+    fn test_token_creation_fee_zero_accepted() {
+        let store = create_test_store();
+        let executor = create_test_executor(store.clone());
+
+        let genesis = create_genesis_block();
+        executor.apply_block(&genesis).unwrap();
+
+        let tx = create_token_creation_tx_with_fee(
+            "Subsidized Token",
+            "FREE",
+            1_000_000,
+            [0xBB; 32],
+            0, // subsidized/system creation
+        );
+        let block1 = create_block_with_txs(1, genesis.header.block_hash, vec![tx]);
+
+        let result = executor.apply_block(&block1);
+
+        assert!(
+            result.is_ok(),
+            "TokenCreation with fee=0 (subsidized) should be accepted: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
     fn test_contract_deployment_writes_contract_code() {
         let store = create_test_store();
         let executor = create_test_executor(store.clone());
