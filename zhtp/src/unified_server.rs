@@ -419,7 +419,7 @@ impl ZhtpUnifiedServer {
         // Initialize QUIC mesh protocol (uses configurable QUIC port to avoid conflicts)
         // QUIC is now REQUIRED (not optional) for all networking
         info!(" [UNIFIED_SERVER] Calling init_quic_mesh()");
-        let quic_mesh = Self::init_quic_mesh(quic_port, server_id)
+        let quic_mesh = Self::init_quic_mesh(quic_port, server_id, blockchain.clone())
             .await
             .context("Failed to initialize QUIC mesh protocol - QUIC is required")?;
         info!(
@@ -596,7 +596,7 @@ impl ZhtpUnifiedServer {
     }
 
     /// Initialize QUIC mesh protocol with configurable port
-    async fn init_quic_mesh(quic_port: u16, server_id: Uuid) -> Result<QuicMeshProtocol> {
+    async fn init_quic_mesh(quic_port: u16, server_id: Uuid, blockchain: Arc<RwLock<Blockchain>>) -> Result<QuicMeshProtocol> {
         info!(" [QUIC] Parsing bind address for port {}", quic_port);
         let bind_addr: std::net::SocketAddr = format!("0.0.0.0:{}", quic_port)
             .parse()
@@ -720,15 +720,13 @@ impl ZhtpUnifiedServer {
         info!(" [QUIC] MeshMessageHandler injected into QUIC protocol");
 
         // Inject on-chain identity registry verifier for Sybil resistance.
+        // Uses the blockchain instance passed in at server construction — no global lookup,
+        // so there is no fail-open risk if the global provider happens to lag behind.
         // Peers whose DID is not in the blockchain identity_registry are rejected.
-        if let Ok(blockchain) = crate::runtime::blockchain_provider::get_global_blockchain().await {
-            quic_mesh.set_identity_registry_verifier(Arc::new(
-                BlockchainIdentityRegistryVerifier { blockchain },
-            ));
-            info!(" [QUIC] On-chain identity registry verifier injected");
-        } else {
-            warn!(" [QUIC] Blockchain not available — on-chain identity verification disabled");
-        }
+        quic_mesh.set_identity_registry_verifier(Arc::new(
+            BlockchainIdentityRegistryVerifier { blockchain },
+        ));
+        info!(" [QUIC] On-chain identity registry verifier injected");
 
         // IMPORTANT: Don't call start_receiving() here!
         // QuicHandler.accept_loop() is now the SOLE entry point for all QUIC connections
