@@ -565,8 +565,48 @@ impl NonceCache {
 
         let db = Arc::new(db);
 
-        // Verify or store network epoch
-        Self::verify_or_store_network_epoch(&db, network_epoch)?;
+        // Verify or store network epoch — auto-recover on mismatch
+        let epoch_result = Self::verify_or_store_network_epoch(&db, network_epoch);
+        let db = if let Err(ref e) = epoch_result {
+            let msg = e.to_string();
+            if msg.contains("Network epoch mismatch") {
+                warn!(
+                    "Network epoch mismatch at {:?}: {}. \
+                     Auto-recovering: deleting stale nonce cache and recreating for current network.",
+                    db_path.as_ref(),
+                    e
+                );
+                // Drop existing db handle before removing directory
+                drop(db);
+                if let Err(rm_err) = std::fs::remove_dir_all(db_path.as_ref()) {
+                    error!(
+                        "Failed to remove stale nonce cache at {:?}: {}. Manual deletion required.",
+                        db_path.as_ref(),
+                        rm_err
+                    );
+                    return Err(anyhow!(
+                        "Nonce cache epoch mismatch and auto-recovery failed: {}. \
+                         Please manually delete {:?}",
+                        rm_err,
+                        db_path.as_ref()
+                    ));
+                }
+                if let Some(parent) = db_path.as_ref().parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let fresh_db = sled::open(db_path.as_ref()).map_err(|e2| {
+                    anyhow!("Failed to recreate nonce cache after epoch mismatch recovery: {}", e2)
+                })?;
+                let fresh_db = Arc::new(fresh_db);
+                Self::verify_or_store_network_epoch(&fresh_db, network_epoch)?;
+                fresh_db
+            } else {
+                epoch_result?;
+                unreachable!()
+            }
+        } else {
+            db
+        };
 
         info!(
             "Nonce cache initialized with network epoch: 0x{:016x}",
