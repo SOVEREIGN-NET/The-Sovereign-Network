@@ -8,7 +8,6 @@ use crate::utils::node::{Node, V4_MASK, V6_MASK};
 use crate::utils::uid::{ID_LENGTH, UID};
 use core::array::from_fn;
 use std::any::Any;
-use std::cmp::Ordering;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
