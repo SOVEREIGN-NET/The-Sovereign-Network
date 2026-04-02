@@ -778,11 +778,12 @@ mod tests {
     /// Test: Message size limit enforcement
     #[tokio::test]
     async fn test_oversized_message_rejection() {
+        use tokio::io::AsyncWriteExt;
         let (mut client, mut server) = duplex(16 * 1024 * 1024);
 
-        // Send a length that exceeds the limit
+        // Send a length prefix that exceeds the 1MB limit
         tokio::spawn(async move {
-            let _ = client.write_u32(2_000_000).await; // 2MB > 1MB limit
+            let _ = client.write_all(&2_000_000u32.to_be_bytes()).await;
             let _ = client.flush().await;
             let _ = graceful_shutdown(&mut client, 5).await;
         });
