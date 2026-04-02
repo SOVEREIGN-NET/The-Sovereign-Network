@@ -485,6 +485,27 @@ pub struct ConsensusEngine {
     /// Unix timestamp (seconds) when this consensus engine instance was created.
     /// Used to compute node uptime for work proofs.
     engine_start_time: u64,
+    /// Receiver for validator set updates from the runtime.
+    /// The consensus loop checks this between iterations and applies updates
+    /// without requiring direct engine access from external tasks.
+    validator_update_rx: Option<tokio::sync::mpsc::Receiver<ValidatorSetUpdate>>,
+}
+
+/// Validator set update message sent from the runtime to the consensus loop.
+///
+/// Each entry is (identity_id, stake, consensus_key, networking_key, rewards_key, commission_rate).
+/// The engine constructs internal Validator instances from this data.
+pub struct ValidatorSetUpdate {
+    pub entries: Vec<ValidatorUpdateEntry>,
+    pub local_identity: Option<IdentityId>,
+    pub local_keypair: Option<lib_crypto::KeyPair>,
+}
+
+/// Single validator entry for a set update.
+pub struct ValidatorUpdateEntry {
+    pub identity_id: IdentityId,
+    pub stake: u64,
+    pub consensus_key: Vec<u8>,
 }
 
 impl ConsensusEngine {
@@ -554,12 +575,22 @@ impl ConsensusEngine {
             block_commit_callback: None,
             catch_up_sync_trigger: None,
             engine_start_time,
+            validator_update_rx: None,
         })
     }
 
     /// Set the message receiver (from network layer)
     pub fn set_message_receiver(&mut self, rx: mpsc::Receiver<ValidatorMessage>) {
         self.message_rx = Some(rx);
+    }
+
+    /// Set the validator update receiver. The consensus loop processes updates
+    /// between iterations without requiring direct engine access.
+    pub fn set_validator_update_receiver(
+        &mut self,
+        rx: tokio::sync::mpsc::Receiver<ValidatorSetUpdate>,
+    ) {
+        self.validator_update_rx = Some(rx);
     }
 
     /// Set liveness event sender for monitoring/alert bridges.
