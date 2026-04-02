@@ -7,6 +7,8 @@ pub mod dependency_injection;
 pub mod dht_adapter;
 pub mod dht_dispatcher;
 pub mod dht_integration;
+pub mod dht_mesh_transport;
+pub mod dht_persistent_backend;
 pub mod dht_payload_handler;
 pub mod event_bus;
 pub mod service_container;
