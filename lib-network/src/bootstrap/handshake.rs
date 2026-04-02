@@ -676,6 +676,7 @@ mod tests {
     /// Test oversized message rejection
     #[tokio::test]
     async fn test_oversized_message_rejection() -> Result<()> {
+        use crate::handshake::MAX_HANDSHAKE_MESSAGE_SIZE;
         if net_tests_disabled() {
             eprintln!("network bootstrap tests disabled in this environment");
             return Ok(());
