@@ -493,8 +493,9 @@ pub struct ConsensusEngine {
 
 /// Validator set update message sent from the runtime to the consensus loop.
 ///
-/// Each entry is (identity_id, stake, consensus_key, networking_key, rewards_key, commission_rate).
-/// The engine constructs internal Validator instances from this data.
+/// Each entry provides the validator's identity, stake, and consensus key:
+/// `(identity_id, stake, consensus_key)`. The engine constructs internal
+/// `Validator` instances from this data.
 pub struct ValidatorSetUpdate {
     pub entries: Vec<ValidatorUpdateEntry>,
     pub local_identity: Option<IdentityId>,
