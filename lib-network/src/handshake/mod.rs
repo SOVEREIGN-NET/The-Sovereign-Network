@@ -624,26 +624,8 @@ impl NodeIdentity {
         res
     }
 
-    /// Verify node is registered on-chain (stub for future implementation)
-    ///
-    /// TODO: Integrate with smart contract registry
-    /// - Check if NodeId exists in on-chain registry
-    /// - Verify minimum stake requirement
-    /// - Check if node is slashed
-    /// - Verify registration hasn't expired
-    ///
-    /// For now, this is a no-op that always succeeds.
-    /// Production deployment MUST implement actual on-chain verification.
-    #[allow(dead_code)]
-    pub fn verify_onchain_registration(&self) -> Result<()> {
-        // Stub: Always succeeds for now
-        // PRODUCTION: Replace with actual smart contract call
-        tracing::debug!(
-            node_id = ?self.node_id,
-            "On-chain verification stub called - implement before production"
-        );
-        Ok(())
-    }
+    // On-chain identity verification is handled by IdentityRegistryVerifier
+    // trait in quic_mesh.rs, injected by the application layer during QUIC setup.
 
     /// Get a compact string representation for logging
     pub fn to_compact_string(&self) -> String {

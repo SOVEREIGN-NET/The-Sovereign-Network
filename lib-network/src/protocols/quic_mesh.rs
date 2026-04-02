@@ -109,6 +109,89 @@ impl Default for QuicTrustMode {
     }
 }
 
+/// Verifier for on-chain identity registration.
+///
+/// Injected by the application layer (zhtp) to check whether a peer's DID
+/// exists in the blockchain identity registry. Peers not registered on-chain
+/// are rejected during the QUIC handshake.
+#[async_trait]
+pub trait IdentityRegistryVerifier: Send + Sync {
+    /// Check whether the given DID is registered in the on-chain identity registry.
+    /// Returns `Ok(true)` if registered, `Ok(false)` if not, `Err` on lookup failure.
+    async fn is_registered(&self, did: &str) -> Result<bool>;
+}
+
+/// Outcome of an on-chain identity registry lookup.
+#[derive(Debug)]
+enum RegistrationOutcome {
+    /// DID is registered — connection may proceed.
+    Registered,
+    /// DID is not in the registry — close with code 4 (`identity_not_registered`).
+    NotRegistered,
+    /// Registry lookup failed — close with code 5 (`identity_lookup_failed`).
+    LookupFailed(String),
+}
+
+/// Classify a DID against the registry verifier without touching the connection.
+///
+/// Separated from `verify_peer_registration` so the decision logic can be tested
+/// in unit tests without requiring a live QUIC connection.
+async fn evaluate_registration(
+    verifier: &dyn IdentityRegistryVerifier,
+    peer_did: &str,
+) -> RegistrationOutcome {
+    match verifier.is_registered(peer_did).await {
+        Ok(true) => RegistrationOutcome::Registered,
+        Ok(false) => RegistrationOutcome::NotRegistered,
+        Err(e) => RegistrationOutcome::LookupFailed(e.to_string()),
+    }
+}
+
+/// Verify that a peer's DID is registered in the on-chain identity registry.
+///
+/// On success returns `Ok(())`. On failure the connection is closed before this
+/// function returns `Err`, using the following close codes:
+///
+/// | Result          | Close code | Close reason              |
+/// |-----------------|-----------|---------------------------|
+/// | Not registered  | 4          | `identity_not_registered` |
+/// | Lookup failure  | 5          | `identity_lookup_failed`  |
+///
+/// Both codes are intentionally distinct so operators can tell apart
+/// "peer is not registered" from "registry could not be reached".
+async fn verify_peer_registration(
+    verifier: &dyn IdentityRegistryVerifier,
+    connection: &Connection,
+    peer_did: &str,
+) -> Result<()> {
+    match evaluate_registration(verifier, peer_did).await {
+        RegistrationOutcome::Registered => {
+            debug!(peer_did = %peer_did, "On-chain identity verified");
+            Ok(())
+        }
+        RegistrationOutcome::NotRegistered => {
+            warn!(
+                peer_did = %peer_did,
+                "Rejecting peer: DID not registered in identity registry"
+            );
+            connection.close(4u32.into(), b"identity_not_registered");
+            Err(anyhow!(
+                "Peer DID {} not registered in identity registry",
+                peer_did
+            ))
+        }
+        RegistrationOutcome::LookupFailed(msg) => {
+            warn!(
+                peer_did = %peer_did,
+                error = %msg,
+                "Identity registry lookup failed — rejecting peer"
+            );
+            connection.close(5u32.into(), b"identity_lookup_failed");
+            Err(anyhow!("Identity registry lookup failed: {}", msg))
+        }
+    }
+}
+
 /// QUIC mesh protocol with UHP authentication and PQC encryption layer
 pub struct QuicMeshProtocol {
     /// QUIC endpoint (handles all connections)
@@ -138,6 +221,11 @@ pub struct QuicMeshProtocol {
 
     /// Message handler for processing received messages
     pub message_handler: Option<Arc<RwLock<MeshMessageHandler>>>,
+
+    /// On-chain identity registry verifier (injected by application layer).
+    /// When set, the QUIC handshake rejects peers whose DID is not registered
+    /// in the blockchain identity registry.
+    identity_registry_verifier: Option<Arc<dyn IdentityRegistryVerifier>>,
 }
 
 /// QUIC connection with UHP-verified identity and PQC encryption
@@ -385,6 +473,7 @@ impl QuicMeshProtocol {
             trust_mode: QuicTrustMode::Pinned, // Default to Pinned mode
             verifier,
             message_handler: None,
+            identity_registry_verifier: None,
         })
     }
 
@@ -401,6 +490,12 @@ impl QuicMeshProtocol {
     /// Set the message handler for processing received messages
     pub fn set_message_handler(&mut self, handler: Arc<RwLock<MeshMessageHandler>>) {
         self.message_handler = Some(handler);
+    }
+
+    /// Set the on-chain identity registry verifier.
+    /// When set, peers whose DID is not in the identity registry are rejected.
+    pub fn set_identity_registry_verifier(&mut self, verifier: Arc<dyn IdentityRegistryVerifier>) {
+        self.identity_registry_verifier = Some(verifier);
     }
 
     /// Set TLS trust policy for QUIC client connections
@@ -593,6 +688,13 @@ impl QuicMeshProtocol {
             }
         }
 
+        // === On-Chain Identity Registry Verification ===
+        // Reject peers whose DID is not registered in the blockchain identity registry.
+        if let Some(ref verifier) = self.identity_registry_verifier {
+            let peer_did = &handshake_result.verified_peer.identity.did;
+            verify_peer_registration(verifier.as_ref(), &connection, peer_did).await?;
+        }
+
         // Create PeerConnection from verified handshake result
         let now_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -743,6 +845,12 @@ impl QuicMeshProtocol {
                     hex::encode(&peer_node_id[..8])
                 ));
             }
+        }
+
+        // === On-Chain Identity Registry Verification (bootstrap peer) ===
+        if let Some(ref verifier) = self.identity_registry_verifier {
+            let peer_did = &handshake_result.verified_peer.identity.did;
+            verify_peer_registration(verifier.as_ref(), &connection, peer_did).await?;
         }
 
         if is_edge_node {
@@ -1133,6 +1241,7 @@ impl QuicMeshProtocol {
         let message_handler = self.message_handler.clone();
         let identity = Arc::clone(&self.identity);
         let handshake_ctx = self.handshake_ctx.clone();
+        let registry_verifier = self.identity_registry_verifier.clone();
 
         // Task: Accept new incoming connections, handshake, register, spawn receive loop
         tokio::spawn(async move {
@@ -1143,6 +1252,7 @@ impl QuicMeshProtocol {
                         let handler = message_handler.clone();
                         let identity = Arc::clone(&identity);
                         let ctx = handshake_ctx.clone();
+                        let reg_verifier = registry_verifier.clone();
 
                         tokio::spawn(async move {
                             match incoming.await {
@@ -1217,6 +1327,14 @@ impl QuicMeshProtocol {
                                         Err(e) => {
                                             error!(error = %e, "Dilithium PK mismatch");
                                             connection.close(3u32.into(), b"dilithium_pk_mismatch");
+                                            return;
+                                        }
+                                    }
+
+                                    // === On-Chain Identity Registry Verification (incoming) ===
+                                    if let Some(ref verifier) = reg_verifier {
+                                        let peer_did = &handshake_result.verified_peer.identity.did;
+                                        if verify_peer_registration(verifier.as_ref(), &connection, peer_did).await.is_err() {
                                             return;
                                         }
                                     }
@@ -2247,5 +2365,72 @@ mod tests {
             .contains("No connection to peer"));
 
         protocol.shutdown().await;
+    }
+
+    // =========================================================================
+    // On-chain identity registry verifier tests
+    //
+    // These tests exercise the `IdentityRegistryVerifier` trait and the
+    // `verify_peer_registration` helper at the logic level, without requiring
+    // a real QUIC connection or network stack.
+    // =========================================================================
+
+    struct AlwaysRegisteredVerifier;
+    struct NeverRegisteredVerifier;
+    struct FailingVerifier;
+
+    #[async_trait::async_trait]
+    impl IdentityRegistryVerifier for AlwaysRegisteredVerifier {
+        async fn is_registered(&self, _did: &str) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl IdentityRegistryVerifier for NeverRegisteredVerifier {
+        async fn is_registered(&self, _did: &str) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl IdentityRegistryVerifier for FailingVerifier {
+        async fn is_registered(&self, _did: &str) -> Result<bool> {
+            Err(anyhow!("simulated registry lookup error"))
+        }
+    }
+
+    // --- evaluate_registration tests (no QUIC connection required) ---
+
+    #[tokio::test]
+    async fn test_evaluate_registration_registered_did() {
+        let outcome = evaluate_registration(&AlwaysRegisteredVerifier, "did:zhtp:registered123").await;
+        assert!(
+            matches!(outcome, RegistrationOutcome::Registered),
+            "Expected Registered outcome for a known DID"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_registration_unregistered_did() {
+        let outcome = evaluate_registration(&NeverRegisteredVerifier, "did:zhtp:unknown456").await;
+        assert!(
+            matches!(outcome, RegistrationOutcome::NotRegistered),
+            "Expected NotRegistered outcome for an unknown DID"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_registration_lookup_failure() {
+        let outcome = evaluate_registration(&FailingVerifier, "did:zhtp:any").await;
+        match outcome {
+            RegistrationOutcome::LookupFailed(msg) => {
+                assert!(
+                    msg.contains("simulated"),
+                    "Error message should propagate from verifier"
+                );
+            }
+            other => panic!("Expected LookupFailed, got {:?}", other),
+        }
     }
 }
