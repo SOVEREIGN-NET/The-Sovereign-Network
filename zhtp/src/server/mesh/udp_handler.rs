@@ -146,6 +146,12 @@ impl MeshRouter {
             warn!("Rejecting PeerAnnouncement without Dilithium public key from {}", addr);
             return Ok(());
         }
+        // Validate key_id is bound to the Dilithium public key — reject forged key_id claims.
+        let expected_key_id = lib_crypto::hash_blake3(&sender.dilithium_pk);
+        if sender.key_id != expected_key_id {
+            warn!("Rejecting PeerAnnouncement with mismatched key_id from {}: claimed key_id does not match dilithium_pk", addr);
+            return Ok(());
+        }
         let mut signed_data = Vec::with_capacity(sender.key_id.len() + 8);
         signed_data.extend_from_slice(&sender.key_id);
         signed_data.extend_from_slice(&timestamp.to_le_bytes());
