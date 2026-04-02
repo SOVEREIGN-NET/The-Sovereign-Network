@@ -496,7 +496,7 @@ impl OracleComponent {
                         debug!(
                             "🔮 Oracle: strict spec mode - submitting attestation as transaction"
                         );
-                        Self::submit_attestation_transaction(&attestation).await;
+                        Self::submit_attestation_transaction(&attestation, &blockchain).await;
                     } else {
                         // Legacy mode: Gossip and process directly
                         Self::gossip_attestation(&attestation).await;
@@ -586,19 +586,63 @@ impl OracleComponent {
 
     /// Submit an attestation as a transaction in strict spec mode.
     ///
-    /// ORACLE-R3: In strict spec mode, attestations must go through the canonical
-    /// transaction/block path rather than direct gossip processing.
-    ///
-    /// TODO: Implement transaction creation and mempool submission
-    async fn submit_attestation_transaction(_attestation: &OraclePriceAttestation) {
-        // This is a placeholder for the full implementation.
-        // In the full implementation, this would:
-        // 1. Create an OracleAttestation transaction
-        // 2. Sign it with the validator's key
-        // 3. Submit it to the mempool
-        // 4. The transaction will be included in a block and processed through
-        //    the canonical path in Blockchain.process_oracle_attestation_transactions()
-        info!("🔮 Oracle: submitting attestation as transaction (TODO: implement)");
+    /// ORACLE-R3: In strict spec mode, attestations go through the canonical
+    /// transaction/block path. The transaction is added to the local mempool
+    /// and will be included in a future block by the proposer.
+    async fn submit_attestation_transaction(
+        attestation: &OraclePriceAttestation,
+        blockchain: &Arc<RwLock<Blockchain>>,
+    ) {
+        use lib_blockchain::transaction::core::{Transaction, TransactionPayload, TX_VERSION_V8};
+        use lib_blockchain::transaction::oracle_governance::OracleAttestationData;
+        use lib_blockchain::types::transaction_type::TransactionType;
+
+        let attestation_data = OracleAttestationData {
+            epoch_id: attestation.epoch_id,
+            sov_usd_price: attestation.sov_usd_price,
+            cbe_usd_price: attestation.cbe_usd_price,
+            timestamp: attestation.timestamp,
+            validator_pubkey: attestation.validator_pubkey,
+            signature: attestation.signature.clone(),
+        };
+
+        // Derive chain_id from runtime configuration via the ZHTP_CHAIN_ID environment
+        // variable, falling back to the legacy dev-chain id (0x03) if not set or invalid.
+        let chain_id: u8 = std::env::var("ZHTP_CHAIN_ID")
+            .ok()
+            .and_then(|s| s.parse::<u8>().ok())
+            .unwrap_or_else(|| {
+                debug!("ZHTP_CHAIN_ID not set or invalid; using fallback chain_id=0x03");
+                0x03
+            });
+
+        let tx = Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::OracleAttestation,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature: lib_crypto::Signature::default(),
+            memo: Vec::new(),
+            payload: TransactionPayload::OracleAttestation(attestation_data),
+        };
+
+        let mut bc = blockchain.write().await;
+        match bc.add_pending_transaction(tx) {
+            Ok(()) => {
+                info!(
+                    "Oracle attestation submitted to mempool (epoch={})",
+                    attestation.epoch_id
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Oracle attestation mempool submission failed (epoch={}): {}",
+                    attestation.epoch_id, e
+                );
+            }
+        }
     }
 }
 
@@ -637,8 +681,170 @@ fn slash_reason_for_validation_error(
 
 #[cfg(test)]
 mod tests {
-    use super::slash_reason_for_validation_error;
-    use lib_blockchain::oracle::{OracleAttestationValidationError, OracleSlashReason};
+    use super::*;
+    use lib_blockchain::{
+        oracle::{OracleAttestationValidationError, OraclePriceAttestation, OracleSlashReason},
+        transaction::core::TransactionPayload,
+        types::transaction_type::TransactionType,
+        Blockchain, ValidatorInfo,
+    };
+    use lib_crypto::keypair::generation::KeyPair;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    /// Build a minimal ValidatorInfo for tests — fills only the fields that
+    /// `validate_oracle_attestation_transaction` inspects.
+    fn make_validator_info(identity: &str, consensus_key: Vec<u8>) -> ValidatorInfo {
+        let oracle_key_id = lib_crypto::hash_blake3(&consensus_key);
+        ValidatorInfo {
+            identity_id: identity.to_string(),
+            stake: 10_000,
+            storage_provided: 0,
+            networking_key: Vec::new(),
+            rewards_key: Vec::new(),
+            network_address: "127.0.0.1:0".to_string(),
+            commission_rate: 0,
+            status: "active".to_string(),
+            registered_at: 0,
+            last_activity: 0,
+            blocks_validated: 0,
+            slash_count: 0,
+            admission_source: "test".to_string(),
+            governance_proposal_id: None,
+            oracle_key_id: Some(oracle_key_id),
+            consensus_key,
+        }
+    }
+
+    /// Set up a blockchain with a single oracle committee member, return the keypair
+    /// and the `validator_pubkey` (= blake3 of the raw Dilithium public key).
+    ///
+    /// `Blockchain::default()` starts with an empty validator registry, a single
+    /// genesis block (height 0), and oracle config defaults (epoch_duration_secs = 600).
+    /// These are sufficient for the oracle attestation mempool submission path.
+    fn setup_blockchain_with_oracle_validator() -> (Blockchain, KeyPair, [u8; 32]) {
+        let kp = KeyPair::generate().expect("keypair generation must succeed");
+        // consensus_key = raw Dilithium pk bytes; validator_pubkey = blake3 of those bytes
+        let dilithium_pk = kp.public_key.dilithium_pk.clone();
+        let validator_pubkey = lib_crypto::hash_blake3(&dilithium_pk);
+
+        let mut blockchain = Blockchain::default();
+
+        // Register the validator in the registry so the stateful validator can look it up
+        let validator_info = make_validator_info("test-validator", dilithium_pk);
+        blockchain
+            .validator_registry
+            .insert("test-validator".to_string(), validator_info);
+
+        // Initialize oracle committee with only this validator's pubkey hash
+        blockchain
+            .init_oracle_committee(vec![validator_pubkey])
+            .expect("oracle committee init must succeed");
+
+        (blockchain, kp, validator_pubkey)
+    }
+
+    /// Build a signed OraclePriceAttestation for epoch 0 using the given keypair.
+    fn build_signed_attestation(
+        kp: &KeyPair,
+        validator_pubkey: [u8; 32],
+        epoch_id: u64,
+        timestamp: u64,
+    ) -> OraclePriceAttestation {
+        let mut attestation = OraclePriceAttestation {
+            epoch_id,
+            sov_usd_price: 100_000_000, // $1.00 at 8 decimal precision
+            cbe_usd_price: None,
+            timestamp,
+            validator_pubkey,
+            signature: Vec::new(),
+        };
+        let digest = attestation
+            .signing_digest()
+            .expect("signing digest must build");
+        let sig = kp.sign(&digest).expect("signing must succeed");
+        attestation.signature = sig.signature;
+        attestation
+    }
+
+    /// Verify that `submit_attestation_transaction` enqueues a single
+    /// `TransactionType::OracleAttestation` transaction whose payload fields
+    /// match the source attestation.
+    #[tokio::test]
+    async fn submit_attestation_enqueues_oracle_attestation_tx() {
+        let (blockchain, kp, validator_pubkey) = setup_blockchain_with_oracle_validator();
+
+        // Use a timestamp in the middle of epoch 0 so epoch_id(timestamp) == 0
+        let epoch_duration = blockchain.oracle_state.config().epoch_duration_secs;
+        let timestamp = epoch_duration / 2;
+        let epoch_id = blockchain.oracle_state.epoch_id(timestamp);
+        assert_eq!(epoch_id, 0, "timestamp should fall in epoch 0");
+
+        let attestation = build_signed_attestation(&kp, validator_pubkey, epoch_id, timestamp);
+
+        let blockchain_arc = Arc::new(RwLock::new(blockchain));
+
+        OracleComponent::submit_attestation_transaction(&attestation, &blockchain_arc).await;
+
+        // The transaction must have been enqueued
+        let bc = blockchain_arc.read().await;
+        let pending = bc.get_pending_transactions();
+        assert_eq!(pending.len(), 1, "exactly one pending transaction expected");
+
+        let tx = &pending[0];
+        assert_eq!(
+            tx.transaction_type,
+            TransactionType::OracleAttestation,
+            "transaction type must be OracleAttestation"
+        );
+
+        // Verify payload fields match the source attestation
+        match &tx.payload {
+            TransactionPayload::OracleAttestation(data) => {
+                assert_eq!(data.epoch_id, attestation.epoch_id);
+                assert_eq!(data.sov_usd_price, attestation.sov_usd_price);
+                assert_eq!(data.cbe_usd_price, attestation.cbe_usd_price);
+                assert_eq!(data.timestamp, attestation.timestamp);
+                assert_eq!(data.validator_pubkey, attestation.validator_pubkey);
+                assert_eq!(data.signature, attestation.signature);
+            }
+            other => panic!("unexpected payload variant: {:?}", other),
+        }
+    }
+
+    /// Verify that the fallback chain_id (0x03) is used when ZHTP_CHAIN_ID is absent.
+    ///
+    /// Saves and restores the previous value of ZHTP_CHAIN_ID to avoid polluting
+    /// the environment for concurrently-running tests.
+    #[tokio::test]
+    async fn submit_attestation_defaults_chain_id_when_env_unset() {
+        // Save previous value so we can restore it after the test
+        let previous = std::env::var("ZHTP_CHAIN_ID").ok();
+        std::env::remove_var("ZHTP_CHAIN_ID");
+
+        let (blockchain, kp, validator_pubkey) = setup_blockchain_with_oracle_validator();
+        let epoch_duration = blockchain.oracle_state.config().epoch_duration_secs;
+        let timestamp = epoch_duration / 2;
+        let epoch_id = blockchain.oracle_state.epoch_id(timestamp);
+        let attestation = build_signed_attestation(&kp, validator_pubkey, epoch_id, timestamp);
+
+        let blockchain_arc = Arc::new(RwLock::new(blockchain));
+        OracleComponent::submit_attestation_transaction(&attestation, &blockchain_arc).await;
+
+        let bc = blockchain_arc.read().await;
+        let pending = bc.get_pending_transactions();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending[0].chain_id, 0x03,
+            "chain_id must fall back to 0x03 when ZHTP_CHAIN_ID is not set"
+        );
+
+        // Restore the previous env var value (if any) to avoid polluting other tests
+        match previous {
+            Some(val) => std::env::set_var("ZHTP_CHAIN_ID", val),
+            None => std::env::remove_var("ZHTP_CHAIN_ID"),
+        }
+    }
 
     #[test]
     fn slashes_on_wrong_epoch_and_deviation_band() {
