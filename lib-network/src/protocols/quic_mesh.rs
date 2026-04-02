@@ -154,7 +154,7 @@ pub struct QuicMeshProtocol {
     /// On-chain identity registry verifier (injected by application layer).
     /// When set, the QUIC handshake rejects peers whose DID is not registered
     /// in the blockchain identity registry.
-    pub identity_registry_verifier: Option<Arc<dyn IdentityRegistryVerifier>>,
+    identity_registry_verifier: Option<Arc<dyn IdentityRegistryVerifier>>,
 }
 
 /// QUIC connection with UHP-verified identity and PQC encryption
