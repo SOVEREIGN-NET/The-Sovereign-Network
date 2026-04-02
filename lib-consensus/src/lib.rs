@@ -32,6 +32,7 @@ pub mod validators;
 pub use chain_evaluation::{ChainDecision, ChainEvaluator, ChainMergeResult, ChainSummary};
 pub use difficulty::{DifficultyConfig, DifficultyError, DifficultyManager, DifficultyResult};
 pub use engines::enhanced_bft_engine::{ConsensusStatus, EnhancedBftEngine};
+pub use engines::consensus_engine::ValidatorSetUpdate;
 pub use engines::ConsensusEngine;
 pub use evidence::{
     isolation_action, Evidence, EvidenceRecord, EvidenceStore, IsolationAction, SlashingParams,
