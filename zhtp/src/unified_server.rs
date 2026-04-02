@@ -461,15 +461,49 @@ impl ZhtpUnifiedServer {
             crate::storage_network_integration::UnifiedStorageWrapper(storage.clone());
         let storage_trait: Arc<dyn lib_network::storage_stub::UnifiedStorage> =
             Arc::new(storage_wrapper);
-        let domain_registry = Arc::new(DomainRegistry::new(storage_trait.clone()).await?);
-        info!(" Domain registry initialized (canonical instance)");
+        // Create persistent DHT backend for web4 content operations.
+        let dht_path = std::path::Path::new("data/dht_web4");
+        let dht_node_id_bytes: [u8; 32] = identity_manager.read().await.list_identities()
+            .first()
+            .map(|id| *id.node_id.as_bytes())
+            .ok_or_else(|| anyhow::anyhow!("DHT persistent backend requires a configured identity"))?;
+        let storage_node_id = lib_types::NodeId::from_bytes(dht_node_id_bytes);
+        let dht_integration = match std::fs::create_dir_all(dht_path)
+            .and_then(|_| Ok(()))
+            .map_err(anyhow::Error::from)
+            .and_then(|_| {
+                crate::integration::dht_persistent_backend::PersistentDhtBackend::open(
+                    storage_node_id,
+                    10_000_000_000,
+                    dht_path,
+                )
+            }) {
+            Ok(backend) => {
+                info!(" DHT persistent backend initialized (sled)");
+                lib_network::dht::ZkDHTIntegration::with_backend(
+                    std::sync::Arc::new(backend),
+                    dht_node_id_bytes,
+                    10_000_000_000,
+                )
+            }
+            Err(e) => {
+                warn!("DHT persistent backend failed, using in-memory: {}", e);
+                lib_network::dht::ZkDHTIntegration::new()
+            }
+        };
 
-        // Create content publisher with same storage backend
-        let content_publisher = Arc::new(lib_network::web4::ContentPublisher::new(
+        let domain_registry = Arc::new(DomainRegistry::new_with_dht(
+            storage_trait.clone(),
+            Some(dht_integration.clone()),
+        ).await?);
+        info!(" Domain registry initialized with persistent DHT");
+
+        let content_publisher = Arc::new(lib_network::web4::ContentPublisher::new_with_dht(
             domain_registry.clone(),
             storage_trait,
+            Some(dht_integration),
         ));
-        info!(" Content publisher initialized");
+        info!(" Content publisher initialized with persistent DHT");
 
         // Create PoUW shared infrastructure — created here so it can be wired into
         // QuicHandler, Web4Handler, and MeshMessageRouter after handler registration.
