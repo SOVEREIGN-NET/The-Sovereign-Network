@@ -1,3 +1,4 @@
+use super::m_bucket::MBucket;
 use crate::routing::inter::routing_table::{RestartListener, RoutingTable};
 use crate::utils;
 use crate::utils::hash::crc32c::Crc32c;
@@ -5,9 +6,12 @@ use crate::utils::linked_hashmap::LinkedHashMap;
 use crate::utils::net::address_utils::is_global_unicast;
 use crate::utils::node::{Node, V4_MASK, V6_MASK};
 use crate::utils::uid::{ID_LENGTH, UID};
+use core::array::from_fn;
 use std::any::Any;
+use std::cmp::Ordering;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct MRoutingTable {
     uid: Option<UID>,
@@ -15,7 +19,7 @@ pub struct MRoutingTable {
     consensus_external_address: IpAddr,
     origin_pairs: LinkedHashMap<IpAddr, IpAddr>,
     secure_only: bool,
-    //m_buckets: [MBucket; ID_LENGTH*8]
+    m_buckets: [MBucket; ID_LENGTH * 8],
 }
 
 impl MRoutingTable {
@@ -26,7 +30,7 @@ impl MRoutingTable {
             consensus_external_address: IpAddr::from([127, 0, 1, 1]),
             origin_pairs: LinkedHashMap::with_capacity(64),
             secure_only: true,
-            //m_buckets: from_fn(|_| MBucket::new())
+            m_buckets: from_fn(|_| MBucket::new()),
         };
 
         routing_table.derive_uid();
@@ -131,27 +135,21 @@ impl RoutingTable for MRoutingTable {
 
         if let Some(uid) = &self.uid {
             if *uid != n.uid {
-                let _id = self.bucket_uid(&n.uid);
+                let id = self.bucket_uid(&n.uid);
 
-                //if self.m_bucket[id],is_full() {
-
-                //}
-
-                /*
                 let mut contains_ip = false;
-                for b in &self.k_buckets {
+                for b in &self.m_buckets {
                     if b.contains_ip(&n) {
                         contains_ip = true;
                         break;
                     }
                 }
 
-                let contains_uid = self.k_buckets[id].contains_uid(&n);
+                let contains_uid = self.m_buckets[id].contains_uid(&n);
 
                 if contains_ip == contains_uid {
-                    self.k_buckets[id].insert(n);
+                    self.m_buckets[id].insert(n);
                 }
-                */
             }
         }
     }
@@ -172,8 +170,7 @@ impl RoutingTable for MRoutingTable {
             ip[i] &= mask[i];
         }
 
-        //let mut rng = rand::thread_rng();
-        let rand: u8 = /*rng.gen::<u8>()*/utils::random::gen::<u8>() & 0xFF;
+        let rand: u8 = utils::random::gen::<u8>() & 0xFF;
         let r = rand & 0x7;
 
         ip[0] |= r << 5;
@@ -185,10 +182,10 @@ impl RoutingTable for MRoutingTable {
         let mut bid = [0u8; ID_LENGTH];
         bid[0] = (crc >> 24) as u8;
         bid[1] = (crc >> 16) as u8;
-        bid[2] = ((crc >> 8) as u8 & 0xF8) | (/*rng.gen::<u8>()*/utils::random::gen::<u8>() & 0x7);
+        bid[2] = ((crc >> 8) as u8 & 0xF8) | (utils::random::gen::<u8>() & 0x7);
 
         for i in 3..19 {
-            bid[i] = /*rng.gen::<u8>()*/utils::random::gen::<u8>() & 0xFF;
+            bid[i] = utils::random::gen::<u8>() & 0xFF;
         }
 
         bid[19] = rand & 0xFF;
@@ -216,28 +213,55 @@ impl RoutingTable for MRoutingTable {
         let _ = self.listeners.remove(index);
     }
 
-    fn has_queried(&self, _n: &Node, _now: u128) -> bool {
-        todo!()
+    fn has_queried(&self, n: &Node, now: u128) -> bool {
+        let id = self.bucket_uid(&n.uid);
+        if !self.m_buckets[id].contains_uid(n) {
+            return false;
+        }
+        self.m_buckets[id].has_queried(n, now)
     }
 
-    fn bucket_uid(&self, _k: &UID) -> usize {
-        todo!()
+    fn bucket_uid(&self, k: &UID) -> usize {
+        let d = self.uid.unwrap().distance(k);
+        if d == 0 { 0 } else { d - 1 }
     }
 
     fn all_nodes(&self) -> Vec<Node> {
-        todo!()
+        let mut nodes = Vec::new();
+        for b in &self.m_buckets {
+            nodes.extend(&b.nodes);
+        }
+        nodes
     }
 
-    fn find_closest(&self, _k: &UID, _r: usize) -> Vec<Node> {
-        todo!()
+    fn find_closest(&self, k: &UID, r: usize) -> Vec<Node> {
+        let mut nodes = self.all_nodes();
+        let target = *k;
+        nodes.sort_by(|a, b| {
+            let da = a.uid.xor_bytes(&target);
+            let db = b.uid.xor_bytes(&target);
+            da.cmp(&db)
+        });
+        if nodes.len() > r {
+            nodes.truncate(r);
+        }
+        nodes
     }
 
-    fn bucket_size(&self, _i: usize) -> usize {
-        todo!()
+    fn bucket_size(&self, i: usize) -> usize {
+        self.m_buckets[i].nodes.len()
     }
 
     fn all_unqueried_nodes(&self) -> Vec<Node> {
-        todo!()
+        let mut nodes = Vec::new();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
+        for b in &self.m_buckets {
+            nodes.extend(&b.unqueried_nodes(now));
+        }
+        nodes
     }
 
     fn get_restart(&self) -> fn(Arc<Mutex<dyn RoutingTable>>) {
@@ -253,16 +277,23 @@ impl RoutingTable for MRoutingTable {
             .unwrap()
             .derive_uid();
 
-        if routing_table
+        let nodes = routing_table.lock().unwrap().all_nodes();
+        routing_table
             .lock()
             .unwrap()
-            .as_any()
-            .downcast_ref::<Self>()
+            .as_any_mut()
+            .downcast_mut::<Self>()
             .unwrap()
-            .listeners
-            .is_empty()
-        {
-            return;
+            .m_buckets = from_fn(|_| MBucket::new());
+
+        for node in nodes {
+            routing_table
+                .lock()
+                .unwrap()
+                .as_any_mut()
+                .downcast_mut::<Self>()
+                .unwrap()
+                .insert(node);
         }
 
         let listeners = routing_table

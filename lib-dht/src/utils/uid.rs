@@ -42,6 +42,15 @@ impl UID {
         ID_LENGTH * 8 - self.xor(k).first_set_bit_index()
     }
 
+    /// XOR distance as raw bytes (for sorting by proximity).
+    pub fn xor_bytes(&self, k: &UID) -> [u8; ID_LENGTH] {
+        let mut result = [0u8; ID_LENGTH];
+        for i in 0..ID_LENGTH {
+            result[i] = self.bid[i] ^ k.bid[i];
+        }
+        result
+    }
+
     fn xor(&self, k: &UID) -> UID {
         let mut distance = [0u8; ID_LENGTH];
         for i in 0..ID_LENGTH {
