@@ -30,6 +30,8 @@ use std::sync::Arc;
 use blake3;
 
 const SOV_PER_WALLET: u128 = 500_000_000_000; // 5,000 SOV × 10^8
+/// Canonical wallet type string for Primary wallets (matches WalletType::Primary serialization).
+const PRIMARY_WALLET_TYPE: &str = "Primary";
 const MAX_TRANSACTIONS_PER_BLOCK: usize = 4096;
 const TARGET_BLOCK_TIME: u64 = 10; // seconds
 
@@ -110,10 +112,13 @@ fn main() -> Result<()> {
 
     // ── 3. Block 0: genesis ───────────────────────────────────────────────
     println!("Writing Block 0 (genesis)...");
-    // Use canonical genesis from embedded config to ensure compatibility
+    // Use canonical genesis from embedded config to ensure all nodes share the same block 0 hash.
     let genesis_config = GenesisConfig::from_embedded()?;
-    let genesis = genesis_config.build_block0()?;
-    write_block(&out_store, genesis)?;
+    let genesis_bc = genesis_config.build_block0()?;
+    let genesis = genesis_bc.blocks.first()
+        .ok_or_else(|| anyhow::anyhow!("build_block0() produced empty blockchain"))?
+        .clone();
+    write_block(&out_store, genesis.clone())?;
 
     // ── 4. Block 1: identity + wallet registrations ───────────────────────
     println!("Writing Block 1 ({} identities + {} wallets)...",
@@ -163,7 +168,7 @@ fn main() -> Result<()> {
     
     // Validate we have at least one primary wallet for SOV distribution
     let primary_count = wallets.iter()
-        .filter(|w| w.wallet_type.eq_ignore_ascii_case("primary"))
+        .filter(|w| w.wallet_type.eq_ignore_ascii_case(PRIMARY_WALLET_TYPE))
         .count();
     if primary_count == 0 {
         return Err(anyhow::anyhow!(
@@ -172,14 +177,14 @@ fn main() -> Result<()> {
     }
 
     let block1 = build_block(1, &genesis, block1_txns)?;
-    write_block(&out_store, block1)?;
+    write_block(&out_store, block1.clone())?;
 
     // ── 5. Block 2: TokenMint 5,000 SOV per PRIMARY wallet only ──────────
     // Only Primary wallets receive the welcome bonus.
     // UBI, Savings, and other wallet types start at 0 SOV.
     let primary_wallets: Vec<&WalletTransactionData> = wallets_sorted
         .iter()
-        .filter(|w| w.wallet_type.eq_ignore_ascii_case("primary"))
+        .filter(|w| w.wallet_type.eq_ignore_ascii_case(PRIMARY_WALLET_TYPE))
         .collect();
 
     println!("Writing Block 2 ({} primary wallet SOV mints at 5,000 SOV each)...", primary_wallets.len());

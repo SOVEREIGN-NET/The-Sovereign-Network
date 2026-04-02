@@ -1,5 +1,9 @@
 //! Byzantine Fault Tolerance consensus engine
 
+/// Number of recent committed blocks to retain in the finality map.
+/// Older entries are pruned to bound memory usage on long-running nodes.
+const FINALITY_WINDOW: u64 = 10_000;
+
 use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -37,6 +41,10 @@ pub struct BftEngine {
     validator_identity: Option<IdentityId>,
     /// Transaction executor for block proposal
     transaction_executor: TransactionExecutor,
+    /// In-memory finality record: height → committed block hash.
+    /// Detects safety violations (conflicting commits at the same height).
+    /// Pruned to keep only the most recent `FINALITY_WINDOW` entries.
+    committed_blocks: HashMap<u64, Hash>,
 }
 
 impl BftEngine {
@@ -73,6 +81,7 @@ impl BftEngine {
                 10_000,    // mempool_max_size
                 10_000,    // mempool_max_age (blocks)
             ),
+            committed_blocks: HashMap::new(),
         }
     }
 
@@ -685,31 +694,47 @@ impl BftEngine {
         Ok(())
     }
 
-    /// Record committed block for finality tracking
+    /// Record committed block for finality tracking.
+    ///
+    /// Persists the (height → hash) mapping in `committed_blocks`.  If a different
+    /// hash was already recorded for the same height, that is a BFT safety violation
+    /// (two conflicting blocks committed at the same height) and the function returns
+    /// `ConsensusError::ByzantineFault` immediately.
     async fn record_committed_block(
         &mut self,
         height: u64,
         committed_hash: Hash,
     ) -> ConsensusResult<()> {
+        if let Some(existing) = self.committed_blocks.get(&height) {
+            if *existing != committed_hash {
+                let msg = format!(
+                    "SAFETY VIOLATION: conflicting committed blocks at height {}: \
+                     existing={} new={}",
+                    height, existing, committed_hash
+                );
+                tracing::error!("{}", msg);
+                return Err(ConsensusError::ByzantineFault(msg));
+            }
+            // Idempotent: same hash already recorded.
+            tracing::debug!("Block at height {} already recorded (idempotent)", height);
+            return Ok(());
+        }
+
+        self.committed_blocks.insert(height, committed_hash.clone());
+
+        // Prune entries older than FINALITY_WINDOW to bound memory.
+        if height > FINALITY_WINDOW {
+            let cutoff = height - FINALITY_WINDOW;
+            self.committed_blocks.retain(|h, _| *h > cutoff);
+        }
+
         tracing::info!(
-            "Recording committed block {} at height {}",
+            "Block {} committed with BFT finality at height {} \
+             (tracked: {})",
             committed_hash,
-            height
+            height,
+            self.committed_blocks.len()
         );
-
-        // In a implementation, this would:
-        // 1. Store the committed hash in persistent storage
-        // 2. Update finality checkpoints
-        // 3. Notify other components about finality
-        // 4. Update the longest committed chain
-
-        // For now, we just log the commitment
-        tracing::info!(
-            "Block {} committed with BFT finality at height {}",
-            committed_hash,
-            height
-        );
-
         Ok(())
     }
 }

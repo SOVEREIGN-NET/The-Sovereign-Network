@@ -57,7 +57,9 @@ pub use types::economic_types::{
 };
 
 // Re-export DHT and content management
-pub use backend::{BackendStats, BatchOp, SledBackend, SledTree, StorageBackend, StorageKey};
+pub use backend::{
+    BackendStats, BatchOp, SledBackend, SledTree, StorageBackend, StorageError, StorageKey,
+};
 pub use cache::{CacheEntry, CacheManager, CacheStats, EvictionPolicy};
 pub use content::{
     AccessControlSettings, ContentManager, ContentStorageRequirements, DownloadRequest,

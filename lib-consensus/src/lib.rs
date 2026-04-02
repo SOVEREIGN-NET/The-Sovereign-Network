@@ -101,8 +101,8 @@ pub enum ConsensusError {
     #[error("Identity error: {0}")]
     IdentityError(String),
 
-    // #[error("Storage error: {0}")]
-    // StorageError(#[from] lib_storage::StorageError),  // TODO: Uncomment when storage is implemented
+    #[error("Storage error: {0}")]
+    StorageError(#[from] lib_storage::StorageError),
     #[error("Network error: {0}")]
     NetworkError(String),
 

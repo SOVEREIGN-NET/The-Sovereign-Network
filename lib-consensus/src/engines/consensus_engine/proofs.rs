@@ -339,10 +339,7 @@ impl ConsensusEngine {
             routing_work,
             storage_work,
             compute_work,
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| ConsensusError::TimeError(e))?
-                .as_secs(),
+            self.engine_start_time,
             validator_id.as_bytes().try_into().unwrap_or([0u8; 32]),
         )
         .map_err(|e| ConsensusError::ProofVerificationFailed(e.to_string()))?;

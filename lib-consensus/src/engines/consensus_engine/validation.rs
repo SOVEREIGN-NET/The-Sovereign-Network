@@ -432,13 +432,21 @@ impl ConsensusEngine {
         Ok(true)
     }
 
-    /// Validate that the previous hash matches the expected blockchain state
+    /// Validate that the previous hash in a proposal matches our local chain tip.
+    ///
+    /// For genesis (height 0), the previous hash must be all-zeros.
+    ///
+    /// For height H > 0, we ask the blockchain provider for the current chain height
+    /// and the hash of the latest committed block.  Validation only fires when the
+    /// local chain is exactly at H-1 (i.e. we have the block being referenced).
+    /// If the chain is behind or ahead (e.g. during catch-up sync), we accept the
+    /// proposal without challenging the hash to avoid blocking progress.
     pub(super) async fn validate_previous_hash(
         &self,
         height: u64,
         previous_hash: &Hash,
     ) -> ConsensusResult<()> {
-        // For genesis block (height 0), previous hash should be zero
+        // Genesis: previous hash must be zero.
         if height == 0 {
             let zero_hash = Hash::from_bytes(&[0u8; 32]);
             if *previous_hash != zero_hash {
@@ -450,24 +458,43 @@ impl ConsensusEngine {
             return Ok(());
         }
 
-        // For subsequent blocks, validate against the actual chain state
-        // In a implementation, this would check against stored blockchain state
+        let expected_prev_height = height - 1;
 
-        // Check if we have the expected previous block
-        if height > 1 {
-            tracing::debug!(
-                "Validating previous hash {} for height {}",
-                previous_hash,
-                height
-            );
+        if let Some(ref provider) = self.blockchain_provider {
+            let chain_height = provider.get_blockchain_height().await.unwrap_or(0);
 
-            // Here we would normally:
-            // 1. Query the blockchain storage for block at height-1
-            // 2. Compare its hash with the provided previous_hash
-            // 3. Detect potential forks or reorganizations
-
-            // For now, we log the validation but don't fail
-            tracing::info!("Previous hash validation passed for height {}", height);
+            if chain_height == expected_prev_height {
+                // Local chain is at H-1 — we can validate the previous hash.
+                match provider.get_latest_block_hash().await {
+                    Ok(expected_hash) => {
+                        if *previous_hash != expected_hash {
+                            return Err(ConsensusError::InvalidPreviousHash(format!(
+                                "Proposal for height {} claims previous_hash={} \
+                                 but local chain tip is {}",
+                                height, previous_hash, expected_hash
+                            )));
+                        }
+                        tracing::debug!(
+                            "✓ Previous hash validated for height {}: {}",
+                            height, previous_hash
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Could not fetch chain tip hash to validate height {}: {}",
+                            height, e
+                        );
+                    }
+                }
+            } else {
+                // Chain is not at H-1 (catching up or proposing ahead).
+                // Skip hash validation; the executor will catch divergence on apply.
+                tracing::debug!(
+                    "Skipping previous hash check for height {}: \
+                     local chain at {} (expected {})",
+                    height, chain_height, expected_prev_height
+                );
+            }
         }
 
         Ok(())
