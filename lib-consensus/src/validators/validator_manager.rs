@@ -227,10 +227,12 @@ impl ValidatorManager {
             .collect()
     }
 
-    /// Get validator set for a specific consensus round
+    /// Get the validator set for a specific consensus round.
+    ///
+    /// All active validators participate in every round.  ZHTP uses a single
+    /// static committee per epoch; per-round rotation is a future enhancement
+    /// that would be gated behind an epoch-boundary validator-set change.
     pub fn get_validator_set_for_round(&self, _round: u64) -> Vec<&Validator> {
-        // For now, return all active validators
-        // In a more sophisticated implementation, this could rotate validators
         self.get_active_validators()
     }
 

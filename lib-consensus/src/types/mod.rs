@@ -423,6 +423,18 @@ pub trait ConsensusBlockchainProvider: Send + Sync {
     ///
     /// Returns false during initialization or sync.
     async fn is_ready(&self) -> bool;
+
+    /// Decode block_data bytes into transaction count and total fees.
+    ///
+    /// `block_data` is the opaque byte payload carried in a `ConsensusProposal`.
+    /// The runtime layer (which knows the concrete `Block` type) decodes it and
+    /// returns `(transaction_count, total_fees_in_base_units)`.
+    ///
+    /// Returns `(0, 0)` if the data cannot be decoded (e.g. empty block, fallback format).
+    async fn decode_block_data(
+        &self,
+        block_data: &[u8],
+    ) -> Result<(u32, u64), Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// No-op blockchain provider for testing or when blockchain is not available
@@ -448,6 +460,13 @@ impl ConsensusBlockchainProvider for NoOpBlockchainProvider {
 
     async fn is_ready(&self) -> bool {
         false
+    }
+
+    async fn decode_block_data(
+        &self,
+        _block_data: &[u8],
+    ) -> Result<(u32, u64), Box<dyn std::error::Error + Send + Sync>> {
+        Ok((0, 0))
     }
 }
 

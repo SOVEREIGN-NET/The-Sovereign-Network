@@ -43,6 +43,16 @@ impl BlockLimits {
             max_tx_count: u32::MAX,
         }
     }
+
+    /// Create limits suitable for trusted peer replay (no size restrictions).
+    ///
+    /// Blocks imported from a trusted peer have already passed consensus;
+    /// applying local size limits would reject valid historical blocks.
+    /// Semantically distinct from `for_testing()` — both are wide-open today
+    /// but trusted replay may diverge (e.g. capping witness bytes) in the future.
+    pub fn for_trusted_replay() -> Self {
+        Self::for_testing()
+    }
 }
 
 /// Accumulates resource usage during block execution.
