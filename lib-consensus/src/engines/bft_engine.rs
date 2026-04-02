@@ -1,5 +1,9 @@
 //! Byzantine Fault Tolerance consensus engine
 
+/// Number of recent committed blocks to retain in the finality map.
+/// Older entries are pruned to bound memory usage on long-running nodes.
+const FINALITY_WINDOW: u64 = 10_000;
+
 use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -39,6 +43,7 @@ pub struct BftEngine {
     transaction_executor: TransactionExecutor,
     /// In-memory finality record: height → committed block hash.
     /// Detects safety violations (conflicting commits at the same height).
+    /// Pruned to keep only the most recent `FINALITY_WINDOW` entries.
     committed_blocks: HashMap<u64, Hash>,
 }
 
@@ -716,9 +721,16 @@ impl BftEngine {
         }
 
         self.committed_blocks.insert(height, committed_hash.clone());
+
+        // Prune entries older than FINALITY_WINDOW to bound memory.
+        if height > FINALITY_WINDOW {
+            let cutoff = height - FINALITY_WINDOW;
+            self.committed_blocks.retain(|h, _| *h > cutoff);
+        }
+
         tracing::info!(
             "Block {} committed with BFT finality at height {} \
-             (total finalized: {})",
+             (tracked: {})",
             committed_hash,
             height,
             self.committed_blocks.len()

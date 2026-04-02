@@ -1078,10 +1078,31 @@ impl ConsensusEngine {
     async fn extract_block_metadata(&self, proposal: &ConsensusProposal) -> BlockMetadata {
         let (transaction_count, total_fees_collected) =
             if let Some(ref provider) = self.blockchain_provider {
-                provider
-                    .decode_block_data(&proposal.block_data)
-                    .await
-                    .unwrap_or((0, 0))
+                // Timeout guards against a misbehaving provider blocking the commit path.
+                // The default impl is just bincode::deserialize (sub-millisecond).
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    provider.decode_block_data(&proposal.block_data),
+                )
+                .await
+                {
+                    Ok(Ok(result)) => result,
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            "decode_block_data failed for height {}: {}",
+                            proposal.height,
+                            e
+                        );
+                        (0, 0)
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            "decode_block_data timed out for height {}",
+                            proposal.height
+                        );
+                        (0, 0)
+                    }
+                }
             } else {
                 (0, 0)
             };

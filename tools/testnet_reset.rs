@@ -112,10 +112,13 @@ fn main() -> Result<()> {
 
     // ── 3. Block 0: genesis ───────────────────────────────────────────────
     println!("Writing Block 0 (genesis)...");
-    // Use canonical genesis from embedded config to ensure compatibility
+    // Use canonical genesis from embedded config to ensure all nodes share the same block 0 hash.
     let genesis_config = GenesisConfig::from_embedded()?;
-    let genesis = genesis_config.build_block0()?;
-    write_block(&out_store, genesis)?;
+    let genesis_bc = genesis_config.build_block0()?;
+    let genesis = genesis_bc.blocks.first()
+        .ok_or_else(|| anyhow::anyhow!("build_block0() produced empty blockchain"))?
+        .clone();
+    write_block(&out_store, genesis.clone())?;
 
     // ── 4. Block 1: identity + wallet registrations ───────────────────────
     println!("Writing Block 1 ({} identities + {} wallets)...",
@@ -174,7 +177,7 @@ fn main() -> Result<()> {
     }
 
     let block1 = build_block(1, &genesis, block1_txns)?;
-    write_block(&out_store, block1)?;
+    write_block(&out_store, block1.clone())?;
 
     // ── 5. Block 2: TokenMint 5,000 SOV per PRIMARY wallet only ──────────
     // Only Primary wallets receive the welcome bonus.

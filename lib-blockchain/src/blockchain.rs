@@ -6815,31 +6815,33 @@ impl Blockchain {
                     // Increment nonce after successful transfer
                     *self.token_nonces.entry(nonce_key).or_insert(0) += 1;
 
-                    let token_label = if is_sov {
-                        "SOV".to_string()
-                    } else if is_cbe {
-                        "CBE".to_string()
-                    } else {
-                        hex::encode(&token_id[..4])
-                    };
-                    info!(
-                        "[token/transfer] committed: token={} from={} to={} amount={} fee={} net={} nonce={} height={} tx={}",
-                        token_label,
-                        hex::encode(&transfer.from[..4]),
-                        hex::encode(&transfer.to[..4]),
-                        amount_u64,
-                        fee_amount,
-                        net_amount,
-                        transfer.nonce,
-                        block.height(),
-                        hex::encode(&tx_hash[..4]),
-                    );
+                    if tracing::enabled!(tracing::Level::INFO) {
+                        let token_label: std::borrow::Cow<'_, str> = if is_sov {
+                            "SOV".into()
+                        } else if is_cbe {
+                            "CBE".into()
+                        } else {
+                            hex::encode(&token_id[..4]).into()
+                        };
+                        info!(
+                            "[token/transfer] committed: token={} from={} to={} amount={} fee={} net={} nonce={} height={} tx={}",
+                            token_label,
+                            hex::encode(&transfer.from[..4]),
+                            hex::encode(&transfer.to[..4]),
+                            amount_u64,
+                            fee_amount,
+                            net_amount,
+                            transfer.nonce,
+                            block.height(),
+                            hex::encode(&tx_hash[..4]),
+                        );
+                    }
 
                     if let Some(store) = &self.store {
                         if let Some(token) = self.token_contracts.get(&token_id) {
                             let store_ref: &dyn crate::storage::BlockchainStore = store.as_ref();
                             if let Err(e) = store_ref.put_token_contract(token) {
-                                warn!("[token/transfer] failed to persist token contract: height={} token={} err={}", block.height(), token_label, e);
+                                warn!("[token/transfer] failed to persist token contract: height={} token={} err={}", block.height(), hex::encode(&token_id[..4]), e);
                             }
                         }
                     }

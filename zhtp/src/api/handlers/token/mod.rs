@@ -780,18 +780,12 @@ impl TokenHandler {
     }
 
     async fn submit_to_mempool(&self, tx: Transaction) -> Result<()> {
-        tracing::info!(
-            "[FLOW] submit_to_mempool: type={:?}, tx_hash={}, size={}, fee={}",
-            tx.transaction_type,
-            hex::encode(tx.hash().as_bytes()),
-            tx.size(),
-            tx.fee
-        );
+        let tx_type = tx.transaction_type;
         let mut blockchain = self.blockchain.write().await;
         blockchain
             .add_pending_transaction(tx)
             .map_err(|e| anyhow::anyhow!("Failed to submit transaction to mempool: {}", e))?;
-        tracing::info!("[FLOW] submit_to_mempool: ok");
+        tracing::debug!("submit_to_mempool: type={:?} accepted", tx_type);
         Ok(())
     }
 }

@@ -945,6 +945,8 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                         if let Err(e) = std::fs::remove_dir_all(&sled_path) {
                             error!("Failed to wipe sled: {}", e);
                         }
+                        // Flush tracing before exit so the divergence log reaches journalctl.
+                        drop(tracing::dispatcher::get_default(|d| d.clone()));
                         std::process::exit(1);
                     }
                 }
