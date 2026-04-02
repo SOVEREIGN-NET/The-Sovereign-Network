@@ -61,6 +61,10 @@ pub struct MeshValidatorDiscoveryTransport {
     /// Local identity for signing DHT operations
     local_identity: lib_crypto::PublicKey,
 
+    /// Optional signing keypair for DHT message authentication.
+    /// When set, DhtStore messages are signed with the node's Dilithium key.
+    signing_keypair: Option<Arc<lib_crypto::KeyPair>>,
+
     /// Local announcement cache (for fast lookups before DHT query)
     local_cache: Arc<RwLock<HashMap<Hash, ValidatorAnnouncement>>>,
 
@@ -86,10 +90,19 @@ impl MeshValidatorDiscoveryTransport {
         Self {
             peer_registry,
             local_identity,
+            signing_keypair: None,
             local_cache: Arc::new(RwLock::new(HashMap::new())),
             cache_ttl: DHT_ENTRY_TTL,
             dht_message_sender: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Attach the node's signing keypair so that outbound DhtStore messages are
+    /// authenticated with a Dilithium signature.  Call this during node startup
+    /// before the transport begins gossiping announcements.
+    pub fn with_signing_keypair(mut self, keypair: Arc<lib_crypto::KeyPair>) -> Self {
+        self.signing_keypair = Some(keypair);
+        self
     }
 
     /// Set the message sender for outbound DHT messages
@@ -186,14 +199,44 @@ impl MeshValidatorDiscoveryTransport {
             .unwrap()
             .as_secs();
 
-        // Create DHT store message
+        // Create DHT store message — sign with the node's Dilithium key when available.
+        // The signature covers the same domain-separated tuple verified by handle_dht_store:
+        // "ZHTP_DHT_STORE_V1|" || key_id || request_id (BE) || ttl (BE) || key || value
+        const DHT_STORE_DOMAIN_SEP: &[u8] = b"ZHTP_DHT_STORE_V1|";
+        let signature = if let Some(ref kp) = self.signing_keypair {
+            let mut signed_data = Vec::with_capacity(
+                DHT_STORE_DOMAIN_SEP.len()
+                    + self.local_identity.key_id.len()
+                    + 8  // request_id BE
+                    + 8  // ttl BE
+                    + key.len()
+                    + value.len(),
+            );
+            signed_data.extend_from_slice(DHT_STORE_DOMAIN_SEP);
+            signed_data.extend_from_slice(&self.local_identity.key_id);
+            signed_data.extend_from_slice(&timestamp.to_be_bytes());
+            signed_data.extend_from_slice(&DHT_ENTRY_TTL.to_be_bytes());
+            signed_data.extend_from_slice(&key);
+            signed_data.extend_from_slice(&value);
+            match kp.sign(&signed_data) {
+                Ok(sig) => sig.signature,
+                Err(e) => {
+                    warn!("Failed to sign DHT Store message: {}", e);
+                    return Err(anyhow!("DHT Store signing failed: {}", e));
+                }
+            }
+        } else {
+            warn!("DHT Store gossip sent without signing keypair — remote peers will reject it");
+            Vec::new()
+        };
+
         let message = ZhtpMeshMessage::DhtStore {
             requester: self.local_identity.clone(),
-            request_id: timestamp, // Use timestamp as simple request ID
+            request_id: timestamp,
             key,
             value,
             ttl: DHT_ENTRY_TTL,
-            signature: Vec::new(), // TODO: Sign with node key when needed
+            signature,
         };
 
         // Get connected peers to gossip to (authenticated peers with active connection)

@@ -552,11 +552,13 @@ impl MeshMessageHandler {
                     .await?;
             }
             ZhtpMeshMessage::ValidatorMessage(msg) => {
-                // Prefer raw sender (ValidatorProtocol middleware) over direct consensus sender
+                // ValidatorMessages MUST go through ValidatorProtocol middleware for
+                // signature verification before reaching the consensus engine.
+                // No fallback path — unverified consensus messages are never forwarded.
                 if let Some(ref raw_tx) = self.raw_validator_message_sender {
                     match raw_tx.send(msg).await {
                         Ok(()) => {
-                            debug!("✅ ValidatorMessage forwarded to ValidatorProtocol middleware from peer {:?}",
+                            debug!("ValidatorMessage forwarded to ValidatorProtocol middleware from peer {:?}",
                                 hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
                             );
                         }
@@ -566,26 +568,9 @@ impl MeshMessageHandler {
                             );
                         }
                     }
-                } else if let Some(ref consensus_tx) = self.consensus_message_sender {
-                    // Fallback: forward directly to consensus engine if sender is wired
-                    let consensus_msg = convert_network_to_consensus_message(&msg);
-
-                    match consensus_tx.send(consensus_msg).await {
-                        Ok(()) => {
-                            debug!(
-                                "✅ ValidatorMessage forwarded to consensus engine from peer {:?}",
-                                hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
-                            );
-                        }
-                        Err(e) => {
-                            warn!("Failed to forward ValidatorMessage to consensus: {} (consensus may be stopped)",
-                                e
-                            );
-                        }
-                    }
                 } else {
-                    debug!(
-                        "Received ValidatorMessage but no consensus sender wired (peer {:?})",
+                    warn!(
+                        "Dropping ValidatorMessage from peer {:?}: no ValidatorProtocol middleware wired (signature verification required)",
                         hex::encode(&sender.key_id[0..8.min(sender.key_id.len())])
                     );
                 }
@@ -1504,24 +1489,114 @@ impl MeshMessageHandler {
     async fn handle_dht_store(
         &self,
         requester: PublicKey,
-        _request_id: u64,
+        request_id: u64,
         key: Vec<u8>,
         value: Vec<u8>,
         ttl: u64,
-        _signature: Vec<u8>,
+        signature: Vec<u8>,
     ) -> Result<()> {
+        let peer_id_hex = hex::encode(&requester.key_id[0..8.min(requester.key_id.len())]);
+
+        // Reject empty key/value — prevents 32-byte signed-data collision with the
+        // "system transaction" bypass in verify_signature (msg_len==32, sig_len==pk_len).
+        if key.is_empty() || value.is_empty() {
+            warn!(
+                "DHT Store rejected from {}: key and value must be non-empty",
+                peer_id_hex
+            );
+            return Err(anyhow!("DHT Store key and value must be non-empty"));
+        }
+
+        // Guard against memory/CPU DoS — cap payload before any allocation.
+        const DHT_STORE_MAX_KEY_BYTES: usize = 256;
+        const DHT_STORE_MAX_VALUE_BYTES: usize = 65_536; // 64 KiB
+        if key.len() > DHT_STORE_MAX_KEY_BYTES {
+            warn!(
+                "DHT Store key too large ({} bytes) from peer {}",
+                key.len(),
+                peer_id_hex
+            );
+            return Err(anyhow!("DHT Store key exceeds maximum size"));
+        }
+        if value.len() > DHT_STORE_MAX_VALUE_BYTES {
+            warn!(
+                "DHT Store value too large ({} bytes) from peer {}",
+                value.len(),
+                peer_id_hex
+            );
+            return Err(anyhow!("DHT Store value exceeds maximum size"));
+        }
+
         info!(
-            "DHT Store request from {:?}: key={} bytes, value={} bytes, ttl={}",
-            requester,
+            "DHT Store request from {}: key={} bytes, value={} bytes, ttl={}",
+            peer_id_hex,
             key.len(),
             value.len(),
             ttl
         );
 
+        // Validate that key_id is bound to the Dilithium public key.
+        // Without this check an attacker can forge a victim's key_id while supplying
+        // their own dilithium_pk and still pass Dilithium verification.
+        if requester.dilithium_pk.is_empty() {
+            warn!(
+                "DHT Store rejected from {}: missing Dilithium public key",
+                peer_id_hex
+            );
+            return Err(anyhow!("DHT Store requester has no Dilithium public key"));
+        }
+        let expected_key_id = lib_crypto::hash_blake3(&requester.dilithium_pk);
+        if requester.key_id != expected_key_id {
+            warn!(
+                "DHT Store rejected from {}: key_id does not match dilithium_pk",
+                peer_id_hex
+            );
+            return Err(anyhow!("DHT Store requester key_id mismatch"));
+        }
+
+        // Verify signature over domain-separated tuple:
+        // "ZHTP_DHT_STORE_V1|" || requester.key_id || request_id (BE) || ttl (BE) || key || value
+        // Including request_id and ttl prevents an attacker from replaying the signature
+        // with a different TTL or a different request context.
+        const DHT_STORE_DOMAIN_SEP: &[u8] = b"ZHTP_DHT_STORE_V1|";
+        let mut signed_data = Vec::with_capacity(
+            DHT_STORE_DOMAIN_SEP.len()
+                + requester.key_id.len()
+                + 8 // request_id (u64 BE)
+                + 8 // ttl (u64 BE)
+                + key.len()
+                + value.len(),
+        );
+        signed_data.extend_from_slice(DHT_STORE_DOMAIN_SEP);
+        signed_data.extend_from_slice(&requester.key_id);
+        signed_data.extend_from_slice(&request_id.to_be_bytes());
+        signed_data.extend_from_slice(&ttl.to_be_bytes());
+        signed_data.extend_from_slice(&key);
+        signed_data.extend_from_slice(&value);
+
+        let sig = lib_crypto::Signature::from_bytes_with_key(&signature, requester.clone());
+        match requester.verify(&signed_data, &sig) {
+            Ok(true) => {
+                debug!("DHT Store signature verified from peer {}", peer_id_hex);
+            }
+            Ok(false) => {
+                warn!(
+                    "DHT Store signature verification FAILED from peer {}",
+                    peer_id_hex
+                );
+                return Err(anyhow!("Invalid DHT Store signature"));
+            }
+            Err(e) => {
+                warn!(
+                    "DHT Store signature verification error from peer {}: {}",
+                    peer_id_hex, e
+                );
+                return Err(anyhow!("DHT Store signature verification error: {}", e));
+            }
+        }
+
         // DHT storage operations should be implemented at the application layer
         // through ZkDHTIntegration. This handler just logs the request.
-        // In a full implementation, this would forward to the local DHT node.
-
         warn!("DHT Store: Application layer should implement through ZkDHTIntegration");
         Ok(())
     }
@@ -1792,6 +1867,7 @@ impl MeshMessageHandler {
 /// The network layer uses `lib_consensus::validators::ValidatorMessage` (the wire format),
 /// while the consensus engine uses `lib_consensus::types::ValidatorMessage` (the internal format).
 /// This function bridges the two representations.
+#[allow(dead_code)]
 fn convert_network_to_consensus_message(
     msg: &lib_consensus::validators::ValidatorMessage,
 ) -> lib_consensus::types::ValidatorMessage {
@@ -2154,5 +2230,233 @@ mod tests {
             .get_pending(&envelope.recipient_did)
             .unwrap();
         assert!(pending.is_empty());
+    }
+
+    // -------------------------------------------------------------------------
+    // DHT Store security tests
+    // -------------------------------------------------------------------------
+
+    fn make_handler() -> MeshMessageHandler {
+        let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
+        let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
+        let revenue_pools = Arc::new(RwLock::new(HashMap::new()));
+        MeshMessageHandler::new(peer_registry, long_range_relays, revenue_pools)
+    }
+
+    /// Build a valid signed DHT Store message matching the domain-separated format
+    /// expected by handle_dht_store.
+    fn dht_store_signed_data(
+        kp: &lib_crypto::KeyPair,
+        request_id: u64,
+        ttl: u64,
+        key: &[u8],
+        value: &[u8],
+    ) -> Vec<u8> {
+        const DOMAIN: &[u8] = b"ZHTP_DHT_STORE_V1|";
+        let mut data = Vec::new();
+        data.extend_from_slice(DOMAIN);
+        data.extend_from_slice(&kp.public_key.key_id);
+        data.extend_from_slice(&request_id.to_be_bytes());
+        data.extend_from_slice(&ttl.to_be_bytes());
+        data.extend_from_slice(key);
+        data.extend_from_slice(value);
+        kp.sign(&data).unwrap().signature
+    }
+
+    /// DHT Store with a valid Dilithium signature is accepted.
+    #[tokio::test]
+    async fn test_dht_store_valid_signature_accepted() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+        let key = b"validator:abcd".to_vec();
+        let value = b"serialized_announcement".to_vec();
+        let request_id = 1_000u64;
+        let ttl = 86_400u64;
+
+        let sig = dht_store_signed_data(&kp, request_id, ttl, &key, &value);
+        let result = handler
+            .handle_dht_store(kp.public_key.clone(), request_id, key, value, ttl, sig)
+            .await;
+        assert!(result.is_ok(), "Valid DHT Store should be accepted: {:?}", result);
+    }
+
+    /// DHT Store with an empty signature is rejected.
+    #[tokio::test]
+    async fn test_dht_store_empty_signature_rejected() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+        let result = handler
+            .handle_dht_store(
+                kp.public_key.clone(),
+                1,
+                b"key".to_vec(),
+                b"value".to_vec(),
+                100,
+                Vec::new(), // empty signature
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    /// DHT Store with an invalid signature (wrong key) is rejected.
+    #[tokio::test]
+    async fn test_dht_store_invalid_signature_rejected() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+        let wrong_kp = lib_crypto::KeyPair::generate().unwrap();
+        let key = b"validator:abcd".to_vec();
+        let value = b"serialized_announcement".to_vec();
+        let request_id = 42u64;
+        let ttl = 100u64;
+
+        // Sign with the wrong key — verification against kp.public_key must fail.
+        let bad_sig = dht_store_signed_data(&wrong_kp, request_id, ttl, &key, &value);
+        let result = handler
+            .handle_dht_store(kp.public_key.clone(), request_id, key, value, ttl, bad_sig)
+            .await;
+        assert!(result.is_err());
+    }
+
+    /// DHT Store with a forged key_id (key_id does not match dilithium_pk) is rejected.
+    #[tokio::test]
+    async fn test_dht_store_forged_key_id_rejected() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+        let victim_kp = lib_crypto::KeyPair::generate().unwrap();
+
+        // Attacker's pk with victim's key_id spliced in.
+        let mut forged = kp.public_key.clone();
+        forged.key_id = victim_kp.public_key.key_id;
+
+        let key = b"validator:forged".to_vec();
+        let value = b"payload".to_vec();
+
+        // Sign with attacker's key over the forged key_id — must still be rejected.
+        let sig = {
+            const DOMAIN: &[u8] = b"ZHTP_DHT_STORE_V1|";
+            let mut data = Vec::new();
+            data.extend_from_slice(DOMAIN);
+            data.extend_from_slice(&forged.key_id); // victim's key_id
+            data.extend_from_slice(&1u64.to_be_bytes());
+            data.extend_from_slice(&100u64.to_be_bytes());
+            data.extend_from_slice(&key);
+            data.extend_from_slice(&value);
+            kp.sign(&data).unwrap().signature
+        };
+
+        let result = handler
+            .handle_dht_store(forged, 1, key, value, 100, sig)
+            .await;
+        assert!(result.is_err(), "Forged key_id must be rejected");
+    }
+
+    /// DHT Store with empty key or value is rejected.
+    #[tokio::test]
+    async fn test_dht_store_empty_key_value_rejected() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+
+        let result_empty_key = handler
+            .handle_dht_store(
+                kp.public_key.clone(),
+                1,
+                Vec::new(), // empty key
+                b"value".to_vec(),
+                100,
+                b"fakesig".to_vec(),
+            )
+            .await;
+        assert!(result_empty_key.is_err());
+
+        let result_empty_val = handler
+            .handle_dht_store(
+                kp.public_key.clone(),
+                1,
+                b"key".to_vec(),
+                Vec::new(), // empty value
+                100,
+                b"fakesig".to_vec(),
+            )
+            .await;
+        assert!(result_empty_val.is_err());
+    }
+
+    /// DHT Store with oversized key or value is rejected.
+    #[tokio::test]
+    async fn test_dht_store_oversized_payload_rejected() {
+        let handler = make_handler();
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+
+        let result_big_key = handler
+            .handle_dht_store(
+                kp.public_key.clone(),
+                1,
+                vec![b'k'; 257], // > DHT_STORE_MAX_KEY_BYTES (256)
+                b"value".to_vec(),
+                100,
+                b"fakesig".to_vec(),
+            )
+            .await;
+        assert!(result_big_key.is_err());
+
+        let result_big_val = handler
+            .handle_dht_store(
+                kp.public_key.clone(),
+                1,
+                b"key".to_vec(),
+                vec![b'v'; 65_537], // > DHT_STORE_MAX_VALUE_BYTES (65_536)
+                100,
+                b"fakesig".to_vec(),
+            )
+            .await;
+        assert!(result_big_val.is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    // ValidatorMessage drop test
+    // -------------------------------------------------------------------------
+
+    /// ValidatorMessage is silently dropped (Ok) when no middleware is wired.
+    #[tokio::test]
+    async fn test_validator_message_dropped_without_middleware() {
+        let handler = make_handler();
+
+        // Use a properly generated keypair to avoid triggering internal key invariants.
+        let kp = lib_crypto::KeyPair::generate().unwrap();
+        let sender_pk = kp.public_key.clone();
+
+        // Build a minimal, structurally valid HeartbeatMessage.  The handler does not
+        // validate message content in the drop path — it only checks whether the
+        // ValidatorProtocol middleware channel is wired.
+        let heartbeat_sig = kp.sign(b"test_heartbeat").unwrap();
+        let heartbeat = lib_consensus::validators::HeartbeatMessage {
+            message_id: lib_crypto::Hash([0u8; 32]),
+            validator: lib_crypto::Hash([0u8; 32]),
+            height: 0,
+            round: 0,
+            step: lib_types::ConsensusStep::Propose,
+            network_summary: lib_consensus::validators::NetworkSummary {
+                active_validators: 0,
+                health_score: 0.0,
+                block_rate: 0.0,
+            },
+            timestamp: 0,
+            signature: heartbeat_sig,
+        };
+        let validator_msg =
+            lib_consensus::validators::ValidatorMessage::Heartbeat(heartbeat);
+
+        // Without middleware wired, the message must be dropped (Ok, not forwarded).
+        let result = handler
+            .handle_mesh_message(
+                ZhtpMeshMessage::ValidatorMessage(validator_msg),
+                sender_pk,
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "ValidatorMessage should be dropped gracefully when middleware is absent: {:?}",
+            result
+        );
     }
 }

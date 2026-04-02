@@ -136,12 +136,36 @@ impl MeshRouter {
         info!("👋 Received PeerAnnouncement from {:?} (timestamp: {})",
               hex::encode(&sender.key_id[0..8.min(sender.key_id.len())]), timestamp);
         
-        // Verify signature to prevent spoofing
-        if let Some(ref identity_mgr) = self.identity_manager {
-            let _mgr = identity_mgr.read().await;
-            // TODO: Proper signature verification with sender's public key
-            if signature.is_empty() {
-                warn!("⚠️ Rejecting PeerAnnouncement with empty signature from {}", addr);
+        // Verify Dilithium signature over (sender.key_id || timestamp).
+        // Reject unsigned or maliciously signed announcements immediately.
+        if signature.is_empty() {
+            warn!("Rejecting PeerAnnouncement with empty signature from {}", addr);
+            return Ok(());
+        }
+        if sender.dilithium_pk.is_empty() {
+            warn!("Rejecting PeerAnnouncement without Dilithium public key from {}", addr);
+            return Ok(());
+        }
+        // Validate key_id is bound to the Dilithium public key — reject forged key_id claims.
+        let expected_key_id = lib_crypto::hash_blake3(&sender.dilithium_pk);
+        if sender.key_id != expected_key_id {
+            warn!("Rejecting PeerAnnouncement with mismatched key_id from {}: claimed key_id does not match dilithium_pk", addr);
+            return Ok(());
+        }
+        let mut signed_data = Vec::with_capacity(sender.key_id.len() + 8);
+        signed_data.extend_from_slice(&sender.key_id);
+        signed_data.extend_from_slice(&timestamp.to_le_bytes());
+        let sig = lib_crypto::Signature::from_bytes_with_key(signature, sender.clone());
+        match sender.verify(&signed_data, &sig) {
+            Ok(true) => {
+                debug!("PeerAnnouncement signature verified from {}", addr);
+            }
+            Ok(false) => {
+                warn!("Rejecting PeerAnnouncement with INVALID signature from {}", addr);
+                return Ok(());
+            }
+            Err(e) => {
+                warn!("PeerAnnouncement signature verification error from {}: {}", addr, e);
                 return Ok(());
             }
         }
