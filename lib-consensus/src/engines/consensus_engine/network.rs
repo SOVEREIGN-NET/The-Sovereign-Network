@@ -444,17 +444,26 @@ impl ConsensusEngine {
 
                 // Validator set update from runtime
                 Some(update) = recv_validator_update(&mut validator_update_rx) => {
-                    // Synchronize validator manager with the full validator list from runtime.
-                    // This avoids calling `register_validator` with incomplete key data.
-                    match self.validator_manager.sync_from_validator_list(&update.entries) {
-                        Ok(added) => {
-                            if added > 0 {
-                                tracing::info!("Validator set updated from runtime: {} new", added);
+                    let mut added = 0usize;
+                    for entry in &update.entries {
+                        if !self.validator_manager.is_validator(&entry.identity_id) {
+                            if let Err(e) = self.validator_manager.register_validator(
+                                entry.identity_id.clone(),
+                                entry.stake,
+                                0,
+                                entry.consensus_key.clone(),
+                                Vec::new(),
+                                Vec::new(),
+                                0,
+                            ) {
+                                tracing::warn!("Validator register failed for {}: {}", entry.identity_id, e);
+                            } else {
+                                added += 1;
                             }
                         }
-                        Err(e) => {
-                            tracing::warn!("Validator set sync from runtime failed: {}", e);
-                        }
+                    }
+                    if added > 0 {
+                        tracing::info!("Validator set updated from runtime: {} new", added);
                     }
                     if let Some(id) = update.local_identity {
                         let _ = self.set_local_validator_identity(id);

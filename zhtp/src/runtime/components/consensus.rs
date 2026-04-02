@@ -2095,8 +2095,6 @@ impl Component for ConsensusComponent {
                                 identity_id,
                                 stake: v.stake,
                                 consensus_key: v.consensus_key.clone(),
-                                networking_key: v.networking_key.clone(),
-                                rewards_key: v.rewards_key.clone(),
                             }
                         }).collect();
                     let update = lib_consensus::ValidatorSetUpdate {
