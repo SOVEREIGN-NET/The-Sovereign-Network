@@ -70,12 +70,13 @@ Use the built-in network commands as a lightweight harness for device-to-device 
 There is no CLI or API endpoint that sends `ValidatorMessage` directly.
 
 What exists today:
-- `lib-network` defines `MessageBroadcaster`, but it is not wired into `lib-consensus`.
-- `lib-consensus` has `ValidatorProtocol::broadcast_*`, but `broadcast_message()` is a TODO and not connected to networking.
+- `lib-network` defines `MessageBroadcaster`, wired into `lib-consensus` via `ConsensusMeshBroadcaster`.
+- `lib-consensus` has `ValidatorProtocol::broadcast_message()` connected to `QuicValidatorTransport`, which sends signed messages over the QUIC mesh via `send_to_peer()`.
+- `ValidatorProtocol` is wired at consensus startup with the mesh router's QUIC protocol.
 
 Implication:
-- You cannot trigger real validator message delivery via CLI yet.
-- For now, validator messages are only reachable through a custom test harness or by wiring `MessageBroadcaster` into consensus.
+- Validator messages are broadcast to peers automatically during consensus rounds.
+- No CLI endpoint is needed — the consensus engine drives message flow.
 
 If you want to add a local harness:
 - Create a small Rust binary that constructs a `ValidatorMessage` and calls `MeshMessageBroadcaster::broadcast_to_validators()` with explicit public keys.
