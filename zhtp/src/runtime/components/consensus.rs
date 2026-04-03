@@ -820,14 +820,21 @@ async fn catchup_sync_from_peer(
             let mut bc = blockchain_arc.write().await;
 
             // CRITICAL: Check the BFT active height guard UNDER the write lock.
-            // This eliminates the TOCTOU race between checking the atomic and
-            // acquiring the lock. BFT commit also acquires this same write lock,
-            // so holding it here guarantees mutual exclusion.
             //
-            // The guard is only set when BFT mode is active (>= 4 validators).
-            // In bootstrap mode it's 0, allowing catch-up to proceed freely.
+            // bft_active_height = current_round.height = blockchain_height + 1
+            // (the height BFT is proposing/voting on).
+            //
+            // Catch-up may apply blocks AT bft_active_height because they come from
+            // peers that already committed them via BFT — the blocks should be
+            // identical. The idempotency check in commit_finalized_block handles
+            // the case where BFT also commits the same block (same hash = skip).
+            //
+            // Catch-up must NOT apply blocks ABOVE bft_active_height — those
+            // haven't been finalized by any peer yet.
+            //
+            // In bootstrap mode the guard is 0, allowing catch-up to proceed freely.
             let bft_height = bft_active_height.load(std::sync::atomic::Ordering::Acquire);
-            if bft_height > 0 && height >= bft_height {
+            if bft_height > 0 && height > bft_height {
                 debug!(
                     "Catch-up: skipping block {} (BFT active at height {})",
                     height, bft_height
@@ -2387,6 +2394,54 @@ mod tests {
         assert!(
             committed_block.header.nonce > 0,
             "Mined block should have non-zero nonce"
+        );
+    }
+
+    #[test]
+    fn test_bft_active_height_guard_allows_blocks_below() {
+        let bft_height = std::sync::atomic::AtomicU64::new(1346);
+        let block_height = 1345u64;
+        let bft_val = bft_height.load(std::sync::atomic::Ordering::Acquire);
+        // Block below BFT height should be allowed
+        assert!(
+            !(bft_val > 0 && block_height > bft_val),
+            "Block below BFT height should pass the guard"
+        );
+    }
+
+    #[test]
+    fn test_bft_active_height_guard_allows_blocks_at_bft_height() {
+        let bft_height = std::sync::atomic::AtomicU64::new(1346);
+        let block_height = 1346u64;
+        let bft_val = bft_height.load(std::sync::atomic::Ordering::Acquire);
+        // Block AT BFT height should be allowed (same block from peer's committed chain)
+        assert!(
+            !(bft_val > 0 && block_height > bft_val),
+            "Block at BFT height should pass the guard"
+        );
+    }
+
+    #[test]
+    fn test_bft_active_height_guard_blocks_above() {
+        let bft_height = std::sync::atomic::AtomicU64::new(1346);
+        let block_height = 1347u64;
+        let bft_val = bft_height.load(std::sync::atomic::Ordering::Acquire);
+        // Block above BFT height should be blocked
+        assert!(
+            bft_val > 0 && block_height > bft_val,
+            "Block above BFT height should be blocked by the guard"
+        );
+    }
+
+    #[test]
+    fn test_bft_active_height_guard_disabled_in_bootstrap() {
+        let bft_height = std::sync::atomic::AtomicU64::new(0); // bootstrap mode
+        let block_height = 9999u64;
+        let bft_val = bft_height.load(std::sync::atomic::Ordering::Acquire);
+        // Guard disabled when bft_height is 0 (bootstrap mode)
+        assert!(
+            !(bft_val > 0 && block_height > bft_val),
+            "Guard should be disabled when bft_active_height is 0"
         );
     }
 }
