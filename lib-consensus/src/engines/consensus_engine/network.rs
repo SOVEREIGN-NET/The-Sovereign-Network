@@ -110,6 +110,22 @@ impl ConsensusEngine {
         }
 
         loop {
+            // Publish the height BFT is actively working on so catch-up sync
+            // doesn't race with block commits at the same height.
+            // Only publish in BFT mode (>= 4 validators). In bootstrap mode,
+            // catch-up sync must be unrestricted to fill the gap.
+            if let Some(ref bft_height) = self.bft_active_height {
+                if self.is_bft_mode_active() {
+                    bft_height.store(
+                        self.current_round.height,
+                        std::sync::atomic::Ordering::Release,
+                    );
+                } else {
+                    // Clear the guard in bootstrap mode so catch-up proceeds freely.
+                    bft_height.store(0, std::sync::atomic::Ordering::Release);
+                }
+            }
+
             tokio::select! {
                 // Timer fired: only process if token matches current state
                 _ = &mut timer_fut => {

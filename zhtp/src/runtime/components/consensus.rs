@@ -460,6 +460,7 @@ async fn run_catch_up_sync_task(
     mut rx: tokio::sync::mpsc::Receiver<u64>,
     blockchain_slot: SharedBlockchainSlot,
     sled_path: std::path::PathBuf,
+    bft_active_height: Arc<std::sync::atomic::AtomicU64>,
 ) {
     const FAST_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(3);
     const NORMAL_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
@@ -521,7 +522,7 @@ async fn run_catch_up_sync_task(
         // same-height peers (e.g. other nodes on the same stale fork) from the count.
         let mut ahead_peers_rejecting: u32 = 0;
         for peer in &prioritized_peers {
-            match catchup_sync_from_peer(&peer.addr, from_height, &blockchain_slot).await {
+            match catchup_sync_from_peer(&peer.addr, from_height, &blockchain_slot, &bft_active_height).await {
                 Ok(0) => {
                     debug!(
                         "Catch-up sync: peer {} at same height ({})",
@@ -685,6 +686,7 @@ async fn catchup_sync_from_peer(
     peer_addr: &str,
     our_height: u64,
     blockchain_slot: &SharedBlockchainSlot,
+    bft_active_height: &Arc<std::sync::atomic::AtomicU64>,
 ) -> anyhow::Result<usize> {
     use anyhow::Context;
     use lib_network::client::{ZhtpClient, ZhtpClientConfig};
@@ -814,7 +816,26 @@ async fn catchup_sync_from_peer(
         let mut applied_in_page = 0usize;
         for block in blocks {
             let height = block.height();
+
             let mut bc = blockchain_arc.write().await;
+
+            // CRITICAL: Check the BFT active height guard UNDER the write lock.
+            // This eliminates the TOCTOU race between checking the atomic and
+            // acquiring the lock. BFT commit also acquires this same write lock,
+            // so holding it here guarantees mutual exclusion.
+            //
+            // The guard is only set when BFT mode is active (>= 4 validators).
+            // In bootstrap mode it's 0, allowing catch-up to proceed freely.
+            let bft_height = bft_active_height.load(std::sync::atomic::Ordering::Acquire);
+            if bft_height > 0 && height >= bft_height {
+                debug!(
+                    "Catch-up: skipping block {} (BFT active at height {})",
+                    height, bft_height
+                );
+                drop(bc);
+                break;
+            }
+
             // Skip blocks strictly below our tip. Allow height == bc.height only
             // for genesis (height 0): a fresh sled needs the canonical block 0 applied.
             if height < bc.height || (height == bc.height && height > 0) {
@@ -877,13 +898,11 @@ impl ConsensusBlockchainAdapter {
     }
 }
 
-/// Callback for committing BFT-finalized blocks to the blockchain
+/// Callback for committing BFT-finalized blocks to the blockchain.
 ///
-/// When BFT consensus achieves 2/3+1 commit votes, this callback is invoked
-/// to actually commit the block to the blockchain storage layer.
-///
-/// This separates the "when" (BFT consensus decides) from the "how"
-/// (blockchain layer stores), maintaining clean architectural boundaries.
+/// When BFT consensus achieves 2/3+1 commit votes, this callback writes the
+/// block to the blockchain. The `bft_active_height` atomic prevents catch-up
+/// sync from racing at the same height (Apr 2 2026 postmortem fix).
 pub struct ConsensusBlockCommitter {
     blockchain_slot: SharedBlockchainSlot,
     environment: crate::config::Environment,
@@ -1966,20 +1985,24 @@ impl Component for ConsensusComponent {
         consensus_engine.set_blockchain_provider(Arc::new(blockchain_adapter));
         info!("📦 Blockchain provider wired to consensus engine");
 
+        // Shared atomic: BFT publishes its active height so catch-up sync avoids racing.
+        let bft_active_height = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        consensus_engine.set_bft_active_height(bft_active_height.clone());
+
         // Wire catch-up sync trigger.
         // Channel capacity of 2 means triggers are coalesced: if two divergence
         // events fire before the task drains the channel, only one sync runs.
         {
             let (catch_up_tx, catch_up_rx) = tokio::sync::mpsc::channel::<u64>(2);
-            // Register the sender globally so mesh event receivers can fire catch-up.
             crate::runtime::blockchain_provider::set_global_catchup_trigger(catch_up_tx.clone());
             let trigger = Arc::new(CatchUpSyncChannel { tx: catch_up_tx });
             consensus_engine.set_catch_up_sync_trigger(trigger);
             let blockchain_slot_for_sync = self.blockchain.clone();
             let sled_path_for_sync =
                 std::path::Path::new(&self.environment.data_directory()).join("sled");
+            let bft_height_for_sync = bft_active_height.clone();
             tokio::spawn(async move {
-                run_catch_up_sync_task(catch_up_rx, blockchain_slot_for_sync, sled_path_for_sync)
+                run_catch_up_sync_task(catch_up_rx, blockchain_slot_for_sync, sled_path_for_sync, bft_height_for_sync)
                     .await;
             });
             info!("🔄 Catch-up sync trigger wired (height-divergence recovery active)");
