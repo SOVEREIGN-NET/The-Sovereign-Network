@@ -1,55 +1,71 @@
 //! CRYSTALS-Kyber wrapper functions - preserving post-quantum KEM
-//! 
+//!
 //! implementation wrappers from crypto.rs for CRYSTALS-Kyber
 
 use anyhow::Result;
-use pqcrypto_kyber::{kyber512, kyber1024};
-use pqcrypto_traits::{
-    kem::{PublicKey as KemPublicKey, SecretKey as KemSecretKey, Ciphertext, SharedSecret},
-};
-use sha3::Sha3_256;
 use hkdf::Hkdf;
+use pqc_kyber;
+use rand::rngs::OsRng;
+use sha3::Sha3_256;
 
-/// Generate Kyber512 keypair (balanced security/performance)
-pub fn kyber512_keypair() -> (Vec<u8>, Vec<u8>) {
-    let (pk, sk) = kyber512::keypair();
-    (pk.as_bytes().to_vec(), sk.as_bytes().to_vec())
+// Re-export Kyber constants from single source of truth for backward compatibility
+pub use super::constants::{
+    KYBER1024_CIPHERTEXT_BYTES as KYBER_CIPHERTEXTBYTES,
+    KYBER1024_PUBLICKEY_BYTES as KYBER_PUBLICKEYBYTES,
+    KYBER1024_SECRETKEY_BYTES as KYBER_SECRETKEYBYTES,
+};
+
+/// Generate Kyber1024 keypair (highest security, larger keys)
+pub fn kyber1024_keypair() -> (Vec<u8>, Vec<u8>) {
+    let keys = pqc_kyber::keypair(&mut OsRng).expect("Kyber1024 keypair generation failed");
+    (keys.public.to_vec(), keys.secret.to_vec())
 }
 
-/// Encapsulate shared secret with Kyber512
+/// ✅ FIX: Encapsulate shared secret with Kyber1024 with consistent KDF info
 ///
-/// Note: kdf_info must match the info used in kyber512_decapsulate for the
-/// shared secrets to be identical on both sides.
-pub fn kyber512_encapsulate(public_key: &[u8], kdf_info: &[u8]) -> Result<(Vec<u8>, [u8; 32])> {
-    let pk = kyber512::PublicKey::from_bytes(public_key)
-        .map_err(|_| anyhow::anyhow!("Invalid Kyber512 public key"))?;
+/// Note: kdf_info must match the info used in kyber1024_decapsulate for the
+/// shared secrets to be identical on both sides. Consistency is enforced by using
+/// the same KDF info constant.
+pub fn kyber1024_encapsulate(public_key: &[u8], kdf_info: &[u8]) -> Result<(Vec<u8>, [u8; 32])> {
+    let pk: [u8; KYBER_PUBLICKEYBYTES] = public_key
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid Kyber1024 public key (len={})", public_key.len()))?;
 
-    let (shared_secret_bytes, ciphertext) = kyber512::encapsulate(&pk);
+    let (ciphertext, shared_secret_bytes) = pqc_kyber::encapsulate(&pk, &mut OsRng)
+        .map_err(|e| anyhow::anyhow!("Kyber1024 encapsulate failed: {:?}", e))?;
 
     // Derive a 32-byte key using HKDF-SHA3
-    let hk = Hkdf::<Sha3_256>::new(None, shared_secret_bytes.as_bytes());
+    let hk = Hkdf::<Sha3_256>::new(None, &shared_secret_bytes);
     let mut shared_secret = [0u8; 32];
     hk.expand(kdf_info, &mut shared_secret)
         .map_err(|_| anyhow::anyhow!("HKDF expansion failed"))?;
 
-    Ok((ciphertext.as_bytes().to_vec(), shared_secret))
+    Ok((ciphertext.to_vec(), shared_secret))
 }
 
-/// Decapsulate shared secret with Kyber512
-pub fn kyber512_decapsulate(ciphertext: &[u8], secret_key: &[u8], kdf_info: &[u8]) -> Result<[u8; 32]> {
-    let sk = kyber512::SecretKey::from_bytes(secret_key)
-        .map_err(|_| anyhow::anyhow!("Invalid Kyber512 secret key"))?;
-    let ct = kyber512::Ciphertext::from_bytes(ciphertext)
-        .map_err(|_| anyhow::anyhow!("Invalid Kyber512 ciphertext"))?;
-    
-    let shared_secret_bytes = kyber512::decapsulate(&ct, &sk);
-    
+/// ✅ FIX: Decapsulate shared secret with Kyber1024 with consistent KDF info
+pub fn kyber1024_decapsulate(
+    ciphertext: &[u8],
+    secret_key: &[u8],
+    kdf_info: &[u8],
+) -> Result<[u8; 32]> {
+    let sk: [u8; KYBER_SECRETKEYBYTES] = secret_key
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid Kyber1024 secret key (len={})", secret_key.len()))?;
+
+    let ct: [u8; KYBER_CIPHERTEXTBYTES] = ciphertext
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid Kyber1024 ciphertext (len={})", ciphertext.len()))?;
+
+    let shared_secret_bytes = pqc_kyber::decapsulate(&ct, &sk)
+        .map_err(|e| anyhow::anyhow!("Kyber1024 decapsulate failed: {:?}", e))?;
+
     // Derive the same 32-byte key using HKDF-SHA3
-    let hk = Hkdf::<Sha3_256>::new(None, shared_secret_bytes.as_bytes());
+    let hk = Hkdf::<Sha3_256>::new(None, &shared_secret_bytes);
     let mut shared_secret = [0u8; 32];
     hk.expand(kdf_info, &mut shared_secret)
         .map_err(|_| anyhow::anyhow!("HKDF expansion failed"))?;
-    
+
     Ok(shared_secret)
 }
 
@@ -106,31 +122,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_kyber512_kem() -> Result<()> {
-        let (pk, sk) = kyber512_keypair();
-
-        // Both sides must use the same kdf_info
-        let kdf_info = b"ZHTP-QUIC-KEM-v1.0";
-
-        // Encapsulate
-        let (ciphertext, shared_secret1) = kyber512_encapsulate(&pk, kdf_info)?;
-
-        // Decapsulate
-        let shared_secret2 = kyber512_decapsulate(&ciphertext, &sk, kdf_info)?;
-
-        // Should match
-        assert_eq!(shared_secret1, shared_secret2);
-        assert_eq!(shared_secret1.len(), 32);
-
-        Ok(())
-    }
-
-    #[test]
     fn test_kyber1024_kem() -> Result<()> {
         let (pk, sk) = kyber1024_keypair();
 
         // Both sides must use the same kdf_info
-        let kdf_info = b"ZHTP-KEM-v1.0";
+        let kdf_info = b"ZHTP-KEM-v2.0";
 
         // Encapsulate
         let (ciphertext, shared_secret1) = kyber1024_encapsulate(&pk, kdf_info)?;
@@ -143,5 +139,12 @@ mod tests {
         assert_eq!(shared_secret1.len(), 32);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_kyber1024_sizes_match_expected() {
+        let (pk, sk) = kyber1024_keypair();
+        assert_eq!(pk.len(), KYBER_PUBLICKEYBYTES);
+        assert_eq!(sk.len(), KYBER_SECRETKEYBYTES);
     }
 }

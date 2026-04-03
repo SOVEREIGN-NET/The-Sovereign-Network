@@ -24,7 +24,7 @@ pub struct ValidatorAnnouncement {
     /// Validator's consensus public key
     pub consensus_key: PublicKey,
 
-    /// Amount of ZHTP tokens staked
+    /// Amount of SOV tokens staked
     pub stake: u64,
 
     /// Storage capacity provided (bytes)
@@ -61,9 +61,7 @@ struct ValidatorAnnouncementPayload {
 impl ValidatorAnnouncement {
     pub fn sign(mut self, keypair: &lib_crypto::keypair::generation::KeyPair) -> Result<Self> {
         if keypair.public_key.dilithium_pk != self.consensus_key.dilithium_pk {
-            return Err(anyhow!(
-                "Keypair does not match announcement consensus key"
-            ));
+            return Err(anyhow!("Keypair does not match announcement consensus key"));
         }
 
         self.endpoints = canonicalize_endpoints(&self.endpoints);
@@ -97,7 +95,8 @@ impl ValidatorAnnouncement {
             status: self.status,
             last_updated: self.last_updated,
         };
-        bincode::serialize(&payload).map_err(|e| anyhow!("ValidatorAnnouncement encode failed: {e}"))
+        bincode::serialize(&payload)
+            .map_err(|e| anyhow!("ValidatorAnnouncement encode failed: {e}"))
     }
 }
 
@@ -183,10 +182,7 @@ impl ValidatorDiscoveryProtocol {
     }
 
     /// Create a new discovery protocol with a transport implementation
-    pub fn with_transport(
-        cache_ttl: u64,
-        transport: Arc<dyn ValidatorDiscoveryTransport>,
-    ) -> Self {
+    pub fn with_transport(cache_ttl: u64, transport: Arc<dyn ValidatorDiscoveryTransport>) -> Self {
         Self {
             validator_cache: Arc::new(RwLock::new(HashMap::new())),
             cache_ttl,
@@ -197,7 +193,7 @@ impl ValidatorDiscoveryProtocol {
     /// Announce this validator to the consensus network
     pub async fn announce_validator(&self, announcement: ValidatorAnnouncement) -> Result<()> {
         info!(
-            "Announcing validator {} with stake {} ZHTP for consensus",
+            "Announcing validator {} with stake {} SOV for consensus",
             announcement.identity_id, announcement.stake
         );
 
@@ -316,9 +312,7 @@ impl ValidatorDiscoveryProtocol {
             .ok_or_else(|| anyhow!("Validator not found in consensus: {}", identity_id))?;
 
         if keypair.public_key.dilithium_pk != announcement.consensus_key.dilithium_pk {
-            return Err(anyhow!(
-                "Keypair does not match validator consensus key"
-            ));
+            return Err(anyhow!("Keypair does not match validator consensus key"));
         }
 
         announcement.status = new_status;
@@ -417,6 +411,43 @@ impl ValidatorDiscoveryProtocol {
         Ok(())
     }
 
+    /// Add a trusted validator to the discovery cache without signature verification.
+    ///
+    /// Used for blockchain-sourced or genesis validators whose data is already
+    /// authenticated by chain consensus. Skips `validate_announcement()` which
+    /// would otherwise reject entries without valid self-signed announcements.
+    pub async fn populate_trusted(
+        &self,
+        validator_id: Hash,
+        consensus_key: lib_crypto::PublicKey,
+        endpoints: Vec<ValidatorEndpoint>,
+        stake: u64,
+    ) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let announcement = ValidatorAnnouncement {
+            identity_id: validator_id.clone(),
+            consensus_key,
+            stake,
+            storage_provided: 0,
+            commission_rate: 0,
+            endpoints,
+            status: ValidatorStatus::Active,
+            last_updated: now,
+            signature: Vec::new(), // No self-signature needed for trusted entries
+        };
+
+        let mut cache = self.validator_cache.write().await;
+        cache.insert(validator_id.clone(), announcement);
+        debug!(
+            "Trusted validator {} added to discovery cache",
+            validator_id
+        );
+    }
+
     /// Select the best endpoint for a validator, respecting priority
     ///
     /// # Invariants
@@ -455,9 +486,7 @@ impl ValidatorDiscoveryProtocol {
 
         debug!(
             "Selected endpoint for validator {}: protocol={}, address={}",
-            identity_id,
-            endpoints[0].protocol,
-            endpoints[0].address
+            identity_id, endpoints[0].protocol, endpoints[0].address
         );
 
         Ok(endpoints.into_iter().next())

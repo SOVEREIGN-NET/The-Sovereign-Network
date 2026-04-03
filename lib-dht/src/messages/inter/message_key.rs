@@ -3,15 +3,14 @@ use crate::messages::inter::message_type::MessageType;
 #[derive(Eq, PartialEq, Hash)]
 pub struct MessageKey {
     method: String,
-    type_: MessageType
+    type_: MessageType,
 }
 
 impl MessageKey {
-
     pub fn new(method: &str, type_: MessageType) -> Self {
         Self {
             method: method.to_string(),
-            type_
+            type_,
         }
     }
 

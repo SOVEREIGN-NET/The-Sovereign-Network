@@ -3,9 +3,9 @@
 //! Implements Cross-Site Request Forgery protection using double-submit pattern
 //! with cryptographic binding to session ID.
 
-use std::sync::Arc;
 use lib_crypto::hash_blake3;
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use std::sync::Arc;
 
 /// CSRF protection using double-submit cookie pattern with session binding
 #[derive(Clone)]

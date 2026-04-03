@@ -99,19 +99,24 @@ impl DaoProposal {
     /// Validate status transition
     pub fn transition_to(&mut self, new_status: DaoProposalStatus) -> Result<(), String> {
         match (&self.status, &new_status) {
-            (DaoProposalStatus::Draft, DaoProposalStatus::Active) => {},
-            (DaoProposalStatus::Active, DaoProposalStatus::Passed) => {},
-            (DaoProposalStatus::Active, DaoProposalStatus::Failed) => {},
-            (DaoProposalStatus::Passed, DaoProposalStatus::Executed) => {},
-            (DaoProposalStatus::Active, DaoProposalStatus::Expired) => {},
+            (DaoProposalStatus::Draft, DaoProposalStatus::Active) => {}
+            (DaoProposalStatus::Active, DaoProposalStatus::Passed) => {}
+            (DaoProposalStatus::Active, DaoProposalStatus::Failed) => {}
+            (DaoProposalStatus::Passed, DaoProposalStatus::Executed) => {}
+            (DaoProposalStatus::Active, DaoProposalStatus::Expired) => {}
             (s, DaoProposalStatus::Cancelled) => {
                 if !matches!(s, DaoProposalStatus::Executed) {
                     // Can cancel from most states except Executed
                 } else {
                     return Err("Cannot cancel executed proposal".to_string());
                 }
-            },
-            _ => return Err(format!("Invalid transition from {:?} to {:?}", self.status, new_status)),
+            }
+            _ => {
+                return Err(format!(
+                    "Invalid transition from {:?} to {:?}",
+                    self.status, new_status
+                ))
+            }
         }
         self.status = new_status;
         Ok(())
@@ -125,25 +130,59 @@ impl DaoProposal {
     }
 
     // Accessor methods (immutable)
-    pub fn id(&self) -> &Hash { &self.id }
-    pub fn title(&self) -> &str { &self.title }
-    pub fn description(&self) -> &str { &self.description }
-    pub fn proposer(&self) -> &IdentityId { &self.proposer }
-    pub fn proposal_type(&self) -> &DaoProposalType { &self.proposal_type }
-    pub fn status(&self) -> &DaoProposalStatus { &self.status }
-    pub fn voting_start_time(&self) -> u64 { self.voting_start_time }
-    pub fn voting_end_time(&self) -> u64 { self.voting_end_time }
-    pub fn quorum_required(&self) -> u8 { self.quorum_required }
-    pub fn vote_tally(&self) -> &DaoVoteTally { &self.vote_tally }
-    pub fn created_at(&self) -> u64 { self.created_at }
-    pub fn created_at_height(&self) -> u64 { self.created_at_height }
-    pub fn execution_params(&self) -> Option<&Vec<u8>> { self.execution_params.as_ref() }
-    pub fn ubi_impact(&self) -> Option<u64> { self.ubi_impact }
-    pub fn economic_impact(&self) -> Option<&ImpactMetrics> { self.economic_impact.as_ref() }
-    pub fn privacy_level(&self) -> &PrivacyLevel { &self.privacy_level }
+    pub fn id(&self) -> &Hash {
+        &self.id
+    }
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+    pub fn proposer(&self) -> &IdentityId {
+        &self.proposer
+    }
+    pub fn proposal_type(&self) -> &DaoProposalType {
+        &self.proposal_type
+    }
+    pub fn status(&self) -> &DaoProposalStatus {
+        &self.status
+    }
+    pub fn voting_start_time(&self) -> u64 {
+        self.voting_start_time
+    }
+    pub fn voting_end_time(&self) -> u64 {
+        self.voting_end_time
+    }
+    pub fn quorum_required(&self) -> u8 {
+        self.quorum_required
+    }
+    pub fn vote_tally(&self) -> &DaoVoteTally {
+        &self.vote_tally
+    }
+    pub fn created_at(&self) -> u64 {
+        self.created_at
+    }
+    pub fn created_at_height(&self) -> u64 {
+        self.created_at_height
+    }
+    pub fn execution_params(&self) -> Option<&Vec<u8>> {
+        self.execution_params.as_ref()
+    }
+    pub fn ubi_impact(&self) -> Option<u64> {
+        self.ubi_impact
+    }
+    pub fn economic_impact(&self) -> Option<&ImpactMetrics> {
+        self.economic_impact.as_ref()
+    }
+    pub fn privacy_level(&self) -> &PrivacyLevel {
+        &self.privacy_level
+    }
 
     // Mutable accessor for tally
-    pub fn vote_tally_mut(&mut self) -> &mut DaoVoteTally { &mut self.vote_tally }
+    pub fn vote_tally_mut(&mut self) -> &mut DaoVoteTally {
+        &mut self.vote_tally
+    }
 }
 
 /// DAO execution parameters for proposal application
@@ -157,6 +196,34 @@ pub struct DaoExecutionParams {
 pub enum DaoExecutionAction {
     /// Governance parameter update
     GovernanceParameterUpdate(GovernanceParameterUpdate),
+    /// Mint authorization (requires Treasury Kernel - M2)
+    MintAuthorization(MintAuthorizationParams),
+    /// Burn authorization (requires Treasury Kernel - M2)
+    BurnAuthorization(BurnAuthorizationParams),
+}
+
+/// Parameters for a governance-authorized mint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MintAuthorizationParams {
+    /// Amount to mint (in smallest token units)
+    pub amount: u64,
+    /// Recipient key_id
+    pub recipient_key_id: [u8; 32],
+    /// Reason: "ubi", "welfare", "infrastructure", "treasury", "emergency"
+    pub reason: String,
+    /// Delay in epochs before executable (0 = use kernel default)
+    pub delay_epochs: u64,
+}
+
+/// Parameters for a governance-authorized burn
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BurnAuthorizationParams {
+    /// Amount to burn (in smallest token units)
+    pub amount: u64,
+    /// Account to burn from (key_id)
+    pub from_key_id: [u8; 32],
+    /// Delay in epochs before executable (0 = use kernel default)
+    pub delay_epochs: u64,
 }
 
 /// Governance parameter update payload
@@ -190,6 +257,24 @@ pub enum GovernanceParameterValue {
     BlockchainAdjustmentInterval(u64),
     /// Target time for difficulty adjustment interval (seconds)
     BlockchainTargetTimespan(u64),
+    /// Base fee for transaction fee calculation (atomic units)
+    TxFeeBase(u64),
+    /// Bytes per 1 SOV fee unit (slope)
+    TxFeeBytesPerSov(u64),
+    /// Witness cap in bytes for fee calculation
+    TxFeeWitnessCap(u32),
+    /// Fixed fee for canonical TokenCreation transactions
+    TokenCreationFee(u64),
+    /// Oracle committee membership set (validator pubkeys), activates at next epoch boundary.
+    OracleCommitteeMembers(Vec<[u8; 32]>),
+    /// Oracle epoch duration in seconds.
+    OracleEpochDurationSecs(u64),
+    /// Oracle max accepted source age in seconds.
+    OracleMaxSourceAgeSecs(u64),
+    /// Oracle max source deviation in basis points.
+    OracleMaxDeviationBps(u32),
+    /// Oracle max staleness (epochs) allowed for graduation checks.
+    OracleMaxPriceStalenessEpochs(u64),
 }
 
 /// Types of DAO proposals
@@ -218,11 +303,16 @@ pub enum DaoProposalType {
     /// Research and development grants
     ResearchGrants,
     /// Difficulty parameter update for adaptive difficulty adjustment
-    /// 
+    ///
     /// Used to propose changes to the blockchain's difficulty adjustment parameters
     /// through DAO governance. Contains target_timespan, adjustment_interval,
     /// and optional min/max adjustment factors.
     DifficultyParameterUpdate,
+    /// Mint/burn authorization requiring Treasury Kernel execution
+    ///
+    /// Proposals of this type are registered with the Treasury Kernel
+    /// and can only execute after the governance delay period elapses.
+    MintBurnAuthorization,
 }
 
 /// DAO proposal status
@@ -291,18 +381,18 @@ impl DaoVoteTally {
             DaoVoteChoice::Yes => {
                 self.yes_votes = self.yes_votes.saturating_add(1);
                 self.weighted_yes = self.weighted_yes.saturating_add(power);
-            },
+            }
             DaoVoteChoice::No => {
                 self.no_votes = self.no_votes.saturating_add(1);
                 self.weighted_no = self.weighted_no.saturating_add(power);
-            },
+            }
             DaoVoteChoice::Abstain => {
                 self.abstain_votes = self.abstain_votes.saturating_add(1);
                 self.weighted_abstain = self.weighted_abstain.saturating_add(power);
-            },
+            }
             DaoVoteChoice::Delegate(_) => {
                 // Delegates don't contribute to votes directly
-            },
+            }
         }
 
         self.total_votes = self.total_votes.saturating_add(1);
@@ -332,14 +422,30 @@ impl DaoVoteTally {
     }
 
     // Accessor methods
-    pub fn total_votes(&self) -> u64 { self.total_votes }
-    pub fn yes_votes(&self) -> u64 { self.yes_votes }
-    pub fn no_votes(&self) -> u64 { self.no_votes }
-    pub fn abstain_votes(&self) -> u64 { self.abstain_votes }
-    pub fn total_eligible_power(&self) -> u64 { self.total_eligible_power }
-    pub fn weighted_yes(&self) -> u64 { self.weighted_yes }
-    pub fn weighted_no(&self) -> u64 { self.weighted_no }
-    pub fn weighted_abstain(&self) -> u64 { self.weighted_abstain }
+    pub fn total_votes(&self) -> u64 {
+        self.total_votes
+    }
+    pub fn yes_votes(&self) -> u64 {
+        self.yes_votes
+    }
+    pub fn no_votes(&self) -> u64 {
+        self.no_votes
+    }
+    pub fn abstain_votes(&self) -> u64 {
+        self.abstain_votes
+    }
+    pub fn total_eligible_power(&self) -> u64 {
+        self.total_eligible_power
+    }
+    pub fn weighted_yes(&self) -> u64 {
+        self.weighted_yes
+    }
+    pub fn weighted_no(&self) -> u64 {
+        self.weighted_no
+    }
+    pub fn weighted_abstain(&self) -> u64 {
+        self.weighted_abstain
+    }
 }
 
 /// Individual DAO vote
@@ -391,7 +497,7 @@ impl DaoVoteChoice {
 /// DAO treasury management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaoTreasury {
-    /// Total treasury balance (ZHTP tokens)
+    /// Total treasury balance (SOV tokens)
     pub total_balance: u64,
     /// Available balance for allocation
     pub available_balance: u64,
@@ -875,4 +981,113 @@ pub enum FundingStatus {
     Disputed,
     /// Completed successfully
     Completed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mint_authorization_params_serialization() {
+        let params = MintAuthorizationParams {
+            amount: 1_000_000,
+            recipient_key_id: [42u8; 32],
+            reason: "welfare".to_string(),
+            delay_epochs: 2,
+        };
+
+        let encoded = bincode::serialize(&params).expect("serialize");
+        let decoded: MintAuthorizationParams = bincode::deserialize(&encoded).expect("deserialize");
+
+        assert_eq!(decoded.amount, 1_000_000);
+        assert_eq!(decoded.recipient_key_id, [42u8; 32]);
+        assert_eq!(decoded.reason, "welfare");
+        assert_eq!(decoded.delay_epochs, 2);
+    }
+
+    #[test]
+    fn test_burn_authorization_params_serialization() {
+        let params = BurnAuthorizationParams {
+            amount: 500_000,
+            from_key_id: [7u8; 32],
+            delay_epochs: 0,
+        };
+
+        let encoded = bincode::serialize(&params).expect("serialize");
+        let decoded: BurnAuthorizationParams = bincode::deserialize(&encoded).expect("deserialize");
+
+        assert_eq!(decoded.amount, 500_000);
+        assert_eq!(decoded.from_key_id, [7u8; 32]);
+        assert_eq!(decoded.delay_epochs, 0);
+    }
+
+    #[test]
+    fn test_dao_execution_action_mint_variant() {
+        let action = DaoExecutionAction::MintAuthorization(MintAuthorizationParams {
+            amount: 100,
+            recipient_key_id: [1u8; 32],
+            reason: "ubi".to_string(),
+            delay_epochs: 1,
+        });
+
+        assert!(matches!(action, DaoExecutionAction::MintAuthorization(_)));
+    }
+
+    #[test]
+    fn test_dao_execution_action_burn_variant() {
+        let action = DaoExecutionAction::BurnAuthorization(BurnAuthorizationParams {
+            amount: 200,
+            from_key_id: [2u8; 32],
+            delay_epochs: 3,
+        });
+
+        assert!(matches!(action, DaoExecutionAction::BurnAuthorization(_)));
+    }
+
+    #[test]
+    fn test_dao_execution_params_with_mint_roundtrip() {
+        let params = DaoExecutionParams {
+            action: DaoExecutionAction::MintAuthorization(MintAuthorizationParams {
+                amount: 50_000,
+                recipient_key_id: [99u8; 32],
+                reason: "infrastructure".to_string(),
+                delay_epochs: 1,
+            }),
+        };
+
+        let encoded = bincode::serialize(&params).expect("serialize");
+        let decoded: DaoExecutionParams = bincode::deserialize(&encoded).expect("deserialize");
+
+        match decoded.action {
+            DaoExecutionAction::MintAuthorization(p) => {
+                assert_eq!(p.amount, 50_000);
+                assert_eq!(p.recipient_key_id, [99u8; 32]);
+                assert_eq!(p.reason, "infrastructure");
+            }
+            _ => panic!("Expected MintAuthorization variant"),
+        }
+    }
+
+    #[test]
+    fn test_dao_proposal_type_includes_mint_burn() {
+        let pt = DaoProposalType::MintBurnAuthorization;
+        assert_ne!(
+            format!("{:?}", pt),
+            format!("{:?}", DaoProposalType::TreasuryAllocation)
+        );
+    }
+
+    #[test]
+    fn test_governance_parameter_token_creation_fee_roundtrip() {
+        let value = GovernanceParameterValue::TokenCreationFee(1_000);
+
+        let encoded = bincode::serialize(&value).expect("serialize");
+        let decoded: GovernanceParameterValue =
+            bincode::deserialize(&encoded).expect("deserialize");
+
+        assert!(matches!(
+            decoded,
+            GovernanceParameterValue::TokenCreationFee(1_000)
+        ));
+    }
 }

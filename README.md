@@ -22,7 +22,7 @@ This is a **monorepo** - all libraries are in this repository as regular directo
 - **DID**: `did:zhtp:{Blake3(seed || "ZHTP_DID_V1")}`
 - **NodeId**: `Blake3("ZHTP_NODE_V2:" + DID + ":" + device)` → 32 bytes
 - **Secrets**: Derived deterministically from seed
-- **PQC Keypairs**: Random attachments (Dilithium2, Kyber512) - can be rotated
+- **PQC Keypairs**: Random attachments (Dilithium2, Kyber1024) - can be rotated
 
 **Constructors:**
 ```rust
@@ -128,6 +128,22 @@ Nodes will automatically discover each other via:
 - Bootstrap peer connections
 
 ## 🔧 Development
+
+### First-time clone setup
+
+After cloning, activate the pre-commit hook that blocks accidental commits of sensitive files:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook prevents staging of:
+- Symlinks
+- Files inside `tmp/` or `.zhtp/`
+- Files matching `*.b64`, `*.key`, `*.pem`, `keystore*`, `.env`
+
+> **Never commit private keys, keystore files, base64-encoded archives, or local environment
+> configs.** Use environment variables or a secrets manager for sensitive material.
 
 ### Project Structure
 ```

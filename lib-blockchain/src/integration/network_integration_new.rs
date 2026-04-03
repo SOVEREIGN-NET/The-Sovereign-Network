@@ -152,11 +152,9 @@ mod tests {
             Hash::default(),            // previous_block_hash
             Hash::default(),            // merkle_root
             1000,                       // timestamp
-            Difficulty::minimum(),      // difficulty
             0,                          // height
             0,                          // transaction_count
             0,                          // block_size
-            Difficulty::minimum(),      // cumulative_difficulty
         );
 
         let block = Block::new(header, Vec::new());
@@ -176,15 +174,16 @@ mod tests {
         
         let transaction = Transaction {
             version: 1,
+            chain_id: 0x03, // development
             transaction_type: TransactionType::Transfer,
             inputs: Vec::new(),
             outputs: Vec::new(),
             fee: 100,
             signature: keypair.sign(b"test_data")?,
             memo: b"test memo".to_vec(),
-            identity_data: None,
-        };
-        
+            payload: crate::transaction::TransactionPayload::None,
+};
+
         let serialized = serialize_transaction_for_network(&transaction)?;
         let deserialized = deserialize_transaction_from_network(&serialized)?;
         
@@ -204,11 +203,9 @@ mod tests {
             Hash::default(),            // previous_block_hash
             Hash::default(),            // merkle_root
             1000,                       // timestamp
-            Difficulty::minimum(),      // difficulty
             1,                          // height
             0,                          // transaction_count
             0,                          // block_size
-            Difficulty::minimum(),      // cumulative_difficulty
         );
 
         let block = Block::new(header, Vec::new());

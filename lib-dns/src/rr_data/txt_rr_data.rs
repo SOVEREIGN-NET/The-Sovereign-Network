@@ -1,42 +1,38 @@
-use std::any::Any;
-use std::fmt;
-use std::fmt::Formatter;
-use crate::messages::wire::{FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError};
+use crate::messages::wire::{
+    FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError,
+};
 use crate::rr_data::inter::rr_data::{RRData, RRDataError};
 use crate::zone::inter::zone_rr_data::ZoneRRData;
 use crate::zone::zone_reader::ZoneReaderError;
+use std::any::Any;
+use std::fmt;
+use std::fmt::Formatter;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TxtRRData {
-    data: Vec<String>
+    data: Vec<String>,
 }
 
 impl Default for TxtRRData {
-
     fn default() -> Self {
-        Self {
-            data: Vec::new()
-        }
+        Self { data: Vec::new() }
     }
 }
 
 impl RRData for TxtRRData {
-
     fn from_bytes(buf: &[u8]) -> Result<Self, RRDataError> {
         let mut data = Vec::new();
         let mut i = 0;
 
         while i < buf.len() {
             let data_length = buf[i] as usize;
-            let record = String::from_utf8(buf[i+1..i+1+data_length].to_vec())
+            let record = String::from_utf8(buf[i + 1..i + 1 + data_length].to_vec())
                 .map_err(|e| RRDataError(e.to_string()))?;
             data.push(record);
-            i += data_length+1;
+            i += data_length + 1;
         }
 
-        Ok(Self {
-            data
-        })
+        Ok(Self { data })
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, RRDataError> {
@@ -68,16 +64,16 @@ impl RRData for TxtRRData {
     }
 
     fn eq_box(&self, other: &dyn RRData) -> bool {
-        other.as_any().downcast_ref::<Self>().map_or(false, |o| self == o)
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .map_or(false, |o| self == o)
     }
 }
 
 impl TxtRRData {
-
     pub fn new(data: Vec<String>) -> Self {
-        Self {
-            data
-        }
+        Self { data }
     }
 
     pub fn add_data(&mut self, data: &str) {
@@ -94,7 +90,6 @@ impl TxtRRData {
 }
 
 impl FromWireLen for TxtRRData {
-
     fn from_wire_len(context: &mut FromWireContext, len: u16) -> Result<Self, WireError> {
         let mut data = Vec::new();
 
@@ -104,17 +99,14 @@ impl FromWireLen for TxtRRData {
             let record = String::from_utf8(context.take(data_length)?.to_vec())
                 .map_err(|e| WireError::Format(e.to_string()))?;
             data.push(record);
-            i += data_length as u16 +1;
+            i += data_length as u16 + 1;
         }
 
-        Ok(Self {
-            data
-        })
+        Ok(Self { data })
     }
 }
 
 impl ToWire for TxtRRData {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
         for record in &self.data {
             let record_bytes = record.as_bytes();
@@ -127,7 +119,6 @@ impl ToWire for TxtRRData {
 }
 
 impl ZoneRRData for TxtRRData {
-
     fn set_data(&mut self, _index: usize, value: &str) -> Result<(), ZoneReaderError> {
         Ok(self.data.push(value.to_string()))
     }
@@ -138,18 +129,22 @@ impl ZoneRRData for TxtRRData {
 }
 
 impl fmt::Display for TxtRRData {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.data.iter()
-                    .map(|s| format!("\"{}\"", s))
-                    .collect::<Vec<_>>()
-                    .join(" "))
+        write!(
+            f,
+            "{}",
+            self.data
+                .iter()
+                .map(|s| format!("\"{}\"", s))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
     }
 }
 
 #[test]
 fn test() {
-    let buf = vec![ 0x9, 0x76, 0x3d, 0x62, 0x6c, 0x61, 0x20, 0x62, 0x6c, 0x61 ];
+    let buf = vec![0x9, 0x76, 0x3d, 0x62, 0x6c, 0x61, 0x20, 0x62, 0x6c, 0x61];
     let record = TxtRRData::from_bytes(&buf).unwrap();
     assert_eq!(buf, record.to_bytes().unwrap());
 }

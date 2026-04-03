@@ -1,10 +1,10 @@
 //! Wallet operations from the original identity.rs
 
-use anyhow::Result;
-use lib_crypto::Hash;
-use crate::wallets::{WalletManager, WalletId};
+use crate::wallets::{WalletId, WalletManager};
 #[cfg(test)]
 use crate::WalletType;
+use anyhow::Result;
+use lib_crypto::Hash;
 
 impl WalletManager {
     /// Create a basic wallet for testing purposes (bypasses seed phrase requirement)
@@ -19,7 +19,7 @@ impl WalletManager {
         let mut public_key = vec![0u8; 32];
         use rand::RngCore;
         rand::rngs::OsRng.fill_bytes(&mut public_key);
-        
+
         // Create the wallet without seed phrase for testing
         let wallet = crate::wallets::QuantumWallet::new(
             wallet_type,
@@ -28,17 +28,17 @@ impl WalletManager {
             self.owner_id.clone(),
             public_key,
         );
-        
+
         let wallet_id = wallet.id.clone();
-        
+
         // Store wallet
         self.wallets.insert(wallet_id.clone(), wallet);
-        
+
         // Store alias mapping if provided
         if let Some(alias) = alias {
             self.alias_map.insert(alias, wallet_id.clone());
         }
-        
+
         Ok(wallet_id)
     }
 
@@ -50,51 +50,53 @@ impl WalletManager {
         } else {
             return Err(anyhow::anyhow!("Wallet not found"));
         };
-        
+
         self.calculate_total_balance();
-        
+
         tracing::info!(
-            "Added {} ZHTP to wallet {}. New balance: {}",
+            "Added {} SOV to wallet {}. New balance: {}",
             amount,
             hex::encode(&wallet_id.0[..8]),
             new_balance
         );
-        
+
         Ok(())
     }
-    
+
     /// Remove funds from a wallet
     pub fn remove_funds_from_wallet(&mut self, wallet_id: &WalletId, amount: u64) -> Result<()> {
         let new_balance = if let Some(wallet) = self.wallets.get_mut(wallet_id) {
-            wallet.remove_funds(amount).map_err(|e| anyhow::anyhow!(e))?;
+            wallet
+                .remove_funds(amount)
+                .map_err(|e| anyhow::anyhow!(e))?;
             wallet.balance
         } else {
             return Err(anyhow::anyhow!("Wallet not found"));
         };
-        
+
         self.calculate_total_balance();
-        
+
         tracing::info!(
-            "Removed {} ZHTP from wallet {}. New balance: {}",
+            "Removed {} SOV from wallet {}. New balance: {}",
             amount,
             hex::encode(&wallet_id.0[..8]),
             new_balance
         );
-        
+
         Ok(())
     }
-    
+
     /// Get wallet balance
     pub fn get_wallet_balance(&self, wallet_id: &WalletId) -> Option<u64> {
         self.wallets.get(wallet_id).map(|wallet| wallet.balance)
     }
-    
+
     /// Check if wallet has sufficient funds
     pub fn has_sufficient_funds(&self, wallet_id: &WalletId, amount: u64) -> bool {
         self.get_wallet_balance(wallet_id)
             .map_or(false, |balance| balance >= amount)
     }
-    
+
     /// Bulk transfer to multiple wallets
     pub fn bulk_transfer_to_wallets(
         &mut self,
@@ -104,14 +106,14 @@ impl WalletManager {
     ) -> Result<Vec<Hash>> {
         // Calculate total amount needed
         let total_amount: u64 = transfers.iter().map(|(_, amount)| amount).sum();
-        
+
         // Check if source wallet has sufficient funds
         if !self.has_sufficient_funds(from_wallet, total_amount) {
             return Err(anyhow::anyhow!("Insufficient funds for bulk transfer"));
         }
-        
+
         let mut transaction_hashes = Vec::new();
-        
+
         // Execute all transfers
         for (to_wallet, amount) in transfers {
             let tx_hash = self.transfer_between_wallets(
@@ -122,21 +124,21 @@ impl WalletManager {
             )?;
             transaction_hashes.push(tx_hash);
         }
-        
+
         tracing::info!(
-            "Completed bulk transfer of {} ZHTP from wallet {} to {} recipients",
+            "Completed bulk transfer of {} SOV from wallet {} to {} recipients",
             total_amount,
             hex::encode(&from_wallet.0[..8]),
             transaction_hashes.len()
         );
-        
+
         Ok(transaction_hashes)
     }
-    
+
     /// Get recent transactions across all wallets
     pub fn get_all_recent_transactions(&self) -> Vec<TransactionSummary> {
         let mut all_transactions = Vec::new();
-        
+
         for wallet in self.wallets.values() {
             for tx_hash in &wallet.recent_transactions {
                 all_transactions.push(TransactionSummary {
@@ -148,26 +150,28 @@ impl WalletManager {
                 });
             }
         }
-        
+
         // Sort by timestamp (most recent first)
         all_transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        
+
         all_transactions
     }
-    
+
     /// Auto-distribute UBI to UBI wallets
     pub fn auto_distribute_ubi(&mut self, amount_per_wallet: u64) -> Result<Vec<Hash>> {
-        let ubi_wallets: Vec<WalletId> = self.wallets.values()
+        let ubi_wallets: Vec<WalletId> = self
+            .wallets
+            .values()
             .filter(|wallet| wallet.wallet_type == crate::wallets::WalletType::UBI)
             .map(|wallet| wallet.id.clone())
             .collect();
-        
+
         let mut distribution_hashes = Vec::new();
-        
+
         for wallet_id in ubi_wallets {
             if let Some(wallet) = self.wallets.get_mut(&wallet_id) {
                 wallet.add_funds(amount_per_wallet);
-                
+
                 // Generate UBI distribution hash
                 let ubi_data = [
                     wallet_id.as_bytes(),
@@ -178,32 +182,38 @@ impl WalletManager {
                         .unwrap()
                         .as_secs()
                         .to_le_bytes(),
-                ].concat();
+                ]
+                .concat();
                 let ubi_hash = Hash::from_bytes(&lib_crypto::hash_blake3(&ubi_data));
-                
+
                 wallet.add_transaction(ubi_hash.clone());
                 distribution_hashes.push(ubi_hash);
             }
         }
-        
+
         self.calculate_total_balance();
-        
+
         tracing::info!(
-            "Auto-distributed {} ZHTP to {} UBI wallets",
+            "Auto-distributed {} SOV to {} UBI wallets",
             amount_per_wallet,
             distribution_hashes.len()
         );
-        
+
         Ok(distribution_hashes)
     }
 
     /// Process UBI distribution to all eligible wallets
-    pub fn process_ubi_distribution(&mut self, total_ubi_pool: u64) -> Result<UbiDistributionResult> {
-        let ubi_wallets: Vec<WalletId> = self.wallets.values()
+    pub fn process_ubi_distribution(
+        &mut self,
+        total_ubi_pool: u64,
+    ) -> Result<UbiDistributionResult> {
+        let ubi_wallets: Vec<WalletId> = self
+            .wallets
+            .values()
             .filter(|wallet| wallet.wallet_type == crate::wallets::WalletType::UBI)
             .map(|wallet| wallet.id.clone())
             .collect();
-        
+
         if ubi_wallets.is_empty() {
             return Ok(UbiDistributionResult {
                 total_distributed: 0,
@@ -216,16 +226,16 @@ impl WalletManager {
                     .as_secs(),
             });
         }
-        
+
         let individual_amount = total_ubi_pool / ubi_wallets.len() as u64;
         let mut distribution_hashes = Vec::new();
         let mut total_distributed = 0;
-        
+
         for wallet_id in &ubi_wallets {
             if let Some(wallet) = self.wallets.get_mut(wallet_id) {
                 wallet.add_funds(individual_amount);
                 total_distributed += individual_amount;
-                
+
                 // Generate distribution hash
                 let distribution_data = [
                     wallet_id.as_bytes(),
@@ -236,13 +246,15 @@ impl WalletManager {
                         .unwrap()
                         .as_secs()
                         .to_le_bytes(),
-                ].concat();
-                
-                let distribution_hash = Hash::from_bytes(&lib_crypto::hash_blake3(&distribution_data));
+                ]
+                .concat();
+
+                let distribution_hash =
+                    Hash::from_bytes(&lib_crypto::hash_blake3(&distribution_data));
                 distribution_hashes.push(distribution_hash);
             }
         }
-        
+
         Ok(UbiDistributionResult {
             total_distributed,
             recipients: ubi_wallets.len(),
@@ -260,15 +272,15 @@ impl WalletManager {
         let mut total_rewards = 0u64;
         let mut reward_recipients = 0;
         let mut reward_details = Vec::new();
-        
+
         for (wallet_id, wallet) in self.wallets.iter_mut() {
             if wallet.staked_balance > 0 {
                 let reward_amount = (wallet.staked_balance as f64 * reward_rate) as u64;
                 wallet.add_rewards(reward_amount);
-                
+
                 total_rewards += reward_amount;
                 reward_recipients += 1;
-                
+
                 reward_details.push(WalletRewardDetail {
                     wallet_id: wallet_id.clone(),
                     staked_amount: wallet.staked_balance,
@@ -277,7 +289,7 @@ impl WalletManager {
                 });
             }
         }
-        
+
         Ok(StakingRewardsResult {
             total_rewards,
             reward_recipients,
@@ -296,25 +308,30 @@ impl WalletManager {
         transaction: CrossWalletTransactionRequest,
     ) -> Result<CrossWalletTransactionResult> {
         // Validate wallets exist and belong to this manager
-        let from_wallet = self.wallets.get(&transaction.from_wallet_id)
+        let from_wallet = self
+            .wallets
+            .get(&transaction.from_wallet_id)
             .ok_or_else(|| anyhow::anyhow!("Source wallet not found"))?;
-        
-        let _to_wallet = self.wallets.get(&transaction.to_wallet_id)
+
+        let _to_wallet = self
+            .wallets
+            .get(&transaction.to_wallet_id)
             .ok_or_else(|| anyhow::anyhow!("Destination wallet not found"))?;
-        
+
         // Check sufficient balance
         if from_wallet.balance < transaction.amount {
             return Err(anyhow::anyhow!("Insufficient balance"));
         }
-        
+
         // Execute transaction
         let from_wallet_mut = self.wallets.get_mut(&transaction.from_wallet_id).unwrap();
-        from_wallet_mut.deduct_funds(transaction.amount)
+        from_wallet_mut
+            .deduct_funds(transaction.amount)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
-        
+
         let to_wallet_mut = self.wallets.get_mut(&transaction.to_wallet_id).unwrap();
         to_wallet_mut.add_funds(transaction.amount);
-        
+
         // Generate transaction hash
         let tx_data = [
             transaction.from_wallet_id.as_bytes(),
@@ -326,14 +343,19 @@ impl WalletManager {
                 .unwrap()
                 .as_secs()
                 .to_le_bytes(),
-        ].concat();
-        
+        ]
+        .concat();
+
         let transaction_hash = Hash::from_bytes(&lib_crypto::hash_blake3(&tx_data));
-        
+
         // Get the new balances before constructing the result
-        let new_from_balance = self.wallets.get(&transaction.from_wallet_id).unwrap().balance;
+        let new_from_balance = self
+            .wallets
+            .get(&transaction.from_wallet_id)
+            .unwrap()
+            .balance;
         let new_to_balance = self.wallets.get(&transaction.to_wallet_id).unwrap().balance;
-        
+
         Ok(CrossWalletTransactionResult {
             transaction_hash,
             from_wallet_id: transaction.from_wallet_id,
@@ -350,27 +372,30 @@ impl WalletManager {
 
     /// Calculate total balance across all wallets
     pub fn calculate_total_balance(&mut self) -> u64 {
-        self.total_balance = self.wallets.values()
-            .map(|wallet| wallet.balance)
-            .sum();
+        self.total_balance = self.wallets.values().map(|wallet| wallet.balance).sum();
         self.total_balance
     }
-    
+
     /// Get wallet count
     pub fn wallet_count(&self) -> usize {
         self.wallets.len()
     }
-    
+
     /// Get active wallet count
     pub fn active_wallet_count(&self) -> usize {
-        self.wallets.values()
+        self.wallets
+            .values()
             .filter(|wallet| wallet.is_active)
             .count()
     }
-    
+
     /// Get wallets by type
-    pub fn get_wallets_by_type(&self, wallet_type: &crate::wallets::WalletType) -> Vec<&crate::wallets::QuantumWallet> {
-        self.wallets.values()
+    pub fn get_wallets_by_type(
+        &self,
+        wallet_type: &crate::wallets::WalletType,
+    ) -> Vec<&crate::wallets::QuantumWallet> {
+        self.wallets
+            .values()
             .filter(|wallet| &wallet.wallet_type == wallet_type)
             .collect()
     }
@@ -381,18 +406,21 @@ impl WalletManager {
         let mut unhealthy_wallets = 0;
         let mut total_balance = 0;
         let mut issues = Vec::new();
-        
+
         for (wallet_id, wallet) in &self.wallets {
             total_balance += wallet.balance;
-            
+
             if wallet.is_healthy() {
                 healthy_wallets += 1;
             } else {
                 unhealthy_wallets += 1;
-                issues.push(format!("Wallet {} is unhealthy", hex::encode(&wallet_id.0[..8])));
+                issues.push(format!(
+                    "Wallet {} is unhealthy",
+                    hex::encode(&wallet_id.0[..8])
+                ));
             }
         }
-        
+
         WalletHealthReport {
             total_wallets: self.wallets.len(),
             healthy_wallets,
@@ -487,28 +515,32 @@ mod tests {
     fn test_ubi_distribution() {
         let owner_id = Hash([1u8; 32]);
         let mut manager = WalletManager::new(owner_id);
-        
+
         // Create UBI wallets
-        let ubi_wallet1 = manager.create_wallet_for_testing(
-            crate::wallets::WalletType::UBI,
-            "UBI Wallet 1".to_string(),
-            Some("ubi1".to_string()),
-        ).unwrap();
-        
-        let ubi_wallet2 = manager.create_wallet_for_testing(
-            crate::wallets::WalletType::UBI,
-            "UBI Wallet 2".to_string(),
-            Some("ubi2".to_string()),
-        ).unwrap();
-        
+        let ubi_wallet1 = manager
+            .create_wallet_for_testing(
+                crate::wallets::WalletType::UBI,
+                "UBI Wallet 1".to_string(),
+                Some("ubi1".to_string()),
+            )
+            .unwrap();
+
+        let ubi_wallet2 = manager
+            .create_wallet_for_testing(
+                crate::wallets::WalletType::UBI,
+                "UBI Wallet 2".to_string(),
+                Some("ubi2".to_string()),
+            )
+            .unwrap();
+
         // Distribute UBI
         let result = manager.process_ubi_distribution(1000).unwrap();
-        
+
         assert_eq!(result.total_distributed, 1000);
         assert_eq!(result.recipients, 2);
         assert_eq!(result.individual_amount, 500);
         assert_eq!(result.distribution_hashes.len(), 2);
-        
+
         // Verify wallets received funds
         assert_eq!(manager.get_wallet(&ubi_wallet1).unwrap().balance, 500);
         assert_eq!(manager.get_wallet(&ubi_wallet2).unwrap().balance, 500);
@@ -518,22 +550,26 @@ mod tests {
     fn test_cross_wallet_transaction() {
         let owner_id = Hash([1u8; 32]);
         let mut manager = WalletManager::new(owner_id);
-        
-        let wallet1 = manager.create_wallet_for_testing(
-            crate::wallets::WalletType::Primary,
-            "Wallet 1".to_string(),
-            None,
-        ).unwrap();
-        
-        let wallet2 = manager.create_wallet_for_testing(
-            crate::wallets::WalletType::Savings,
-            "Wallet 2".to_string(),
-            None,
-        ).unwrap();
-        
+
+        let wallet1 = manager
+            .create_wallet_for_testing(
+                crate::wallets::WalletType::Primary,
+                "Wallet 1".to_string(),
+                None,
+            )
+            .unwrap();
+
+        let wallet2 = manager
+            .create_wallet_for_testing(
+                crate::wallets::WalletType::Savings,
+                "Wallet 2".to_string(),
+                None,
+            )
+            .unwrap();
+
         // Add funds to first wallet
         manager.wallets.get_mut(&wallet1).unwrap().add_funds(1000);
-        
+
         // Create transaction request
         let tx_request = CrossWalletTransactionRequest {
             from_wallet_id: wallet1.clone(),
@@ -541,9 +577,11 @@ mod tests {
             amount: 300,
             purpose: "Transfer to savings".to_string(),
         };
-        
-        let result = manager.process_cross_wallet_transaction(tx_request).unwrap();
-        
+
+        let result = manager
+            .process_cross_wallet_transaction(tx_request)
+            .unwrap();
+
         assert_eq!(result.amount, 300);
         assert_eq!(result.new_from_balance, 700);
         assert_eq!(result.new_to_balance, 300);
@@ -554,22 +592,26 @@ mod tests {
     fn test_wallet_health_check() {
         let owner_id = Hash([1u8; 32]);
         let mut manager = WalletManager::new(owner_id);
-        
+
         // Create some wallets
-        let _wallet1 = manager.create_wallet_for_testing(
-            crate::wallets::WalletType::Primary,
-            "Healthy Wallet".to_string(),
-            None,
-        ).unwrap();
-        
-        let _wallet2 = manager.create_wallet_for_testing(
-            crate::wallets::WalletType::UBI,
-            "Another Healthy Wallet".to_string(),
-            None,
-        ).unwrap();
-        
+        let _wallet1 = manager
+            .create_wallet_for_testing(
+                crate::wallets::WalletType::Primary,
+                "Healthy Wallet".to_string(),
+                None,
+            )
+            .unwrap();
+
+        let _wallet2 = manager
+            .create_wallet_for_testing(
+                crate::wallets::WalletType::UBI,
+                "Another Healthy Wallet".to_string(),
+                None,
+            )
+            .unwrap();
+
         let health_report = manager.perform_health_check();
-        
+
         assert_eq!(health_report.total_wallets, 2);
         assert_eq!(health_report.healthy_wallets, 2);
         assert_eq!(health_report.unhealthy_wallets, 0);
@@ -581,37 +623,47 @@ mod tests {
     fn test_staking_rewards_generation() {
         let owner_id = Hash([1u8; 32]);
         let mut manager = WalletManager::new(owner_id);
-        
-        let wallet1 = manager.create_wallet_for_testing(
-            crate::wallets::WalletType::Primary,
-            "Staking Wallet 1".to_string(),
-            None,
-        ).unwrap();
-        
-        let wallet2 = manager.create_wallet_for_testing(
-            crate::wallets::WalletType::Savings,
-            "Staking Wallet 2".to_string(),
-            None,
-        ).unwrap();
-        
+
+        let wallet1 = manager
+            .create_wallet_for_testing(
+                crate::wallets::WalletType::Primary,
+                "Staking Wallet 1".to_string(),
+                None,
+            )
+            .unwrap();
+
+        let wallet2 = manager
+            .create_wallet_for_testing(
+                crate::wallets::WalletType::Savings,
+                "Staking Wallet 2".to_string(),
+                None,
+            )
+            .unwrap();
+
         // Add staked amounts
         manager.wallets.get_mut(&wallet1).unwrap().staked_balance = 1000;
         manager.wallets.get_mut(&wallet2).unwrap().staked_balance = 2000;
-        
+
         // Generate rewards at 5% rate
         let reward_result = manager.generate_staking_rewards(0.05).unwrap();
-        
+
         assert_eq!(reward_result.reward_recipients, 2);
         assert_eq!(reward_result.total_rewards, 150); // 5% of 3000
         assert_eq!(reward_result.reward_details.len(), 2);
-        
+
         // Check individual rewards
-        let wallet1_reward = reward_result.reward_details.iter()
-            .find(|r| r.wallet_id == wallet1).unwrap();
+        let wallet1_reward = reward_result
+            .reward_details
+            .iter()
+            .find(|r| r.wallet_id == wallet1)
+            .unwrap();
         assert_eq!(wallet1_reward.reward_amount, 50); // 5% of 1000
-        
-        let wallet2_reward = reward_result.reward_details.iter()
-            .find(|r| r.wallet_id == wallet2).unwrap();
+
+        let wallet2_reward = reward_result
+            .reward_details
+            .iter()
+            .find(|r| r.wallet_id == wallet2)
+            .unwrap();
         assert_eq!(wallet2_reward.reward_amount, 100); // 5% of 2000
     }
 
@@ -619,40 +671,41 @@ mod tests {
     fn test_bulk_transfer() {
         let owner_id = Hash([1u8; 32]);
         let mut manager = WalletManager::new(owner_id);
-        
-        let source_wallet = manager.create_wallet_for_testing(
-            crate::wallets::WalletType::Primary,
-            "Source Wallet".to_string(),
-            None,
-        ).unwrap();
-        
-        let dest1 = manager.create_wallet_for_testing(
-            crate::wallets::WalletType::Savings,
-            "Dest 1".to_string(),
-            None,
-        ).unwrap();
-        
-        let dest2 = manager.create_wallet_for_testing(
-            crate::wallets::WalletType::Business,
-            "Dest 2".to_string(),
-            None,
-        ).unwrap();
-        
+
+        let source_wallet = manager
+            .create_wallet_for_testing(
+                crate::wallets::WalletType::Primary,
+                "Source Wallet".to_string(),
+                None,
+            )
+            .unwrap();
+
+        let dest1 = manager
+            .create_wallet_for_testing(
+                crate::wallets::WalletType::Savings,
+                "Dest 1".to_string(),
+                None,
+            )
+            .unwrap();
+
+        let dest2 = manager
+            .create_wallet_for_testing(
+                crate::wallets::WalletType::Business,
+                "Dest 2".to_string(),
+                None,
+            )
+            .unwrap();
+
         // Add funds to source
         manager.add_funds_to_wallet(&source_wallet, 1000).unwrap();
-        
+
         // Bulk transfer
-        let transfers = vec![
-            (dest1.clone(), 300),
-            (dest2.clone(), 200),
-        ];
-        
-        let tx_hashes = manager.bulk_transfer_to_wallets(
-            &source_wallet,
-            transfers,
-            "Test bulk transfer".to_string(),
-        ).unwrap();
-        
+        let transfers = vec![(dest1.clone(), 300), (dest2.clone(), 200)];
+
+        let tx_hashes = manager
+            .bulk_transfer_to_wallets(&source_wallet, transfers, "Test bulk transfer".to_string())
+            .unwrap();
+
         assert_eq!(tx_hashes.len(), 2);
         assert_eq!(manager.get_wallet_balance(&source_wallet).unwrap(), 500);
         assert_eq!(manager.get_wallet_balance(&dest1).unwrap(), 300);

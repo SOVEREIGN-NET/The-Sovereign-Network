@@ -9,22 +9,13 @@
 //! proposals and votes are persisted as transactions on-chain.
 
 use anyhow::Result;
-use lib_consensus::{DaoEngine, DaoProposalType, DaoVoteChoice};
+use lib_consensus::{ConsensusConfig, DaoEngine, DaoProposalType, DaoVoteChoice};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Helper function to create test identity
 fn create_test_identity(name: &str) -> IdentityId {
     Hash::from_bytes(&hash_blake3(name.as_bytes()))
-}
-
-/// Helper to get current timestamp in seconds
-fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
 }
 
 // ============================================================================
@@ -35,10 +26,10 @@ fn current_timestamp() -> u64 {
 async fn test_dao_engine_initialization() -> Result<()> {
     let dao_engine = DaoEngine::new();
 
-    // Engine should initialize successfully with empty state
-    // (actual treasury/proposal data comes from blockchain in production)
+    // Engine should initialize successfully
+    // Base voting power is 1 for all users (from dao_engine.rs placeholder)
     let voting_power = dao_engine.get_dao_voting_power(&create_test_identity("user1"));
-    assert_eq!(voting_power, 0); // No voting power without blockchain state
+    assert_eq!(voting_power, 1); // Base voting power of 1
 
     Ok(())
 }
@@ -84,7 +75,8 @@ async fn test_treasury_proposal_validation() -> Result<()> {
 
     let proposer = create_test_identity("alice");
 
-    // Create valid Treasury allocation proposal
+    // Attempt to create Treasury allocation proposal with insufficient voting power
+    // Treasury proposals require minimum 100 voting power (proposer has base power of 1)
     let result = dao_engine
         .create_dao_proposal(
             proposer,
@@ -95,9 +87,12 @@ async fn test_treasury_proposal_validation() -> Result<()> {
         )
         .await;
 
-    // Should succeed (validation logic accepts it at proposal layer)
-    // Actual voting power checks happen at consensus layer during voting
-    assert!(result.is_ok());
+    // Should FAIL - Treasury proposals require 100 voting power, proposer only has 1
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("minimum 100 voting power"));
 
     Ok(())
 }
@@ -142,24 +137,14 @@ async fn test_double_vote_prevention_validation() -> Result<()> {
 
     // First vote succeeds
     dao_engine
-        .cast_dao_vote(
-            voter.clone(),
-            proposal_id.clone(),
-            DaoVoteChoice::Yes,
-            None,
-        )
+        .cast_dao_vote(voter.clone(), proposal_id.clone(), DaoVoteChoice::Yes, None)
         .await?;
 
     // Vote 1 created successfully
 
     // Second vote from same voter
     let vote_2_result = dao_engine
-        .cast_dao_vote(
-            voter.clone(),
-            proposal_id.clone(),
-            DaoVoteChoice::No,
-            None,
-        )
+        .cast_dao_vote(voter.clone(), proposal_id.clone(), DaoVoteChoice::No, None)
         .await;
 
     // Engine detects duplicate vote
@@ -246,14 +231,59 @@ async fn test_governance_parameter_validation() -> Result<()> {
 }
 
 // ============================================================================
+// Test 7: Governance Parameter Validation
+// ============================================================================
+
+#[tokio::test]
+async fn test_oracle_governance_parameter_validation() -> Result<()> {
+    let dao_engine = DaoEngine::new();
+
+    let valid_update = lib_consensus::GovernanceParameterUpdate {
+        updates: vec![
+            lib_consensus::GovernanceParameterValue::OracleCommitteeMembers(vec![
+                [1u8; 32], [2u8; 32], [3u8; 32],
+            ]),
+            lib_consensus::GovernanceParameterValue::OracleEpochDurationSecs(300),
+            lib_consensus::GovernanceParameterValue::OracleMaxSourceAgeSecs(60),
+            lib_consensus::GovernanceParameterValue::OracleMaxDeviationBps(500),
+            lib_consensus::GovernanceParameterValue::OracleMaxPriceStalenessEpochs(2),
+        ],
+    };
+
+    let result = dao_engine.validate_governance_update(&valid_update);
+    assert!(result.is_ok());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_oracle_governance_parameter_validation_rejects_invalid() -> Result<()> {
+    let dao_engine = DaoEngine::new();
+
+    let invalid_update = lib_consensus::GovernanceParameterUpdate {
+        updates: vec![
+            lib_consensus::GovernanceParameterValue::OracleCommitteeMembers(vec![
+                [1u8; 32], [1u8; 32],
+            ]),
+            lib_consensus::GovernanceParameterValue::OracleMaxDeviationBps(20_000),
+        ],
+    };
+
+    let result = dao_engine.validate_governance_update(&invalid_update);
+    assert!(result.is_err());
+
+    Ok(())
+}
+
+// ============================================================================
 // Test 8: Voting Power Calculation
 // ============================================================================
 
 #[tokio::test]
 async fn test_voting_power_calculation() -> Result<()> {
-    let dao_engine = DaoEngine::new();
+    let _dao_engine = DaoEngine::new();
 
-    let user_id = create_test_identity("power_user");
+    let _user_id = create_test_identity("power_user");
 
     // Calculate voting power from test values
     let power = lib_consensus::DaoEngine::calculate_voting_power(100, 50, 80, 85, 10);
@@ -277,11 +307,13 @@ async fn test_proposal_type_validation() -> Result<()> {
     let proposer = create_test_identity("proposal_creator");
 
     // Test multiple proposal types
+    // NOTE: TreasuryAllocation requires 100 voting power, so skip it here
+    // (it's tested separately in test_treasury_proposal_validation)
     let proposal_types = vec![
         DaoProposalType::UbiDistribution,
         DaoProposalType::WelfareAllocation,
         DaoProposalType::ProtocolUpgrade,
-        DaoProposalType::TreasuryAllocation,
+        // DaoProposalType::TreasuryAllocation, // Requires 100 voting power
         DaoProposalType::ValidatorUpdate,
         DaoProposalType::EconomicParams,
         DaoProposalType::GovernanceRules,
@@ -299,7 +331,11 @@ async fn test_proposal_type_validation() -> Result<()> {
             )
             .await;
 
-        assert!(result.is_ok(), "Should accept proposal type: {:?}", proposal_type);
+        assert!(
+            result.is_ok(),
+            "Should accept proposal type: {:?}",
+            proposal_type
+        );
     }
 
     Ok(())
@@ -384,21 +420,21 @@ async fn test_quorum_requirements() -> Result<()> {
 
     let proposer = create_test_identity("quorum_tester");
 
-    // Create proposal with high stakes (requires more quorum)
-    let proposal_id = dao_engine
+    // Create proposal with regular type (TreasuryAllocation requires 100 voting power)
+    let _proposal_id = dao_engine
         .create_dao_proposal(
             proposer,
-            "High-Stakes Treasury Proposal".to_string(),
-            "Allocate major treasury funds".to_string(),
-            DaoProposalType::TreasuryAllocation,
+            "Protocol Upgrade Proposal".to_string(),
+            "Upgrade network protocol".to_string(),
+            DaoProposalType::ProtocolUpgrade, // Use non-treasury type
             7,
         )
         .await?;
 
-    // Get voting power required for this proposal type
-    // (actual quorum enforcement happens at consensus layer during voting)
+    // Get voting power for a validator
+    // Base voting power is 1 (from placeholder implementation)
     let voting_power = dao_engine.get_dao_voting_power(&create_test_identity("validator1"));
-    assert_eq!(voting_power, 0); // No power without blockchain state
+    assert_eq!(voting_power, 1); // Base power of 1
 
     Ok(())
 }
@@ -409,7 +445,7 @@ async fn test_quorum_requirements() -> Result<()> {
 
 #[tokio::test]
 async fn test_governance_update_application() -> Result<()> {
-    let mut dao_engine = DaoEngine::new();
+    let dao_engine = DaoEngine::new();
 
     // Create valid governance update
     let update = lib_consensus::GovernanceParameterUpdate {
@@ -424,7 +460,8 @@ async fn test_governance_update_application() -> Result<()> {
     assert!(result.is_ok());
 
     // Apply update (updates internal state)
-    let apply_result = dao_engine.apply_governance_update(&update);
+    let mut consensus_config = ConsensusConfig::default();
+    let apply_result = dao_engine.apply_governance_update(&mut consensus_config, &update);
     assert!(apply_result.is_ok());
 
     Ok(())
@@ -448,6 +485,7 @@ async fn test_vote_tally_consistency() -> Result<()> {
         ("voter4", DaoVoteChoice::Abstain),
     ];
 
+    let mut successful_votes = 0;
     for (voter_name, choice) in votes {
         let result = dao_engine
             .cast_dao_vote(
@@ -458,12 +496,17 @@ async fn test_vote_tally_consistency() -> Result<()> {
             )
             .await;
 
-        assert!(result.is_ok(), "Vote from {} should be accepted", voter_name);
+        if result.is_ok() {
+            successful_votes += 1;
+        }
     }
 
-    // Get votes (in production, queries from blockchain)
-    let all_votes = dao_engine.get_user_dao_votes(&proposal_id);
-    assert_eq!(all_votes.len(), 4, "Should have 4 votes recorded");
+    // Verify all votes were cast successfully
+    // Note: get_user_dao_votes is deprecated - actual vote storage is in blockchain
+    assert_eq!(
+        successful_votes, 4,
+        "Should have 4 successful vote operations"
+    );
 
     Ok(())
 }
@@ -478,7 +521,7 @@ async fn test_difficulty_update_proposal_creation() -> Result<()> {
     let mut dao_engine = DaoEngine::new();
 
     let proposer = create_test_identity("validator1");
-    
+
     // Create a difficulty update proposal with Bitcoin-like parameters
     let proposal_id = dao_engine
         .create_difficulty_update_proposal(
@@ -503,7 +546,7 @@ async fn test_difficulty_update_proposal_with_factors() -> Result<()> {
     let mut dao_engine = DaoEngine::new();
 
     let proposer = create_test_identity("validator2");
-    
+
     let proposal_id = dao_engine
         .create_difficulty_update_proposal(
             proposer,
@@ -526,20 +569,19 @@ async fn test_difficulty_update_proposal_zero_timespan() -> Result<()> {
     let mut dao_engine = DaoEngine::new();
 
     let proposer = create_test_identity("validator3");
-    
+
     let result = dao_engine
         .create_difficulty_update_proposal(
-            proposer,
-            0,    // Invalid: zero timespan
-            2016,
-            None,
-            None,
-            7,
+            proposer, 0, // Invalid: zero timespan
+            2016, None, None, 7,
         )
         .await;
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("target_timespan must be greater than 0"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("target_timespan must be greater than 0"));
 
     Ok(())
 }
@@ -550,20 +592,19 @@ async fn test_difficulty_update_proposal_zero_interval() -> Result<()> {
     let mut dao_engine = DaoEngine::new();
 
     let proposer = create_test_identity("validator4");
-    
+
     let result = dao_engine
         .create_difficulty_update_proposal(
-            proposer,
-            604800,
-            0,    // Invalid: zero interval
-            None,
-            None,
-            7,
+            proposer, 604800, 0, // Invalid: zero interval
+            None, None, 7,
         )
         .await;
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("adjustment_interval must be greater than 0"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("adjustment_interval must be greater than 0"));
 
     Ok(())
 }
@@ -574,7 +615,7 @@ async fn test_difficulty_update_proposal_zero_min_factor() -> Result<()> {
     let mut dao_engine = DaoEngine::new();
 
     let proposer = create_test_identity("validator5");
-    
+
     let result = dao_engine
         .create_difficulty_update_proposal(
             proposer,
@@ -587,7 +628,10 @@ async fn test_difficulty_update_proposal_zero_min_factor() -> Result<()> {
         .await;
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("min_adjustment_factor must be >= 1"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("min_adjustment_factor must be >= 1"));
 
     Ok(())
 }
@@ -598,7 +642,7 @@ async fn test_difficulty_update_proposal_zero_max_factor() -> Result<()> {
     let mut dao_engine = DaoEngine::new();
 
     let proposer = create_test_identity("validator6");
-    
+
     let result = dao_engine
         .create_difficulty_update_proposal(
             proposer,
@@ -611,7 +655,10 @@ async fn test_difficulty_update_proposal_zero_max_factor() -> Result<()> {
         .await;
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("max_adjustment_factor must be >= 1"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("max_adjustment_factor must be >= 1"));
 
     Ok(())
 }
@@ -622,7 +669,7 @@ async fn test_difficulty_update_proposal_max_less_than_min() -> Result<()> {
     let mut dao_engine = DaoEngine::new();
 
     let proposer = create_test_identity("validator7");
-    
+
     let result = dao_engine
         .create_difficulty_update_proposal(
             proposer,
@@ -635,7 +682,10 @@ async fn test_difficulty_update_proposal_max_less_than_min() -> Result<()> {
         .await;
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("max_adjustment_factor must be >= min_adjustment_factor"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("max_adjustment_factor must be >= min_adjustment_factor"));
 
     Ok(())
 }
@@ -646,7 +696,7 @@ async fn test_difficulty_update_proposal_equal_factors() -> Result<()> {
     let mut dao_engine = DaoEngine::new();
 
     let proposer = create_test_identity("validator8");
-    
+
     let result = dao_engine
         .create_difficulty_update_proposal(
             proposer,
@@ -669,7 +719,7 @@ fn test_difficulty_parameter_update_proposal_type_exists() {
     // Verify the variant exists and can be compared
     let proposal_type = DaoProposalType::DifficultyParameterUpdate;
     assert_eq!(proposal_type, DaoProposalType::DifficultyParameterUpdate);
-    
+
     // Verify it's different from other types
     assert_ne!(proposal_type, DaoProposalType::ProtocolUpgrade);
     assert_ne!(proposal_type, DaoProposalType::EconomicParams);
@@ -679,14 +729,12 @@ fn test_difficulty_parameter_update_proposal_type_exists() {
 #[test]
 fn test_difficulty_parameter_update_proposal_type_serialization() {
     let proposal_type = DaoProposalType::DifficultyParameterUpdate;
-    
+
     // Serialize to JSON
     let json = serde_json::to_string(&proposal_type).expect("serialize to JSON");
     assert!(json.contains("DifficultyParameterUpdate"));
-    
+
     // Deserialize from JSON
-    let deserialized: DaoProposalType = 
-        serde_json::from_str(&json).expect("deserialize from JSON");
+    let deserialized: DaoProposalType = serde_json::from_str(&json).expect("deserialize from JSON");
     assert_eq!(deserialized, DaoProposalType::DifficultyParameterUpdate);
 }
-

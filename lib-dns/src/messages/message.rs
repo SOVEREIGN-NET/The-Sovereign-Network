@@ -1,23 +1,25 @@
-use std::fmt;
-use std::fmt::Formatter;
-use std::net::SocketAddr;
 use crate::keyring::key::Key;
+use crate::messages::edns::Edns;
 use crate::messages::inter::op_codes::OpCodes;
 use crate::messages::inter::response_codes::ResponseCodes;
 use crate::messages::inter::rr_classes::RRClasses;
-use crate::rr_data::inter::rr_data::RRData;
-use crate::messages::rr_query::RRQuery;
 use crate::messages::inter::rr_types::RRTypes;
-use crate::messages::edns::Edns;
 use crate::messages::record::Record;
+use crate::messages::rr_query::RRQuery;
 use crate::messages::tsig::TSig;
-use crate::messages::wire::{FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError};
+use crate::messages::wire::{
+    FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError,
+};
+use crate::rr_data::inter::rr_data::RRData;
 use crate::rr_data::tsig_rr_data::TSigRRData;
 use crate::utils::fqdn_utils::pack_fqdn;
 #[allow(unused_imports)]
 use crate::utils::hash::hmac::hmac;
 #[allow(unused_imports)]
 use crate::utils::hash::sha256::Sha256;
+use std::fmt;
+use std::fmt::Formatter;
+use std::net::SocketAddr;
 /*
                                1  1  1  1  1  1
  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
@@ -53,11 +55,10 @@ pub struct Message {
     queries: Vec<RRQuery>,
     sections: [Vec<Record>; 3],
     edns: Option<Edns>,
-    tsig: Option<TSig>
+    tsig: Option<TSig>,
 }
 
 impl Default for Message {
-
     fn default() -> Self {
         Self {
             id: 0,
@@ -75,13 +76,12 @@ impl Default for Message {
             queries: Vec::new(),
             sections: Default::default(),
             edns: None,
-            tsig: None
+            tsig: None,
         }
     }
 }
 
 impl Message {
-
     pub fn new(id: u16) -> Self {
         Self {
             id,
@@ -97,7 +97,8 @@ impl Message {
         let flags = u16::from_wire(&mut context)?;
 
         let qr = (flags & 0x8000) != 0;
-        let op_code = OpCodes::try_from(((flags >> 11) & 0x0F) as u8).map_err(|e| WireError::Format(e.to_string()))?;
+        let op_code = OpCodes::try_from(((flags >> 11) & 0x0F) as u8)
+            .map_err(|e| WireError::Format(e.to_string()))?;
         let authoritative = (flags & 0x0400) != 0;
         let truncated = (flags & 0x0200) != 0;
         let recursion_desired = (flags & 0x0100) != 0;
@@ -105,7 +106,8 @@ impl Message {
         //let z = (flags & 0x0040) != 0;
         let authenticated_data = (flags & 0x0020) != 0;
         let checking_disabled = (flags & 0x0010) != 0;
-        let response_code = ResponseCodes::try_from((flags & 0x000F) as u8).map_err(|e| WireError::Format(e.to_string()))?;
+        let response_code = ResponseCodes::try_from((flags & 0x000F) as u8)
+            .map_err(|e| WireError::Format(e.to_string()))?;
 
         let qd_count = u16::from_wire(&mut context)?;
         let an_count = u16::from_wire(&mut context)?;
@@ -134,14 +136,16 @@ impl Message {
             let fqdn = context.name()?;
             let checkpoint = context.pos();
 
-            let rtype = RRTypes::try_from(u16::from_wire(&mut context)?).map_err(|e| WireError::Format(e.to_string()))?;
+            let rtype = RRTypes::try_from(u16::from_wire(&mut context)?)
+                .map_err(|e| WireError::Format(e.to_string()))?;
 
             match rtype {
                 RRTypes::Opt => edns = Some(Edns::from_wire(&mut context)?),
                 RRTypes::TSig => {
                     let class = u16::from_wire(&mut context)?;
                     let cache_flush = (class & 0x8000) != 0;
-                    let class = RRClasses::try_from(class).map_err(|e| WireError::Format(e.to_string()))?;
+                    let class =
+                        RRClasses::try_from(class).map_err(|e| WireError::Format(e.to_string()))?;
                     let ttl = u32::from_wire(&mut context)?;
 
                     let len = u16::from_wire(&mut context)?;
@@ -151,27 +155,40 @@ impl Message {
                             match TSigRRData::from_wire_len(&mut context, len) {
                                 Ok(mut data) => {
                                     let mut signed_payload = context.range(0..checkpoint)?.to_vec();
-                                    signed_payload[10..12].copy_from_slice(&(ar_count - 1).to_be_bytes());
+                                    signed_payload[10..12]
+                                        .copy_from_slice(&(ar_count - 1).to_be_bytes());
 
-                                    signed_payload.extend_from_slice(&RRClasses::Any.code().to_be_bytes());
+                                    signed_payload
+                                        .extend_from_slice(&RRClasses::Any.code().to_be_bytes());
                                     signed_payload.extend_from_slice(&0u32.to_be_bytes());
 
-                                    signed_payload.extend_from_slice(&pack_fqdn(&data.algorithm().as_ref()
-                                        .ok_or_else(|| WireError::Format("algorithm param was not set".to_string()))?.to_string())); //PROBABLY NO COMPRESS
+                                    signed_payload.extend_from_slice(&pack_fqdn(
+                                        &data
+                                            .algorithm()
+                                            .as_ref()
+                                            .ok_or_else(|| {
+                                                WireError::Format(
+                                                    "algorithm param was not set".to_string(),
+                                                )
+                                            })?
+                                            .to_string(),
+                                    )); //PROBABLY NO COMPRESS
 
                                     signed_payload.extend_from_slice(&[
                                         ((data.time_signed() >> 40) & 0xFF) as u8,
                                         ((data.time_signed() >> 32) & 0xFF) as u8,
                                         ((data.time_signed() >> 24) & 0xFF) as u8,
                                         ((data.time_signed() >> 16) & 0xFF) as u8,
-                                        ((data.time_signed() >>  8) & 0xFF) as u8,
-                                        ( data.time_signed()        & 0xFF) as u8
+                                        ((data.time_signed() >> 8) & 0xFF) as u8,
+                                        (data.time_signed() & 0xFF) as u8,
                                     ]);
                                     signed_payload.extend_from_slice(&data.fudge().to_be_bytes());
 
                                     signed_payload.extend_from_slice(&data.error().to_be_bytes());
 
-                                    signed_payload.extend_from_slice(&(data.data().len() as u16).to_be_bytes());
+                                    signed_payload.extend_from_slice(
+                                        &(data.data().len() as u16).to_be_bytes(),
+                                    );
                                     signed_payload.extend_from_slice(&data.data());
 
                                     let mut ts = TSig::new(&fqdn, data);
@@ -187,13 +204,14 @@ impl Message {
                 _ => {
                     let class = u16::from_wire(&mut context)?;
                     let _cache_flush = (class & 0x8000) != 0;
-                    let class = RRClasses::try_from(class).map_err(|e| WireError::Format(e.to_string()))?;
+                    let class =
+                        RRClasses::try_from(class).map_err(|e| WireError::Format(e.to_string()))?;
                     let ttl = u32::from_wire(&mut context)?;
 
                     let len = u16::from_wire(&mut context)?;
                     let data = match len {
                         0 => None,
-                        _ => Some(<dyn RRData>::from_wire(&mut context, len, &rtype, &class)?)
+                        _ => Some(<dyn RRData>::from_wire(&mut context, len, &rtype, &class)?),
                     };
 
                     sections[2].push(Record::new(&fqdn, class, rtype, ttl, data));
@@ -217,14 +235,14 @@ impl Message {
             queries,
             sections,
             edns,
-            tsig
+            tsig,
         })
     }
 
     pub fn to_bytes(&self, max_payload_len: usize) -> Vec<u8> {
         let max_payload_len = match self.edns.as_ref() {
             Some(edns) => edns.payload_size() as usize,
-            None => max_payload_len
+            None => max_payload_len,
         };
 
         let mut context = ToWireContext::with_capacity(max_payload_len);
@@ -259,7 +277,9 @@ impl Message {
                     }
                     count += 1;
                 }
-                context.patch(i*2+6..i*2+8, &count.to_be_bytes()).unwrap();
+                context
+                    .patch(i * 2 + 6..i * 2 + 8, &count.to_be_bytes())
+                    .unwrap();
             }
         }
 
@@ -302,7 +322,7 @@ impl Message {
             //(if self.z { 0x0040 } else { 0 }) |  // Z bit (always 0)
             (if self.authenticated_data { 0x0020 } else { 0 }) |  // AD bit
             (if self.checking_disabled { 0x0010 } else { 0 }) |  // CD bit
-            (self.response_code.code() as u16 & 0x000F);  // RCODE
+            (self.response_code.code() as u16 & 0x000F); // RCODE
         context.patch(2..4, &flags.to_be_bytes()).unwrap();
 
         context.into_bytes()
@@ -311,7 +331,7 @@ impl Message {
     pub fn to_bytes_with_sig(&mut self, max_payload_len: usize, key: &Key) -> Vec<u8> {
         let max_payload_len = match self.edns.as_ref() {
             Some(edns) => edns.payload_size() as usize,
-            None => max_payload_len
+            None => max_payload_len,
         };
 
         let mut context = ToWireContext::with_capacity(max_payload_len);
@@ -346,7 +366,9 @@ impl Message {
                     }
                     count += 1;
                 }
-                context.patch(i*2+6..i*2+8, &count.to_be_bytes()).unwrap();
+                context
+                    .patch(i * 2 + 6..i * 2 + 8, &count.to_be_bytes())
+                    .unwrap();
             }
         }
 
@@ -390,7 +412,7 @@ impl Message {
             //(if self.z { 0x0040 } else { 0 }) |  // Z bit (always 0)
             (if self.authenticated_data { 0x0020 } else { 0 }) |  // AD bit
             (if self.checking_disabled { 0x0010 } else { 0 }) |  // CD bit
-            (self.response_code.code() as u16 & 0x000F);  // RCODE
+            (self.response_code.code() as u16 & 0x000F); // RCODE
         context.patch(2..4, &flags.to_be_bytes()).unwrap();
 
         if !truncated {
@@ -403,15 +425,17 @@ impl Message {
                 signed_payload.extend_from_slice(&RRClasses::Any.code().to_be_bytes());
                 signed_payload.extend_from_slice(&0u32.to_be_bytes());
 
-                signed_payload.extend_from_slice(&pack_fqdn(&tsig.data().algorithm().as_ref().unwrap().to_string())); //PROBABLY NO COMPRESS
+                signed_payload.extend_from_slice(&pack_fqdn(
+                    &tsig.data().algorithm().as_ref().unwrap().to_string(),
+                )); //PROBABLY NO COMPRESS
 
                 signed_payload.extend_from_slice(&[
                     ((tsig.data().time_signed() >> 40) & 0xFF) as u8,
                     ((tsig.data().time_signed() >> 32) & 0xFF) as u8,
                     ((tsig.data().time_signed() >> 24) & 0xFF) as u8,
                     ((tsig.data().time_signed() >> 16) & 0xFF) as u8,
-                    ((tsig.data().time_signed() >>  8) & 0xFF) as u8,
-                    ( tsig.data().time_signed()        & 0xFF) as u8
+                    ((tsig.data().time_signed() >> 8) & 0xFF) as u8,
+                    (tsig.data().time_signed() & 0xFF) as u8,
                 ]);
                 signed_payload.extend_from_slice(&tsig.data().fudge().to_be_bytes());
 
@@ -422,7 +446,6 @@ impl Message {
 
                 tsig.add_to_signed_payload(&signed_payload);
                 tsig.sign(key);
-
 
                 if let Err(_) = tsig.to_wire(&mut context) {
                     truncated = true;
@@ -440,7 +463,7 @@ impl Message {
     pub fn wire_chunks(&mut self, max_payload_len: usize) -> WireIter<'_> {
         let max_payload_len = match self.edns.as_ref() {
             Some(edns) => edns.payload_size() as usize,
-            None => max_payload_len
+            None => max_payload_len,
         };
 
         let mut context = ToWireContext::with_capacity(max_payload_len);
@@ -456,7 +479,7 @@ impl Message {
             (if self.authenticated_data { 0x0020 } else { 0 }) |  // AD bit
             (if self.checking_disabled { 0x0010 } else { 0 }) |  // CD bit
             (self.response_code.code() as u16 & 0x000F);
-        flags.to_wire(&mut context).unwrap();  // RCODE
+        flags.to_wire(&mut context).unwrap(); // RCODE
 
         let mut total = self.sections.iter().map(|r| r.len()).sum();
         if self.edns.is_some() {
@@ -472,14 +495,14 @@ impl Message {
             total,
             context,
             key: None,
-            msg_index: 0
+            msg_index: 0,
         }
     }
 
     pub fn wire_chunks_with_tsig(&mut self, max_payload_len: usize, key: &Key) -> WireIter<'_> {
         let max_payload_len = match self.edns.as_ref() {
             Some(edns) => edns.payload_size() as usize,
-            None => max_payload_len
+            None => max_payload_len,
         };
 
         let mut context = ToWireContext::with_capacity(max_payload_len);
@@ -495,7 +518,7 @@ impl Message {
             (if self.authenticated_data { 0x0020 } else { 0 }) |  // AD bit
             (if self.checking_disabled { 0x0010 } else { 0 }) |  // CD bit
             (self.response_code.code() as u16 & 0x000F);
-        flags.to_wire(&mut context).unwrap();  // RCODE
+        flags.to_wire(&mut context).unwrap(); // RCODE
 
         let mut total = self.sections.iter().map(|r| r.len()).sum();
         if self.edns.is_some() {
@@ -511,7 +534,7 @@ impl Message {
             total,
             context,
             key: Some(key.clone()),
-            msg_index: 0
+            msg_index: 0,
         }
     }
 
@@ -619,7 +642,15 @@ impl Message {
         self.sections[index] = section;
     }
 
-    pub fn add_section(&mut self, index: usize, query: &str, class: RRClasses, rtype: RRTypes, ttl: u32, data: Option<Box<dyn RRData>>) {
+    pub fn add_section(
+        &mut self,
+        index: usize,
+        query: &str,
+        class: RRClasses,
+        rtype: RRTypes,
+        ttl: u32,
+        data: Option<Box<dyn RRData>>,
+    ) {
         self.sections[index].push(Record::new(query, class, rtype, ttl, data));
     }
 
@@ -673,26 +704,46 @@ impl Message {
 }
 
 impl fmt::Display for Message {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        writeln!(f, ";; ->>HEADER<<- opcode: {}, status: {}, id: {}", self.op_code, self.response_code, self.id)?;
+        writeln!(
+            f,
+            ";; ->>HEADER<<- opcode: {}, status: {}, id: {}",
+            self.op_code, self.response_code, self.id
+        )?;
 
         let mut flags = Vec::new();
 
-        if self.qr { flags.push("qr"); }
-        if self.authoritative { flags.push("aa"); }
-        if self.truncated { flags.push("tc"); }
-        if self.recursion_desired { flags.push("rd"); }
-        if self.recursion_available { flags.push("ra"); }
-        if self.authenticated_data { flags.push("ad"); }
-        if self.checking_disabled { flags.push("cd"); }
+        if self.qr {
+            flags.push("qr");
+        }
+        if self.authoritative {
+            flags.push("aa");
+        }
+        if self.truncated {
+            flags.push("tc");
+        }
+        if self.recursion_desired {
+            flags.push("rd");
+        }
+        if self.recursion_available {
+            flags.push("ra");
+        }
+        if self.authenticated_data {
+            flags.push("ad");
+        }
+        if self.checking_disabled {
+            flags.push("cd");
+        }
 
-        writeln!(f, ";; flags: {}; QUERY: {}, ANSWER: {}, AUTHORITY: {}, ADDITIONAL: {}",
-                flags.join(" "),
-                self.queries.len(),
-                self.sections[0].len(),
-                self.sections[1].len(),
-                self.sections[2].len())?;
+        writeln!(
+            f,
+            ";; flags: {}; QUERY: {}, ANSWER: {}, AUTHORITY: {}, ADDITIONAL: {}",
+            flags.join(" "),
+            self.queries.len(),
+            self.sections[0].len(),
+            self.sections[1].len(),
+            self.sections[2].len()
+        )?;
 
         /*
         if let Some(r) = self.additional_records.get(&String::new()) {
@@ -753,11 +804,10 @@ pub struct WireIter<'a> {
     total: usize,
     context: ToWireContext,
     key: Option<Key>,
-    msg_index: usize
+    msg_index: usize,
 }
 
 impl<'a> Iterator for WireIter<'a> {
-
     type Item = Vec<u8>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -796,19 +846,23 @@ impl<'a> Iterator for WireIter<'a> {
                             let checkpoint = self.context.pos();
                             if let Err(_) = record.to_wire(&mut self.context) {
                                 self.context.rollback(checkpoint);
-                                self.context.patch(i*2+6..i*2+8, &count.to_be_bytes()).unwrap();
+                                self.context
+                                    .patch(i * 2 + 6..i * 2 + 8, &count.to_be_bytes())
+                                    .unwrap();
                                 self.position += count as usize;
                                 break 'sections;
                             }
                             count += 1;
                         }
-                        self.context.patch(i*2+6..i*2+8, &count.to_be_bytes()).unwrap();
+                        self.context
+                            .patch(i * 2 + 6..i * 2 + 8, &count.to_be_bytes())
+                            .unwrap();
                         self.position += count as usize;
                     }
                 }
 
                 let before = total;
-                total += self.total-before;
+                total += self.total - before;
 
                 if self.position < total {
                     count = 0;
@@ -851,26 +905,28 @@ impl<'a> Iterator for WireIter<'a> {
                         signed_payload.extend_from_slice(&RRClasses::Any.code().to_be_bytes());
                         signed_payload.extend_from_slice(&0u32.to_be_bytes());
 
-                        signed_payload.extend_from_slice(&pack_fqdn(&tsig.data().algorithm().as_ref().unwrap().to_string()));
+                        signed_payload.extend_from_slice(&pack_fqdn(
+                            &tsig.data().algorithm().as_ref().unwrap().to_string(),
+                        ));
 
                         signed_payload.extend_from_slice(&[
                             ((tsig.data().time_signed() >> 40) & 0xFF) as u8,
                             ((tsig.data().time_signed() >> 32) & 0xFF) as u8,
                             ((tsig.data().time_signed() >> 24) & 0xFF) as u8,
                             ((tsig.data().time_signed() >> 16) & 0xFF) as u8,
-                            ((tsig.data().time_signed() >>  8) & 0xFF) as u8,
-                            ( tsig.data().time_signed()        & 0xFF) as u8
+                            ((tsig.data().time_signed() >> 8) & 0xFF) as u8,
+                            (tsig.data().time_signed() & 0xFF) as u8,
                         ]);
                         signed_payload.extend_from_slice(&tsig.data().fudge().to_be_bytes());
 
                         signed_payload.extend_from_slice(&tsig.data().error().to_be_bytes());
 
-                        signed_payload.extend_from_slice(&(tsig.data().data().len() as u16).to_be_bytes());
+                        signed_payload
+                            .extend_from_slice(&(tsig.data().data().len() as u16).to_be_bytes());
                         signed_payload.extend_from_slice(&tsig.data().data());
 
                         tsig.add_to_signed_payload(&signed_payload);
                         tsig.sign(self.key.as_ref().unwrap());
-
 
                         if let Err(_) = tsig.to_wire(&mut self.context) {
                             truncated = true;

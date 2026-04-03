@@ -1,0 +1,922 @@
+//! Client-side identity generation
+//!
+//! Generates ZHTP identities with post-quantum cryptographic keys.
+//! All keys are generated locally on the client device and private
+//! keys NEVER leave the device.
+//!
+//! # Security Model
+//!
+//! ```text
+//! Client Device                    Server
+//!     |                               |
+//!     |-- Generate recovery_entropy   |
+//!     |-- Derive Dilithium5 keypair   |
+//!     |-- Generate Kyber1024 keypair  |  (random, not derived — operational key)
+//!     |-- Compute DID from public key |
+//!     |                               |
+//!     |-- Send ONLY public keys ----->|  (Registration)
+//!     |                               |
+//!     |   Private keys stay here!     |
+//! ```
+//!
+//! # Key Derivation (New Invariant)
+//!
+//! ```text
+//! recovery_entropy (32 bytes random, mnemonic-encodable)
+//!     |
+//!     +-- RootSecret (64 bytes) = HKDF(recovery_entropy, info="zhtp:root-secret:v1")
+//!            |
+//!            +-- Root Signing Key (Dilithium5) = KeyGen(HKDF(RootSecret, info="zhtp:root-signing-seed:v1"))
+//!            |
+//!            +-- DID = "did:zhtp:" + hex(Blake3(root_signing_public_key))
+//!
+//! Operational keys (e.g. Kyber1024) are generated separately and are NOT part of the DID.
+//!     |
+//!     +-- node_id = Blake3(did || device_id)
+//! ```
+
+use crate::bip39_wordlist::BIP39_WORDLIST;
+use crate::crypto::{random_bytes, Blake3, Dilithium5, Kyber1024};
+use crate::error::{ClientError, Result};
+use lib_identity_core::{
+    derive_root_secret64_from_recovery_entropy, did_from_root_signing_public_key,
+    RecoveryEntropy32, RootSigningKeypair,
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Complete ZHTP identity with both public and private keys
+///
+/// This struct contains sensitive cryptographic material and should
+/// be stored securely (e.g., iOS Keychain, Android Keystore).
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Identity {
+    /// Decentralized Identifier: "did:zhtp:{hash}"
+    pub did: String,
+
+    /// Dilithium5 public key for signature verification (~2592 bytes)
+    pub public_key: Vec<u8>,
+
+    /// Dilithium5 private key for signing (~4896 bytes)
+    /// SECURITY: Never transmit this!
+    pub private_key: Vec<u8>,
+
+    /// Kyber1024 public key for key encapsulation (~1568 bytes)
+    pub kyber_public_key: Vec<u8>,
+
+    /// Kyber1024 secret key for decapsulation (~3168 bytes)
+    /// SECURITY: Never transmit this!
+    pub kyber_secret_key: Vec<u8>,
+
+    /// Node identifier: Blake3(did || device_id)
+    pub node_id: Vec<u8>,
+
+    /// Device identifier (e.g., UUID)
+    pub device_id: String,
+
+    /// Master seed for key derivation (32 bytes)
+    /// SECURITY: Never transmit this!
+    ///
+    /// This is NOT directly used to form the DID. It is expanded into a RootSecret and then
+    /// used to deterministically derive the Root Signing Key.
+    pub recovery_entropy: Vec<u8>,
+
+    /// Creation timestamp (Unix seconds)
+    pub created_at: u64,
+}
+
+/// Public portion of identity (safe to send to server)
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct PublicIdentity {
+    /// Decentralized Identifier
+    pub did: String,
+
+    /// Dilithium5 public key
+    pub public_key: Vec<u8>,
+
+    /// Kyber1024 public key
+    pub kyber_public_key: Vec<u8>,
+
+    /// Node identifier
+    pub node_id: Vec<u8>,
+
+    /// Device identifier
+    pub device_id: String,
+
+    /// Creation timestamp
+    pub created_at: u64,
+}
+
+/// Payload for `/api/v1/identity/migrate`.
+///
+/// This is a controlled re-registration flow used when DIDs are broken due to invariant changes.
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct MigrateIdentityRequestPayload {
+    pub display_name: String,
+    /// Hex-encoded Dilithium5 public key (root signing key)
+    pub new_public_key: String,
+    /// Hex-encoded Kyber1024 public key (operational KEM key, freshly generated on recovery)
+    pub kyber_public_key: String,
+    pub device_id: String,
+    pub timestamp: u64,
+    /// Hex-encoded Dilithium5 signature over:
+    /// `SEED_MIGRATE:{display_name}:{new_public_key}:{timestamp}`
+    pub signature: String,
+}
+
+/// Generate a new ZHTP identity with post-quantum keys
+///
+/// All cryptographic keys are generated locally. Private keys
+/// never leave the device.
+///
+/// # Arguments
+///
+/// * `device_id` - Unique device identifier (e.g., UUID)
+///
+/// # Returns
+///
+/// Complete `Identity` with public and private keys
+///
+/// # Example
+///
+/// ```ignore
+/// let identity = generate_identity("iphone-abc123".into())?;
+/// // Store identity.private_key in Keychain
+/// // Send get_public_identity(&identity) to server
+/// ```
+pub fn generate_identity(device_id: String) -> Result<Identity> {
+    // 1. Generate 32-byte recovery entropy (mnemonic-encodable)
+    let recovery_entropy = random_bytes(32);
+    let entropy32: [u8; 32] = recovery_entropy
+        .as_slice()
+        .try_into()
+        .map_err(|_| ClientError::CryptoError("Recovery entropy must be 32 bytes".into()))?;
+
+    // 2. Expand to RootSecret (64 bytes)
+    let rs = derive_root_secret64_from_recovery_entropy(&RecoveryEntropy32(entropy32))
+        .map_err(|e| ClientError::CryptoError(format!("RootSecret derivation failed: {}", e)))?;
+
+    // 3. Deterministically derive Root Signing Key (Dilithium5, crystals-dilithium encoding)
+    let rsk = RootSigningKeypair::from_root_secret(&rs).map_err(|e| {
+        ClientError::CryptoError(format!("Root signing key derivation failed: {}", e))
+    })?;
+
+    // 4. DID is anchored to the root signing public key
+    let did = did_from_root_signing_public_key(&rsk.public_key);
+
+    // 5. Generate operational Kyber keypair (random)
+    let (kyber_pk, kyber_sk) = Kyber1024::generate_keypair()?;
+
+    // 6. Derive node ID: Blake3(did || device_id)
+    let node_id_input = format!("{}{}", did, device_id);
+    let node_id = Blake3::hash_vec(node_id_input.as_bytes());
+
+    // 7. Get creation timestamp
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    Ok(Identity {
+        did,
+        public_key: rsk.public_key.clone(),
+        private_key: rsk.secret_key.clone(),
+        kyber_public_key: kyber_pk,
+        kyber_secret_key: kyber_sk,
+        node_id,
+        device_id,
+        recovery_entropy,
+        created_at,
+    })
+}
+
+/// Restore an identity from a master seed
+///
+/// Used for recovery when user enters their seed phrase on a new device.
+///
+/// The Dilithium5 signing key is derived deterministically — same entropy always
+/// produces the same DID and public key. The Kyber1024 key is an operational key
+/// that is intentionally NOT part of the DID; it is regenerated fresh on each
+/// recovery. Callers must re-publish the new Kyber public key after recovery.
+pub fn restore_identity_from_seed(
+    recovery_entropy: Vec<u8>,
+    device_id: String,
+) -> Result<Identity> {
+    if recovery_entropy.len() != 32 {
+        return Err(ClientError::CryptoError(
+            "Recovery entropy must be 32 bytes".into(),
+        ));
+    }
+
+    let entropy32: [u8; 32] = recovery_entropy
+        .as_slice()
+        .try_into()
+        .map_err(|_| ClientError::CryptoError("Recovery entropy must be 32 bytes".into()))?;
+
+    let rs = derive_root_secret64_from_recovery_entropy(&RecoveryEntropy32(entropy32))
+        .map_err(|e| ClientError::CryptoError(format!("RootSecret derivation failed: {}", e)))?;
+
+    let rsk = RootSigningKeypair::from_root_secret(&rs).map_err(|e| {
+        ClientError::CryptoError(format!("Root signing key derivation failed: {}", e))
+    })?;
+
+    let did = did_from_root_signing_public_key(&rsk.public_key);
+
+    // Operational Kyber keypair is random and may rotate; on recovery we regenerate it.
+    let (kyber_pk, kyber_sk) = Kyber1024::generate_keypair()?;
+
+    let node_id_input = format!("{}{}", did, device_id);
+    let node_id = Blake3::hash_vec(node_id_input.as_bytes());
+
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    Ok(Identity {
+        did,
+        public_key: rsk.public_key.clone(),
+        private_key: rsk.secret_key.clone(),
+        kyber_public_key: kyber_pk,
+        kyber_secret_key: kyber_sk,
+        node_id,
+        device_id,
+        recovery_entropy,
+        created_at,
+    })
+}
+
+/// Restore an identity from a 24-word BIP39 seed phrase
+///
+/// This derives the 32-byte master seed from the phrase and restores the identity.
+pub fn restore_identity_from_phrase(phrase: &str, device_id: String) -> Result<Identity> {
+    let entropy = entropy_from_mnemonic(phrase)?;
+    restore_identity_from_seed(entropy, device_id)
+}
+
+/// Build a signed `/api/v1/identity/migrate` request payload.
+///
+/// The server verifies the signature using the **new** public key, proving the user controls the
+/// recovery phrase that produces the new root signing key.
+pub fn build_migrate_identity_request(
+    identity: &Identity,
+    display_name: String,
+) -> Result<MigrateIdentityRequestPayload> {
+    // Migration endpoint verifies using crystals-dilithium detached signatures.
+    // Enforce we have the expected seed-derived key encoding.
+    if identity.public_key.len() != Dilithium5::PUBLIC_KEY_SIZE {
+        return Err(ClientError::CryptoError(format!(
+            "Invalid Dilithium5 public key size for migration: expected {}, got {}",
+            Dilithium5::PUBLIC_KEY_SIZE,
+            identity.public_key.len()
+        )));
+    }
+    if identity.private_key.len() != Dilithium5::SECRET_KEY_SIZE_SEEDED {
+        return Err(ClientError::CryptoError(format!(
+            "Invalid Dilithium5 secret key size for migration: expected seeded {} (crystals), got {}",
+            Dilithium5::SECRET_KEY_SIZE_SEEDED,
+            identity.private_key.len()
+        )));
+    }
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let new_public_key = hex::encode(&identity.public_key);
+    let signed_message = format!(
+        "SEED_MIGRATE:{}:{}:{}",
+        display_name, new_public_key, timestamp
+    );
+    let signature_bytes = Dilithium5::sign(signed_message.as_bytes(), &identity.private_key)?;
+
+    Ok(MigrateIdentityRequestPayload {
+        display_name,
+        new_public_key,
+        kyber_public_key: hex::encode(&identity.kyber_public_key),
+        device_id: identity.device_id.clone(),
+        timestamp,
+        signature: hex::encode(signature_bytes),
+    })
+}
+
+/// Same as `build_migrate_identity_request` but returns JSON ready for HTTP transport.
+pub fn build_migrate_identity_request_json(
+    identity: &Identity,
+    display_name: String,
+) -> Result<String> {
+    let payload = build_migrate_identity_request(identity, display_name)?;
+    serde_json::to_string(&payload).map_err(|e| ClientError::SerializationError(e.to_string()))
+}
+
+/// Extract public portion of identity (safe to send to server)
+///
+/// This function returns only the public parts of the identity
+/// that can be safely transmitted to the server for registration.
+pub fn get_public_identity(identity: &Identity) -> PublicIdentity {
+    PublicIdentity {
+        did: identity.did.clone(),
+        public_key: identity.public_key.clone(),
+        kyber_public_key: identity.kyber_public_key.clone(),
+        node_id: identity.node_id.clone(),
+        device_id: identity.device_id.clone(),
+        created_at: identity.created_at,
+    }
+}
+
+/// Convert the master seed into a 24-word BIP39 mnemonic (English)
+pub fn get_seed_phrase(identity: &Identity) -> Result<String> {
+    mnemonic_from_entropy(&identity.recovery_entropy).map(|words| words.join(" "))
+}
+
+fn entropy_from_mnemonic(phrase: &str) -> Result<Vec<u8>> {
+    let words: Vec<String> = phrase
+        .split_whitespace()
+        .map(|w| w.to_lowercase())
+        .collect();
+
+    if words.len() != 24 {
+        return Err(ClientError::CryptoError(
+            "Seed phrase must be exactly 24 words".into(),
+        ));
+    }
+
+    let mut bits = Vec::with_capacity(words.len() * 11);
+    for word in words {
+        let index = BIP39_WORDLIST
+            .iter()
+            .position(|w| *w == word)
+            .ok_or_else(|| ClientError::CryptoError("Invalid BIP39 word".into()))?
+            as u16;
+
+        for i in (0..11).rev() {
+            bits.push(((index >> i) & 1) as u8);
+        }
+    }
+
+    if bits.len() != 264 {
+        return Err(ClientError::CryptoError("Invalid mnemonic length".into()));
+    }
+
+    let mut entropy = vec![0u8; 32];
+    for i in 0..32 {
+        let mut byte = 0u8;
+        for j in 0..8 {
+            byte = (byte << 1) | bits[i * 8 + j];
+        }
+        entropy[i] = byte;
+    }
+
+    let mut checksum_byte = 0u8;
+    for j in 0..8 {
+        checksum_byte = (checksum_byte << 1) | bits[256 + j];
+    }
+
+    let expected_checksum = Sha256::digest(&entropy)[0];
+    if checksum_byte != expected_checksum {
+        return Err(ClientError::CryptoError(
+            "Invalid seed phrase checksum".into(),
+        ));
+    }
+
+    Ok(entropy)
+}
+
+fn mnemonic_from_entropy(entropy: &[u8]) -> Result<Vec<&'static str>> {
+    if entropy.len() != 32 {
+        return Err(ClientError::CryptoError(
+            "Recovery entropy must be 32 bytes".into(),
+        ));
+    }
+
+    let entropy_bits = entropy.len() * 8;
+    let checksum_bits = entropy_bits / 32;
+    let hash = Sha256::digest(entropy);
+
+    let total_bits = entropy_bits + checksum_bits;
+    let word_count = total_bits / 11;
+
+    let mut words = Vec::with_capacity(word_count);
+    let mut bit_index = 0usize;
+
+    for _ in 0..word_count {
+        let mut index = 0u16;
+        for _ in 0..11 {
+            index <<= 1;
+            let bit = if bit_index < entropy_bits {
+                let byte = entropy[bit_index / 8];
+                (byte >> (7 - (bit_index % 8))) & 1
+            } else {
+                let checksum_bit_index = bit_index - entropy_bits;
+                if checksum_bit_index >= 8 {
+                    0
+                } else {
+                    (hash[0] >> (7 - checksum_bit_index)) & 1
+                }
+            };
+            index |= bit as u16;
+            bit_index += 1;
+        }
+        let word = BIP39_WORDLIST
+            .get(index as usize)
+            .ok_or_else(|| ClientError::CryptoError("Invalid BIP39 index".into()))?;
+        words.push(*word);
+    }
+
+    Ok(words)
+}
+
+/// Sign a registration proof for server registration
+///
+/// Creates a signature over "ZHTP_REGISTER:{did}:{timestamp}" that
+/// proves ownership of the private key without revealing it.
+///
+/// # Arguments
+///
+/// * `identity` - The identity to sign with
+/// * `timestamp` - Current Unix timestamp (server validates freshness)
+///
+/// # Returns
+///
+/// Dilithium5 signature as bytes
+pub fn sign_registration_proof(identity: &Identity, timestamp: u64) -> Result<Vec<u8>> {
+    // Server expects: "ZHTP_REGISTER:{timestamp}" (no DID in message)
+    let message = format!("ZHTP_REGISTER:{}", timestamp);
+    Dilithium5::sign(message.as_bytes(), &identity.private_key)
+}
+
+/// Sign an arbitrary message with the identity's private key
+pub fn sign_message(identity: &Identity, message: &[u8]) -> Result<Vec<u8>> {
+    Dilithium5::sign(message, &identity.private_key)
+}
+
+/// Sign a PoUW receipt from JSON using canonical server-side serialization.
+///
+/// The server verifies PoUW signatures over `bincode::serialize(receipt)`,
+/// not over raw JSON bytes. This function mirrors that exact behavior so
+/// mobile clients produce verifiable signatures.
+pub fn sign_pouw_receipt_json(identity: &Identity, receipt_json: &str) -> Result<Vec<u8>> {
+    let receipt: PouwReceiptForSigning = serde_json::from_str(receipt_json)
+        .map_err(|e| ClientError::SerializationError(e.to_string()))?;
+    let receipt_bytes =
+        bincode::serialize(&receipt).map_err(|e| ClientError::SerializationError(e.to_string()))?;
+    Dilithium5::sign(&receipt_bytes, &identity.private_key)
+}
+
+/// Verify a signature against an identity's public key
+pub fn verify_signature(public_key: &[u8], message: &[u8], signature: &[u8]) -> Result<bool> {
+    Dilithium5::verify(message, signature, public_key)
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+struct PouwReceiptForSigning {
+    version: u32,
+    #[serde(with = "hex_bytes")]
+    task_id: Vec<u8>,
+    client_did: String,
+    #[serde(with = "hex_bytes")]
+    client_node_id: Vec<u8>,
+    #[serde(with = "hex_bytes")]
+    provider_id: Vec<u8>,
+    #[serde(with = "hex_bytes")]
+    content_id: Vec<u8>,
+    proof_type: PouwProofTypeForSigning,
+    bytes_verified: u64,
+    result_ok: bool,
+    started_at: u64,
+    finished_at: u64,
+    #[serde(with = "hex_bytes")]
+    receipt_nonce: Vec<u8>,
+    #[serde(with = "hex_bytes")]
+    challenge_nonce: Vec<u8>,
+    aux: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum PouwProofTypeForSigning {
+    Hash,
+    Merkle,
+    Signature,
+    #[serde(alias = "web4_manifest_route")]
+    Web4ManifestRoute,
+    #[serde(alias = "web4_content_served")]
+    Web4ContentServed,
+}
+
+mod hex_bytes {
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        hex::decode(&s).map_err(serde::de::Error::custom)
+    }
+
+    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&hex::encode(bytes))
+    }
+}
+
+/// Serialize identity to JSON for storage
+pub fn serialize_identity(identity: &Identity) -> Result<String> {
+    serde_json::to_string(identity).map_err(|e| ClientError::SerializationError(e.to_string()))
+}
+
+/// Deserialize identity from JSON
+pub fn deserialize_identity(json: &str) -> Result<Identity> {
+    serde_json::from_str(json).map_err(|e| ClientError::SerializationError(e.to_string()))
+}
+
+/// Serialize only public identity to JSON
+pub fn serialize_public_identity(identity: &PublicIdentity) -> Result<String> {
+    serde_json::to_string(identity).map_err(|e| ClientError::SerializationError(e.to_string()))
+}
+
+/// Export identity as base64-encoded keystore tarball for CI/CD deployment
+///
+/// Creates a tar.gz archive containing:
+/// - keystore/user_identity.json (ZhtpIdentity format for CLI)
+/// - keystore/user_private_key.json (private keys)
+///
+/// The output can be stored as a GitHub secret (ZHTP_KEYSTORE_B64) and used
+/// with the deploy-site GitHub Action.
+///
+/// # Security
+/// The output contains private keys! Treat it as a secret.
+///
+/// # Example
+/// ```ignore
+/// let identity = generate_identity("device-123".into())?;
+/// let keystore_b64 = export_keystore_base64(&identity)?;
+/// // User copies this to GitHub secrets as ZHTP_KEYSTORE_B64
+/// ```
+pub fn export_keystore_base64(identity: &Identity) -> Result<String> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use tar::{Builder, Header};
+
+    // 1. Create user_identity.json (ZhtpIdentity format)
+    let user_identity_json = create_zhtp_identity_json(identity)?;
+
+    // 2. Create user_private_key.json (KeystorePrivateKey format)
+    let user_private_key_json = create_keystore_private_key_json(identity)?;
+
+    // 3. Create tar.gz archive in memory
+    let mut archive_data = Vec::new();
+    {
+        let encoder = GzEncoder::new(&mut archive_data, Compression::default());
+        let mut archive = Builder::new(encoder);
+
+        // Add keystore/user_identity.json
+        let identity_bytes = user_identity_json.as_bytes();
+        let mut header = Header::new_gnu();
+        header
+            .set_path("keystore/user_identity.json")
+            .map_err(|e| ClientError::SerializationError(format!("Failed to set path: {}", e)))?;
+        header.set_size(identity_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive.append(&header, identity_bytes).map_err(|e| {
+            ClientError::SerializationError(format!("Failed to add identity: {}", e))
+        })?;
+
+        // Add keystore/user_private_key.json
+        let private_key_bytes = user_private_key_json.as_bytes();
+        let mut header = Header::new_gnu();
+        header
+            .set_path("keystore/user_private_key.json")
+            .map_err(|e| ClientError::SerializationError(format!("Failed to set path: {}", e)))?;
+        header.set_size(private_key_bytes.len() as u64);
+        header.set_mode(0o600); // Restrictive permissions for private key
+        header.set_cksum();
+        archive.append(&header, private_key_bytes).map_err(|e| {
+            ClientError::SerializationError(format!("Failed to add private key: {}", e))
+        })?;
+
+        // Finalize archive
+        let encoder = archive.into_inner().map_err(|e| {
+            ClientError::SerializationError(format!("Failed to finalize archive: {}", e))
+        })?;
+        encoder.finish().map_err(|e| {
+            ClientError::SerializationError(format!("Failed to finish compression: {}", e))
+        })?;
+    }
+
+    // 4. Base64 encode
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    Ok(STANDARD.encode(&archive_data))
+}
+
+/// Create ZhtpIdentity JSON format expected by the CLI
+fn create_zhtp_identity_json(identity: &Identity) -> Result<String> {
+    use crate::crypto::Blake3;
+
+    // Compute key_id = Blake3(dilithium_public_key)
+    let key_id = Blake3::hash(&identity.public_key);
+
+    // Extract identity ID from DID (format: "did:zhtp:{id_hex}")
+    let id_hex = identity
+        .did
+        .strip_prefix("did:zhtp:")
+        .unwrap_or(&identity.did);
+    let id_bytes: Vec<u8> = hex::decode(id_hex).unwrap_or_else(|_| key_id.to_vec());
+
+    // Generate dao_member_id from DID (deterministic)
+    let dao_member_id = format!("dao:{}", id_hex);
+
+    // NodeId struct format
+    let node_id_bytes: [u8; 32] = if identity.node_id.len() >= 32 {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&identity.node_id[..32]);
+        arr
+    } else {
+        let mut arr = [0u8; 32];
+        arr[..identity.node_id.len()].copy_from_slice(&identity.node_id);
+        arr
+    };
+
+    let zero_bytes: [u8; 32] = [0u8; 32];
+    let node_id_struct = serde_json::json!({
+        "bytes": node_id_bytes,
+        "creation_nonce": zero_bytes,
+        "network_genesis": zero_bytes
+    });
+
+    // Convert key_id to [u8; 32] array format
+    let key_id_arr: [u8; 32] = {
+        let mut arr = [0u8; 32];
+        let len = std::cmp::min(key_id.len(), 32);
+        arr[..len].copy_from_slice(&key_id[..len]);
+        arr
+    };
+
+    // Build ZhtpIdentity format (matches lib-identity expectations)
+    let zhtp_identity = serde_json::json!({
+        "id": id_bytes,
+        "did": identity.did,
+        "identity_type": "Device",
+        "public_key": {
+            "dilithium_pk": identity.public_key,
+            "kyber_pk": identity.kyber_public_key,
+            "key_id": key_id_arr
+        },
+        "node_id": node_id_struct,
+        "device_node_ids": {
+            identity.device_id.clone(): node_id_struct
+        },
+        "primary_device": identity.device_id,
+        "dao_member_id": dao_member_id,
+        "ownership_proof": {
+            "proof_system": "dilithium-pop-placeholder-v0",
+            "proof_data": [],
+            "public_inputs": id_bytes.clone(),
+            "verification_key": identity.public_key.clone(),
+            "plonky2_proof": null,
+            "proof": []
+        },
+        "credentials": {},
+        "metadata": {},
+        "attestations": [],
+        "reputation": 100,
+        "access_level": "Standard",
+        "age": null,
+        "jurisdiction": null,
+        "citizenship_verified": false,
+        "dao_voting_power": 0,
+        "private_data_id": null,
+        "created_at": identity.created_at,
+        "last_active": identity.created_at,
+        "recovery_keys": [],
+        "did_document_hash": null,
+        "owner_identity_id": null,
+        "reward_wallet_id": null
+    });
+
+    serde_json::to_string_pretty(&zhtp_identity)
+        .map_err(|e| ClientError::SerializationError(e.to_string()))
+}
+
+/// Create KeystorePrivateKey JSON format expected by the CLI
+fn create_keystore_private_key_json(identity: &Identity) -> Result<String> {
+    let keystore_key = serde_json::json!({
+        "dilithium_sk": identity.private_key,
+        "dilithium_pk": identity.public_key,
+        "kyber_sk": identity.kyber_secret_key,
+        // NOTE: Legacy field name retained for compatibility with older tooling.
+        // It now stores recovery entropy (32 bytes), not a 64-byte BIP39 PBKDF2 seed.
+        "master_seed": identity.recovery_entropy
+    });
+
+    serde_json::to_string_pretty(&keystore_key)
+        .map_err(|e| ClientError::SerializationError(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_identity() {
+        let identity = generate_identity("test-device".into()).unwrap();
+
+        assert!(identity.did.starts_with("did:zhtp:"));
+        assert_eq!(identity.public_key.len(), Dilithium5::PUBLIC_KEY_SIZE);
+        // Seeded keys use crystals-dilithium (4864 bytes)
+        assert_eq!(
+            identity.private_key.len(),
+            Dilithium5::SECRET_KEY_SIZE_SEEDED
+        );
+        assert_eq!(identity.kyber_public_key.len(), Kyber1024::PUBLIC_KEY_SIZE);
+        assert_eq!(identity.kyber_secret_key.len(), Kyber1024::SECRET_KEY_SIZE);
+        assert_eq!(identity.node_id.len(), 32);
+        assert_eq!(identity.device_id, "test-device");
+        assert_eq!(identity.recovery_entropy.len(), 32);
+    }
+
+    #[test]
+    fn test_get_public_identity() {
+        let identity = generate_identity("test-device".into()).unwrap();
+        let public = get_public_identity(&identity);
+
+        assert_eq!(public.did, identity.did);
+        assert_eq!(public.public_key, identity.public_key);
+        assert_eq!(public.kyber_public_key, identity.kyber_public_key);
+        assert_eq!(public.node_id, identity.node_id);
+        assert_eq!(public.device_id, identity.device_id);
+    }
+
+    #[test]
+    fn test_sign_registration_proof() {
+        let identity = generate_identity("test-device".into()).unwrap();
+        let timestamp = 1234567890u64;
+
+        let signature = sign_registration_proof(&identity, timestamp).unwrap();
+
+        // Verify the signature (server expects "ZHTP_REGISTER:{timestamp}" without DID)
+        let message = format!("ZHTP_REGISTER:{}", timestamp);
+        assert!(Dilithium5::verify(message.as_bytes(), &signature, &identity.public_key).unwrap());
+    }
+
+    #[test]
+    fn test_serialize_deserialize_identity() {
+        let identity = generate_identity("test-device".into()).unwrap();
+
+        let json = serialize_identity(&identity).unwrap();
+        let restored = deserialize_identity(&json).unwrap();
+
+        assert_eq!(restored.did, identity.did);
+        assert_eq!(restored.public_key, identity.public_key);
+        assert_eq!(restored.private_key, identity.private_key);
+    }
+
+    #[test]
+    fn test_sign_pouw_receipt_json_matches_bincode_verify() {
+        let identity = generate_identity("test-device".into()).unwrap();
+        let receipt_json = r#"{
+          "version": 1,
+          "task_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "client_did": "did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "client_node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "provider_id": "",
+          "content_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "proof_type": "web4manifestroute",
+          "bytes_verified": 4096,
+          "result_ok": true,
+          "started_at": 1700000000,
+          "finished_at": 1700000001,
+          "receipt_nonce": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "challenge_nonce": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "aux": "{\"manifest_cid\":\"cid\"}"
+        }"#;
+
+        let signature = sign_pouw_receipt_json(&identity, receipt_json).unwrap();
+        let receipt: PouwReceiptForSigning = serde_json::from_str(receipt_json).unwrap();
+        let canonical = bincode::serialize(&receipt).unwrap();
+
+        assert!(Dilithium5::verify(&canonical, &signature, &identity.public_key).unwrap());
+    }
+
+    #[test]
+    fn test_get_seed_phrase_word_count() {
+        let mut identity = generate_identity("test-device".into()).unwrap();
+        identity.recovery_entropy = vec![0u8; 32];
+
+        let phrase = get_seed_phrase(&identity).unwrap();
+        assert_eq!(phrase.split_whitespace().count(), 24);
+    }
+
+    #[test]
+    fn test_seed_recovery_produces_same_did() {
+        // Generate a new identity
+        let identity = generate_identity("test-device".into()).unwrap();
+        let original_did = identity.did.clone();
+        let original_public_key = identity.public_key.clone();
+
+        // Get the seed phrase
+        let phrase = get_seed_phrase(&identity).unwrap();
+
+        // Restore from seed phrase
+        let restored = restore_identity_from_phrase(&phrase, "new-device".into()).unwrap();
+
+        // DIDs MUST match (this is the critical test)
+        assert_eq!(
+            restored.did, original_did,
+            "Restored DID must match original"
+        );
+        assert_eq!(
+            restored.public_key, original_public_key,
+            "Restored public key must match"
+        );
+    }
+
+    #[test]
+    fn test_seed_recovery_deterministic() {
+        // Same seed should always produce same keys
+        let seed = vec![42u8; 32];
+
+        let id1 = restore_identity_from_seed(seed.clone(), "device1".into()).unwrap();
+        let id2 = restore_identity_from_seed(seed.clone(), "device2".into()).unwrap();
+
+        // Same keys regardless of device_id
+        assert_eq!(id1.did, id2.did);
+        assert_eq!(id1.public_key, id2.public_key);
+        assert_eq!(id1.private_key, id2.private_key);
+    }
+
+    #[test]
+    fn test_export_keystore_base64() {
+        let identity = generate_identity("test-device".into()).unwrap();
+
+        // Export should succeed
+        let keystore_b64 = export_keystore_base64(&identity).unwrap();
+
+        // Should be valid base64
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let decoded = STANDARD
+            .decode(&keystore_b64)
+            .expect("Should be valid base64");
+
+        // Should be a valid gzip (starts with 0x1f 0x8b)
+        assert!(decoded.len() > 2, "Archive should have content");
+        assert_eq!(decoded[0], 0x1f, "Should start with gzip magic byte 1");
+        assert_eq!(decoded[1], 0x8b, "Should start with gzip magic byte 2");
+
+        // Decompress and verify tar structure
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut decoder = GzDecoder::new(&decoded[..]);
+        let mut tar_data = Vec::new();
+        decoder
+            .read_to_end(&mut tar_data)
+            .expect("Should decompress");
+
+        // Check that tar contains expected files
+        use tar::Archive;
+        let mut archive = Archive::new(&tar_data[..]);
+        let entries: Vec<_> = archive
+            .entries()
+            .unwrap()
+            .map(|e| e.unwrap().path().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert!(
+            entries.contains(&"keystore/user_identity.json".to_string()),
+            "Should contain user_identity.json, got: {:?}",
+            entries
+        );
+        assert!(
+            entries.contains(&"keystore/user_private_key.json".to_string()),
+            "Should contain user_private_key.json, got: {:?}",
+            entries
+        );
+    }
+
+    #[test]
+    fn test_build_migrate_identity_request_signature_verifies() {
+        let identity = generate_identity("test-device".into()).unwrap();
+        let payload = build_migrate_identity_request(&identity, "alice".to_string()).unwrap();
+
+        let pk_bytes = hex::decode(&payload.new_public_key).unwrap();
+        let sig_bytes = hex::decode(&payload.signature).unwrap();
+        let msg = format!(
+            "SEED_MIGRATE:{}:{}:{}",
+            payload.display_name, payload.new_public_key, payload.timestamp
+        );
+
+        let valid = lib_crypto::post_quantum::dilithium::dilithium5_verify_crystals(
+            msg.as_bytes(),
+            &sig_bytes,
+            &pk_bytes,
+        )
+        .unwrap();
+        assert!(valid);
+    }
+}

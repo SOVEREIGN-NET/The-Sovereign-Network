@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sovereign Explorer</title>
+  <link rel="stylesheet" href="/style-1c011d8f0c15ca86.css" integrity="sha384-bbn71CnIa+RAQc/cvEaO7bRObZrAF86CoMdHglqUUu/ZTl33ONyG9WnZUW/AcErv"/>
+  
+<script type="module">
+import init, * as bindings from '/explorer-3bfc1d811e97da06.js';
+const wasm = await init({ module_or_path: '/explorer-3bfc1d811e97da06_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+  <base href="/" />
+<link rel="modulepreload" href="/explorer-3bfc1d811e97da06.js" crossorigin="anonymous" integrity="sha384-9kUQQPONT6GtHCeJSKdV0UVmtZxFM6ZYyg/WSrSozFoFnAmUfDyJaOvo25+T4wvL"><link rel="preload" href="/explorer-3bfc1d811e97da06_bg.wasm" crossorigin="anonymous" integrity="sha384-0hlQ/qPkq+cTS8gcSLRfMokUXcl+1jeWAWrr2q+TZdwGSPIrzG7x2yz6solMSvFY" as="fetch" type="application/wasm"></head>
+<body>
+  <div id="root"></div>
+</body>
+</html>

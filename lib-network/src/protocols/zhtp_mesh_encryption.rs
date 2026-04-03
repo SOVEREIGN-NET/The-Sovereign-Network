@@ -32,10 +32,10 @@
 //!
 //! Example for node discovery:
 //! ```text
-//! "zhtp-mesh\0v1\0node_discovery\0<16-byte session_id>"
+//! "zhtp-mesh\0v1\0node_discovery\0<32-byte session_id>"
 //! ```
 
-use crate::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption, EncryptionStats};
+use crate::encryption::{ChaCha20Poly1305Encryption, EncryptionStats, ProtocolEncryption};
 use anyhow::Result;
 use tracing::debug;
 
@@ -51,13 +51,13 @@ mod core {
     /// This ensures different message types and sessions produce different AAD.
     pub fn build_aad(message_type: &str, session_id: &[u8]) -> Vec<u8> {
         let mut aad = Vec::new();
-        aad.extend_from_slice(b"zhtp-mesh");      // protocol_id
-        aad.push(0x00);                            // separator
-        aad.extend_from_slice(b"v1");              // version
-        aad.push(0x00);                            // separator
+        aad.extend_from_slice(b"zhtp-mesh"); // protocol_id
+        aad.push(0x00); // separator
+        aad.extend_from_slice(b"v1"); // version
+        aad.push(0x00); // separator
         aad.extend_from_slice(message_type.as_bytes()); // message_type
-        aad.push(0x00);                            // separator
-        aad.extend_from_slice(session_id);         // session_id
+        aad.push(0x00); // separator
+        aad.extend_from_slice(session_id); // session_id
         aad
     }
 }
@@ -74,12 +74,12 @@ mod shell {
         /// Core encryption (ChaCha20Poly1305)
         enc: ChaCha20Poly1305Encryption,
         /// Session identifier for domain separation
-        session_id: [u8; 16],
+        session_id: [u8; 32],
     }
 
     impl ZhtpMeshEncryption {
         /// Create new ZHTP mesh encryption instance
-        pub fn new(app_key: &[u8; 32], session_id: [u8; 16]) -> Result<Self> {
+        pub fn new(app_key: &[u8; 32], session_id: [u8; 32]) -> Result<Self> {
             Ok(Self {
                 enc: ChaCha20Poly1305Encryption::new("zhtp-mesh", app_key)?,
                 session_id,
@@ -142,7 +142,7 @@ mod shell {
             Ok(plaintext)
         }
 
-        pub fn session_id(&self) -> [u8; 16] {
+        pub fn session_id(&self) -> [u8; 32] {
             self.session_id
         }
     }
@@ -189,15 +189,15 @@ mod tests {
         [0x77u8; 32]
     }
 
-    fn create_test_session_id() -> [u8; 16] {
-        [0x88u8; 16]
+    fn create_test_session_id() -> [u8; 32] {
+        [0x88u8; 32]
     }
 
     // ========== CORE TESTS ==========
 
     #[test]
     fn test_aad_construction() {
-        let session_id = [0xAAu8; 16];
+        let session_id = [0xAAu8; 32];
         let aad = core::build_aad("node_discovery", &session_id);
 
         // Verify structure
@@ -207,13 +207,16 @@ mod tests {
 
         // Different message types should produce different AAD
         let aad2 = core::build_aad("route_update", &session_id);
-        assert_ne!(aad, aad2, "Different message types must produce different AAD");
+        assert_ne!(
+            aad, aad2,
+            "Different message types must produce different AAD"
+        );
     }
 
     #[test]
     fn test_aad_session_separation() {
-        let session_id1 = [0x11u8; 16];
-        let session_id2 = [0x22u8; 16];
+        let session_id1 = [0x11u8; 32];
+        let session_id2 = [0x22u8; 32];
 
         let aad1 = core::build_aad("node_discovery", &session_id1);
         let aad2 = core::build_aad("node_discovery", &session_id2);
@@ -223,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_aad_determinism() {
-        let session_id = [0x99u8; 16];
+        let session_id = [0x99u8; 32];
         let aad1 = core::build_aad("node_discovery", &session_id);
         let aad2 = core::build_aad("node_discovery", &session_id);
 
@@ -260,14 +263,17 @@ mod tests {
 
         // Try to decrypt with different message type (should fail)
         let result = enc.decrypt_message(&ciphertext, "route_update");
-        assert!(result.is_err(), "Different message type should fail decryption");
+        assert!(
+            result.is_err(),
+            "Different message type should fail decryption"
+        );
     }
 
     #[test]
     fn test_zhtp_session_separation() {
         let key = create_test_key();
-        let session_id1 = [0x11u8; 16];
-        let session_id2 = [0x22u8; 16];
+        let session_id1 = [0x11u8; 32];
+        let session_id2 = [0x22u8; 32];
 
         let enc1 = ZhtpMeshEncryption::new(&key, session_id1).unwrap();
         let enc2 = ZhtpMeshEncryption::new(&key, session_id2).unwrap();
@@ -310,7 +316,10 @@ mod tests {
 
         // Encrypt empty message
         let ciphertext = enc.encrypt_message(b"", "node_discovery").unwrap();
-        assert!(!ciphertext.is_empty(), "Even empty message produces ciphertext (tag)");
+        assert!(
+            !ciphertext.is_empty(),
+            "Even empty message produces ciphertext (tag)"
+        );
 
         let decrypted = enc.decrypt_message(&ciphertext, "node_discovery").unwrap();
         assert_eq!(decrypted.len(), 0, "Empty message should decrypt to empty");
@@ -326,10 +335,15 @@ mod tests {
         // Create 1MB message
         let large_message = vec![0x42u8; 1024 * 1024];
 
-        let ciphertext = enc.encrypt_message(&large_message, "node_discovery").unwrap();
+        let ciphertext = enc
+            .encrypt_message(&large_message, "node_discovery")
+            .unwrap();
         let decrypted = enc.decrypt_message(&ciphertext, "node_discovery").unwrap();
 
-        assert_eq!(large_message, decrypted, "Large message should round-trip correctly");
+        assert_eq!(
+            large_message, decrypted,
+            "Large message should round-trip correctly"
+        );
     }
 
     #[test]

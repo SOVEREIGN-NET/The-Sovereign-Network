@@ -1,16 +1,18 @@
 //! ZHTP Access Control System
-//! 
+//!
 //! Comprehensive access control implementation with geographic restrictions,
 //! time-based access, reputation scoring, DAO membership verification,
 //! and multi-dimensional access policies.
 
+#![allow(dead_code)]
+
 use crate::types::ZhtpRequest;
-use crate::zhtp::config::{ServerConfig, AccessPolicy as ConfigAccessPolicy, AuthMethod};
+use crate::zhtp::config::{AccessPolicy as ConfigAccessPolicy, AuthMethod, ServerConfig};
 use crate::zhtp::ZhtpResult;
 
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
 
 /// Access control result
 #[derive(Debug, Clone)]
@@ -444,23 +446,23 @@ impl AccessController {
             policy_cache: HashMap::new(),
         }
     }
-    
+
     /// Check access for ZHTP request
     pub async fn check_access(&mut self, request: &ZhtpRequest) -> ZhtpResult<AccessControlResult> {
         let start_time = std::time::Instant::now();
         let mut metrics = AccessMetrics::default();
-        
+
         // Check policy cache first
         let cache_key = self.generate_cache_key(request);
         if let Some(cached) = self.get_cached_policy(&cache_key) {
             return Ok(cached.result.clone());
         }
-        
+
         // Extract user identity
         let auth_start = std::time::Instant::now();
         let user_identity = self.extract_user_identity(request).await?;
         metrics.auth_time_ms = auth_start.elapsed().as_millis() as u64;
-        
+
         // Check account status
         if let Some(ref identity) = user_identity {
             if identity.account_status != AccountStatus::Active {
@@ -475,63 +477,73 @@ impl AccessController {
                 });
             }
         }
-        
+
         // Evaluate access policies
         let policy_start = std::time::Instant::now();
-        let policy_result = self.evaluate_access_policies(request, &user_identity).await?;
+        let policy_result = self
+            .evaluate_access_policies(request, &user_identity)
+            .await?;
         metrics.policy_eval_time_ms = policy_start.elapsed().as_millis() as u64;
-        
+
         if !policy_result.granted {
             return Ok(policy_result);
         }
-        
+
         // Check geographic restrictions
         let geo_start = std::time::Instant::now();
         let geo_result = self.check_geographic_restrictions(request).await?;
         metrics.geo_check_time_ms = geo_start.elapsed().as_millis() as u64;
-        
+
         if !geo_result.granted {
             return Ok(geo_result);
         }
-        
+
         // Check time-based access
-        let time_result = self.check_time_based_access(request, &user_identity).await?;
+        let time_result = self
+            .check_time_based_access(request, &user_identity)
+            .await?;
         if !time_result.granted {
             return Ok(time_result);
         }
-        
+
         // Check reputation requirements
         let rep_start = std::time::Instant::now();
-        let reputation_result = self.check_reputation_requirements(request, &user_identity).await?;
+        let reputation_result = self
+            .check_reputation_requirements(request, &user_identity)
+            .await?;
         metrics.reputation_check_time_ms = rep_start.elapsed().as_millis() as u64;
-        
+
         if !reputation_result.granted {
             return Ok(reputation_result);
         }
-        
+
         // Check DAO membership if required
         let dao_result = self.check_dao_membership(request, &user_identity).await?;
         if !dao_result.granted {
             return Ok(dao_result);
         }
-        
+
         // Determine access level
         let access_level = self.determine_access_level(&user_identity, request).await?;
-        
+
         // Create or retrieve session
-        let session_info = self.create_or_update_session(request, &user_identity).await?;
-        
+        let session_info = self
+            .create_or_update_session(request, &user_identity)
+            .await?;
+
         // Authorization check
         let authz_start = std::time::Instant::now();
-        let authz_result = self.check_authorization(&user_identity, &session_info, request).await?;
+        let authz_result = self
+            .check_authorization(&user_identity, &session_info, request)
+            .await?;
         metrics.authz_time_ms = authz_start.elapsed().as_millis() as u64;
-        
+
         if !authz_result.granted {
             return Ok(authz_result);
         }
-        
+
         metrics.total_time_ms = start_time.elapsed().as_millis() as u64;
-        
+
         let final_result = AccessControlResult {
             granted: true,
             denial_reason: None,
@@ -541,15 +553,18 @@ impl AccessController {
             session_info: Some(session_info),
             metrics,
         };
-        
+
         // Cache the result
         self.cache_policy(&cache_key, &final_result);
-        
+
         Ok(final_result)
     }
-    
+
     /// Extract user identity from request
-    async fn extract_user_identity(&self, request: &ZhtpRequest) -> ZhtpResult<Option<UserIdentity>> {
+    async fn extract_user_identity(
+        &self,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<Option<UserIdentity>> {
         // Extract identity from various sources
         if let Some(session_id) = request.headers.get("X-Session-ID") {
             if let Some(session) = self.active_sessions.get(&session_id) {
@@ -558,11 +573,11 @@ impl AccessController {
                 }
             }
         }
-        
+
         if let Some(user_id) = request.headers.get("X-User-ID") {
             return Ok(self.identity_store.get(&user_id).cloned());
         }
-        
+
         if let Some(dao_account) = request.headers.get("X-DAO-Account") {
             // Find user by DAO account
             for identity in self.identity_store.values() {
@@ -571,10 +586,10 @@ impl AccessController {
                 }
             }
         }
-        
+
         Ok(None)
     }
-    
+
     /// Evaluate access policies
     async fn evaluate_access_policies(
         &self,
@@ -616,7 +631,9 @@ impl AccessController {
                         granted: false,
                         denial_reason: Some("Authentication required".to_string()),
                         required_verifications: vec!["authentication".to_string()],
-                        conditions: vec![AccessCondition::RequireAdditionalAuth(AuthMethod::ZkProof)],
+                        conditions: vec![AccessCondition::RequireAdditionalAuth(
+                            AuthMethod::ZkProof,
+                        )],
                         access_level: AccessLevel::None,
                         session_info: None,
                         metrics: AccessMetrics::default(),
@@ -649,8 +666,13 @@ impl AccessController {
                 } else {
                     Ok(AccessControlResult {
                         granted: false,
-                        denial_reason: Some("Authentication and DAO membership required".to_string()),
-                        required_verifications: vec!["authentication".to_string(), "dao_membership".to_string()],
+                        denial_reason: Some(
+                            "Authentication and DAO membership required".to_string(),
+                        ),
+                        required_verifications: vec![
+                            "authentication".to_string(),
+                            "dao_membership".to_string(),
+                        ],
                         conditions: vec![
                             AccessCondition::RequireAdditionalAuth(AuthMethod::ZkProof),
                             AccessCondition::RequireDaoMembership,
@@ -663,13 +685,17 @@ impl AccessController {
             }
             ConfigAccessPolicy::Custom(policy_name) => {
                 // Evaluate custom policy
-                self.evaluate_custom_policy(policy_name, request, user_identity).await
+                self.evaluate_custom_policy(policy_name, request, user_identity)
+                    .await
             }
         }
     }
-    
+
     /// Check geographic restrictions
-    async fn check_geographic_restrictions(&self, request: &ZhtpRequest) -> ZhtpResult<AccessControlResult> {
+    async fn check_geographic_restrictions(
+        &self,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<AccessControlResult> {
         if !self.config.security.ddos_protection.enable_geofencing {
             return Ok(AccessControlResult {
                 granted: true,
@@ -681,28 +707,49 @@ impl AccessController {
                 metrics: AccessMetrics::default(),
             });
         }
-        
+
         let client_ip = self.extract_client_ip(request);
         let country_code = self.geo_resolver.resolve_country(&client_ip).await?;
-        
+
         // Check allowed countries
-        if !self.config.security.ddos_protection.allowed_countries.is_empty() &&
-           !self.config.security.ddos_protection.allowed_countries.contains(&country_code) {
+        if !self
+            .config
+            .security
+            .ddos_protection
+            .allowed_countries
+            .is_empty()
+            && !self
+                .config
+                .security
+                .ddos_protection
+                .allowed_countries
+                .contains(&country_code)
+        {
             return Ok(AccessControlResult {
                 granted: false,
                 denial_reason: Some(format!("Access not allowed from country: {}", country_code)),
                 required_verifications: vec![],
                 conditions: vec![AccessCondition::RequireGeographicLocation(
-                    self.config.security.ddos_protection.allowed_countries.clone()
+                    self.config
+                        .security
+                        .ddos_protection
+                        .allowed_countries
+                        .clone(),
                 )],
                 access_level: AccessLevel::None,
                 session_info: None,
                 metrics: AccessMetrics::default(),
             });
         }
-        
+
         // Check blocked countries
-        if self.config.security.ddos_protection.blocked_countries.contains(&country_code) {
+        if self
+            .config
+            .security
+            .ddos_protection
+            .blocked_countries
+            .contains(&country_code)
+        {
             return Ok(AccessControlResult {
                 granted: false,
                 denial_reason: Some(format!("Access blocked from country: {}", country_code)),
@@ -713,7 +760,7 @@ impl AccessController {
                 metrics: AccessMetrics::default(),
             });
         }
-        
+
         Ok(AccessControlResult {
             granted: true,
             denial_reason: None,
@@ -724,10 +771,12 @@ impl AccessController {
             metrics: AccessMetrics::default(),
         })
     }
-    
+
     /// Extract client IP from request
     fn extract_client_ip(&self, request: &ZhtpRequest) -> String {
-        request.headers.get("X-Forwarded-For")
+        request
+            .headers
+            .get("X-Forwarded-For")
             .or_else(|| request.headers.get("X-Real-IP"))
             .unwrap_or("unknown".to_string())
             .split(',')
@@ -736,16 +785,16 @@ impl AccessController {
             .trim()
             .to_string()
     }
-    
+
     /// Generate cache key for access control result
     fn generate_cache_key(&self, request: &ZhtpRequest) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         request.method.hash(&mut hasher);
         request.uri.hash(&mut hasher);
-        
+
         // Include relevant headers
         if let Some(user_id) = request.headers.get("X-User-ID") {
             user_id.hash(&mut hasher);
@@ -753,10 +802,10 @@ impl AccessController {
         if let Some(session_id) = request.headers.get("X-Session-ID") {
             session_id.hash(&mut hasher);
         }
-        
+
         format!("access_{:x}", hasher.finish())
     }
-    
+
     /// Get cached policy result
     fn get_cached_policy(&self, key: &str) -> Option<&CachedPolicy> {
         if let Some(cached) = self.policy_cache.get(key) {
@@ -764,14 +813,14 @@ impl AccessController {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            
+
             if current_time <= cached.timestamp + cached.ttl {
                 return Some(cached);
             }
         }
         None
     }
-    
+
     /// Cache policy result
     fn cache_policy(&mut self, key: &str, result: &AccessControlResult) {
         let cached = CachedPolicy {
@@ -782,12 +831,16 @@ impl AccessController {
                 .as_secs(),
             ttl: 300, // 5 minutes
         };
-        
+
         self.policy_cache.insert(key.to_string(), cached);
     }
-    
+
     // Additional method stubs that would be fully implemented
-    async fn check_time_based_access(&self, _request: &ZhtpRequest, _user_identity: &Option<UserIdentity>) -> ZhtpResult<AccessControlResult> {
+    async fn check_time_based_access(
+        &self,
+        _request: &ZhtpRequest,
+        _user_identity: &Option<UserIdentity>,
+    ) -> ZhtpResult<AccessControlResult> {
         Ok(AccessControlResult {
             granted: true,
             denial_reason: None,
@@ -798,8 +851,12 @@ impl AccessController {
             metrics: AccessMetrics::default(),
         })
     }
-    
-    async fn check_reputation_requirements(&self, _request: &ZhtpRequest, _user_identity: &Option<UserIdentity>) -> ZhtpResult<AccessControlResult> {
+
+    async fn check_reputation_requirements(
+        &self,
+        _request: &ZhtpRequest,
+        _user_identity: &Option<UserIdentity>,
+    ) -> ZhtpResult<AccessControlResult> {
         Ok(AccessControlResult {
             granted: true,
             denial_reason: None,
@@ -810,8 +867,12 @@ impl AccessController {
             metrics: AccessMetrics::default(),
         })
     }
-    
-    async fn check_dao_membership(&self, _request: &ZhtpRequest, _user_identity: &Option<UserIdentity>) -> ZhtpResult<AccessControlResult> {
+
+    async fn check_dao_membership(
+        &self,
+        _request: &ZhtpRequest,
+        _user_identity: &Option<UserIdentity>,
+    ) -> ZhtpResult<AccessControlResult> {
         Ok(AccessControlResult {
             granted: true,
             denial_reason: None,
@@ -822,12 +883,20 @@ impl AccessController {
             metrics: AccessMetrics::default(),
         })
     }
-    
-    async fn determine_access_level(&self, _user_identity: &Option<UserIdentity>, _request: &ZhtpRequest) -> ZhtpResult<AccessLevel> {
+
+    async fn determine_access_level(
+        &self,
+        _user_identity: &Option<UserIdentity>,
+        _request: &ZhtpRequest,
+    ) -> ZhtpResult<AccessLevel> {
         Ok(AccessLevel::Standard)
     }
-    
-    async fn create_or_update_session(&mut self, _request: &ZhtpRequest, _user_identity: &Option<UserIdentity>) -> ZhtpResult<SessionInfo> {
+
+    async fn create_or_update_session(
+        &mut self,
+        _request: &ZhtpRequest,
+        _user_identity: &Option<UserIdentity>,
+    ) -> ZhtpResult<SessionInfo> {
         Ok(SessionInfo {
             session_id: "test_session".to_string(),
             user_identity: None,
@@ -839,8 +908,13 @@ impl AccessController {
             roles: HashSet::new(),
         })
     }
-    
-    async fn check_authorization(&self, _user_identity: &Option<UserIdentity>, _session_info: &SessionInfo, _request: &ZhtpRequest) -> ZhtpResult<AccessControlResult> {
+
+    async fn check_authorization(
+        &self,
+        _user_identity: &Option<UserIdentity>,
+        _session_info: &SessionInfo,
+        _request: &ZhtpRequest,
+    ) -> ZhtpResult<AccessControlResult> {
         Ok(AccessControlResult {
             granted: true,
             denial_reason: None,
@@ -851,8 +925,13 @@ impl AccessController {
             metrics: AccessMetrics::default(),
         })
     }
-    
-    async fn evaluate_custom_policy(&self, _policy_name: &str, _request: &ZhtpRequest, _user_identity: &Option<UserIdentity>) -> ZhtpResult<AccessControlResult> {
+
+    async fn evaluate_custom_policy(
+        &self,
+        _policy_name: &str,
+        _request: &ZhtpRequest,
+        _user_identity: &Option<UserIdentity>,
+    ) -> ZhtpResult<AccessControlResult> {
         Ok(AccessControlResult {
             granted: true,
             denial_reason: None,
@@ -891,7 +970,7 @@ impl GeographicResolver {
             ip_country_cache: HashMap::new(),
         }
     }
-    
+
     async fn resolve_country(&self, _ip: &str) -> ZhtpResult<String> {
         // Simplified implementation - would use actual GeoIP service
         Ok("US".to_string())
@@ -914,13 +993,13 @@ mod tests {
     #[tokio::test]
     async fn test_access_control() {
         use lib_economy::{EconomicModel, Priority};
-        
+
         let config = crate::zhtp::config::ServerConfig::testing();
         let mut controller = AccessController::new(config);
-        
+
         // Create a test economic model
         let economic_model = EconomicModel::new();
-        
+
         let headers = ZhtpHeaders::new();
         let request = ZhtpRequest::new(
             ZhtpMethod::Get,
@@ -929,8 +1008,9 @@ mod tests {
             None, // requester
             Priority::Normal,
             &economic_model,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         let result = controller.check_access(&request).await.unwrap();
         assert!(result.granted);
         assert_eq!(result.access_level, AccessLevel::Standard);
@@ -945,7 +1025,13 @@ mod tests {
 
     #[test]
     fn test_verification_status() {
-        assert_eq!(VerificationStatus::FullyVerified, VerificationStatus::FullyVerified);
-        assert_ne!(VerificationStatus::NotVerified, VerificationStatus::EmailVerified);
+        assert_eq!(
+            VerificationStatus::FullyVerified,
+            VerificationStatus::FullyVerified
+        );
+        assert_ne!(
+            VerificationStatus::NotVerified,
+            VerificationStatus::EmailVerified
+        );
     }
 }

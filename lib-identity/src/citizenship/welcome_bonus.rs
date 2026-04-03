@@ -1,10 +1,11 @@
 //! Welcome bonus for new citizens from the original identity.rs
 
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use crate::constants::{SOV_ATOMIC_UNITS, SOV_WELCOME_BONUS_SOV};
+use crate::economics::{EconomicModel, Priority, Transaction, TransactionType};
 use crate::types::IdentityId;
 use crate::wallets::WalletId;
-use crate::economics::{EconomicModel, Transaction, TransactionType, Priority};
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Welcome bonus for new citizens
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,7 +14,7 @@ pub struct WelcomeBonus {
     pub identity_id: IdentityId,
     /// Wallet receiving the bonus
     pub wallet_id: WalletId,
-    /// Bonus amount (5000 ZHTP)
+    /// Bonus amount (atomic units)
     pub bonus_amount: u64,
     /// Welcome bonus transaction
     pub bonus_tx: Transaction,
@@ -42,7 +43,7 @@ impl WelcomeBonus {
             granted_at,
         }
     }
-    
+
     /// Provide welcome bonus to new citizens - IMPLEMENTATION FROM ORIGINAL
     pub async fn provide_welcome_bonus(
         identity_id: &IdentityId,
@@ -53,8 +54,8 @@ impl WelcomeBonus {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
-        // Welcome bonus: 5000 ZHTP tokens to get started
-        let bonus_amount = 5000u64;
+        // Welcome bonus: 5,000 SOV tokens to get started (atomic units)
+        let bonus_amount = SOV_WELCOME_BONUS_SOV.saturating_mul(SOV_ATOMIC_UNITS);
 
         // Create welcome bonus transaction
         let bonus_tx = Transaction::new(
@@ -63,7 +64,7 @@ impl WelcomeBonus {
             bonus_amount,
             TransactionType::Reward,
             economic_model,
-            64, // Transaction size
+            64,             // Transaction size
             Priority::High, // Priority for new citizens
         )?;
 
@@ -74,13 +75,14 @@ impl WelcomeBonus {
                 identity_id.0.as_slice(),
                 &bonus_amount.to_le_bytes(),
                 &current_time.to_le_bytes(),
-            ].concat()
+            ]
+            .concat(),
         );
 
         tracing::info!(
-            "🎁 WELCOME BONUS: Citizen {} received {} ZHTP tokens",
+            "🎁 WELCOME BONUS: Citizen {} received {} SOV tokens",
             hex::encode(&identity_id.0[..8]),
-            bonus_amount
+            SOV_WELCOME_BONUS_SOV
         );
 
         Ok(Self::new(
@@ -93,14 +95,11 @@ impl WelcomeBonus {
         ))
     }
 
-    
     /// Check if bonus is valid
     pub fn is_valid(&self) -> bool {
-        self.bonus_amount > 0 && 
-        !self.bonus_proof.is_empty() &&
-        self.granted_at > 0
+        self.bonus_amount > 0 && !self.bonus_proof.is_empty() && self.granted_at > 0
     }
-    
+
     /// Get bonus age in seconds
     pub fn bonus_age_seconds(&self) -> u64 {
         let now = std::time::SystemTime::now()
@@ -109,12 +108,12 @@ impl WelcomeBonus {
             .as_secs();
         now.saturating_sub(self.granted_at)
     }
-    
+
     /// Get days since bonus was granted
     pub fn days_since_granted(&self) -> u64 {
         self.bonus_age_seconds() / (24 * 3600)
     }
-    
+
     /// Verify bonus authenticity
     pub fn verify_bonus_proof(&self) -> bool {
         let expected_proof = lib_crypto::hash_blake3(
@@ -123,12 +122,13 @@ impl WelcomeBonus {
                 self.identity_id.0.as_slice(),
                 &self.bonus_amount.to_le_bytes(),
                 &self.granted_at.to_le_bytes(),
-            ].concat()
+            ]
+            .concat(),
         );
-        
+
         self.bonus_proof == expected_proof
     }
-    
+
     /// Get bonus summary
     pub fn get_summary(&self) -> WelcomeBonusSummary {
         WelcomeBonusSummary {

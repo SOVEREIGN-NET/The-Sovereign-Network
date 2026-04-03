@@ -44,17 +44,17 @@
 //! It must NOT change per handshake, per open, or per process restart.
 //! Replay protection is enforced by persistent nonce fingerprints within TTL.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use blake3::Hasher;
 use parking_lot::RwLock;
-use sled::{Db, Batch, IVec};
 use serde::{Deserialize, Serialize};
+use sled::{Batch, Db, IVec};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::{warn, info, debug, error};
+use tracing::{debug, error, info, warn};
 
 // ============================================================================
 // Global Singleton NonceCache
@@ -182,7 +182,9 @@ pub fn get_or_init_global_nonce_cache(
 
     // Slow path: serialize initialization with mutex to prevent TOCTOU race
     // This ensures only one thread creates the expensive NonceCache instance
-    let _guard = INIT_MUTEX.lock().map_err(|_| anyhow!("Init mutex poisoned"))?;
+    let _guard = INIT_MUTEX
+        .lock()
+        .map_err(|_| anyhow!("Init mutex poisoned"))?;
 
     // Double-check after acquiring lock (another thread may have initialized)
     if let Some(cache) = GLOBAL_NONCE_CACHE.get() {
@@ -192,9 +194,17 @@ pub fn get_or_init_global_nonce_cache(
     // We hold the mutex, safe to initialize
     let db_path = default_nonce_cache_path()?;
     let network_epoch = NetworkEpoch::from_global_or_fail()?;
-    info!("Initializing global NonceCache singleton");
+    info!(
+        "Initializing global NonceCache singleton at {:?} (epoch: 0x{:016x})",
+        db_path,
+        network_epoch.value()
+    );
 
-    let cache = NonceCache::open(&db_path, ttl_secs, max_memory_size, network_epoch)?;
+    let cache =
+        NonceCache::open(&db_path, ttl_secs, max_memory_size, network_epoch).map_err(|e| {
+            error!("Failed to open global NonceCache at {:?}: {}", db_path, e);
+            e
+        })?;
 
     // OnceLock::set is infallible here since we hold the mutex and double-checked
     let _ = GLOBAL_NONCE_CACHE.set(cache);
@@ -374,6 +384,7 @@ struct PersistentNonceEntry {
     /// Unix timestamp when nonce was first seen
     first_seen_unix: i64,
     /// Message timestamp from handshake (for audit)
+    #[allow(dead_code)]
     message_timestamp: u64,
 }
 
@@ -386,6 +397,7 @@ struct MemoryNonceEntry {
     /// Unix timestamp when nonce was first seen (consistent with disk)
     first_seen_unix: i64,
     /// Message timestamp from handshake (for audit)
+    #[allow(dead_code)]
     message_timestamp: u64,
 }
 
@@ -480,22 +492,126 @@ impl NonceCache {
     /// - Verifies network epoch matches stored value (prevents DB cross-use)
     /// - Creates tables if missing (migration-safe)
     /// - Loads existing nonces into memory cache
+    ///
+    /// # Auto-Recovery
+    ///
+    /// If sled database is corrupted, automatically clears and recreates it.
+    /// This is safe because nonce cache data can be regenerated (it's replay
+    /// protection, not persistent state).
     pub fn open<P: AsRef<Path>>(
         db_path: P,
         ttl_secs: u64,
         max_memory_size: usize,
         network_epoch: NetworkEpoch,
     ) -> Result<Self> {
-        // Open sled database
-        let db = sled::open(db_path.as_ref())
-            .map_err(|e| anyhow!("Failed to open nonce cache DB: {}", e))?;
+        // Open sled database with auto-recovery for corruption
+        let db = match sled::open(db_path.as_ref()) {
+            Ok(db) => db,
+            Err(e) => {
+                let err_str = e.to_string().to_lowercase();
+                // Detect corruption indicators in error message
+                if err_str.contains("corrupt")
+                    || err_str.contains("crc")
+                    || err_str.contains("checksum")
+                    || err_str.contains("invalid")
+                {
+                    warn!(
+                        "SLED CORRUPTION DETECTED at {:?}: {}. \
+                         Auto-recovering by clearing corrupted database.",
+                        db_path.as_ref(),
+                        e
+                    );
+
+                    // Clear the corrupted database
+                    if let Err(rm_err) = std::fs::remove_dir_all(db_path.as_ref()) {
+                        error!(
+                            "Failed to remove corrupted sled database at {:?}: {}. \
+                             Manual intervention required.",
+                            db_path.as_ref(),
+                            rm_err
+                        );
+                        return Err(anyhow!(
+                            "Sled database corrupted and auto-recovery failed: {}. \
+                             Original error: {}. Please manually delete {:?}",
+                            rm_err,
+                            e,
+                            db_path.as_ref()
+                        ));
+                    }
+
+                    info!(
+                        "Cleared corrupted sled database at {:?}. Recreating fresh database.",
+                        db_path.as_ref()
+                    );
+
+                    // Ensure parent directory exists for recreation
+                    if let Some(parent) = db_path.as_ref().parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+
+                    // Retry opening
+                    sled::open(db_path.as_ref()).map_err(|e2| {
+                        anyhow!(
+                            "Failed to recreate sled database after corruption recovery: {}",
+                            e2
+                        )
+                    })?
+                } else {
+                    // Non-corruption error - fail immediately
+                    return Err(anyhow!("Failed to open nonce cache DB: {}", e));
+                }
+            }
+        };
 
         let db = Arc::new(db);
 
-        // Verify or store network epoch
-        Self::verify_or_store_network_epoch(&db, network_epoch)?;
+        // Verify or store network epoch — auto-recover on mismatch
+        let epoch_result = Self::verify_or_store_network_epoch(&db, network_epoch);
+        let db = if let Err(ref e) = epoch_result {
+            let msg = e.to_string();
+            if msg.contains("Network epoch mismatch") {
+                warn!(
+                    "Network epoch mismatch at {:?}: {}. \
+                     Auto-recovering: deleting stale nonce cache and recreating for current network.",
+                    db_path.as_ref(),
+                    e
+                );
+                // Drop existing db handle before removing directory
+                drop(db);
+                if let Err(rm_err) = std::fs::remove_dir_all(db_path.as_ref()) {
+                    error!(
+                        "Failed to remove stale nonce cache at {:?}: {}. Manual deletion required.",
+                        db_path.as_ref(),
+                        rm_err
+                    );
+                    return Err(anyhow!(
+                        "Nonce cache epoch mismatch and auto-recovery failed: {}. \
+                         Please manually delete {:?}",
+                        rm_err,
+                        db_path.as_ref()
+                    ));
+                }
+                if let Some(parent) = db_path.as_ref().parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let fresh_db = sled::open(db_path.as_ref()).map_err(|e2| {
+                    anyhow!("Failed to recreate nonce cache after epoch mismatch recovery: {}", e2)
+                })?;
+                let fresh_db = Arc::new(fresh_db);
+                Self::verify_or_store_network_epoch(&fresh_db, network_epoch)?;
+                fresh_db
+            } else {
+                epoch_result?;
+                unreachable!()
+            }
+        } else {
+            db
+        };
 
-        info!("Nonce cache initialized with network epoch: 0x{:016x}", network_epoch.value());
+        info!(
+            "Nonce cache initialized with network epoch: 0x{:016x}",
+            network_epoch.value()
+        );
 
         // Create memory cache
         let capacity = std::num::NonZeroUsize::new(max_memory_size)
@@ -561,7 +677,10 @@ impl NonceCache {
         {
             let memory = self.memory_cache.read();
             if memory.peek(nonce_fp).is_some() {
-                debug!("Replay detected in memory cache: nonce_fp={}", hex::encode(nonce_fp));
+                debug!(
+                    "Replay detected in memory cache: nonce_fp={}",
+                    hex::encode(nonce_fp)
+                );
                 return Ok(SeenResult::Replay);
             }
         }
@@ -587,27 +706,42 @@ impl NonceCache {
         // This prevents TOCTOU races where:
         // 1. Concurrent processes sharing the same sled DB could race
         // 2. Crash between check and insert could allow replay after restart
-        match self.db.compare_and_swap(
-            &nonce_key,
-            None::<&[u8]>,  // Expected: key doesn't exist
-            Some(entry_bytes.as_slice()),  // New value to insert
-        ).map_err(|e| anyhow!("DB CAS error: {}", e))? {
+        match self
+            .db
+            .compare_and_swap(
+                &nonce_key,
+                None::<&[u8]>,                // Expected: key doesn't exist
+                Some(entry_bytes.as_slice()), // New value to insert
+            )
+            .map_err(|e| anyhow!("DB CAS error: {}", e))?
+        {
             Ok(()) => {
                 // Successfully inserted atomically - update memory cache
-                memory.put(*nonce_fp, MemoryNonceEntry {
-                    first_seen_unix: now,
-                    message_timestamp: now as u64,
-                });
+                memory.put(
+                    *nonce_fp,
+                    MemoryNonceEntry {
+                        first_seen_unix: now,
+                        message_timestamp: now as u64,
+                    },
+                );
                 drop(memory);
 
                 // Flush for durability - critical for replay protection
-                self.db.flush()
+                self.db
+                    .flush()
                     .map_err(|e| anyhow!("Failed to flush nonce: {}", e))?;
 
-                debug!("Stored nonce fingerprint: fp={}, timestamp={}", hex::encode(nonce_fp), now);
+                debug!(
+                    "Stored nonce fingerprint: fp={}, timestamp={}",
+                    hex::encode(nonce_fp),
+                    now
+                );
 
                 // Increment insert counter and trigger pruning if needed
-                let count = self.insert_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                let count = self
+                    .insert_count
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    + 1;
                 if count % Self::PRUNE_EVERY_N_INSERTS == 0 {
                     // Lazy pruning trigger
                     match self.prune_seen_nonces_internal() {
@@ -631,7 +765,10 @@ impl NonceCache {
             }
             Err(_current_value) => {
                 // Key already exists - this is a replay detected atomically
-                warn!("Replay detected via CAS in persistent cache: nonce_fp={}", hex::encode(nonce_fp));
+                warn!(
+                    "Replay detected via CAS in persistent cache: nonce_fp={}",
+                    hex::encode(nonce_fp)
+                );
                 Ok(SeenResult::Replay)
             }
         }
@@ -645,7 +782,10 @@ impl NonceCache {
     /// # Breaking Change
     /// The `message_timestamp` parameter is now ignored and current system time is used instead.
     /// This aligns with the new persistent replay protection design.
-    #[deprecated(since = "0.2.0", note = "Use `mark_nonce_seen` with `compute_nonce_fingerprint` instead")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `mark_nonce_seen` with `compute_nonce_fingerprint` instead"
+    )]
     pub fn check_and_store(&self, nonce: &[u8; 32], _message_timestamp: u64) -> Result<()> {
         // Use raw nonce as fingerprint for backward compatibility
         // This is less secure than using compute_nonce_fingerprint but maintains API
@@ -880,7 +1020,10 @@ impl NonceCache {
                     "Cleanup task failed to prune nonces: {}. \
                      Cache may grow unbounded. \
                      Current cache size: {}/{} entries (utilization: {:.1}%)",
-                    e, self.size(), self.max_size(), self.utilization() * 100.0
+                    e,
+                    self.size(),
+                    self.max_size(),
+                    self.utilization() * 100.0
                 );
             }
         }
@@ -915,10 +1058,13 @@ impl NonceCache {
                 };
 
                 if stored_epoch != expected_epoch {
+                    // SECURITY: Epoch mismatch is a hard error. Silently clearing
+                    // the database would be dangerous - it could accidentally
+                    // destroy replay protection data if connecting to wrong network.
                     return Err(anyhow!(
-                        "Network epoch mismatch! DB belongs to different network.\n\
-                         Stored: 0x{:016x}, Expected: 0x{:016x}\n\
-                         This database was created for a different blockchain network.",
+                        "Network epoch mismatch: stored epoch 0x{:016x} does not match \
+                         expected epoch 0x{:016x}. This database belongs to a different \
+                         network. Delete the database manually if you want to switch networks.",
                         stored_epoch.value(),
                         expected_epoch.value()
                     ));
@@ -962,7 +1108,10 @@ impl NonceCache {
                         .map_err(|e| anyhow!("Failed to flush network epoch: {}", e))?;
                 }
 
-                info!("Stored new network epoch: 0x{:016x}", expected_epoch.value());
+                info!(
+                    "Stored new network epoch: 0x{:016x}",
+                    expected_epoch.value()
+                );
             }
             Err(e) => {
                 return Err(anyhow!("Failed to read network epoch from DB: {}", e));
@@ -1041,10 +1190,13 @@ impl NonceCache {
             };
 
             // Add to memory cache (use Unix timestamp from disk for consistency)
-            memory.put(nonce_fp, MemoryNonceEntry {
-                first_seen_unix: entry.first_seen_unix,
-                message_timestamp: entry.message_timestamp,
-            });
+            memory.put(
+                nonce_fp,
+                MemoryNonceEntry {
+                    first_seen_unix: entry.first_seen_unix,
+                    message_timestamp: entry.message_timestamp,
+                },
+            );
 
             loaded += 1;
 
@@ -1114,18 +1266,18 @@ impl NonceCache {
     #[cfg(test)]
     pub fn new_test(ttl_secs: u64, max_memory_size: usize, network_epoch: NetworkEpoch) -> Self {
         static TEST_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        
+
         let counter = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir for test");
         let db_path = temp_dir.path().join(format!("nonce_cache_{}", counter));
-        
+
         // Create cache
         let cache = Self::open(&db_path, ttl_secs, max_memory_size, network_epoch)
             .expect("Failed to create test nonce cache");
-        
+
         // Leak temp_dir to keep it alive (acceptable for tests)
         std::mem::forget(temp_dir);
-        
+
         cache
     }
 }
@@ -1148,7 +1300,9 @@ pub async fn start_nonce_cleanup_task(cache: NonceCache, interval_secs: u64) {
         let cache_clone = cache.clone();
         if let Err(e) = tokio::task::spawn_blocking(move || {
             cache_clone.cleanup_expired();
-        }).await {
+        })
+        .await
+        {
             warn!("Nonce cleanup task panicked: {}", e);
         }
     }
@@ -1373,25 +1527,26 @@ mod tests {
             .map(|_| {
                 let cache = cache.clone();
                 let fp = nonce_fp;
-                thread::spawn(move || {
-                    cache.mark_nonce_seen(&fp, 1234567890)
-                })
+                thread::spawn(move || cache.mark_nonce_seen(&fp, 1234567890))
             })
             .collect();
 
         // Wait for all threads
-        let results: Vec<_> = handles
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
         // Exactly ONE should succeed, rest should fail
-        let successes = results.iter().filter(|r| {
-            r.as_ref().map(|s| *s == SeenResult::New).unwrap_or(false)
-        }).count();
-        let failures = results.iter().filter(|r| {
-            r.as_ref().map(|s| *s == SeenResult::Replay).unwrap_or(false)
-        }).count();
+        let successes = results
+            .iter()
+            .filter(|r| r.as_ref().map(|s| *s == SeenResult::New).unwrap_or(false))
+            .count();
+        let failures = results
+            .iter()
+            .filter(|r| {
+                r.as_ref()
+                    .map(|s| *s == SeenResult::Replay)
+                    .unwrap_or(false)
+            })
+            .count();
 
         assert_eq!(successes, 1, "Exactly one insertion should succeed");
         assert_eq!(failures, 99, "99 insertions should fail (replay detected)");
@@ -1446,7 +1601,10 @@ mod tests {
         let epoch2 = NetworkEpoch::from_genesis(&[2u8; 32]);
         let result = NonceCache::open_default(db_path, 300, epoch2);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Network epoch mismatch"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Network epoch mismatch"));
     }
 
     // ============================================================================
@@ -1478,11 +1636,18 @@ mod tests {
         let cache2 = NonceCache::open_default(db_path, 60, epoch).unwrap();
 
         // Should load successfully and skip corrupted entry
-        assert!(cache2.size() >= 1, "Cache should have loaded at least one valid entry");
+        assert!(
+            cache2.size() >= 1,
+            "Cache should have loaded at least one valid entry"
+        );
 
         // Verify we can still insert new nonces
         let result = cache2.mark_nonce_seen(&[2u8; 32], 1234567890).unwrap();
-        assert_eq!(result, SeenResult::New, "Should be able to insert new nonce after recovering from corruption");
+        assert_eq!(
+            result,
+            SeenResult::New,
+            "Should be able to insert new nonce after recovering from corruption"
+        );
     }
 
     #[test]
@@ -1514,13 +1679,17 @@ mod tests {
         // First nonce was evicted from memory but still on disk
         // Attempting to use it again should fail (disk lookup will find it)
         let result = cache.mark_nonce_seen(&fp1, 1000).unwrap();
-        assert_eq!(result, SeenResult::Replay, "Evicted nonce should still be detected as replay via disk");
+        assert_eq!(
+            result,
+            SeenResult::Replay,
+            "Evicted nonce should still be detected as replay via disk"
+        );
     }
 
     #[test]
     fn test_concurrent_pruning_with_insertions_safe() {
-        use std::thread;
         use std::sync::Arc;
+        use std::thread;
 
         let temp_dir = Arc::new(TempDir::new().unwrap());
         let epoch = test_epoch();
@@ -1594,12 +1763,18 @@ mod tests {
         let empty = [0u8; 32];
         let epoch1 = NetworkEpoch::from_genesis(&empty);
         let epoch2 = NetworkEpoch::from_genesis(&empty);
-        assert_eq!(epoch1, epoch2, "Empty genesis should produce consistent epochs");
+        assert_eq!(
+            epoch1, epoch2,
+            "Empty genesis should produce consistent epochs"
+        );
 
         // But verify it's different from other patterns
         let ones = [1u8; 32];
         let epoch_ones = NetworkEpoch::from_genesis(&ones);
-        assert_ne!(epoch1, epoch_ones, "Different genesis hashes should produce different epochs");
+        assert_ne!(
+            epoch1, epoch_ones,
+            "Different genesis hashes should produce different epochs"
+        );
     }
 
     #[test]
@@ -1619,13 +1794,21 @@ mod tests {
         let cache = NonceCache::open_default(db_path, 300, epoch).unwrap();
 
         // Verify migration happened
-        assert_eq!(cache.network_epoch(), epoch, "Epoch should match after migration");
+        assert_eq!(
+            cache.network_epoch(),
+            epoch,
+            "Epoch should match after migration"
+        );
 
         // Should be able to add nonces normally
         let nonce = [42u8; 32];
         let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
         let result = cache.mark_nonce_seen(&fp, 1234567890).unwrap();
-        assert_eq!(result, SeenResult::New, "Should work normally after migration");
+        assert_eq!(
+            result,
+            SeenResult::New,
+            "Should work normally after migration"
+        );
     }
 
     #[test]
@@ -1727,7 +1910,11 @@ mod tests {
         // All fingerprints should be insertable as new (they were batch-deleted)
         for fp in &fingerprints {
             let result = cache2.mark_nonce_seen(fp, old_timestamp + 200).unwrap();
-            assert_eq!(result, SeenResult::New, "Pruned nonce should be insertable as new");
+            assert_eq!(
+                result,
+                SeenResult::New,
+                "Pruned nonce should be insertable as new"
+            );
         }
     }
 
@@ -1783,7 +1970,11 @@ mod tests {
             nonce[0] = i;
             let fp = compute_nonce_fingerprint(epoch, &nonce, 1, "client");
             let result = cache.mark_nonce_seen(&fp, 1234567890).unwrap();
-            assert_eq!(result, SeenResult::New, "Cleared nonce should be insertable");
+            assert_eq!(
+                result,
+                SeenResult::New,
+                "Cleared nonce should be insertable"
+            );
         }
     }
 
@@ -1832,9 +2023,18 @@ mod tests {
 
         // Assert: epoch is STABLE (does NOT increment)
         // The test name says "increments" but the correct behavior is NO increment
-        assert_eq!(epoch1, expected_epoch, "Epoch should match genesis-derived value");
-        assert_eq!(epoch2, expected_epoch, "Epoch should remain stable after first reopen");
-        assert_eq!(epoch3, expected_epoch, "Epoch should remain stable after second reopen");
+        assert_eq!(
+            epoch1, expected_epoch,
+            "Epoch should match genesis-derived value"
+        );
+        assert_eq!(
+            epoch2, expected_epoch,
+            "Epoch should remain stable after first reopen"
+        );
+        assert_eq!(
+            epoch3, expected_epoch,
+            "Epoch should remain stable after second reopen"
+        );
         assert_eq!(epoch1, epoch2, "Epoch must not change between reopens");
         assert_eq!(epoch2, epoch3, "Epoch must not change between reopens");
     }

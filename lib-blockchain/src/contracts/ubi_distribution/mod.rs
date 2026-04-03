@@ -7,6 +7,18 @@
 pub mod core;
 pub mod types;
 
+#[cfg(test)]
+pub mod red_tests;
+
 // Re-export key types
 pub use core::UbiDistributor;
-pub use types::{MonthIndex, Error};
+pub use types::{
+    EpochIndex,
+    Error,
+    MonthIndex,
+    // Event schemas (Issue #844 Prep Phase)
+    UbiClaimRecorded,
+    UbiClaimRejected,
+    UbiDistributed,
+    UbiPoolStatus,
+};

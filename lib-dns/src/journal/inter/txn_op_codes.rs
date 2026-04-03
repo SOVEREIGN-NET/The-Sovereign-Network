@@ -5,16 +5,18 @@ use std::fmt::Formatter;
 pub enum TxnOpCodes {
     #[default]
     Delete,
-    Add
+    Add,
 }
 
 impl fmt::Display for TxnOpCodes {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self {
-            Self::Delete => "DELETE",
-            Self::Add => "ADD"
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Delete => "DELETE",
+                Self::Add => "ADD",
+            }
+        )
     }
 }
-

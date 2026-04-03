@@ -1,15 +1,15 @@
 //! Service Container for Dependency Management
-//! 
+//!
 //! Provides dependency injection and service lifecycle management
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
-use tracing::{info, error, debug};
+use tracing::{debug, error, info};
 
-use crate::runtime::{ComponentId, Component};
+use crate::runtime::{Component, ComponentId};
 
 /// Service container for managing component dependencies and lifecycle
 pub struct ServiceContainer {
@@ -29,9 +29,9 @@ pub trait ServiceFactory: Send + Sync {
 /// Service lifetime management
 #[derive(Debug, Clone, PartialEq)]
 pub enum ServiceLifetime {
-    Transient,  // New instance each time
-    Singleton,  // Single instance
-    Scoped,     // Instance per scope
+    Transient, // New instance each time
+    Singleton, // Single instance
+    Scoped,    // Instance per scope
 }
 
 /// Service registration
@@ -67,10 +67,10 @@ impl ServiceContainer {
         }
 
         info!("Initializing service container...");
-        
+
         // Register core services
         self.register_core_services().await?;
-        
+
         *initialized = true;
         info!("Service container initialized");
         Ok(())
@@ -79,7 +79,7 @@ impl ServiceContainer {
     /// Shutdown the service container
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down service container...");
-        
+
         // Stop all components
         let components = self.components.read().await;
         for (id, component) in components.iter() {
@@ -87,15 +87,15 @@ impl ServiceContainer {
                 error!("Failed to stop component {}: {}", id, e);
             }
         }
-        
+
         // Clear all services
         self.services.write().await.clear();
         self.singletons.write().await.clear();
         self.components.write().await.clear();
-        
+
         let mut initialized = self.initialized.write().await;
         *initialized = false;
-        
+
         info!("Service container shut down");
         Ok(())
     }
@@ -108,7 +108,10 @@ impl ServiceContainer {
         let type_id = TypeId::of::<T>();
         let mut singletons = self.singletons.write().await;
         singletons.insert(type_id, instance);
-        debug!("Registered singleton service: {:?}", std::any::type_name::<T>());
+        debug!(
+            "Registered singleton service: {:?}",
+            std::any::type_name::<T>()
+        );
         Ok(())
     }
 
@@ -121,12 +124,19 @@ impl ServiceContainer {
         let type_id = TypeId::of::<T>();
         let mut factories = self.factories.write().await;
         factories.insert(type_id, Box::new(factory));
-        debug!("Registered transient service: {:?}", std::any::type_name::<T>());
+        debug!(
+            "Registered transient service: {:?}",
+            std::any::type_name::<T>()
+        );
         Ok(())
     }
 
     /// Register a component
-    pub async fn register_component(&self, id: ComponentId, component: Arc<dyn Component>) -> Result<()> {
+    pub async fn register_component(
+        &self,
+        id: ComponentId,
+        component: Arc<dyn Component>,
+    ) -> Result<()> {
         let mut components = self.components.write().await;
         components.insert(id.clone(), component);
         debug!("Registered component: {}", id);
@@ -139,12 +149,13 @@ impl ServiceContainer {
         T: Any + Send + Sync,
     {
         let type_id = TypeId::of::<T>();
-        
+
         // Check singletons first
         {
             let singletons = self.singletons.read().await;
             if let Some(service) = singletons.get(&type_id) {
-                return service.clone()
+                return service
+                    .clone()
                     .downcast::<T>()
                     .map_err(|_| anyhow::anyhow!("Failed to downcast singleton service"));
             }
@@ -154,23 +165,27 @@ impl ServiceContainer {
         {
             let factories = self.factories.read().await;
             if let Some(factory) = factories.get(&type_id) {
-                let instance = factory.create(self)
+                let instance = factory
+                    .create(self)
                     .context("Failed to create service from factory")?;
-                
-                return Ok(Arc::new(
-                    *instance.downcast::<T>()
-                        .map_err(|_| anyhow::anyhow!("Failed to downcast factory-created service"))?
-                ));
+
+                return Ok(Arc::new(*instance.downcast::<T>().map_err(|_| {
+                    anyhow::anyhow!("Failed to downcast factory-created service")
+                })?));
             }
         }
 
-        Err(anyhow::anyhow!("Service not found: {:?}", std::any::type_name::<T>()))
+        Err(anyhow::anyhow!(
+            "Service not found: {:?}",
+            std::any::type_name::<T>()
+        ))
     }
 
     /// Resolve a component by ID
     pub async fn resolve_component(&self, id: &ComponentId) -> Result<Arc<dyn Component>> {
         let components = self.components.read().await;
-        components.get(id)
+        components
+            .get(id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Component not found: {}", id))
     }
@@ -187,12 +202,12 @@ impl ServiceContainer {
         T: Any + Send + Sync,
     {
         let type_id = TypeId::of::<T>();
-        
+
         let singletons = self.singletons.read().await;
         if singletons.contains_key(&type_id) {
             return true;
         }
-        
+
         let factories = self.factories.read().await;
         factories.contains_key(&type_id)
     }
@@ -217,7 +232,7 @@ impl ServiceContainer {
             container: Arc::downgrade(&Arc::new(self.clone())),
         });
         self.register_singleton(self_ref).await?;
-        
+
         debug!("Core services registered");
         Ok(())
     }
@@ -232,14 +247,16 @@ impl ServiceContainer {
         // Check if core components are accessible
         let components = self.components.read().await;
         let component_count = components.len();
-        
+
         // Verify singletons are still valid
         let singletons = self.singletons.read().await;
         let singleton_count = singletons.len();
-        
-        debug!(" Service container health: {} components, {} singletons", 
-               component_count, singleton_count);
-        
+
+        debug!(
+            " Service container health: {} components, {} singletons",
+            component_count, singleton_count
+        );
+
         Ok(true)
     }
 
@@ -301,24 +318,28 @@ impl ServiceScope {
         T: Any + Send + Sync,
     {
         let type_id = TypeId::of::<T>();
-        
+
         // Check if already exists in scope
         if let Some(service) = self.scoped_services.get(&type_id) {
-            return service.clone()
+            return service
+                .clone()
                 .downcast::<T>()
                 .map_err(|_| anyhow::anyhow!("Failed to downcast scoped service"));
         }
-        
+
         // Create new scoped instance
         // This would require additional factory logic for scoped services
         // For now, delegate to container
         Err(anyhow::anyhow!("Scoped service resolution not implemented"))
     }
-    
+
     /// Dispose of scoped services
     pub fn dispose(self) {
         // Services will be dropped when scope is dropped
-        debug!(" Service scope disposed with {} services", self.scoped_services.len());
+        debug!(
+            " Service scope disposed with {} services",
+            self.scoped_services.len()
+        );
     }
 }
 
@@ -345,7 +366,7 @@ where
     fn create(&self, _container: &ServiceContainer) -> Result<Box<dyn Any + Send + Sync>> {
         Ok(Box::new(T::default()))
     }
-    
+
     fn service_type(&self) -> TypeId {
         TypeId::of::<T>()
     }
@@ -397,7 +418,7 @@ impl ServiceContainerBuilder {
     /// Build the service container
     pub async fn build(self) -> Result<ServiceContainer> {
         let container = ServiceContainer::new().await?;
-        
+
         // Process registrations
         for registration in self.registrations {
             match registration.lifetime {
@@ -417,7 +438,7 @@ impl ServiceContainerBuilder {
                 }
             }
         }
-        
+
         Ok(container)
     }
 }

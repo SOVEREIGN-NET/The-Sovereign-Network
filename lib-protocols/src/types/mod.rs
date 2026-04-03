@@ -1,26 +1,42 @@
 //! Core Web4 Protocol Types
-//! 
+//!
 //! This module contains all the fundamental types used across the ZHTP protocol stack,
 //! including request/response types, status codes, headers, and content structures.
 
-pub mod status;
-pub mod method;
-pub mod headers;
-pub mod request;
-pub mod response;
 pub mod access_policy;
 pub mod content;
 pub mod economic;
+pub mod group_message;
+pub mod headers;
+pub mod identity_message;
+pub mod identity_payload;
+pub mod method;
+pub mod pouw;
+pub mod request;
+pub mod response;
+pub mod status;
 
 // Re-export all types for convenience
-pub use status::ZhtpStatus;
-pub use method::ZhtpMethod;
+pub use access_policy::{AccessPolicy, TimeRestriction};
+pub use content::{
+    CompressionInfo, ContentChunk, ContentMetadata, EncryptionInfo, ReplicationInfo, ServerContent,
+};
+pub use economic::EconomicAssessment;
+pub use group_message::{
+    GroupChange, GroupEpochKey, GroupId, GroupMember, GroupMessage, GroupStateUpdate,
+    DEFAULT_GROUP_CAP, MAX_GROUP_CAP,
+};
 pub use headers::ZhtpHeaders;
+pub use identity_message::{
+    ControlMessageType, DeliveryReceipt, DevicePayload, IdentityEnvelope, IdentityMessageKind,
+    MessageTtl, ReadReceipt, ReceiptType, SealedSenderEnvelope,
+};
+pub use identity_payload::IdentityPayload;
+pub use method::ZhtpMethod;
+pub use pouw::PoUwStamp;
 pub use request::ZhtpRequest;
 pub use response::ZhtpResponse;
-pub use access_policy::{AccessPolicy, TimeRestriction};
-pub use content::{ContentMetadata, ServerContent, EncryptionInfo, CompressionInfo, ContentChunk, ReplicationInfo};
-pub use economic::EconomicAssessment;
+pub use status::ZhtpStatus;
 
 // Types defined in this module are automatically available:
 // - StorageRequirements, StorageQuality, etc.
@@ -43,7 +59,7 @@ pub const DEFAULT_REQUEST_TIMEOUT: u64 = 30;
 /// Default cache TTL (1 hour)
 pub const DEFAULT_CACHE_TTL: u64 = 3600;
 
-/// Minimum DAO fee (5 ZHTP tokens)
+/// Minimum DAO fee (5 SOV tokens)
 pub const MIN_DAO_FEE: u64 = 5;
 
 /// DAO fee percentage (2.00%)
@@ -281,7 +297,10 @@ mod tests {
     #[test]
     fn test_zdns_response_code_description() {
         assert_eq!(ZdnsResponseCode::NoError.description(), "No error");
-        assert_eq!(ZdnsResponseCode::ZkProofInvalid.description(), "Zero-knowledge proof invalid");
+        assert_eq!(
+            ZdnsResponseCode::ZkProofInvalid.description(),
+            "Zero-knowledge proof invalid"
+        );
     }
 
     #[test]

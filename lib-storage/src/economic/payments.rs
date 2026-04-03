@@ -1,5 +1,5 @@
 //! Payment Processing and Escrow System
-//! 
+//!
 //! Implements secure payment processing for storage contracts including:
 //! - Multi-signature escrow accounts
 //! - Automated payment releases
@@ -7,12 +7,12 @@
 //! - Dispute resolution with fund protection
 //! - Cross-chain payment support
 
-use crate::types::{PaymentStatus, PaymentType, EscrowCondition, DisputeResolution};
 use crate::economic::contracts::ContractStatus;
-use anyhow::{Result, anyhow};
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
+use crate::types::{DisputeResolution, EscrowCondition, PaymentStatus, PaymentType};
+use anyhow::{anyhow, Result};
 use lib_crypto::PostQuantumSignature;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Payment processor for storage contracts
 #[derive(Debug)]
@@ -302,7 +302,7 @@ impl PaymentProcessor {
         release_conditions: Vec<EscrowCondition>,
     ) -> Result<String> {
         let account_id = format!("escrow_{}", uuid::Uuid::new_v4());
-        
+
         let account = EscrowAccount {
             account_id: account_id.clone(),
             contract_id: contract_id.clone(),
@@ -321,7 +321,7 @@ impl PaymentProcessor {
         };
 
         self.escrow_accounts.insert(account_id.clone(), account);
-        
+
         // Record the escrow deposit
         let payment_record = PaymentRecord {
             payment_id: format!("payment_{}", uuid::Uuid::new_v4()),
@@ -358,7 +358,7 @@ impl PaymentProcessor {
         scheduled_time: u64,
     ) -> Result<String> {
         let payment_id = format!("payment_{}", uuid::Uuid::new_v4());
-        
+
         let pending_payment = PendingPayment {
             payment_id: payment_id.clone(),
             contract_id,
@@ -371,7 +371,8 @@ impl PaymentProcessor {
             conditions,
         };
 
-        self.pending_payments.insert(payment_id.clone(), pending_payment);
+        self.pending_payments
+            .insert(payment_id.clone(), pending_payment);
         Ok(payment_id)
     }
 
@@ -388,8 +389,7 @@ impl PaymentProcessor {
 
         // First, collect payments that need to be executed
         for (payment_id, payment) in &self.pending_payments {
-            if payment.scheduled_time <= current_time && 
-               self.check_payment_conditions(payment)? {
+            if payment.scheduled_time <= current_time && self.check_payment_conditions(payment)? {
                 payments_to_execute.push((payment_id.clone(), payment.clone()));
                 payments_to_remove.push(payment_id.clone());
             }
@@ -437,7 +437,8 @@ impl PaymentProcessor {
     /// Execute a payment from escrow
     fn execute_payment(&mut self, payment: &PendingPayment) -> Result<()> {
         // Find the escrow account for this contract
-        let escrow_account = self.escrow_accounts
+        let escrow_account = self
+            .escrow_accounts
             .values_mut()
             .find(|acc| acc.contract_id == payment.contract_id)
             .ok_or_else(|| anyhow!("Escrow account not found"))?;
@@ -483,27 +484,28 @@ impl PaymentProcessor {
         pricing_rates: &BillingRates,
     ) -> Result<UsageBilling> {
         let (storage_usage, bandwidth_usage, api_usage) = usage_metrics;
-        
+
         // Calculate storage charges (storage-hours * rate)
-        let storage_charge = (storage_usage.storage_hours * pricing_rates.storage_rate_per_hour) / 1000;
-        
+        let storage_charge =
+            (storage_usage.storage_hours * pricing_rates.storage_rate_per_hour) / 1000;
+
         // Calculate bandwidth charges
-        let bandwidth_charge = 
-            ((bandwidth_usage.bytes_uploaded + bandwidth_usage.bytes_downloaded) 
-             * pricing_rates.bandwidth_rate_per_gb) / (1024 * 1024 * 1024);
-        
+        let bandwidth_charge = ((bandwidth_usage.bytes_uploaded
+            + bandwidth_usage.bytes_downloaded)
+            * pricing_rates.bandwidth_rate_per_gb)
+            / (1024 * 1024 * 1024);
+
         // Calculate API charges
-        let api_charge = 
-            storage_usage.avg_storage_used * pricing_rates.read_operation_rate +
-            bandwidth_usage.bytes_uploaded * pricing_rates.write_operation_rate +
-            api_usage.delete_operations * pricing_rates.delete_operation_rate +
-            api_usage.list_operations * pricing_rates.list_operation_rate;
+        let api_charge = storage_usage.avg_storage_used * pricing_rates.read_operation_rate
+            + bandwidth_usage.bytes_uploaded * pricing_rates.write_operation_rate
+            + api_usage.delete_operations * pricing_rates.delete_operation_rate
+            + api_usage.list_operations * pricing_rates.list_operation_rate;
 
         let charges = BillingCharges {
             storage_charge,
             bandwidth_charge,
             api_charge,
-            bonuses: 0, // Would be calculated based on performance
+            bonuses: 0,   // Would be calculated based on performance
             penalties: 0, // Would be calculated based on SLA violations
             total_due: storage_charge + bandwidth_charge + api_charge,
         };
@@ -529,7 +531,7 @@ impl PaymentProcessor {
         evidence: Vec<DisputeEvidence>,
     ) -> Result<String> {
         let dispute_id = format!("dispute_{}", uuid::Uuid::new_v4());
-        
+
         let dispute = DisputeAccount {
             dispute_id: dispute_id.clone(),
             contract_id: contract_id.clone(),
@@ -547,8 +549,11 @@ impl PaymentProcessor {
         };
 
         // Lock the disputed amount in escrow
-        if let Some(escrow) = self.escrow_accounts.values_mut()
-            .find(|acc| acc.contract_id == contract_id) {
+        if let Some(escrow) = self
+            .escrow_accounts
+            .values_mut()
+            .find(|acc| acc.contract_id == contract_id)
+        {
             escrow.status = EscrowStatus::Disputed;
         }
 
@@ -611,15 +616,17 @@ mod tests {
     #[test]
     fn test_escrow_account_creation() {
         let mut processor = PaymentProcessor::new();
-        
-        let account_id = processor.create_escrow_account(
-            "contract1".to_string(),
-            "client_pubkey".to_string(),
-            "provider_pubkey".to_string(),
-            vec!["witness1".to_string()],
-            1000,
-            vec![EscrowCondition::ContractCompletion],
-        ).unwrap();
+
+        let account_id = processor
+            .create_escrow_account(
+                "contract1".to_string(),
+                "client_pubkey".to_string(),
+                "provider_pubkey".to_string(),
+                vec!["witness1".to_string()],
+                1000,
+                vec![EscrowCondition::ContractCompletion],
+            )
+            .unwrap();
 
         assert!(processor.escrow_accounts.contains_key(&account_id));
         assert_eq!(processor.escrow_accounts[&account_id].balance, 1000);
@@ -629,15 +636,17 @@ mod tests {
     #[test]
     fn test_payment_scheduling() {
         let mut processor = PaymentProcessor::new();
-        
-        let payment_id = processor.schedule_payment(
-            "contract1".to_string(),
-            500,
-            "provider1".to_string(),
-            PaymentReason::ContractCompletion,
-            vec![PaymentCondition::TimeElapsed(1000)],
-            2000,
-        ).unwrap();
+
+        let payment_id = processor
+            .schedule_payment(
+                "contract1".to_string(),
+                500,
+                "provider1".to_string(),
+                PaymentReason::ContractCompletion,
+                vec![PaymentCondition::TimeElapsed(1000)],
+                2000,
+            )
+            .unwrap();
 
         assert!(processor.pending_payments.contains_key(&payment_id));
     }

@@ -1,5 +1,5 @@
 //! # Unified Reward Orchestrator
-//! 
+//!
 //! Manages both routing and storage reward processors with unified configuration.
 //! Provides a single interface for:
 //! - Starting/stopping both processors
@@ -15,7 +15,7 @@
 //!     environment,
 //!     config,
 //! );
-//! 
+//!
 //! orchestrator.start_all().await?;
 //! // Both processors now running...
 //! let metrics = orchestrator.get_combined_metrics().await;
@@ -23,20 +23,20 @@
 //! ```
 
 use anyhow::Result;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
 use tracing::{info, warn};
 
-use lib_blockchain::Blockchain;
 use super::components::NetworkComponent;
-use super::routing_rewards::{RoutingRewardProcessor, RoutingRewardConfig, RoutingRewardMetrics};
-use super::storage_rewards::{StorageRewardProcessor, StorageRewardConfig, StorageRewardMetrics};
+use super::routing_rewards::{RoutingRewardConfig, RoutingRewardMetrics, RoutingRewardProcessor};
+use super::storage_rewards::{StorageRewardConfig, StorageRewardMetrics, StorageRewardProcessor};
 use crate::config::aggregation::RewardsConfig;
+use lib_blockchain::Blockchain;
 
 /// Rate limiter for reward claims
-/// 
+///
 /// Prevents abuse by tracking claim history and enforcing:
 /// - Cooldown periods between claims
 /// - Maximum claims per hour
@@ -61,11 +61,11 @@ impl RateLimiter {
             max_claims_per_hour,
         }
     }
-    
+
     /// Check if a claim is allowed for this processor
     fn can_claim(&mut self, processor_id: &str) -> Result<()> {
         let now = Instant::now();
-        
+
         // 1. Check cooldown period
         if let Some(last_claim) = self.last_claim_time.get(processor_id) {
             let elapsed = now.duration_since(*last_claim);
@@ -77,18 +77,19 @@ impl RateLimiter {
                 ));
             }
         }
-        
+
         // 2. Check hourly rate limit
         let one_hour_ago = now - Duration::from_secs(3600);
-        
+
         // Get claims for this processor
-        let claims = self.claims_per_hour
+        let claims = self
+            .claims_per_hour
             .entry(processor_id.to_string())
             .or_insert_with(Vec::new);
-        
+
         // Remove claims older than 1 hour
         claims.retain(|&timestamp| timestamp > one_hour_ago);
-        
+
         // Check if under limit
         if claims.len() >= self.max_claims_per_hour as usize {
             return Err(anyhow::anyhow!(
@@ -97,32 +98,35 @@ impl RateLimiter {
                 self.max_claims_per_hour
             ));
         }
-        
+
         Ok(())
     }
-    
+
     /// Record a successful claim
     fn record_claim(&mut self, processor_id: &str) {
         let now = Instant::now();
         self.last_claim_time.insert(processor_id.to_string(), now);
-        
-        let claims = self.claims_per_hour
+
+        let claims = self
+            .claims_per_hour
             .entry(processor_id.to_string())
             .or_insert_with(Vec::new);
         claims.push(now);
     }
-    
+
     /// Get statistics for a processor
     fn get_stats(&self, processor_id: &str) -> RateLimitStats {
         let now = Instant::now();
         let one_hour_ago = now - Duration::from_secs(3600);
-        
-        let claims_in_last_hour = self.claims_per_hour
+
+        let claims_in_last_hour = self
+            .claims_per_hour
             .get(processor_id)
             .map(|claims| claims.iter().filter(|&&t| t > one_hour_ago).count())
             .unwrap_or(0) as u32;
-        
-        let cooldown_remaining = self.last_claim_time
+
+        let cooldown_remaining = self
+            .last_claim_time
             .get(processor_id)
             .and_then(|last_claim| {
                 let elapsed = now.duration_since(*last_claim);
@@ -132,7 +136,7 @@ impl RateLimiter {
                     None
                 }
             });
-        
+
         RateLimitStats {
             claims_in_last_hour,
             cooldown_remaining,
@@ -173,7 +177,7 @@ impl Default for RewardOrchestratorConfig {
             storage_config: StorageRewardConfig::default(),
             enable_routing_rewards: true,
             enable_storage_rewards: true,
-            cooldown_period_secs: 600,  // 10 minutes
+            cooldown_period_secs: 600, // 10 minutes
             max_claims_per_hour: 6,
         }
     }
@@ -182,7 +186,7 @@ impl Default for RewardOrchestratorConfig {
 impl From<&RewardsConfig> for RewardOrchestratorConfig {
     fn from(config: &RewardsConfig) -> Self {
         use tokio::time::Duration;
-        
+
         Self {
             routing_config: RoutingRewardConfig {
                 check_interval: Duration::from_secs(config.routing_check_interval_secs),
@@ -203,22 +207,22 @@ impl From<&RewardsConfig> for RewardOrchestratorConfig {
 }
 
 /// Unified reward orchestrator
-/// 
+///
 /// Manages both routing and storage reward processors with a single interface.
 /// Simplifies lifecycle management and provides aggregated metrics.
 pub struct RewardOrchestrator {
-    network_component: Arc<NetworkComponent>,
-    blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
-    environment: crate::config::Environment,
+    _network_component: Arc<NetworkComponent>,
+    _blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+    _environment: crate::config::Environment,
     config: RewardOrchestratorConfig,
-    
+
     // Processor instances
     routing_processor: Arc<RoutingRewardProcessor>,
     storage_processor: Arc<StorageRewardProcessor>,
-    
+
     // Rate limiter
     rate_limiter: Arc<RwLock<RateLimiter>>,
-    
+
     // Task handles
     routing_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
     storage_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
@@ -228,49 +232,49 @@ impl RewardOrchestrator {
     /// Create a new unified reward orchestrator with default configuration
     pub fn new(
         network_component: Arc<NetworkComponent>,
-        blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+        _blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
         environment: crate::config::Environment,
     ) -> Self {
         Self::with_config(
             network_component,
-            blockchain_arc,
+            _blockchain_arc,
             environment,
             RewardOrchestratorConfig::default(),
         )
     }
-    
+
     /// Create with custom configuration
     pub fn with_config(
         network_component: Arc<NetworkComponent>,
-        blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
+        _blockchain_arc: Arc<RwLock<Option<Blockchain>>>,
         environment: crate::config::Environment,
         config: RewardOrchestratorConfig,
     ) -> Self {
         // Create processor instances
         let routing_processor = Arc::new(RoutingRewardProcessor::with_config(
             network_component.clone(),
-            blockchain_arc.clone(),
+            _blockchain_arc.clone(),
             environment.clone(),
             config.routing_config.clone(),
         ));
-        
+
         let storage_processor = Arc::new(StorageRewardProcessor::with_config(
             network_component.clone(),
-            blockchain_arc.clone(),
+            _blockchain_arc.clone(),
             environment.clone(),
             config.storage_config.clone(),
         ));
-        
+
         // Create rate limiter
         let rate_limiter = Arc::new(RwLock::new(RateLimiter::new(
             config.cooldown_period_secs,
             config.max_claims_per_hour,
         )));
-        
+
         Self {
-            network_component,
-            blockchain_arc,
-            environment,
+            _network_component: network_component,
+            _blockchain_arc: _blockchain_arc,
+            _environment: environment,
             config,
             routing_processor,
             storage_processor,
@@ -279,21 +283,35 @@ impl RewardOrchestrator {
             storage_handle: Arc::new(RwLock::new(None)),
         }
     }
-    
+
     /// Start all enabled reward processors
-    /// 
+    ///
     /// Starts routing and/or storage processors based on configuration.
     /// Returns immediately if processors are already running.
     pub async fn start_all(&self) -> Result<()> {
         info!("═══════════════════════════════════════════════════════");
         info!(" Starting Unified Reward Orchestrator");
         info!("═══════════════════════════════════════════════════════");
-        info!("   Routing rewards: {}", if self.config.enable_routing_rewards { "ENABLED" } else { "DISABLED" });
-        info!("   Storage rewards: {}", if self.config.enable_storage_rewards { "ENABLED" } else { "DISABLED" });
+        info!(
+            "   Routing rewards: {}",
+            if self.config.enable_routing_rewards {
+                "ENABLED"
+            } else {
+                "DISABLED"
+            }
+        );
+        info!(
+            "   Storage rewards: {}",
+            if self.config.enable_storage_rewards {
+                "ENABLED"
+            } else {
+                "DISABLED"
+            }
+        );
         info!("═══════════════════════════════════════════════════════");
-        
+
         let mut started_count = 0;
-        
+
         // Start routing processor if enabled
         if self.config.enable_routing_rewards {
             if self.routing_handle.read().await.is_some() {
@@ -307,7 +325,7 @@ impl RewardOrchestrator {
         } else {
             info!("  Routing rewards disabled");
         }
-        
+
         // Start storage processor if enabled
         if self.config.enable_storage_rewards {
             if self.storage_handle.read().await.is_some() {
@@ -321,72 +339,78 @@ impl RewardOrchestrator {
         } else {
             info!("  Storage rewards disabled");
         }
-        
+
         info!("═══════════════════════════════════════════════════════");
-        info!(" Reward Orchestrator Started: {} processor(s) active", started_count);
+        info!(
+            " Reward Orchestrator Started: {} processor(s) active",
+            started_count
+        );
         info!("═══════════════════════════════════════════════════════");
-        
+
         Ok(())
     }
-    
+
     /// Stop all reward processors
-    /// 
+    ///
     /// Gracefully stops all running processors.
     pub async fn stop_all(&self) -> Result<()> {
         info!("Stopping unified reward orchestrator...");
-        
+
         let mut stopped_count = 0;
-        
+
         // Stop routing processor
         if let Some(handle) = self.routing_handle.write().await.take() {
             info!("Stopping routing reward processor...");
             handle.abort();
             stopped_count += 1;
         }
-        
+
         // Stop storage processor
         if let Some(handle) = self.storage_handle.write().await.take() {
             info!("Stopping storage reward processor...");
             handle.abort();
             stopped_count += 1;
         }
-        
-        info!(" Reward orchestrator stopped: {} processor(s) terminated", stopped_count);
+
+        info!(
+            " Reward orchestrator stopped: {} processor(s) terminated",
+            stopped_count
+        );
         Ok(())
     }
-    
+
     /// Get combined metrics from both processors
-    /// 
+    ///
     /// Returns aggregated metrics showing total pending rewards and activity
     /// across both routing and storage.
     pub async fn get_combined_metrics(&self) -> CombinedRewardMetrics {
         let routing_metrics = self.routing_processor.get_metrics().await;
         let storage_metrics = self.storage_processor.get_metrics().await;
-        
+
         let total = routing_metrics.pending_rewards + storage_metrics.pending_rewards;
-        
+
         CombinedRewardMetrics {
             routing: routing_metrics,
             storage: storage_metrics,
             total_pending_rewards: total,
         }
     }
-    
+
     /// Get current configuration
     pub fn get_config(&self) -> &RewardOrchestratorConfig {
         &self.config
     }
-    
+
     /// Check if routing processor is running
     pub async fn is_routing_running(&self) -> bool {
         self.routing_handle.read().await.is_some()
     }
-    
+
     /// Check if storage processor is running
     pub async fn is_storage_running(&self) -> bool {
         self.storage_handle.read().await.is_some()
     }
-    
+
     /// Get status summary
     pub async fn get_status(&self) -> RewardOrchestratorStatus {
         RewardOrchestratorStatus {
@@ -411,29 +435,29 @@ pub struct CombinedRewardMetrics {
 
 impl RewardOrchestrator {
     /// Check if a reward claim is allowed (for rate limiting)
-    /// 
+    ///
     /// This method should be called by processors before claiming rewards.
     /// Returns Ok(()) if claim is allowed, Err with reason if not.
     pub async fn check_rate_limit(&self, processor_id: &str) -> Result<()> {
         let mut rate_limiter = self.rate_limiter.write().await;
         rate_limiter.can_claim(processor_id)
     }
-    
+
     /// Record a successful reward claim (for rate limiting)
-    /// 
+    ///
     /// This method should be called by processors after successfully claiming rewards.
     pub async fn record_claim(&self, processor_id: &str) {
         let mut rate_limiter = self.rate_limiter.write().await;
         rate_limiter.record_claim(processor_id);
         info!(" Rate limit: Claim recorded for {}", processor_id);
     }
-    
+
     /// Get rate limit statistics for a processor
     pub async fn get_rate_limit_stats(&self, processor_id: &str) -> RateLimitStats {
         let rate_limiter = self.rate_limiter.read().await;
         rate_limiter.get_stats(processor_id)
     }
-    
+
     /// Get rate limit statistics for all processors
     pub async fn get_all_rate_limit_stats(&self) -> AllRateLimitStats {
         AllRateLimitStats {
@@ -466,10 +490,10 @@ pub struct RewardOrchestratorStatus {
 impl RewardOrchestratorStatus {
     /// Check if orchestrator is fully operational
     pub fn is_fully_operational(&self) -> bool {
-        (self.routing_enabled == self.routing_running) &&
-        (self.storage_enabled == self.storage_running)
+        (self.routing_enabled == self.routing_running)
+            && (self.storage_enabled == self.storage_running)
     }
-    
+
     /// Get human-readable status description
     pub fn description(&self) -> String {
         let routing_status = match (self.routing_enabled, self.routing_running) {
@@ -477,13 +501,13 @@ impl RewardOrchestratorStatus {
             (true, false) => "Enabled but not running",
             (false, _) => "Disabled",
         };
-        
+
         let storage_status = match (self.storage_enabled, self.storage_running) {
             (true, true) => "Running",
             (true, false) => "Enabled but not running",
             (false, _) => "Disabled",
         };
-        
+
         format!("Routing: {}, Storage: {}", routing_status, storage_status)
     }
 }
@@ -491,7 +515,7 @@ impl RewardOrchestratorStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_default_config() {
         let config = RewardOrchestratorConfig::default();
@@ -500,7 +524,7 @@ mod tests {
         assert_eq!(config.routing_config.check_interval.as_secs(), 600);
         assert_eq!(config.storage_config.check_interval.as_secs(), 600);
     }
-    
+
     #[test]
     fn test_status_description() {
         let status = RewardOrchestratorStatus {
@@ -511,7 +535,7 @@ mod tests {
         };
         assert!(status.is_fully_operational());
         assert_eq!(status.description(), "Routing: Running, Storage: Running");
-        
+
         let partial_status = RewardOrchestratorStatus {
             routing_enabled: true,
             storage_enabled: false,
@@ -519,8 +543,11 @@ mod tests {
             storage_running: false,
         };
         assert!(partial_status.is_fully_operational());
-        assert_eq!(partial_status.description(), "Routing: Running, Storage: Disabled");
+        assert_eq!(
+            partial_status.description(),
+            "Routing: Running, Storage: Disabled"
+        );
     }
-    
+
     // TODO: Add integration tests with mock components
 }

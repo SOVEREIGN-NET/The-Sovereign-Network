@@ -7,14 +7,16 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Output trait injection for testing
 
-use crate::argument_parsing::{DomainArgs, DomainAction, TrustFlags, ZhtpCli};
-use crate::commands::web4_utils::{build_trust_config, connect_client, load_identity_from_keystore, validate_domain};
-use crate::error::{CliResult, CliError};
+use crate::argument_parsing::{DomainAction, DomainArgs, ZhtpCli};
+use crate::commands::web4_utils::{
+    build_trust_config, connect_client, load_identity_from_keystore, resolve_keystore_path,
+    validate_domain,
+};
+use crate::error::{CliError, CliResult};
 use crate::output::Output;
 
-use std::collections::HashMap;
-use std::path::PathBuf;
 use lib_crypto::sign_message;
+use std::collections::HashMap;
 
 // ============================================================================
 // PURE LOGIC - No side effects, fully testable
@@ -65,9 +67,19 @@ pub fn validate_domain_name(domain: &str) -> CliResult<()> {
 }
 
 fn minimum_registration_fee() -> u64 {
-    let estimated_tx_size = 5400u64;
-    let fee_per_byte = 1u64;
-    (estimated_tx_size * fee_per_byte) / 5
+    // Match blockchain's fee calculation formula
+    // (lib-blockchain/src/transaction/creation.rs::calculate_minimum_fee)
+    // Formula: base_fee + size_fee, where size_fee = (tx_size / bytes_per_zhtp)
+    // and size_fee is multiplied by 2 for transactions larger than 10_000 bytes.
+    let estimated_tx_size = 9000u64; // Domain registration typically ~8718 bytes
+    let base_fee = 1000u64;
+    let bytes_per_zhtp = 100u64;
+    let threshold_bytes = 10_000u64;
+    let mut size_fee = (estimated_tx_size / bytes_per_zhtp).max(1);
+    if estimated_tx_size > threshold_bytes {
+        size_fee *= 2;
+    }
+    base_fee + size_fee // = 1000 + 90 = 1090 SOV for 9000-byte estimate
 }
 
 // ============================================================================
@@ -77,10 +89,7 @@ fn minimum_registration_fee() -> u64 {
 /// Handle domain command with proper error handling and output
 ///
 /// Public entry point that maintains backward compatibility
-pub async fn handle_domain_command(
-    args: DomainArgs,
-    cli: &ZhtpCli,
-) -> crate::error::CliResult<()> {
+pub async fn handle_domain_command(args: DomainArgs, cli: &ZhtpCli) -> crate::error::CliResult<()> {
     let output = crate::output::ConsoleOutput;
     handle_domain_command_impl(args, cli, &output).await
 }
@@ -189,7 +198,7 @@ async fn handle_domain_command_impl(
             transfer_domain_impl(
                 &domain,
                 &new_owner,
-                keystore.as_str(),
+                Some(keystore.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
@@ -214,7 +223,7 @@ async fn handle_domain_command_impl(
             // Imperative: Network communication
             release_domain_impl(
                 &domain,
-                keystore.as_str(),
+                Some(keystore.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
@@ -229,7 +238,7 @@ async fn handle_domain_command_impl(
             output.header("Migrate Domain Records")?;
 
             migrate_domains_impl(
-                keystore.as_str(),
+                Some(keystore.as_str()),
                 trust.pin_spki.as_deref(),
                 trust.node_did.as_deref(),
                 trust.tofu,
@@ -255,11 +264,12 @@ async fn register_domain_impl(
     server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    output.info(&format!("Registering domain '{}' for {} days...", domain, duration))?;
+    output.info(&format!(
+        "Registering domain '{}' for {} days...",
+        domain, duration
+    ))?;
 
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required for register".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
@@ -275,8 +285,10 @@ async fn register_domain_impl(
         .map_err(|e| CliError::ConfigError(format!("Failed to sign registration: {}", e)))?;
 
     let metadata_json = match metadata {
-        Some(raw) => Some(serde_json::from_str::<serde_json::Value>(raw)
-            .map_err(|e| CliError::ConfigError(format!("Invalid metadata JSON: {}", e)))?),
+        Some(raw) => Some(
+            serde_json::from_str::<serde_json::Value>(raw)
+                .map_err(|e| CliError::ConfigError(format!("Invalid metadata JSON: {}", e)))?,
+        ),
         None => None,
     };
 
@@ -294,12 +306,17 @@ async fn register_domain_impl(
         .post_json("/api/v1/web4/domains/register", &body)
         .await
         .map_err(|e| CliError::ConfigError(format!("Failed to register domain: {}", e)))?;
-    let _: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
-        .map_err(|e| CliError::ConfigError(format!("Failed to parse registration response: {}", e)))?;
+    let _: serde_json::Value =
+        lib_network::client::ZhtpClient::parse_json(&response).map_err(|e| {
+            CliError::ConfigError(format!("Failed to parse registration response: {}", e))
+        })?;
 
     output.success(&format!("✓ Domain '{}' registered successfully", domain))?;
     output.print(&format!("Registration period: {} days", duration))?;
-    output.print(&format!("Use 'zhtp-cli domain info {}' to view details", domain))?;
+    output.print(&format!(
+        "Use 'zhtp-cli domain info {}' to view details",
+        domain
+    ))?;
 
     Ok(())
 }
@@ -317,9 +334,7 @@ async fn check_domain_impl(
 ) -> CliResult<()> {
     output.info(&format!("Checking availability for '{}'...", domain))?;
 
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required for check".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
@@ -356,9 +371,7 @@ async fn get_domain_info_impl(
     server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let keystore_path = keystore
-        .map(|p| PathBuf::from(p))
-        .ok_or_else(|| CliError::IdentityError("Keystore path required for info".to_string()))?;
+    let keystore_path = resolve_keystore_path(keystore)?;
 
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
@@ -385,7 +398,7 @@ async fn get_domain_info_impl(
 async fn transfer_domain_impl(
     domain: &str,
     new_owner: &str,
-    keystore: &str,
+    keystore: Option<&str>,
     pin_spki: Option<&str>,
     node_did: Option<&str>,
     tofu: bool,
@@ -398,7 +411,7 @@ async fn transfer_domain_impl(
         domain, new_owner
     ))?;
 
-    let keystore_path = PathBuf::from(keystore);
+    let keystore_path = resolve_keystore_path(keystore)?;
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
     let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
@@ -421,7 +434,11 @@ async fn transfer_domain_impl(
     let result: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
         .map_err(|e| CliError::ConfigError(format!("Failed to parse transfer response: {}", e)))?;
 
-    if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if result
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         output.success(&format!(
             "✓ Domain '{}' transfer initiated to '{}'",
             domain, new_owner
@@ -430,15 +447,13 @@ async fn transfer_domain_impl(
         return Ok(());
     }
 
-    Err(CliError::ConfigError(
-        "Domain transfer failed".to_string(),
-    ))
+    Err(CliError::ConfigError("Domain transfer failed".to_string()))
 }
 
 /// Release domain from use
 async fn release_domain_impl(
     domain: &str,
-    keystore: &str,
+    keystore: Option<&str>,
     pin_spki: Option<&str>,
     node_did: Option<&str>,
     tofu: bool,
@@ -449,7 +464,7 @@ async fn release_domain_impl(
 ) -> CliResult<()> {
     output.info(&format!("Releasing domain '{}'...", domain))?;
 
-    let keystore_path = PathBuf::from(keystore);
+    let keystore_path = resolve_keystore_path(keystore)?;
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
     let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
@@ -466,20 +481,22 @@ async fn release_domain_impl(
     let result: serde_json::Value = lib_network::client::ZhtpClient::parse_json(&response)
         .map_err(|e| CliError::ConfigError(format!("Failed to parse release response: {}", e)))?;
 
-    if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if result
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         output.success(&format!("✓ Domain '{}' released successfully", domain))?;
         output.print("This domain is now available for registration by others")?;
         return Ok(());
     }
 
-    Err(CliError::ConfigError(
-        "Domain release failed".to_string(),
-    ))
+    Err(CliError::ConfigError("Domain release failed".to_string()))
 }
 
 /// Admin: migrate legacy domain records
 async fn migrate_domains_impl(
-    keystore: &str,
+    keystore: Option<&str>,
     pin_spki: Option<&str>,
     node_did: Option<&str>,
     tofu: bool,
@@ -487,13 +504,16 @@ async fn migrate_domains_impl(
     server: &str,
     output: &dyn Output,
 ) -> CliResult<()> {
-    let keystore_path = PathBuf::from(keystore);
+    let keystore_path = resolve_keystore_path(keystore)?;
     let loaded = load_identity_from_keystore(&keystore_path)?;
     let trust_config = build_trust_config(pin_spki, node_did, tofu, trust_node)?;
     let client = connect_client(loaded.identity.clone(), trust_config, server).await?;
 
     let response = client
-        .post_json("/api/v1/web4/domains/admin/migrate-domains", &serde_json::json!({}))
+        .post_json(
+            "/api/v1/web4/domains/admin/migrate-domains",
+            &serde_json::json!({}),
+        )
         .await
         .map_err(|e| CliError::ConfigError(format!("Failed to migrate domains: {}", e)))?;
 
@@ -512,6 +532,7 @@ async fn migrate_domains_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::argument_parsing::TrustFlags;
 
     #[test]
     fn test_validate_domain_name_valid_zhtp() {
@@ -577,7 +598,10 @@ mod tests {
 
     #[test]
     fn test_operation_description() {
-        assert_eq!(DomainOperation::Register.description(), "Register a new domain");
+        assert_eq!(
+            DomainOperation::Register.description(),
+            "Register a new domain"
+        );
         assert_eq!(
             DomainOperation::Check.description(),
             "Check domain availability"

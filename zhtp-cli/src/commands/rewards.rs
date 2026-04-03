@@ -7,8 +7,8 @@
 //! - **Error Handling**: Domain-specific CliError types
 //! - **Testability**: Pure functions for message formatting and status display
 
+use crate::argument_parsing::{RewardAction, RewardArgs, ZhtpCli};
 use anyhow::Result;
-use crate::argument_parsing::{RewardArgs, RewardAction, ZhtpCli};
 use serde_json::{json, Value};
 
 // ============================================================================
@@ -90,7 +90,7 @@ pub fn format_routing_rewards_message(
     max_batch_size: u64,
 ) -> String {
     format!(
-        "Routing Rewards:\n  Status:               {}\n  Check Interval:       {} seconds\n  Minimum Threshold:    {} ZHTP\n  Max Batch Size:       {} ZHTP",
+        "Routing Rewards:\n  Status:               {}\n  Check Interval:       {} seconds\n  Minimum Threshold:    {} SOV\n  Max Batch Size:       {} SOV",
         if enabled { "ENABLED" } else { "DISABLED" },
         check_interval_secs,
         minimum_threshold,
@@ -108,7 +108,7 @@ pub fn format_storage_rewards_message(
     max_batch_size: u64,
 ) -> String {
     format!(
-        "Storage Rewards:\n  Status:               {}\n  Check Interval:       {} seconds\n  Minimum Threshold:    {} ZHTP\n  Max Batch Size:       {} ZHTP",
+        "Storage Rewards:\n  Status:               {}\n  Check Interval:       {} seconds\n  Minimum Threshold:    {} SOV\n  Max Batch Size:       {} SOV",
         if enabled { "ENABLED" } else { "DISABLED" },
         check_interval_secs,
         minimum_threshold,
@@ -181,7 +181,7 @@ pub fn build_config_response(
 /// Pure function - message formatting only
 pub fn get_operation_header(operation: RewardOperation) -> String {
     match operation {
-        RewardOperation::Status => format!("{} ZHTP Reward Orchestrator Status", operation.emoji()),
+        RewardOperation::Status => format!("{} SOV Reward Orchestrator Status", operation.emoji()),
         RewardOperation::Metrics => format!("{} Combined Reward Metrics", operation.emoji()),
         RewardOperation::Routing => format!("{} Routing Reward Details", operation.emoji()),
         RewardOperation::Storage => format!("{} Storage Reward Details", operation.emoji()),
@@ -200,7 +200,10 @@ pub async fn handle_reward_command(args: RewardArgs, _cli: &ZhtpCli) -> Result<(
     // Print header
     println!("\n╔════════════════════════════════════════════════════════╗");
     println!("║                                                        ║");
-    println!("║  {}                                   ║", get_operation_header(operation));
+    println!(
+        "║  {}                                   ║",
+        get_operation_header(operation)
+    );
     println!("║                                                        ║");
     println!("╚════════════════════════════════════════════════════════╝\n");
 
@@ -257,9 +260,7 @@ fn handle_storage_impl() -> Result<()> {
 /// Internal handler for config operation
 fn handle_config_impl() -> Result<()> {
     let config_json = build_config_response(
-        true, true, 100, 3600,
-        true, 60, 1000, 10000,
-        true, 60, 1000, 10000,
+        true, true, 100, 3600, true, 60, 1000, 10000, true, 60, 1000, 10000,
     );
 
     println!(" Global Settings:");
@@ -301,36 +302,66 @@ mod tests {
 
     #[test]
     fn test_action_to_operation_status() {
-        assert_eq!(action_to_operation(&RewardAction::Status), RewardOperation::Status);
+        assert_eq!(
+            action_to_operation(&RewardAction::Status),
+            RewardOperation::Status
+        );
     }
 
     #[test]
     fn test_action_to_operation_metrics() {
-        assert_eq!(action_to_operation(&RewardAction::Metrics), RewardOperation::Metrics);
+        assert_eq!(
+            action_to_operation(&RewardAction::Metrics),
+            RewardOperation::Metrics
+        );
     }
 
     #[test]
     fn test_action_to_operation_routing() {
-        assert_eq!(action_to_operation(&RewardAction::Routing), RewardOperation::Routing);
+        assert_eq!(
+            action_to_operation(&RewardAction::Routing),
+            RewardOperation::Routing
+        );
     }
 
     #[test]
     fn test_action_to_operation_storage() {
-        assert_eq!(action_to_operation(&RewardAction::Storage), RewardOperation::Storage);
+        assert_eq!(
+            action_to_operation(&RewardAction::Storage),
+            RewardOperation::Storage
+        );
     }
 
     #[test]
     fn test_action_to_operation_config() {
-        assert_eq!(action_to_operation(&RewardAction::Config), RewardOperation::Config);
+        assert_eq!(
+            action_to_operation(&RewardAction::Config),
+            RewardOperation::Config
+        );
     }
 
     #[test]
     fn test_operation_description() {
-        assert_eq!(RewardOperation::Status.description(), "Show reward orchestrator status");
-        assert_eq!(RewardOperation::Metrics.description(), "Show combined reward metrics");
-        assert_eq!(RewardOperation::Routing.description(), "Show routing reward details");
-        assert_eq!(RewardOperation::Storage.description(), "Show storage reward details");
-        assert_eq!(RewardOperation::Config.description(), "Show reward configuration");
+        assert_eq!(
+            RewardOperation::Status.description(),
+            "Show reward orchestrator status"
+        );
+        assert_eq!(
+            RewardOperation::Metrics.description(),
+            "Show combined reward metrics"
+        );
+        assert_eq!(
+            RewardOperation::Routing.description(),
+            "Show routing reward details"
+        );
+        assert_eq!(
+            RewardOperation::Storage.description(),
+            "Show storage reward details"
+        );
+        assert_eq!(
+            RewardOperation::Config.description(),
+            "Show reward configuration"
+        );
     }
 
     #[test]
@@ -396,15 +427,37 @@ mod tests {
     #[test]
     fn test_build_config_response() {
         let config = build_config_response(
-            true, true, 100, 3600,
-            true, 60, 1000, 10000,
-            false, 120, 2000, 20000,
+            true, true, 100, 3600, true, 60, 1000, 10000, false, 120, 2000, 20000,
         );
 
-        assert_eq!(config.get("global").and_then(|v| v.get("enabled")).and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(config.get("global").and_then(|v| v.get("max_claims_per_hour")).and_then(|v| v.as_u64()), Some(100));
-        assert_eq!(config.get("routing").and_then(|v| v.get("enabled")).and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(config.get("storage").and_then(|v| v.get("enabled")).and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            config
+                .get("global")
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            config
+                .get("global")
+                .and_then(|v| v.get("max_claims_per_hour"))
+                .and_then(|v| v.as_u64()),
+            Some(100)
+        );
+        assert_eq!(
+            config
+                .get("routing")
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            config
+                .get("storage")
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
     }
 
     #[test]

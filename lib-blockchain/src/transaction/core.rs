@@ -2,10 +2,14 @@
 //!
 //! Defines the fundamental transaction data structures used in the ZHTP blockchain.
 
-use serde::{Serialize, Deserialize};
-use crate::types::{Hash, transaction_type::TransactionType};
-use crate::integration::crypto_integration::{Signature, PublicKey};
+use crate::integration::crypto_integration::{PublicKey, Signature};
 use crate::integration::zk_integration::ZkTransactionProof;
+use crate::transaction::oracle_governance::{
+    CancelOracleUpdateData, OracleAttestationData, OracleCommitteeUpdateData,
+    OracleConfigUpdateData,
+};
+use crate::types::{transaction_type::TransactionType, Hash};
+use serde::{Deserialize, Serialize};
 
 /// Zero-knowledge transaction with identity support
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,31 +30,24 @@ pub struct Transaction {
     pub signature: Signature,
     /// Optional memo data
     pub memo: Vec<u8>,
-    /// Identity-specific data (only for identity transactions)
-    /// This data is processed by lib-identity package
-    pub identity_data: Option<IdentityTransactionData>,
-    /// Wallet-specific data (only for wallet transactions)
-    /// This data is processed by lib-identity package
-    pub wallet_data: Option<WalletTransactionData>,
-    /// Validator-specific data (only for validator transactions)
-    /// This data is processed by lib-consensus package
-    pub validator_data: Option<ValidatorTransactionData>,
-    /// DAO proposal data (only for DAO proposal transactions)
-    /// This data is processed by lib-consensus package
-    pub dao_proposal_data: Option<DaoProposalData>,
-    /// DAO vote data (only for DAO vote transactions)
-    /// This data is processed by lib-consensus package
-    pub dao_vote_data: Option<DaoVoteData>,
-    /// DAO execution data (only for DAO execution transactions)
-    /// This data is processed by lib-consensus package
-    pub dao_execution_data: Option<DaoExecutionData>,
-    /// UBI claim data (only for UBI claim transactions - Week 7)
-    /// This data is processed by lib-contracts package
-    pub ubi_claim_data: Option<UbiClaimData>,
-    /// Profit declaration data (only for profit declaration transactions - Week 7)
-    /// This data is processed by lib-contracts package
-    pub profit_declaration_data: Option<ProfitDeclarationData>,
+    /// Typed transaction payload — replaces the old flat Option<FooData> field scatter.
+    pub payload: TransactionPayload,
 }
+
+/// Transaction wire-format version constants.
+///
+/// Never renumber — each constant is embedded in serialized blocks on-chain.
+/// V1–V7 used a positional tuple format (hand-rolled serde). V8 switches to
+/// a tagged-payload model (`TransactionPayload` enum) with `#[derive(Serialize, Deserialize)]`.
+/// V1–V7 deserialization is intentionally not supported in V8+ nodes (testnet reset required).
+pub const TX_VERSION_V1: u32 = 1; // [historical] 18 positional fields
+pub const TX_VERSION_V2: u32 = 2; // [historical] +token_mint_data
+pub const TX_VERSION_V3: u32 = 3; // [historical] +bonding_curve_* data
+pub const TX_VERSION_V4: u32 = 4; // [historical] +oracle_* data
+pub const TX_VERSION_V5: u32 = 5; // [historical] +oracle_attestation_data
+pub const TX_VERSION_V6: u32 = 6; // [historical] +cancel_oracle_update_data
+pub const TX_VERSION_V7: u32 = 7; // [historical] +init_entity_registry_data
+pub const TX_VERSION_V8: u32 = 8; // Tagged payload model (TransactionPayload enum)
 
 /// DAO proposal transaction data (processed by lib-consensus package)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,6 +177,235 @@ pub struct RevenueSource {
     pub amount: u64,
 }
 
+/// Token transfer data for Phase 2 balance-model transfers
+///
+/// This struct contains the canonical representation of a token transfer.
+/// All fields are explicit - no derivation from other transaction fields.
+///
+/// # Invariants (Phase 2)
+/// - `amount` must be > 0
+/// - `from` must have sufficient balance
+/// - If `fee > 0`, fee is paid in native token from `from` address
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenTransferData {
+    /// Token identifier (32-byte hash, or TokenId::NATIVE for native)
+    pub token_id: [u8; 32],
+    /// Sender address (32-byte public key hash)
+    /// - For SOV, this is the wallet_id
+    pub from: [u8; 32],
+    /// Recipient address (32-byte public key hash)
+    /// - For SOV, this is the wallet_id
+    pub to: [u8; 32],
+    /// Amount to transfer (in smallest token unit)
+    pub amount: u128,
+    /// Nonce for replay protection (must equal sender's current nonce)
+    pub nonce: u64,
+}
+
+/// Token mint data (system-controlled issuance)
+///
+/// # Invariants
+/// - `amount` must be > 0
+/// - `to` must be a valid public key hash (key_id)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenMintData {
+    /// Token identifier (32-byte hash, or TokenId::NATIVE for native)
+    pub token_id: [u8; 32],
+    /// Recipient address (32-byte public key hash)
+    /// - For SOV, this is the wallet_id
+    pub to: [u8; 32],
+    /// Amount to mint (in smallest token unit)
+    pub amount: u128,
+}
+
+/// Governance config update data for Phase 3D
+///
+/// Allows authorized governance addresses to update specific token configuration.
+/// Only allowlisted fields can be updated to prevent unauthorized changes.
+///
+/// # Allowlisted operations (Phase 3D)
+/// - `SetFeeSchedule` - Update fee parameters
+/// - `SetTransferPolicy` - Switch between supported policies (not ComplianceGated)
+/// - `SetPaused` - Emergency circuit breaker (pause/unpause)
+///
+/// # NOT allowed in Phase 3
+/// - EmissionModel updates (requires budget window enforcement)
+///
+/// # Validation rules
+/// - Caller must be in authorities[Governance] for target token
+/// - Target token must exist
+/// - Update must be on an allowlisted field
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceConfigUpdateData {
+    /// Target token identifier (32-byte hash)
+    pub token_id: [u8; 32],
+    /// Caller address (must have Governance role)
+    pub caller: [u8; 32],
+    /// The specific governance operation to perform
+    pub operation: GovernanceConfigOperation,
+    /// Nonce for replay protection
+    pub nonce: u64,
+    /// Timestamp when update was created
+    pub timestamp: u64,
+}
+
+/// Allowlisted governance config operations (Phase 3D)
+///
+/// These are the only operations allowed for governance config updates.
+/// Each operation is deterministic and consensus-safe.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GovernanceConfigOperation {
+    /// Update fee schedule parameters
+    ///
+    /// Changes transfer_fee_bps, burn_fee_bps, fee_cap_amount, min_fee_amount.
+    /// Validated: all bps values <= 10000 (100%)
+    SetFeeSchedule {
+        /// Transfer fee in basis points (0-10000)
+        transfer_fee_bps: u16,
+        /// Burn fee in basis points (0-10000)
+        burn_fee_bps: u16,
+        /// Maximum fee amount (cap)
+        fee_cap_amount: u128,
+        /// Minimum fee amount
+        min_fee_amount: u128,
+    },
+    /// Update transfer policy
+    ///
+    /// Switch between: Free, AllowlistOnly, NonTransferable
+    /// ComplianceGated is NOT allowed in Phase 2/3
+    SetTransferPolicy {
+        /// New transfer policy (serialized as string for determinism)
+        /// Valid values: "Free", "AllowlistOnly", "NonTransferable"
+        policy: String,
+    },
+    /// Pause or unpause the token contract
+    ///
+    /// When paused, all state-mutating operations EXCEPT unpause REVERT.
+    SetPaused {
+        /// true to pause, false to unpause
+        paused: bool,
+    },
+}
+
+impl GovernanceConfigUpdateData {
+    /// Validate governance config update data
+    ///
+    /// # Returns
+    /// true if valid, false if invalid
+    ///
+    /// # Checks
+    /// - Operation is valid and within bounds
+    /// - For SetFeeSchedule: bps values <= 10000
+    /// - For SetTransferPolicy: policy is one of allowed values
+    pub fn validate(&self) -> bool {
+        match &self.operation {
+            GovernanceConfigOperation::SetFeeSchedule {
+                transfer_fee_bps,
+                burn_fee_bps,
+                ..
+            } => {
+                // Basis points must be <= 10000 (100%)
+                *transfer_fee_bps <= 10_000 && *burn_fee_bps <= 10_000
+            }
+            GovernanceConfigOperation::SetTransferPolicy { policy } => {
+                // Only allowed policies (not ComplianceGated)
+                matches!(
+                    policy.as_str(),
+                    "Free" | "AllowlistOnly" | "NonTransferable"
+                )
+            }
+            GovernanceConfigOperation::SetPaused { .. } => {
+                // Always valid
+                true
+            }
+        }
+    }
+
+    /// Get the operation type as a string (for logging/events)
+    pub fn operation_type(&self) -> &'static str {
+        match &self.operation {
+            GovernanceConfigOperation::SetFeeSchedule { .. } => "set_fee_schedule",
+            GovernanceConfigOperation::SetTransferPolicy { .. } => "set_transfer_policy",
+            GovernanceConfigOperation::SetPaused { .. } => "set_paused",
+        }
+    }
+}
+
+/// Token swap data - exchange one token for another via AMM pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenSwapData {
+    /// Pool token ID (the token being swapped to)
+    pub pool_token_id: [u8; 32],
+    /// Amount of input token to swap
+    pub amount_in: u128,
+    /// Minimum amount expected out (slippage protection)
+    pub min_amount_out: u128,
+    /// Is this swapping SOV -> Token (true) or Token -> SOV (false)
+    pub sov_to_token: bool,
+    /// Sender's address
+    pub from: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Create pool data - initialize a new AMM liquidity pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreatePoolData {
+    /// Token ID for the pool (must not already exist)
+    pub token_id: [u8; 32],
+    /// Initial SOV liquidity provided
+    pub initial_sov_liquidity: u128,
+    /// Initial token liquidity provided
+    pub initial_token_liquidity: u128,
+    /// Fee tier in basis points (100 = 1%, max 1000 = 10%)
+    pub fee_bps: u16,
+    /// Creator's address
+    pub creator: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Add liquidity data - add funds to an existing AMM pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddLiquidityData {
+    /// Pool token ID
+    pub pool_token_id: [u8; 32],
+    /// Amount of SOV to add
+    pub sov_amount: u128,
+    /// Amount of pool token to add
+    pub token_amount: u128,
+    /// Minimum SOV to receive as LP tokens (slippage protection)
+    pub min_lp_tokens: u128,
+    /// Provider's address
+    pub provider: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Remove liquidity data - withdraw funds from an AMM pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveLiquidityData {
+    /// Pool token ID
+    pub pool_token_id: [u8; 32],
+    /// Amount of LP tokens to burn
+    pub lp_tokens: u128,
+    /// Minimum SOV to receive (slippage protection)
+    pub min_sov_out: u128,
+    /// Minimum token to receive (slippage protection)
+    pub min_token_out: u128,
+    /// Provider's address
+    pub provider: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+impl TokenTransferData {
+    /// Check if this transfer is for the native token
+    pub fn is_native(&self) -> bool {
+        self.token_id == [0u8; 32]
+    }
+}
+
 /// Transaction input referencing a previous output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionInput {
@@ -205,7 +431,7 @@ pub struct TransactionOutput {
 }
 
 /// Identity transaction data (processed by lib-identity package)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IdentityTransactionData {
     /// Zero-knowledge DID identifier
     pub did: String,
@@ -232,7 +458,7 @@ pub struct IdentityTransactionData {
 }
 
 /// Wallet registration transaction data (processed by lib-identity package)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WalletTransactionData {
     /// Unique wallet identifier (32-byte hash)
     pub wallet_id: Hash,
@@ -273,6 +499,8 @@ pub struct WalletReference {
     pub created_at: u64,
     /// Registration fee paid
     pub registration_fee: u64,
+    /// Initial balance (source of truth for wallet balances in UTXO/Pedersen system)
+    pub initial_balance: u64,
 }
 
 /// Sensitive wallet data stored in encrypted DHT
@@ -294,17 +522,38 @@ pub struct WalletPrivateData {
     pub metadata: std::collections::HashMap<String, String>,
 }
 
-/// Validator registration transaction data (processed by lib-consensus package)
+/// Validator registration transaction data (processed by lib-consensus package).
+///
+/// # Key Separation
+///
+/// Validators must supply three cryptographically independent keys.  See
+/// [`ValidatorInfo`](crate::blockchain::ValidatorInfo) for the full rationale.
+///
+/// - `consensus_key`: Signs BFT votes/proposals (Dilithium2, hot).
+/// - `networking_key`: P2P / QUIC transport identity (Ed25519/X25519, hot).
+/// - `rewards_key`: Rewards wallet public key for fee/block-reward collection (cold-capable).
+///
+/// All three fields are required and must be distinct; the blockchain rejects
+/// registrations where any two keys are equal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorTransactionData {
     /// Identity ID of the validator (must be pre-registered)
     pub identity_id: String,
-    /// Staked amount in micro-ZHTP
+    /// Staked amount in micro-SOV
     pub stake: u64,
     /// Storage provided in bytes
     pub storage_provided: u64,
-    /// Post-quantum consensus public key
+    /// Post-quantum Dilithium2 public key used exclusively for signing BFT consensus
+    /// messages (proposals, pre-votes, pre-commits).
     pub consensus_key: Vec<u8>,
+    /// Ed25519 / X25519 public key used for P2P transport identity (QUIC TLS, DHT
+    /// node ID derivation, peer authentication).
+    #[serde(default)]
+    pub networking_key: Vec<u8>,
+    /// Public key of the rewards wallet that receives block rewards and fee
+    /// distributions.
+    #[serde(default)]
+    pub rewards_key: Vec<u8>,
     /// Network address for validator communication (host:port)
     pub network_address: String,
     /// Commission rate percentage (0-100)
@@ -336,7 +585,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::Transfer,
             inputs,
@@ -344,14 +593,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload: TransactionPayload::None,
         }
     }
 
@@ -363,7 +605,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::IdentityRegistration,
             inputs: Vec::new(), // Identity registration doesn't have inputs
@@ -371,14 +613,7 @@ impl Transaction {
             fee: identity_data.registration_fee + identity_data.dao_fee,
             signature,
             memo,
-            identity_data: Some(identity_data),
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload: TransactionPayload::Identity(identity_data),
         }
     }
 
@@ -392,7 +627,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::IdentityUpdate,
             inputs,
@@ -400,14 +635,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: Some(identity_data),
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload: TransactionPayload::Identity(identity_data),
         }
     }
 
@@ -437,7 +665,7 @@ impl Transaction {
         };
 
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::IdentityRevocation,
             inputs,
@@ -445,14 +673,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: Some(revocation_data),
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload: TransactionPayload::Identity(revocation_data),
         }
     }
 
@@ -464,22 +685,134 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::WalletRegistration,
             inputs: Vec::new(), // Wallet registration doesn't need inputs
             outputs,
-            fee: wallet_data.registration_fee,
+            fee: 0, // System transactions must have zero fee (registration_fee stored in wallet_data for records)
             signature,
             memo,
-            identity_data: None,
-            wallet_data: Some(wallet_data),
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload: TransactionPayload::Wallet(wallet_data),
+        }
+    }
+
+    /// Create a wallet update transaction.
+    ///
+    /// Used to update wallet metadata/ownership on-chain. In testnet migrations this may be used
+    /// as a system transaction (no inputs). In production, authorization rules must be enforced.
+    pub fn new_wallet_update(
+        wallet_data: WalletTransactionData,
+        outputs: Vec<TransactionOutput>,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Self::new_wallet_update_with_chain_id(0x03, wallet_data, outputs, signature, memo)
+    }
+
+    /// Create a wallet update transaction with an explicit chain id.
+    ///
+    /// This is preferred for node-side transaction construction where the chain id is known
+    /// from configuration/state.
+    pub fn new_wallet_update_with_chain_id(
+        chain_id: u8,
+        wallet_data: WalletTransactionData,
+        outputs: Vec<TransactionOutput>,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::WalletUpdate,
+            inputs: Vec::new(), // Update authorization is consensus-defined; system updates use empty inputs
+            outputs,
+            fee: 0, // System-style update: zero fee (registration_fee remains for historical record only)
+            signature,
+            memo,
+            payload: TransactionPayload::Wallet(wallet_data),
+        }
+    }
+
+    /// Create a new token transfer transaction (balance model).
+    pub fn new_token_transfer(
+        token_transfer_data: TokenTransferData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Self::new_token_transfer_with_chain_id(0x03, token_transfer_data, signature, memo)
+    }
+
+    /// Create a new token transfer transaction with an explicit chain id.
+    pub fn new_token_transfer_with_chain_id(
+        chain_id: u8,
+        token_transfer_data: TokenTransferData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::TokenTransfer,
+            inputs: Vec::new(),  // Balance-model transfer has no UTXO inputs
+            outputs: Vec::new(), // Balance-model transfer has no UTXO outputs
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::TokenTransfer(token_transfer_data),
+        }
+    }
+
+    /// Create a new token mint transaction (balance model).
+    pub fn new_token_mint(
+        token_mint_data: TokenMintData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Self::new_token_mint_with_chain_id(0x03, token_mint_data, signature, memo)
+    }
+
+    /// Create a new token mint transaction with an explicit chain id.
+    pub fn new_token_mint_with_chain_id(
+        chain_id: u8,
+        token_mint_data: TokenMintData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::TokenMint,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::TokenMint(token_mint_data),
+        }
+    }
+
+    /// Create a new token creation transaction.
+    pub fn new_token_creation(signature: Signature, memo: Vec<u8>) -> Self {
+        Self::new_token_creation_with_chain_id(0x03, signature, memo)
+    }
+
+    /// Create a new token creation transaction with an explicit chain id.
+    pub fn new_token_creation_with_chain_id(
+        chain_id: u8,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::TokenCreation,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::None,
         }
     }
 
@@ -491,7 +824,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::ValidatorRegistration,
             inputs: Vec::new(), // Validator registration via staking
@@ -499,14 +832,7 @@ impl Transaction {
             fee: 0, // Fee paid via stake
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: Some(validator_data),
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload: TransactionPayload::Validator(validator_data),
         }
     }
 
@@ -520,7 +846,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::ValidatorUpdate,
             inputs,
@@ -528,28 +854,21 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: Some(validator_data),
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload: TransactionPayload::Validator(validator_data),
         }
     }
 
     /// Create a new validator unregister transaction
     pub fn new_validator_unregister(
         validator_data: ValidatorTransactionData,
-        inputs: Vec<TransactionInput>, // Authorization
+        inputs: Vec<TransactionInput>,   // Authorization
         outputs: Vec<TransactionOutput>, // Stake return
         fee: u64,
         signature: Signature,
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::ValidatorUnregister,
             inputs,
@@ -557,14 +876,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: Some(validator_data),
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload: TransactionPayload::Validator(validator_data),
         }
     }
 
@@ -578,7 +890,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::DaoProposal,
             inputs,
@@ -586,14 +898,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: Some(proposal_data),
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload: TransactionPayload::DaoProposal(proposal_data),
         }
     }
 
@@ -607,7 +912,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::DaoVote,
             inputs,
@@ -615,28 +920,21 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: Some(vote_data),
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload: TransactionPayload::DaoVote(vote_data),
         }
     }
 
     /// Create a new DAO execution transaction
     pub fn new_dao_execution(
         execution_data: DaoExecutionData,
-        inputs: Vec<TransactionInput>, // Treasury UTXOs being spent
+        inputs: Vec<TransactionInput>,   // Treasury UTXOs being spent
         outputs: Vec<TransactionOutput>, // Recipient + change
         fee: u64,
         signature: Signature,
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::DaoExecution,
             inputs,
@@ -644,14 +942,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: Some(execution_data),
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload: TransactionPayload::DaoExecution(execution_data),
         }
     }
 
@@ -663,7 +954,7 @@ impl Transaction {
     /// # Arguments
     /// * `claim_data` - UBI claim data with claimant identity, month index, and claim amount
     /// * `outputs` - Transaction outputs (typically sends UBI to recipient wallet)
-    /// * `fee` - Transaction fee in micro-ZHTP
+    /// * `fee` - Transaction fee in micro-SOV
     /// * `signature` - Authorization signature from claimant
     /// * `memo` - Optional transaction memo
     ///
@@ -677,7 +968,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::UBIClaim,
             inputs: Vec::new(), // UBI claims don't require inputs (claiming from pool)
@@ -685,14 +976,7 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: Some(claim_data),
-            profit_declaration_data: None,
+            payload: TransactionPayload::UbiClaim(claim_data),
         }
     }
 
@@ -705,7 +989,7 @@ impl Transaction {
     /// * `declaration_data` - Profit declaration data with profit amount, tribute calculation, and entities
     /// * `inputs` - UTXOs from for-profit treasury (must cover tribute amount)
     /// * `outputs` - UTXOs to nonprofit treasury (tribute recipient)
-    /// * `fee` - Transaction fee in micro-ZHTP
+    /// * `fee` - Transaction fee in micro-SOV
     /// * `signature` - Authorization signature from for-profit entity
     /// * `memo` - Optional transaction memo
     ///
@@ -725,7 +1009,7 @@ impl Transaction {
         memo: Vec<u8>,
     ) -> Self {
         Transaction {
-            version: 1,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: TransactionType::ProfitDeclaration,
             inputs,
@@ -733,14 +1017,46 @@ impl Transaction {
             fee,
             signature,
             memo,
-            identity_data: None,
-            wallet_data: None,
-            validator_data: None,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: Some(declaration_data),
+            payload: TransactionPayload::ProfitDeclaration(declaration_data),
+        }
+    }
+
+    /// Create a new governance config update transaction (Phase 3D)
+    ///
+    /// Authorized governance addresses can update specific token configuration:
+    /// - set_fee_schedule: Update fee parameters
+    /// - set_transfer_policy: Switch between supported policies (not ComplianceGated)
+    /// - pause/unpause: Emergency circuit breaker
+    ///
+    /// # Arguments
+    /// * `config_data` - Governance config update data with operation and target token
+    /// * `fee` - Transaction fee in micro-SOV
+    /// * `signature` - Authorization signature from governance address
+    /// * `memo` - Optional transaction memo
+    ///
+    /// # Returns
+    /// New Transaction with TransactionType::GovernanceConfigUpdate set
+    ///
+    /// # Validation (at execution time)
+    /// - Caller must be in authorities[Governance] for target token
+    /// - Target token must exist
+    /// - Operation must be valid and within bounds
+    pub fn new_governance_config_update(
+        config_data: GovernanceConfigUpdateData,
+        fee: u64,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id: 0x03, // Default to development network
+            transaction_type: TransactionType::GovernanceConfigUpdate,
+            inputs: Vec::new(), // Governance updates don't need inputs
+            outputs: Vec::new(),
+            fee,
+            signature,
+            memo,
+            payload: TransactionPayload::GovernanceConfigUpdate(config_data),
         }
     }
 
@@ -766,7 +1082,7 @@ impl Transaction {
     }
 
     /// Check if this is a coinbase transaction
-    /// Note: ZHTP uses native token system, not Bitcoin-style coinbase
+    /// Note: SOV uses native token system, not Bitcoin-style coinbase
     pub fn is_coinbase(&self) -> bool {
         false
     }
@@ -789,7 +1105,163 @@ impl Transaction {
 
     /// Check if transaction has identity data
     pub fn has_identity_data(&self) -> bool {
-        self.identity_data.is_some()
+        matches!(self.payload, TransactionPayload::Identity(_))
+    }
+
+    // -------------------------------------------------------------------------
+    // Payload accessor methods
+    // These provide the same API as the old flat Option<FooData> fields.
+    // -------------------------------------------------------------------------
+
+    pub fn identity_data(&self) -> Option<&IdentityTransactionData> {
+        match &self.payload {
+            TransactionPayload::Identity(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn wallet_data(&self) -> Option<&WalletTransactionData> {
+        match &self.payload {
+            TransactionPayload::Wallet(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn validator_data(&self) -> Option<&ValidatorTransactionData> {
+        match &self.payload {
+            TransactionPayload::Validator(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn dao_proposal_data(&self) -> Option<&DaoProposalData> {
+        match &self.payload {
+            TransactionPayload::DaoProposal(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn dao_vote_data(&self) -> Option<&DaoVoteData> {
+        match &self.payload {
+            TransactionPayload::DaoVote(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn dao_execution_data(&self) -> Option<&DaoExecutionData> {
+        match &self.payload {
+            TransactionPayload::DaoExecution(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn ubi_claim_data(&self) -> Option<&UbiClaimData> {
+        match &self.payload {
+            TransactionPayload::UbiClaim(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn profit_declaration_data(&self) -> Option<&ProfitDeclarationData> {
+        match &self.payload {
+            TransactionPayload::ProfitDeclaration(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn token_transfer_data(&self) -> Option<&TokenTransferData> {
+        match &self.payload {
+            TransactionPayload::TokenTransfer(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn token_mint_data(&self) -> Option<&TokenMintData> {
+        match &self.payload {
+            TransactionPayload::TokenMint(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn governance_config_data(&self) -> Option<&GovernanceConfigUpdateData> {
+        match &self.payload {
+            TransactionPayload::GovernanceConfigUpdate(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn bonding_curve_deploy_data(&self) -> Option<&BondingCurveDeployData> {
+        match &self.payload {
+            TransactionPayload::BondingCurveDeploy(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn bonding_curve_buy_data(&self) -> Option<&BondingCurveBuyData> {
+        match &self.payload {
+            TransactionPayload::BondingCurveBuy(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn bonding_curve_sell_data(&self) -> Option<&BondingCurveSellData> {
+        match &self.payload {
+            TransactionPayload::BondingCurveSell(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn bonding_curve_graduate_data(&self) -> Option<&BondingCurveGraduateData> {
+        match &self.payload {
+            TransactionPayload::BondingCurveGraduate(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn oracle_committee_update_data(&self) -> Option<&OracleCommitteeUpdateData> {
+        match &self.payload {
+            TransactionPayload::OracleCommitteeUpdate(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn oracle_config_update_data(&self) -> Option<&OracleConfigUpdateData> {
+        match &self.payload {
+            TransactionPayload::OracleConfigUpdate(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn oracle_attestation_data(&self) -> Option<&OracleAttestationData> {
+        match &self.payload {
+            TransactionPayload::OracleAttestation(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn cancel_oracle_update_data(&self) -> Option<&CancelOracleUpdateData> {
+        match &self.payload {
+            TransactionPayload::CancelOracleUpdate(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn init_entity_registry_data(&self) -> Option<&InitEntityRegistryData> {
+        match &self.payload {
+            TransactionPayload::InitEntityRegistry(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn record_on_ramp_trade_data(&self) -> Option<&RecordOnRampTradeData> {
+        match &self.payload {
+            TransactionPayload::RecordOnRampTrade(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn treasury_allocation_data(&self) -> Option<&TreasuryAllocationData> {
+        match &self.payload {
+            TransactionPayload::TreasuryAllocation(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn init_cbe_token_data(&self) -> Option<&InitCbeTokenData> {
+        match &self.payload {
+            TransactionPayload::InitCbeToken(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn create_employment_contract_data(&self) -> Option<&CreateEmploymentContractData> {
+        match &self.payload {
+            TransactionPayload::CreateEmploymentContract(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn process_payroll_data(&self) -> Option<&ProcessPayrollData> {
+        match &self.payload {
+            TransactionPayload::ProcessPayroll(d) => Some(d),
+            _ => None,
+        }
     }
 
     /// Get the size of the transaction in bytes
@@ -800,6 +1272,275 @@ impl Transaction {
     /// Check if transaction is empty (no inputs or outputs)
     pub fn is_empty(&self) -> bool {
         self.inputs.is_empty() && self.outputs.is_empty()
+    }
+
+    /// Create a new bonding curve deploy transaction with an explicit chain id.
+    pub fn new_bonding_curve_deploy_with_chain_id(
+        chain_id: u8,
+        bonding_curve_deploy_data: BondingCurveDeployData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveDeploy,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::BondingCurveDeploy(bonding_curve_deploy_data),
+        }
+    }
+
+    /// Create a new bonding curve buy transaction with an explicit chain id.
+    pub fn new_bonding_curve_buy_with_chain_id(
+        chain_id: u8,
+        bonding_curve_buy_data: BondingCurveBuyData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveBuy,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::BondingCurveBuy(bonding_curve_buy_data),
+        }
+    }
+
+    /// Create a new bonding curve sell transaction with an explicit chain id.
+    pub fn new_bonding_curve_sell_with_chain_id(
+        chain_id: u8,
+        bonding_curve_sell_data: BondingCurveSellData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveSell,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::BondingCurveSell(bonding_curve_sell_data),
+        }
+    }
+
+    /// Create a new bonding curve graduate transaction with an explicit chain id.
+    pub fn new_bonding_curve_graduate_with_chain_id(
+        chain_id: u8,
+        bonding_curve_graduate_data: BondingCurveGraduateData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::BondingCurveGraduate,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::BondingCurveGraduate(bonding_curve_graduate_data),
+        }
+    }
+
+    /// Create a new oracle committee update transaction with an explicit chain id.
+    pub fn new_oracle_committee_update_with_chain_id(
+        chain_id: u8,
+        oracle_committee_update_data: OracleCommitteeUpdateData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::UpdateOracleCommittee,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::OracleCommitteeUpdate(oracle_committee_update_data),
+        }
+    }
+
+    /// Create a new oracle configuration update transaction with an explicit chain id.
+    pub fn new_oracle_config_update_with_chain_id(
+        chain_id: u8,
+        oracle_config_update_data: OracleConfigUpdateData,
+        signature: Signature,
+        memo: Vec<u8>,
+    ) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::UpdateOracleConfig,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo,
+            payload: TransactionPayload::OracleConfigUpdate(oracle_config_update_data),
+        }
+    }
+
+    /// Create a new InitEntityRegistry transaction (legacy single-signer path).
+    ///
+    /// This is a one-time, irreversible transaction that sets the CBE and Nonprofit
+    /// treasury addresses. Must be signed by a Bootstrap Council member.
+    ///
+    /// For new code, prefer `new_init_entity_registry_threshold` which uses the
+    /// multi-signer threshold approval set.
+    pub fn new_init_entity_registry(
+        chain_id: u8,
+        cbe_treasury: PublicKey,
+        nonprofit_treasury: PublicKey,
+        initialized_at: u64,
+        initialized_at_height: u64,
+        signature: Signature,
+    ) -> Self {
+        let approvals = crate::transaction::threshold_approval::ThresholdApprovalSet::new(
+            crate::transaction::threshold_approval::ApprovalDomain::BootstrapCouncil,
+        );
+        let data = InitEntityRegistryData {
+            cbe_treasury,
+            nonprofit_treasury,
+            initialized_at,
+            initialized_at_height,
+            approvals,
+        };
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::InitEntityRegistry,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_INIT_ENTITY_REGISTRY".to_vec(),
+            payload: TransactionPayload::InitEntityRegistry(data),
+        }
+    }
+
+    /// Create a new RecordOnRampTrade transaction.
+    pub fn new_record_on_ramp_trade(chain_id: u8, data: RecordOnRampTradeData) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::RecordOnRampTrade,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature: Default::default(),
+            memo: b"ZHTP_RECORD_ON_RAMP_TRADE".to_vec(),
+            payload: TransactionPayload::RecordOnRampTrade(data),
+        }
+    }
+
+    /// Create a new TreasuryAllocation transaction.
+    pub fn new_treasury_allocation(chain_id: u8, data: TreasuryAllocationData) -> Self {
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::TreasuryAllocation,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature: Default::default(),
+            memo: b"ZHTP_TREASURY_ALLOCATION".to_vec(),
+            payload: TransactionPayload::TreasuryAllocation(data),
+        }
+    }
+
+    pub fn new_init_cbe_token(
+        chain_id: u8,
+        compensation_key_id: [u8; 32],
+        operational_key_id: [u8; 32],
+        performance_key_id: [u8; 32],
+        strategic_key_id: [u8; 32],
+        initialized_at: u64,
+        initialized_at_height: u64,
+        signature: Signature,
+    ) -> Self {
+        let data = InitCbeTokenData {
+            compensation_key_id,
+            operational_key_id,
+            performance_key_id,
+            strategic_key_id,
+            initialized_at,
+            initialized_at_height,
+        };
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::InitCbeToken,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_INIT_CBE_TOKEN".to_vec(),
+            payload: TransactionPayload::InitCbeToken(data),
+        }
+    }
+
+    pub fn new_create_employment_contract(
+        chain_id: u8,
+        dao_id: [u8; 32],
+        employee_key_id: [u8; 32],
+        contract_type: u8,
+        compensation_amount: u64,
+        payment_period: u8,
+        tax_rate_basis_points: u16,
+        tax_jurisdiction: String,
+        profit_share_percentage: u16,
+        signature: Signature,
+    ) -> Self {
+        let data = CreateEmploymentContractData {
+            dao_id,
+            employee_key_id,
+            contract_type,
+            compensation_amount,
+            payment_period,
+            tax_rate_basis_points,
+            tax_jurisdiction,
+            profit_share_percentage,
+        };
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::CreateEmploymentContract,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_CREATE_EMPLOYMENT_CONTRACT".to_vec(),
+            payload: TransactionPayload::CreateEmploymentContract(data),
+        }
+    }
+
+    pub fn new_process_payroll(chain_id: u8, contract_id: [u8; 32], signature: Signature) -> Self {
+        let data = ProcessPayrollData { contract_id };
+        Transaction {
+            version: TX_VERSION_V8,
+            chain_id,
+            transaction_type: TransactionType::ProcessPayroll,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            fee: 0,
+            signature,
+            memo: b"ZHTP_PROCESS_PAYROLL".to_vec(),
+            payload: TransactionPayload::ProcessPayroll(data),
+        }
     }
 }
 
@@ -827,11 +1568,7 @@ impl TransactionInput {
 
 impl TransactionOutput {
     /// Create a new transaction output
-    pub fn new(
-        commitment: Hash,
-        note: Hash,
-        recipient: PublicKey,
-    ) -> Self {
+    pub fn new(commitment: Hash, note: Hash, recipient: PublicKey) -> Self {
         Self {
             commitment,
             note,
@@ -936,7 +1673,7 @@ impl UbiClaimData {
     ///
     /// This ensures each claimant can only claim once per month with a unique identifier.
     /// In production, this would hash the claimant identity + month to produce a deterministic claim ID.
-    pub fn compute_claim_id(claimant_identity: &str, month_index: u64) -> Hash {
+    pub fn compute_claim_id(_claimant_identity: &str, _month_index: u64) -> Hash {
         // Stub implementation for Week 7
         // Production: Use actual cryptographic hash function
         // For now, return default hash - will be overridden by actual claim_id in transaction
@@ -999,7 +1736,8 @@ impl ProfitDeclarationData {
     /// # Returns
     /// true if tribute_amount == profit_amount * 20 / 100
     pub fn validate_tribute_calculation(&self) -> bool {
-        let expected_tribute = self.profit_amount
+        let expected_tribute = self
+            .profit_amount
             .checked_mul(20)
             .and_then(|x| x.checked_div(100));
 
@@ -1036,9 +1774,7 @@ impl ProfitDeclarationData {
         }
 
         // Verify revenue sources sum to profit amount
-        let total_revenue: u64 = self.revenue_sources.iter()
-            .map(|src| src.amount)
-            .sum();
+        let total_revenue: u64 = self.revenue_sources.iter().map(|src| src.amount).sum();
         if total_revenue != self.profit_amount {
             return false;
         }
@@ -1135,4 +1871,271 @@ impl ProfitDeclarationData {
 
         true
     }
+}
+
+// ============================================================================
+// Bonding Curve Transaction Data
+// ============================================================================
+
+/// Bonding curve token deployment data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BondingCurveDeployData {
+    /// Token name
+    pub name: String,
+    /// Token symbol (max 10 chars)
+    pub symbol: String,
+    /// Curve type: 0=Linear, 1=Exponential, 2=Sigmoid
+    pub curve_type: u8,
+    /// Base price in stablecoin atomic units
+    pub base_price: u64,
+    /// Slope for linear, growth rate bps for exponential, steepness for sigmoid
+    pub curve_param: u64,
+    /// Midpoint supply for sigmoid (ignored for other types)
+    pub midpoint_supply: Option<u64>,
+    /// Graduation threshold type: 0=ReserveAmount, 1=SupplyAmount, 2=TimeAndReserve, 3=TimeAndSupply
+    pub threshold_type: u8,
+    /// Threshold value (reserve or supply amount)
+    pub threshold_value: u64,
+    /// Minimum time in seconds (for TimeAnd* thresholds)
+    pub threshold_time_seconds: Option<u64>,
+    /// Whether selling is enabled during curve phase
+    pub sell_enabled: bool,
+    /// Creator's public key
+    pub creator: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Bonding curve buy transaction data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BondingCurveBuyData {
+    /// Token ID being purchased
+    pub token_id: [u8; 32],
+    /// Amount of stablecoin to spend
+    pub stable_amount: u128,
+    /// Minimum tokens expected (slippage protection)
+    pub min_tokens_out: u128,
+    /// Buyer's address
+    pub buyer: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Bonding curve sell transaction data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BondingCurveSellData {
+    /// Token ID being sold
+    pub token_id: [u8; 32],
+    /// Amount of tokens to sell
+    pub token_amount: u128,
+    /// Minimum stablecoin expected (slippage protection)
+    pub min_stable_out: u128,
+    /// Seller's address
+    pub seller: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Bonding curve graduation transaction data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BondingCurveGraduateData {
+    /// Token ID being graduated
+    pub token_id: [u8; 32],
+    /// AMM pool ID to create/use
+    pub pool_id: [u8; 32],
+    /// SOV amount to seed into AMM pool
+    pub sov_seed_amount: u128,
+    /// Token amount to seed into AMM pool
+    pub token_seed_amount: u128,
+    /// Graduator's address (must be creator or governance)
+    pub graduator: [u8; 32],
+    /// Nonce for replay protection
+    pub nonce: u64,
+}
+
+/// Entity registry initialization data (TSR)
+///
+/// One-time transaction that sets the CBE (for-profit) and Nonprofit treasury
+/// addresses on-chain. The EntityRegistry becomes immutable after this transaction
+/// is committed. Must be approved by at least `council_threshold` Bootstrap Council members.
+///
+/// # Invariants
+/// - cbe_treasury != nonprofit_treasury
+/// - Neither address may be zero
+/// - Can only be processed once per chain lifetime
+///
+/// # Threshold approval preimage
+/// Each council signer signs:
+///   `compute_approval_preimage(38, ApprovalDomain::BootstrapCouncil, bincode({cbe_treasury, nonprofit_treasury, initialized_at, initialized_at_height}))`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InitEntityRegistryData {
+    /// CBE (For-Profit) treasury public key
+    pub cbe_treasury: crate::integration::crypto_integration::PublicKey,
+    /// Nonprofit treasury public key
+    pub nonprofit_treasury: crate::integration::crypto_integration::PublicKey,
+    /// Unix timestamp when this initialization was requested
+    pub initialized_at: u64,
+    /// Block height at time of signing (client-provided; part of the signed payload
+    /// so it cannot be modified post-signing without invalidating the signature).
+    pub initialized_at_height: u64,
+    /// Bootstrap Council threshold approvals. Each signer has signed
+    /// `compute_approval_preimage(38, ApprovalDomain::BootstrapCouncil, canonical_payload_bytes)`
+    /// where `canonical_payload_bytes` is bincode of the four fields above.
+    #[serde(default)]
+    pub approvals: crate::transaction::threshold_approval::ThresholdApprovalSet,
+}
+
+// ---------------------------------------------------------------------------
+// #1897 — RecordOnRampTrade transaction data
+// ---------------------------------------------------------------------------
+
+/// Oracle committee-attested fiat→CBE on-ramp trade record (type 39).
+///
+/// An off-chain gateway submits this transaction once T-of-N oracle committee
+/// members have approved the trade. The approval set must use the OracleCommittee
+/// domain so the committee membership check uses the correct signer set.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecordOnRampTradeData {
+    /// Oracle epoch when this trade occurred.
+    pub epoch_id: u64,
+    /// CBE received by the user (18-decimal atomic units).
+    pub cbe_amount: u128,
+    /// USDC paid by the user (6-decimal atomic units).
+    pub usdc_amount: u128,
+    /// Unix timestamp of the trade.
+    pub traded_at: u64,
+    /// Oracle committee threshold approvals over the canonical preimage.
+    /// Domain must be `ApprovalDomain::OracleCommittee`.
+    pub approvals: crate::transaction::threshold_approval::ThresholdApprovalSet,
+}
+
+// ---------------------------------------------------------------------------
+// #1896 — TreasuryAllocation transaction data
+// ---------------------------------------------------------------------------
+
+/// Governance-approved treasury allocation from CBE treasury → DAO wallet (type 40).
+///
+/// Authorized by Bootstrap Council threshold approvals. The actual SOV movement
+/// is wired at block-processing level; the executor arm records it as LegacySystem
+/// and a TODO is left for full SOV ledger integration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TreasuryAllocationData {
+    /// Source: CBE treasury wallet key_id (must match EntityRegistry.cbe_treasury.key_id).
+    pub source_treasury_key_id: [u8; 32],
+    /// Destination: DAO treasury wallet key_id.
+    pub destination_key_id: [u8; 32],
+    /// Amount of SOV to transfer (atomic units).
+    pub amount: u64,
+    /// Human-readable spending category (e.g. "operations", "grants").
+    pub spending_category: String,
+    /// DAO proposal ID that authorized this allocation (for audit trail).
+    pub proposal_id: [u8; 32],
+    /// Bootstrap Council threshold approvals.
+    /// Domain must be `ApprovalDomain::BootstrapCouncil`.
+    pub approvals: crate::transaction::threshold_approval::ThresholdApprovalSet,
+}
+
+// ============================================================================
+// CBE Transaction Payload Structs
+// ============================================================================
+
+/// CBE token initialization data (one-time, irreversible)
+///
+/// Carries the 4 pool addresses that `CbeToken::init()` requires.
+/// The block processor resolves each key_id to a full `PublicKey` via
+/// `resolve_public_key_by_key_id` before calling the contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InitCbeTokenData {
+    /// Compensation pool wallet key_id — receives 40% of CBE supply
+    pub compensation_key_id: [u8; 32],
+    /// Operational treasury wallet key_id — receives 30% of CBE supply
+    pub operational_key_id: [u8; 32],
+    /// Performance incentives wallet key_id — receives 20% of CBE supply
+    pub performance_key_id: [u8; 32],
+    /// Strategic reserves wallet key_id — receives 10% of CBE supply
+    pub strategic_key_id: [u8; 32],
+    /// Unix timestamp of initialization
+    pub initialized_at: u64,
+    /// Block height at initialization (client-provided, part of signed payload)
+    pub initialized_at_height: u64,
+}
+
+/// Employment contract creation data
+///
+/// Maps 1-to-1 to `EmploymentRegistry::create_employment_contract()` parameters.
+/// Enum types (`ContractAccessType`, `EconomicPeriod`) are encoded as `u8` discriminants
+/// to avoid `#[cfg(feature = "contracts")]` dependencies in the transaction core.
+/// The block processor converts them to the correct enum variants.
+///
+/// ContractAccessType discriminants: 0 = PublicAccess, 1 = Employment
+/// EconomicPeriod discriminants:     0 = Monthly, 1 = Quarterly, 2 = Annually
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateEmploymentContractData {
+    /// DAO / employer key_id (32-byte)
+    pub dao_id: [u8; 32],
+    /// Employee wallet key_id (32-byte) — resolved to PublicKey in block processor
+    pub employee_key_id: [u8; 32],
+    /// Contract type discriminant (0=PublicAccess, 1=Employment)
+    pub contract_type: u8,
+    /// Compensation amount in CBE atomic units
+    pub compensation_amount: u64,
+    /// Payment period discriminant (0=Monthly, 1=Quarterly, 2=Annually)
+    pub payment_period: u8,
+    /// Tax rate in basis points (max 5000 = 50%)
+    pub tax_rate_basis_points: u16,
+    /// Tax jurisdiction string
+    pub tax_jurisdiction: String,
+    /// Profit share in basis points (max 2000 = 20%)
+    pub profit_share_percentage: u16,
+}
+
+/// Payroll disbursement trigger data
+///
+/// The block processor calls `EmploymentRegistry::process_payroll(contract_id, current_height)`.
+/// All amounts are computed by the contract; this payload only identifies which contract to pay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessPayrollData {
+    /// Contract to process payroll for (32-byte contract_id from CreateEmploymentContract)
+    pub contract_id: [u8; 32],
+}
+
+// ============================================================================
+// TransactionPayload enum
+// ============================================================================
+
+/// Typed transaction payload - replaces the flat Option<FooData> field scatter on Transaction.
+///
+/// Adding a new transaction type = adding one variant here. No version constant, no positional
+/// field count, no `if version >= TX_VERSION_VN` ladder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TransactionPayload {
+    /// No typed payload (Transfer, Coinbase, SessionCreation, SessionTermination,
+    /// ContentUpload, UbiDistribution, DifficultyUpdate, CancelOracleUpdate, and
+    /// other types that use inputs/outputs/memo only)
+    None,
+    Identity(IdentityTransactionData),
+    Wallet(WalletTransactionData),
+    Validator(ValidatorTransactionData),
+    DaoProposal(DaoProposalData),
+    DaoVote(DaoVoteData),
+    DaoExecution(DaoExecutionData),
+    UbiClaim(UbiClaimData),
+    ProfitDeclaration(ProfitDeclarationData),
+    TokenTransfer(TokenTransferData),
+    TokenMint(TokenMintData),
+    GovernanceConfigUpdate(GovernanceConfigUpdateData),
+    BondingCurveDeploy(BondingCurveDeployData),
+    BondingCurveBuy(BondingCurveBuyData),
+    BondingCurveSell(BondingCurveSellData),
+    BondingCurveGraduate(BondingCurveGraduateData),
+    OracleCommitteeUpdate(OracleCommitteeUpdateData),
+    OracleConfigUpdate(OracleConfigUpdateData),
+    OracleAttestation(OracleAttestationData),
+    CancelOracleUpdate(CancelOracleUpdateData),
+    InitEntityRegistry(InitEntityRegistryData),
+    RecordOnRampTrade(RecordOnRampTradeData),
+    TreasuryAllocation(TreasuryAllocationData),
+    InitCbeToken(InitCbeTokenData),
+    CreateEmploymentContract(CreateEmploymentContractData),
+    ProcessPayroll(ProcessPayrollData),
 }

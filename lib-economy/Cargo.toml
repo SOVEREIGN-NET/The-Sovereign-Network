@@ -17,6 +17,7 @@ tokio = { version = "1.0", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # ZHTP package dependencies
+lib-types = { path = "../lib-types" }
 lib-crypto = { path = "../lib-crypto" }
 lib-identity = { path = "../lib-identity" }
 lib-proofs = { path = "../lib-proofs" }

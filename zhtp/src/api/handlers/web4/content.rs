@@ -1,14 +1,13 @@
 //! Web4 Content Publishing API Endpoints
 
-use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
-use lib_protocols::zhtp::ZhtpResult;
-use lib_network::web4::{ContentPublishResponse, ContentMetadata, Web4Manifest, ManifestFile};
-use lib_identity::ZhtpIdentity;
-use serde::{Deserialize, Serialize};
-use tracing::{info, error};
 use anyhow::anyhow;
-use base64::{Engine as _, engine::general_purpose};
-use std::collections::HashMap;
+use base64::{engine::general_purpose, Engine as _};
+use lib_identity::ZhtpIdentity;
+use lib_network::web4::{ContentMetadata, ContentPublishResponse, ManifestFile, Web4Manifest};
+use lib_protocols::zhtp::ZhtpResult;
+use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use serde::{Deserialize, Serialize};
+use tracing::{error, info};
 
 use super::Web4Handler;
 
@@ -90,15 +89,18 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid content publish request: {}", e))?;
 
         // Deserialize publisher identity
-        let publisher_identity = self.deserialize_identity(&api_request.publisher_identity)
+        let publisher_identity = self
+            .deserialize_identity(&api_request.publisher_identity)
             .map_err(|e| anyhow!("Invalid publisher identity: {}", e))?;
 
         // Deserialize ownership proof
-        let _ownership_proof = self.deserialize_proof(&api_request.ownership_proof)
+        let _ownership_proof = self
+            .deserialize_proof(&api_request.ownership_proof)
             .map_err(|e| anyhow!("Invalid ownership proof: {}", e))?;
 
         // Decode content from base64
-        let content = general_purpose::STANDARD.decode(&api_request.content)
+        let content = general_purpose::STANDARD
+            .decode(&api_request.content)
             .map_err(|e| anyhow!("Invalid base64 content: {}", e))?;
 
         // Create content metadata
@@ -114,20 +116,27 @@ impl Web4Handler {
         // Create ownership proof for content publishing
         let _ownership_proof_for_request = lib_proofs::ZeroKnowledgeProof::new(
             "Plonky2".to_string(),
-            lib_crypto::hash_blake3(&[
-                publisher_identity.id.0.as_slice(),
-                api_request.domain.as_bytes(),
-            ].concat()).to_vec(),
+            lib_crypto::hash_blake3(
+                &[
+                    publisher_identity.id.0.as_slice(),
+                    api_request.domain.as_bytes(),
+                ]
+                .concat(),
+            )
+            .to_vec(),
             publisher_identity.id.0.to_vec(),
             publisher_identity.id.0.to_vec(),
             None,
         );
 
         // Get content publisher from Web4 manager
-        
+
         // For now, implement content publishing directly using DHT
         // Verify domain ownership first
-        let domain_info = self.domain_registry.lookup_domain(&api_request.domain).await
+        let domain_info = self
+            .domain_registry
+            .lookup_domain(&api_request.domain)
+            .await
             .map_err(|e| anyhow!("Failed to lookup domain: {}", e))?;
 
         if !domain_info.found {
@@ -144,17 +153,27 @@ impl Web4Handler {
             None, // No jurisdiction for device
             "web4-content-publisher",
             None, // Random seed
-        ).map_err(|e| anyhow!("Failed to create identity: {}", e))?;
+        )
+        .map_err(|e| anyhow!("Failed to create identity: {}", e))?;
 
         // Initialize global DHT and get client
-        crate::runtime::shared_dht::initialize_global_dht(identity).await
+        crate::runtime::shared_dht::initialize_global_dht(identity)
+            .await
             .map_err(|e| anyhow!("Failed to initialize DHT: {}", e))?;
-        let dht_client = crate::runtime::shared_dht::get_dht_client().await
+        let dht_client = crate::runtime::shared_dht::get_dht_client()
+            .await
             .map_err(|e| anyhow!("Failed to get DHT client: {}", e))?;
 
         // Store content in DHT
         let mut dht = dht_client.write().await;
-        let _dht_result = dht.store_content(&api_request.domain, &api_request.path, content.clone()).await
+        let _dht_result = dht
+            .store_content(
+                &api_request.domain,
+                &api_request.path,
+                content.clone(),
+                86400,
+            )
+            .await
             .map_err(|e| anyhow!("Failed to store content in DHT: {}", e))?;
         drop(dht); // Release DHT lock
 
@@ -162,13 +181,25 @@ impl Web4Handler {
         let content_hash = hex::encode(lib_crypto::hash_blake3(&content));
 
         // Get current domain record to access manifest
-        let current_domain = self.domain_registry.lookup_domain(&api_request.domain).await
+        let current_domain = self
+            .domain_registry
+            .lookup_domain(&api_request.domain)
+            .await
             .map_err(|e| anyhow!("Failed to get domain for manifest update: {}", e))?;
 
-        let current_record = current_domain.record.ok_or_else(|| anyhow!("Domain record disappeared"))?;
+        let current_record = current_domain
+            .record
+            .ok_or_else(|| anyhow!("Domain record disappeared"))?;
 
         // Get current manifest or create new one
-        let mut manifest = if let Ok(Some(m)) = self.domain_registry.get_manifest(&api_request.domain, &current_record.current_web4_manifest_cid).await {
+        let mut manifest = if let Ok(Some(m)) = self
+            .domain_registry
+            .get_manifest(
+                &api_request.domain,
+                &current_record.current_web4_manifest_cid,
+            )
+            .await
+        {
             m
         } else {
             // Create new manifest for v1
@@ -177,7 +208,7 @@ impl Web4Handler {
                 version: 1,
                 previous_manifest: None,
                 build_hash: hex::encode(lib_crypto::hash_blake3(&content)),
-                files: HashMap::new(),
+                files: std::collections::BTreeMap::new(),
                 created_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -206,7 +237,10 @@ impl Web4Handler {
         }
 
         // Store updated manifest
-        let manifest_cid = self.domain_registry.store_manifest(manifest).await
+        let manifest_cid = self
+            .domain_registry
+            .store_manifest(manifest)
+            .await
             .map_err(|e| anyhow!("Failed to store manifest: {}", e))?;
 
         // Update domain record to point to new manifest.
@@ -226,10 +260,15 @@ impl Web4Handler {
                     .as_secs(),
             };
 
-            let _update_response = self.domain_registry.update_domain(update_request).await
+            let _update_response = self
+                .domain_registry
+                .update_domain(update_request)
+                .await
                 .map_err(|e| anyhow!("Failed to update domain manifest: {}", e))?;
         } else {
-            error!("Refusing unsigned domain update in non-debug build; endpoint is development-only");
+            error!(
+                "Refusing unsigned domain update in non-debug build; endpoint is development-only"
+            );
             return Err(anyhow!(
                 "Domain update endpoint is disabled in this build because updates are not signed"
             ));
@@ -252,8 +291,11 @@ impl Web4Handler {
 
         match serde_json::to_vec(&response) {
             Ok(response_json) => {
-                info!(" Content published successfully: {}{}", api_request.domain, api_request.path);
-                
+                info!(
+                    " Content published successfully: {}{}",
+                    api_request.domain, api_request.path
+                );
+
                 Ok(ZhtpResponse::success_with_content_type(
                     response_json,
                     "application/json".to_string(),
@@ -291,15 +333,18 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid content update request: {}", e))?;
 
         // Deserialize publisher identity
-        let publisher_identity = self.deserialize_identity(&api_request.publisher_identity)
+        let publisher_identity = self
+            .deserialize_identity(&api_request.publisher_identity)
             .map_err(|e| anyhow!("Invalid publisher identity: {}", e))?;
 
         // Deserialize ownership proof
-        let _ownership_proof = self.deserialize_proof(&api_request.ownership_proof)
+        let _ownership_proof = self
+            .deserialize_proof(&api_request.ownership_proof)
             .map_err(|e| anyhow!("Invalid ownership proof: {}", e))?;
 
         // Decode content from base64
-        let content = general_purpose::STANDARD.decode(&api_request.content)
+        let content = general_purpose::STANDARD
+            .decode(&api_request.content)
             .map_err(|e| anyhow!("Invalid base64 content: {}", e))?;
 
         // Create metadata (use existing or provided) - not actually used for DHT approach
@@ -327,19 +372,22 @@ impl Web4Handler {
         // Create ownership proof for content update
         let _ownership_proof = lib_proofs::ZeroKnowledgeProof::new(
             "Plonky2".to_string(),
-            lib_crypto::hash_blake3(&[
-                publisher_identity.id.0.as_slice(),
-                domain.as_bytes(),
-            ].concat()).to_vec(),
+            lib_crypto::hash_blake3(
+                &[publisher_identity.id.0.as_slice(), domain.as_bytes()].concat(),
+            )
+            .to_vec(),
             publisher_identity.id.0.to_vec(),
             publisher_identity.id.0.to_vec(),
             None,
         );
 
         // Implement content update using direct DHT approach (same as publish)
-        
+
         // Verify domain exists and ownership
-        let domain_info = self.domain_registry.lookup_domain(domain).await
+        let domain_info = self
+            .domain_registry
+            .lookup_domain(domain)
+            .await
             .map_err(|e| anyhow!("Failed to lookup domain: {}", e))?;
 
         if !domain_info.found {
@@ -356,17 +404,22 @@ impl Web4Handler {
             None, // No jurisdiction for device
             "web4-content-updater",
             None, // Random seed
-        ).map_err(|e| anyhow!("Failed to create identity: {}", e))?;
+        )
+        .map_err(|e| anyhow!("Failed to create identity: {}", e))?;
 
         // Initialize global DHT and get client
-        crate::runtime::shared_dht::initialize_global_dht(identity).await
+        crate::runtime::shared_dht::initialize_global_dht(identity)
+            .await
             .map_err(|e| anyhow!("Failed to initialize DHT: {}", e))?;
-        let dht_client = crate::runtime::shared_dht::get_dht_client().await
+        let dht_client = crate::runtime::shared_dht::get_dht_client()
+            .await
             .map_err(|e| anyhow!("Failed to get DHT client: {}", e))?;
 
         // Update content in DHT (same as store)
         let mut dht = dht_client.write().await;
-        let _dht_result = dht.store_content(domain, &content_path, content.clone()).await
+        let _dht_result = dht
+            .store_content(domain, &content_path, content.clone(), 86400)
+            .await
             .map_err(|e| anyhow!("Failed to update content in DHT: {}", e))?;
         drop(dht); // Release DHT lock
 
@@ -374,13 +427,22 @@ impl Web4Handler {
         let content_hash = hex::encode(lib_crypto::hash_blake3(&content));
 
         // Get current domain record to update manifest
-        let current_domain = self.domain_registry.lookup_domain(domain).await
+        let current_domain = self
+            .domain_registry
+            .lookup_domain(domain)
+            .await
             .map_err(|e| anyhow!("Failed to get domain for manifest update: {}", e))?;
 
-        let current_record = current_domain.record.ok_or_else(|| anyhow!("Domain record disappeared"))?;
+        let current_record = current_domain
+            .record
+            .ok_or_else(|| anyhow!("Domain record disappeared"))?;
 
         // Get current manifest
-        let mut manifest = if let Ok(Some(m)) = self.domain_registry.get_manifest(domain, &current_record.current_web4_manifest_cid).await {
+        let mut manifest = if let Ok(Some(m)) = self
+            .domain_registry
+            .get_manifest(domain, &current_record.current_web4_manifest_cid)
+            .await
+        {
             m
         } else {
             // Create new manifest if none exists
@@ -389,7 +451,7 @@ impl Web4Handler {
                 version: 1,
                 previous_manifest: None,
                 build_hash: hex::encode(lib_crypto::hash_blake3(&content)),
-                files: HashMap::new(),
+                files: std::collections::BTreeMap::new(),
                 created_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -400,7 +462,10 @@ impl Web4Handler {
         };
 
         // Update or add the file in manifest
-        let content_type = api_request.content_type.clone().unwrap_or("application/octet-stream".to_string());
+        let content_type = api_request
+            .content_type
+            .clone()
+            .unwrap_or("application/octet-stream".to_string());
         manifest.files.insert(
             content_path.clone(),
             ManifestFile {
@@ -416,7 +481,10 @@ impl Web4Handler {
         manifest.previous_manifest = Some(current_record.current_web4_manifest_cid.clone());
 
         // Store updated manifest
-        let manifest_cid = self.domain_registry.store_manifest(manifest).await
+        let manifest_cid = self
+            .domain_registry
+            .store_manifest(manifest)
+            .await
             .map_err(|e| anyhow!("Failed to store manifest: {}", e))?;
 
         // Update domain record to point to new manifest.
@@ -436,10 +504,15 @@ impl Web4Handler {
                     .as_secs(),
             };
 
-            let _update_response = self.domain_registry.update_domain(update_request).await
+            let _update_response = self
+                .domain_registry
+                .update_domain(update_request)
+                .await
                 .map_err(|e| anyhow!("Failed to update domain manifest: {}", e))?;
         } else {
-            error!("Refusing unsigned domain update in non-debug build; endpoint is development-only");
+            error!(
+                "Refusing unsigned domain update in non-debug build; endpoint is development-only"
+            );
             return Err(anyhow!(
                 "Domain update endpoint is disabled in this build because updates are not signed"
             ));
@@ -463,7 +536,7 @@ impl Web4Handler {
         match serde_json::to_vec(&response) {
             Ok(response_json) => {
                 info!(" Content updated successfully: {}{}", domain, content_path);
-                
+
                 Ok(ZhtpResponse::success_with_content_type(
                     response_json,
                     "application/json".to_string(),
@@ -493,13 +566,15 @@ impl Web4Handler {
 
         let domain = path_parts[4];
         // Remove the trailing "/metadata"
-        let content_path = format!("/{}", path_parts[5..path_parts.len()-1].join("/"));
+        let content_path = format!("/{}", path_parts[5..path_parts.len() - 1].join("/"));
 
         info!(" Getting metadata for content: {}{}", domain, content_path);
 
-        
         // Check if domain exists
-        let domain_info = self.domain_registry.lookup_domain(domain).await
+        let domain_info = self
+            .domain_registry
+            .lookup_domain(domain)
+            .await
             .map_err(|e| anyhow!("Failed to lookup domain: {}", e))?;
 
         // For now, return basic metadata if domain exists and has content mappings
@@ -526,7 +601,7 @@ impl Web4Handler {
                     "path": content_path
                 })
             };
-            
+
             let response_json = serde_json::to_vec(&response)
                 .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
 
@@ -542,7 +617,7 @@ impl Web4Handler {
                 "domain": domain,
                 "path": content_path
             });
-            
+
             let response_json = serde_json::to_vec(&response)
                 .map_err(|e| anyhow!("Failed to serialize response: {}", e))?;
 
@@ -575,7 +650,8 @@ impl Web4Handler {
             .map_err(|e| anyhow!("Invalid content delete request: {}", e))?;
 
         // Deserialize and validate publisher identity
-        let publisher_identity = self.deserialize_identity(&api_request.publisher_identity)
+        let publisher_identity = self
+            .deserialize_identity(&api_request.publisher_identity)
             .map_err(|e| anyhow!("Invalid publisher identity: {}", e))?;
 
         // Validate publisher has permission for this domain
@@ -585,12 +661,17 @@ impl Web4Handler {
                 "Publisher identity ID cannot be empty".to_string(),
             ));
         }
-        
-        tracing::info!("Content deletion requested by publisher: {}", publisher_identity.id.to_string());
 
-        
+        tracing::info!(
+            "Content deletion requested by publisher: {}",
+            publisher_identity.id.to_string()
+        );
+
         // Verify domain exists
-        let domain_info = self.domain_registry.lookup_domain(domain).await
+        let domain_info = self
+            .domain_registry
+            .lookup_domain(domain)
+            .await
             .map_err(|e| anyhow!("Failed to lookup domain: {}", e))?;
 
         if !domain_info.found {
@@ -615,7 +696,7 @@ impl Web4Handler {
         match serde_json::to_vec(&response) {
             Ok(response_json) => {
                 info!(" Content deleted successfully: {}{}", domain, content_path);
-                
+
                 Ok(ZhtpResponse::success_with_content_type(
                     response_json,
                     "application/json".to_string(),
@@ -623,7 +704,10 @@ impl Web4Handler {
                 ))
             }
             Err(e) => {
-                error!("Failed to delete content from {}{}: {}", domain, content_path, e);
+                error!(
+                    "Failed to delete content from {}{}: {}",
+                    domain, content_path, e
+                );
                 Ok(ZhtpResponse::error(
                     ZhtpStatus::BadRequest,
                     format!("Content deletion failed: {}", e),

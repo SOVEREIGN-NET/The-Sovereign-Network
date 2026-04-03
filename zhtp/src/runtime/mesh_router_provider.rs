@@ -1,9 +1,9 @@
+use anyhow::Result;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
-use anyhow::Result;
 use tracing::info;
 
-use crate::unified_server::{MeshRouter, BroadcastMetrics};
+use crate::unified_server::{BroadcastMetrics, MeshRouter};
 
 /// Global mesh router provider for shared access across components
 /// This allows API handlers to access mesh router metrics and state
@@ -30,7 +30,9 @@ impl MeshRouterProvider {
 
     /// Get the mesh router instance
     pub async fn get_mesh_router(&self) -> Result<Arc<MeshRouter>> {
-        self.mesh_router.read().await
+        self.mesh_router
+            .read()
+            .await
             .as_ref()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Mesh router not available"))
@@ -87,7 +89,9 @@ pub async fn get_broadcast_metrics() -> Result<BroadcastMetrics> {
 }
 
 /// Get peer reputation from the global mesh router
-pub async fn get_peer_reputation(peer_id: &str) -> Result<Option<crate::unified_server::PeerReputation>> {
+pub async fn get_peer_reputation(
+    peer_id: &str,
+) -> Result<Option<crate::unified_server::PeerReputation>> {
     let mesh_router = get_global_mesh_router().await?;
     Ok(mesh_router.get_peer_reputation(peer_id).await)
 }
@@ -132,20 +136,26 @@ pub async fn get_alert_thresholds() -> Result<crate::unified_server::AlertThresh
 }
 
 /// Update alert thresholds
-pub async fn update_alert_thresholds(thresholds: crate::unified_server::AlertThresholds) -> Result<()> {
+pub async fn update_alert_thresholds(
+    thresholds: crate::unified_server::AlertThresholds,
+) -> Result<()> {
     let mesh_router = get_global_mesh_router().await?;
     mesh_router.update_alert_thresholds(thresholds).await;
     Ok(())
 }
 
 /// Get metrics history
-pub async fn get_metrics_history(last_n: Option<usize>) -> Result<Vec<crate::unified_server::MetricsSnapshot>> {
+pub async fn get_metrics_history(
+    last_n: Option<usize>,
+) -> Result<Vec<crate::unified_server::MetricsSnapshot>> {
     let mesh_router = get_global_mesh_router().await?;
     Ok(mesh_router.get_metrics_history(last_n).await)
 }
 
 /// Get peer-specific performance metrics
-pub async fn get_peer_performance(peer_id: &str) -> Result<Option<crate::unified_server::PeerPerformanceStats>> {
+pub async fn get_peer_performance(
+    peer_id: &str,
+) -> Result<Option<crate::unified_server::PeerPerformanceStats>> {
     let mesh_router = get_global_mesh_router().await?;
     Ok(mesh_router.get_peer_performance(peer_id).await)
 }

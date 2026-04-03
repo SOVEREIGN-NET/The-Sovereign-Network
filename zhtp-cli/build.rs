@@ -5,10 +5,16 @@ fn main() {
     capture_git_info();
 
     // Capture build timestamp
-    println!("cargo:rustc-env=BUILD_TIMESTAMP={}", chrono::Utc::now().to_rfc3339());
+    println!(
+        "cargo:rustc-env=BUILD_TIMESTAMP={}",
+        chrono::Utc::now().to_rfc3339()
+    );
 
     // Capture build profile
-    println!("cargo:rustc-env=BUILD_PROFILE={}", std::env::var("PROFILE").unwrap_or_default());
+    println!(
+        "cargo:rustc-env=BUILD_PROFILE={}",
+        std::env::var("PROFILE").unwrap_or_default()
+    );
 }
 
 fn capture_git_info() {
@@ -51,7 +57,10 @@ fn capture_git_info() {
         .output()
     {
         let dirty = !String::from_utf8_lossy(&output.stdout).is_empty();
-        println!("cargo:rustc-env=GIT_DIRTY={}", if dirty { "true" } else { "false" });
+        println!(
+            "cargo:rustc-env=GIT_DIRTY={}",
+            if dirty { "true" } else { "false" }
+        );
     } else {
         println!("cargo:rustc-env=GIT_DIRTY=unknown");
     }

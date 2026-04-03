@@ -1,8 +1,8 @@
+use anyhow::Result;
+use lib_blockchain::edge_node_state::EdgeNodeState;
+use lib_blockchain::{BlockHeader, Hash, TransactionOutput}; // Need TransactionOutput and Hash for UTXO tracking
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
-use lib_blockchain::edge_node_state::EdgeNodeState;
-use lib_blockchain::{BlockHeader, TransactionOutput, Hash};  // Need TransactionOutput and Hash for UTXO tracking
-use anyhow::Result;
 use tracing::info;
 
 /// Global edge state provider for shared access across components
@@ -30,7 +30,9 @@ impl EdgeStateProvider {
 
     /// Get the edge state instance
     pub async fn get_edge_state(&self) -> Result<Arc<RwLock<EdgeNodeState>>> {
-        self.edge_state.read().await
+        self.edge_state
+            .read()
+            .await
             .as_ref()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Edge state not available (not an edge node)"))
@@ -84,7 +86,7 @@ pub async fn is_global_edge_state_available() -> bool {
 pub async fn add_header(header: BlockHeader) -> Result<()> {
     let edge_state = get_global_edge_state().await?;
     let mut edge_state_lock = edge_state.write().await;
-    edge_state_lock.add_header(header)?;  // Propagate validation error
+    edge_state_lock.add_header(header)?; // Propagate validation error
     Ok(())
 }
 

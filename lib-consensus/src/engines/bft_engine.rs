@@ -1,5 +1,9 @@
 //! Byzantine Fault Tolerance consensus engine
 
+/// Number of recent committed blocks to retain in the finality map.
+/// Older entries are pruned to bound memory usage on long-running nodes.
+const FINALITY_WINDOW: u64 = 10_000;
+
 use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -7,12 +11,12 @@ use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 
 use crate::byzantine::ByzantineFaultDetector;
+use crate::engines::TransactionExecutor;
 use crate::types::{
     ConsensusConfig, ConsensusEvent, ConsensusProposal, ConsensusRound, ConsensusStep,
     ConsensusVote, VoteType,
 };
 use crate::validators::ValidatorManager;
-use crate::engines::TransactionExecutor;
 use crate::{ConsensusError, ConsensusResult};
 
 /// Byzantine Fault Tolerance consensus engine
@@ -37,6 +41,10 @@ pub struct BftEngine {
     validator_identity: Option<IdentityId>,
     /// Transaction executor for block proposal
     transaction_executor: TransactionExecutor,
+    /// In-memory finality record: height → committed block hash.
+    /// Detects safety violations (conflicting commits at the same height).
+    /// Pruned to keep only the most recent `FINALITY_WINDOW` entries.
+    committed_blocks: HashMap<u64, Hash>,
 }
 
 impl BftEngine {
@@ -68,11 +76,12 @@ impl BftEngine {
             byzantine_detector: ByzantineFaultDetector::new(),
             validator_identity: None,
             transaction_executor: TransactionExecutor::new(
-                256,                    // max_transactions_per_block
-                5_000_000,              // max_block_size_bytes (5MB)
-                10_000,                 // mempool_max_size
-                10_000,                 // mempool_max_age (blocks)
+                256,       // max_transactions_per_block
+                5_000_000, // max_block_size_bytes (5MB)
+                10_000,    // mempool_max_size
+                10_000,    // mempool_max_age (blocks)
             ),
+            committed_blocks: HashMap::new(),
         }
     }
 
@@ -286,9 +295,18 @@ impl BftEngine {
         Ok(())
     }
 
-    /// Create a BFT proposal
-    async fn create_bft_proposal(&mut self, previous_hash: Hash) -> ConsensusResult<ConsensusProposal> {
-        // Extract validator_id early to avoid borrow conflicts
+    /// Create a BFT proposal.
+    ///
+    /// Note: This method requires `&mut self` because it collects transactions
+    /// from the mempool via `collect_block_transactions`, which internally
+    /// calls `prepare_block_transactions` and mutates the mempool state.
+    async fn create_bft_proposal(
+        &mut self,
+        previous_hash: Hash,
+    ) -> ConsensusResult<ConsensusProposal> {
+        // Extract validator_id early to avoid borrow conflicts.
+        // Clone is acceptable here: IdentityId is Hash (32 bytes), and we need
+        // owned value for use after mutable borrow in collect_block_transactions.
         let validator_id = self
             .validator_identity
             .clone()
@@ -321,6 +339,7 @@ impl BftEngine {
             id: proposal_id,
             proposer: validator_id.clone(),
             height: self.current_round.height,
+            round: self.current_round.round,
             previous_hash,
             block_data,
             timestamp: SystemTime::now()
@@ -527,8 +546,9 @@ impl BftEngine {
     /// Collect transactions for block from mempool
     async fn collect_block_transactions(&mut self) -> ConsensusResult<Vec<u8>> {
         // Prepare transactions from mempool
-        let (tx_hashes, total_fees, total_size) =
-            self.transaction_executor.prepare_block_transactions(self.current_round.height);
+        let (tx_hashes, total_fees, total_size) = self
+            .transaction_executor
+            .prepare_block_transactions(self.current_round.height);
 
         // Create block metadata with transaction data
         #[derive(serde::Serialize)]
@@ -560,8 +580,9 @@ impl BftEngine {
         };
 
         // Serialize block data using bincode
-        bincode::serialize(&block_data)
-            .map_err(|e| ConsensusError::CryptoError(anyhow::anyhow!("Block serialization failed: {}", e)))
+        bincode::serialize(&block_data).map_err(|e| {
+            ConsensusError::CryptoError(anyhow::anyhow!("Block serialization failed: {}", e))
+        })
     }
 
     /// Create BFT consensus proof
@@ -673,31 +694,47 @@ impl BftEngine {
         Ok(())
     }
 
-    /// Record committed block for finality tracking
+    /// Record committed block for finality tracking.
+    ///
+    /// Persists the (height → hash) mapping in `committed_blocks`.  If a different
+    /// hash was already recorded for the same height, that is a BFT safety violation
+    /// (two conflicting blocks committed at the same height) and the function returns
+    /// `ConsensusError::ByzantineFault` immediately.
     async fn record_committed_block(
         &mut self,
         height: u64,
         committed_hash: Hash,
     ) -> ConsensusResult<()> {
+        if let Some(existing) = self.committed_blocks.get(&height) {
+            if *existing != committed_hash {
+                let msg = format!(
+                    "SAFETY VIOLATION: conflicting committed blocks at height {}: \
+                     existing={} new={}",
+                    height, existing, committed_hash
+                );
+                tracing::error!("{}", msg);
+                return Err(ConsensusError::ByzantineFault(msg));
+            }
+            // Idempotent: same hash already recorded.
+            tracing::debug!("Block at height {} already recorded (idempotent)", height);
+            return Ok(());
+        }
+
+        self.committed_blocks.insert(height, committed_hash.clone());
+
+        // Prune entries older than FINALITY_WINDOW to bound memory.
+        if height > FINALITY_WINDOW {
+            let cutoff = height - FINALITY_WINDOW;
+            self.committed_blocks.retain(|h, _| *h > cutoff);
+        }
+
         tracing::info!(
-            "Recording committed block {} at height {}",
+            "Block {} committed with BFT finality at height {} \
+             (tracked: {})",
             committed_hash,
-            height
+            height,
+            self.committed_blocks.len()
         );
-
-        // In a implementation, this would:
-        // 1. Store the committed hash in persistent storage
-        // 2. Update finality checkpoints
-        // 3. Notify other components about finality
-        // 4. Update the longest committed chain
-
-        // For now, we just log the commitment
-        tracing::info!(
-            "Block {} committed with BFT finality at height {}",
-            committed_hash,
-            height
-        );
-
         Ok(())
     }
 }

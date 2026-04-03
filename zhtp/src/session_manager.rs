@@ -1,12 +1,12 @@
 //! Session Manager for ZHTP Server
-//! 
+//!
 //! Manages authenticated user sessions with secure tokens
 
+use anyhow::{anyhow, Result};
+use lib_identity::{IdentityId, SessionToken};
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use lib_identity::{SessionToken, IdentityId};
-use tokio::sync::RwLock;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Session manager for the ZHTP server
 #[derive(Debug)]
@@ -131,11 +131,11 @@ impl SessionManager {
     /// Remove a session (signout)
     pub async fn remove_session(&self, token: &str) -> Result<()> {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(session) = sessions.remove(token) {
             let identity_id = session.identity_id;
             drop(sessions);
-            
+
             // Remove from sessions by identity
             let mut sessions_by_identity = self.sessions_by_identity.write().await;
             if let Some(identity_sessions) = sessions_by_identity.get_mut(&identity_id) {
@@ -144,13 +144,13 @@ impl SessionManager {
                     sessions_by_identity.remove(&identity_id);
                 }
             }
-            
+
             tracing::info!(
                 "🚪 Session removed for identity {}: {}",
                 hex::encode(&identity_id.0[..8]),
                 &token[..16]
             );
-            
+
             Ok(())
         } else {
             Err(anyhow!("Session not found"))
@@ -160,23 +160,23 @@ impl SessionManager {
     /// Remove all sessions for an identity
     pub async fn remove_all_sessions(&self, identity_id: &IdentityId) -> Result<usize> {
         let mut sessions_by_identity = self.sessions_by_identity.write().await;
-        
+
         if let Some(identity_sessions) = sessions_by_identity.remove(identity_id) {
             let session_count = identity_sessions.len();
             drop(sessions_by_identity);
-            
+
             // Remove all sessions for this identity
             let mut sessions = self.sessions.write().await;
             for token in identity_sessions {
                 sessions.remove(&token);
             }
-            
+
             tracing::info!(
                 "🚪 All {} sessions removed for identity {}",
                 session_count,
                 hex::encode(&identity_id.0[..8])
             );
-            
+
             Ok(session_count)
         } else {
             Ok(0)
@@ -196,7 +196,7 @@ impl SessionManager {
     pub async fn get_identity_sessions(&self, identity_id: &IdentityId) -> Vec<SessionToken> {
         let sessions_by_identity = self.sessions_by_identity.read().await;
         let sessions = self.sessions.read().await;
-        
+
         if let Some(identity_sessions) = sessions_by_identity.get(identity_id) {
             identity_sessions
                 .iter()
@@ -211,10 +211,10 @@ impl SessionManager {
     pub async fn cleanup_expired_sessions(&self) {
         let mut sessions = self.sessions.write().await;
         let mut sessions_by_identity = self.sessions_by_identity.write().await;
-        
+
         let mut expired_tokens = Vec::new();
         let mut identity_cleanup = HashMap::new();
-        
+
         // Find expired sessions
         for (token, session) in sessions.iter() {
             if !session.is_valid() {
@@ -225,14 +225,14 @@ impl SessionManager {
                     .push(token.clone());
             }
         }
-        
+
         // Remove expired sessions
         let mut removed_count = 0;
         for token in expired_tokens {
             sessions.remove(&token);
             removed_count += 1;
         }
-        
+
         // Clean up sessions by identity mapping
         for (identity_id, expired_tokens) in identity_cleanup {
             if let Some(identity_sessions) = sessions_by_identity.get_mut(&identity_id) {
@@ -244,7 +244,7 @@ impl SessionManager {
                 }
             }
         }
-        
+
         if removed_count > 0 {
             tracing::info!(" Cleaned up {} expired sessions", removed_count);
         }
@@ -260,12 +260,12 @@ impl SessionManager {
     async fn remove_oldest_session(&self, identity_id: &IdentityId) -> Result<()> {
         let sessions_by_identity = self.sessions_by_identity.read().await;
         let sessions = self.sessions.read().await;
-        
+
         if let Some(identity_sessions) = sessions_by_identity.get(identity_id) {
             // Find oldest session
             let mut oldest_token = None;
             let mut oldest_created = u64::MAX;
-            
+
             for token in identity_sessions {
                 if let Some(session) = sessions.get(token) {
                     if session.created_at < oldest_created {
@@ -274,15 +274,15 @@ impl SessionManager {
                     }
                 }
             }
-            
+
             drop(sessions);
             drop(sessions_by_identity);
-            
+
             if let Some(token) = oldest_token {
                 self.remove_session(&token).await?;
             }
         }
-        
+
         Ok(())
     }
 
@@ -294,16 +294,16 @@ impl SessionManager {
             default_session_duration: self.default_session_duration,
             max_sessions_per_identity: self.max_sessions_per_identity,
         };
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300)); // 5 minutes
-            
+
             loop {
                 interval.tick().await;
                 session_manager.cleanup_expired_sessions().await;
             }
         });
-        
+
         tracing::info!(" Session cleanup task started (runs every 5 minutes)");
     }
 }

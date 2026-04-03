@@ -5,10 +5,10 @@
 //! mesh side. This is platform-agnostic and avoids macOS-specific code paths.
 
 use anyhow::Result;
+use lib_crypto::hash_sha3_256;
+use lib_crypto::post_quantum::dilithium::{dilithium_sign, dilithium_verify};
 use serde::{Deserialize, Serialize};
 use tracing::info;
-use lib_crypto::hash_sha3_256;
-use lib_crypto::post_quantum::dilithium::{dilithium5_sign, dilithium5_verify};
 
 /// 49-byte device message (fits DR0=51 bytes).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,7 +74,7 @@ impl LoRaWANGatewayAuth {
     ///
     /// # Arguments
     /// * `public_key` - Dilithium5 public key (2592 bytes)
-    /// * `secret_key` - Dilithium5 secret key (4896 bytes)
+    /// * `secret_key` - Dilithium5 secret key (4864 or 4896 bytes)
     ///
     /// # Errors
     /// Returns error if key lengths are invalid
@@ -85,9 +85,9 @@ impl LoRaWANGatewayAuth {
                 public_key.len()
             ));
         }
-        if secret_key.len() != 4896 {
+        if secret_key.len() != 4864 && secret_key.len() != 4896 {
             return Err(anyhow::anyhow!(
-                "Invalid Dilithium5 secret key length: {} bytes (expected 4896)",
+                "Invalid Dilithium5 secret key length: {} bytes (expected 4864 or 4896)",
                 secret_key.len()
             ));
         }
@@ -100,7 +100,7 @@ impl LoRaWANGatewayAuth {
     ///
     /// # Arguments
     /// * `public_key` - Dilithium5 public key (2592 bytes)
-    /// * `secret_key` - Dilithium5 secret key (4896 bytes)
+    /// * `secret_key` - Dilithium5 secret key (4864 or 4896 bytes)
     pub fn with_keypair(public_key: Vec<u8>, secret_key: Vec<u8>) -> Result<Self> {
         if public_key.len() != 2592 {
             return Err(anyhow::anyhow!(
@@ -108,9 +108,9 @@ impl LoRaWANGatewayAuth {
                 public_key.len()
             ));
         }
-        if secret_key.len() != 4896 {
+        if secret_key.len() != 4864 && secret_key.len() != 4896 {
             return Err(anyhow::anyhow!(
-                "Invalid Dilithium5 secret key length: {} bytes (expected 4896)",
+                "Invalid Dilithium5 secret key length: {} bytes (expected 4864 or 4896)",
                 secret_key.len()
             ));
         }
@@ -215,7 +215,7 @@ impl LoRaWANGatewayAuth {
         attestation_msg.extend_from_slice(&device_msg.nonce);
 
         // Sign attestation with Dilithium5
-        let signature = dilithium5_sign(&attestation_msg, &self.secret_key)?;
+        let signature = dilithium_sign(&attestation_msg, &self.secret_key)?;
 
         Ok(GatewayAttestation {
             gateway_id,
@@ -259,7 +259,11 @@ impl LoRaWANGatewayAuth {
         // In production, nonce should be stored in attestation or retrieved separately
 
         // Verify Dilithium5 signature
-        match dilithium5_verify(&attestation_msg, &binding.attestation.signature, gateway_public_key) {
+        match dilithium_verify(
+            &attestation_msg,
+            &binding.attestation.signature,
+            gateway_public_key,
+        ) {
             Ok(valid) => {
                 info!(
                     device = %hex::encode(binding.device_eui),

@@ -1,8 +1,8 @@
 //! Proof generation for cross-package operations
 
 use crate::identity::ZhtpIdentity;
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Proof generation system for identity operations
 #[derive(Debug, Clone)]
@@ -139,7 +139,7 @@ impl ProofGenerator {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs();
-            
+
             if cached_proof.expires_at > current_time {
                 self.generation_stats.cache_hits += 1;
                 return Ok(ProofGenerationResult {
@@ -158,14 +158,18 @@ impl ProofGenerator {
         self.generation_stats.cache_misses += 1;
 
         // Get proof type definition
-        let proof_type_def = self.proof_types.get(&request.proof_type)
+        let proof_type_def = self
+            .proof_types
+            .get(&request.proof_type)
             .ok_or_else(|| format!("Unknown proof type: {}", request.proof_type))?;
 
         // Validate request
         self.validate_proof_request(identity, &request, proof_type_def)?;
 
         // Generate the proof
-        let proof_result = self.perform_proof_generation(identity, &request, proof_type_def).await?;
+        let proof_result = self
+            .perform_proof_generation(identity, &request, proof_type_def)
+            .await?;
 
         // Cache the proof
         self.cache_proof(&request, &proof_result);
@@ -175,7 +179,7 @@ impl ProofGenerator {
         self.update_generation_stats(generation_time, true);
 
         self.generation_stats.successful_generations += 1;
-        
+
         Ok(proof_result)
     }
 
@@ -194,12 +198,19 @@ impl ProofGenerator {
         // Check if all required inputs are available
         for required_input in &proof_type_def.required_inputs {
             if !identity.metadata.contains_key(required_input) {
-                return Err(format!("Required input '{}' not available in identity", required_input).into());
+                return Err(format!(
+                    "Required input '{}' not available in identity",
+                    required_input
+                )
+                .into());
             }
         }
 
         // Check privacy level compatibility
-        if !self.is_privacy_level_compatible(&proof_type_def.privacy_level, &request.privacy_requirements.minimum_privacy_level) {
+        if !self.is_privacy_level_compatible(
+            &proof_type_def.privacy_level,
+            &request.privacy_requirements.minimum_privacy_level,
+        ) {
             return Err("Privacy level requirements cannot be satisfied".into());
         }
 
@@ -208,10 +219,14 @@ impl ProofGenerator {
             if !proof_type_def.supports_selective_disclosure {
                 return Err("Proof type does not support selective disclosure".into());
             }
-            
+
             for attr in selective_attrs {
                 if !request.required_attributes.contains(attr) {
-                    return Err(format!("Selective disclosure attribute '{}' not in required attributes", attr).into());
+                    return Err(format!(
+                        "Selective disclosure attribute '{}' not in required attributes",
+                        attr
+                    )
+                    .into());
                 }
             }
         }
@@ -226,11 +241,17 @@ impl ProofGenerator {
         request: &ProofGenerationRequest,
         proof_type_def: &ProofTypeDefinition,
     ) -> Result<ProofGenerationResult, Box<dyn std::error::Error>> {
-        let proof_id = format!("proof_{}_{}", request.proof_type, 
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs());
+        let proof_id = format!(
+            "proof_{}_{}",
+            request.proof_type,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs()
+        );
 
         // Generate proof based on type
-        let (proof_data, verification_key, actual_privacy_level) = match request.proof_type.as_str() {
+        let (proof_data, verification_key, actual_privacy_level) = match request.proof_type.as_str()
+        {
             "citizenship_proof" => self.generate_citizenship_proof(identity, request).await?,
             "age_proof" => self.generate_age_proof(identity, request).await?,
             "identity_proof" => self.generate_identity_proof(identity, request).await?,
@@ -249,13 +270,19 @@ impl ProofGenerator {
 
         // Create metadata
         let mut metadata = HashMap::new();
-        metadata.insert("proof_type_definition".to_string(), 
-            serde_json::to_value(proof_type_def)?);
-        metadata.insert("generation_method".to_string(), 
-            serde_json::Value::String("zk_snark".to_string()));
-        metadata.insert("circuit_version".to_string(), 
-            serde_json::Value::String("v1.0".to_string()));
-        
+        metadata.insert(
+            "proof_type_definition".to_string(),
+            serde_json::to_value(proof_type_def)?,
+        );
+        metadata.insert(
+            "generation_method".to_string(),
+            serde_json::Value::String("zk_snark".to_string()),
+        );
+        metadata.insert(
+            "circuit_version".to_string(),
+            serde_json::Value::String("v1.0".to_string()),
+        );
+
         // Add additional context
         for (key, value) in &request.additional_context {
             metadata.insert(format!("context_{}", key), value.clone());
@@ -274,7 +301,8 @@ impl ProofGenerator {
             privacy_level_achieved: actual_privacy_level,
             attributes_included,
             generation_time_ms: std::time::Instant::now().elapsed().as_millis() as u64,
-            validity_expires_at: current_time + (proof_type_def.validity_duration_hours as u64 * 3600),
+            validity_expires_at: current_time
+                + (proof_type_def.validity_duration_hours as u64 * 3600),
         })
     }
 
@@ -286,25 +314,33 @@ impl ProofGenerator {
     ) -> Result<(Vec<u8>, Vec<u8>, PrivacyLevel), Box<dyn std::error::Error>> {
         // In implementation, would use actual ZK circuit for citizenship proof
         let mut proof_data = Vec::new();
-        
+
         // Include nationality if required and available
-        if request.required_attributes.contains(&"nationality".to_string()) {
+        if request
+            .required_attributes
+            .contains(&"nationality".to_string())
+        {
             if let Some(nationality) = identity.metadata.get("nationality") {
                 proof_data.extend_from_slice(nationality.as_bytes());
             }
         }
-        
+
         // Include residence if required and available
-        if request.required_attributes.contains(&"residence".to_string()) {
+        if request
+            .required_attributes
+            .contains(&"residence".to_string())
+        {
             if let Some(residence) = identity.metadata.get("residence") {
                 proof_data.extend_from_slice(residence.as_bytes());
             }
         }
 
         // Generate ZK proof (simplified)
-        let zk_proof = self.generate_zk_proof(&proof_data, request.challenge.as_ref()).await?;
+        let zk_proof = self
+            .generate_zk_proof(&proof_data, request.challenge.as_ref())
+            .await?;
         let verification_key = self.generate_verification_key(&proof_data).await?;
-        
+
         Ok((zk_proof, verification_key, PrivacyLevel::Confidential))
     }
 
@@ -316,7 +352,7 @@ impl ProofGenerator {
     ) -> Result<(Vec<u8>, Vec<u8>, PrivacyLevel), Box<dyn std::error::Error>> {
         // Age proof using range proofs to prove age without revealing exact age
         let mut proof_data = Vec::new();
-        
+
         if let Some(birth_date) = identity.metadata.get("date_of_birth") {
             // Calculate age (simplified)
             let birth_year = birth_date
@@ -324,23 +360,31 @@ impl ProofGenerator {
                 .next()
                 .and_then(|year| year.parse::<u32>().ok())
                 .unwrap_or(1990);
-                
+
             let current_year = 2024; // In implementation, use actual current year
             let age = current_year - birth_year;
-            
+
             // Create range proof for age > 18 (simplified)
-            if request.required_attributes.contains(&"age_over_18".to_string()) {
+            if request
+                .required_attributes
+                .contains(&"age_over_18".to_string())
+            {
                 proof_data.push(if age >= 18 { 1 } else { 0 });
             }
-            
-            if request.required_attributes.contains(&"age_over_21".to_string()) {
+
+            if request
+                .required_attributes
+                .contains(&"age_over_21".to_string())
+            {
                 proof_data.push(if age >= 21 { 1 } else { 0 });
             }
         }
 
-        let zk_proof = self.generate_zk_proof(&proof_data, request.challenge.as_ref()).await?;
+        let zk_proof = self
+            .generate_zk_proof(&proof_data, request.challenge.as_ref())
+            .await?;
         let verification_key = self.generate_verification_key(&proof_data).await?;
-        
+
         Ok((zk_proof, verification_key, PrivacyLevel::Restricted))
     }
 
@@ -352,10 +396,10 @@ impl ProofGenerator {
     ) -> Result<(Vec<u8>, Vec<u8>, PrivacyLevel), Box<dyn std::error::Error>> {
         // Identity proof using signature and ownership
         let mut proof_data = Vec::new();
-        
+
         // Include identity public key
         proof_data.extend_from_slice(&identity.public_key.as_bytes());
-        
+
         // Include required identity attributes
         for attr in &request.required_attributes {
             if let Some(value) = identity.metadata.get(attr) {
@@ -368,9 +412,11 @@ impl ProofGenerator {
             proof_data.extend_from_slice(challenge);
         }
 
-        let zk_proof = self.generate_zk_proof(&proof_data, request.challenge.as_ref()).await?;
+        let zk_proof = self
+            .generate_zk_proof(&proof_data, request.challenge.as_ref())
+            .await?;
         let verification_key = self.generate_verification_key(&proof_data).await?;
-        
+
         Ok((zk_proof, verification_key, PrivacyLevel::Confidential))
     }
 
@@ -384,7 +430,7 @@ impl ProofGenerator {
         let proof_data = format!("qualification_proof_for_{}", identity.id).into_bytes();
         let zk_proof = self.generate_zk_proof(&proof_data, None).await?;
         let verification_key = self.generate_verification_key(&proof_data).await?;
-        
+
         Ok((zk_proof, verification_key, PrivacyLevel::Restricted))
     }
 
@@ -398,7 +444,7 @@ impl ProofGenerator {
         let proof_data = format!("residence_proof_for_{}", identity.id).into_bytes();
         let zk_proof = self.generate_zk_proof(&proof_data, None).await?;
         let verification_key = self.generate_verification_key(&proof_data).await?;
-        
+
         Ok((zk_proof, verification_key, PrivacyLevel::Restricted))
     }
 
@@ -411,47 +457,60 @@ impl ProofGenerator {
         // Ownership proof using digital signature
         let mut proof_data = Vec::new();
         proof_data.extend_from_slice(&identity.public_key.as_bytes());
-        
+
         if let Some(challenge) = &request.challenge {
             proof_data.extend_from_slice(challenge);
         }
 
-        let zk_proof = self.generate_zk_proof(&proof_data, request.challenge.as_ref()).await?;
+        let zk_proof = self
+            .generate_zk_proof(&proof_data, request.challenge.as_ref())
+            .await?;
         let verification_key = self.generate_verification_key(&proof_data).await?;
-        
+
         Ok((zk_proof, verification_key, PrivacyLevel::Confidential))
     }
 
     /// Generate ZK proof (simplified implementation)
-    async fn generate_zk_proof(&self, data: &[u8], challenge: Option<&Vec<u8>>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    async fn generate_zk_proof(
+        &self,
+        data: &[u8],
+        challenge: Option<&Vec<u8>>,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         // In implementation, would use actual ZK proof system
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         let mut hasher = Sha256::new();
         hasher.update(data);
-        
+
         if let Some(challenge) = challenge {
             hasher.update(challenge);
         }
-        
+
         hasher.update(b"zk_proof_salt");
-        
+
         Ok(hasher.finalize().to_vec())
     }
 
     /// Generate verification key
-    async fn generate_verification_key(&self, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        use sha2::{Sha256, Digest};
-        
+    async fn generate_verification_key(
+        &self,
+        data: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        use sha2::{Digest, Sha256};
+
         let mut hasher = Sha256::new();
         hasher.update(data);
         hasher.update(b"verification_key_salt");
-        
+
         Ok(hasher.finalize().to_vec())
     }
 
     /// Check if privacy levels are compatible
-    fn is_privacy_level_compatible(&self, provided: &PrivacyLevel, required: &PrivacyLevel) -> bool {
+    fn is_privacy_level_compatible(
+        &self,
+        provided: &PrivacyLevel,
+        required: &PrivacyLevel,
+    ) -> bool {
         let provided_level = self.privacy_level_to_number(provided);
         let required_level = self.privacy_level_to_number(required);
         provided_level >= required_level
@@ -470,24 +529,32 @@ impl ProofGenerator {
 
     /// Generate cache key for proof
     fn generate_cache_key(&self, request: &ProofGenerationRequest) -> String {
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         let mut hasher = Sha256::new();
         hasher.update(request.proof_type.as_bytes());
         hasher.update(request.identity_id.as_bytes());
-        hasher.update(serde_json::to_string(&request.required_attributes).unwrap_or_default().as_bytes());
-        
+        hasher.update(
+            serde_json::to_string(&request.required_attributes)
+                .unwrap_or_default()
+                .as_bytes(),
+        );
+
         if let Some(ref selective) = request.selective_disclosure {
-            hasher.update(serde_json::to_string(selective).unwrap_or_default().as_bytes());
+            hasher.update(
+                serde_json::to_string(selective)
+                    .unwrap_or_default()
+                    .as_bytes(),
+            );
         }
-        
+
         format!("{:x}", hasher.finalize())
     }
 
     /// Cache generated proof
     fn cache_proof(&mut self, request: &ProofGenerationRequest, result: &ProofGenerationResult) {
         let cache_key = self.generate_cache_key(request);
-        
+
         let cached_proof = CachedProof {
             proof_id: result.proof_id.clone(),
             proof_type: result.proof_type.clone(),
@@ -501,7 +568,7 @@ impl ProofGenerator {
             expires_at: result.validity_expires_at,
             usage_count: 0,
         };
-        
+
         self.proof_cache.insert(cache_key, cached_proof);
     }
 
@@ -515,57 +582,72 @@ impl ProofGenerator {
 
         // Update average generation time
         let total_generations = self.generation_stats.total_proofs_generated as f64;
-        self.generation_stats.average_generation_time_ms = 
-            (self.generation_stats.average_generation_time_ms * (total_generations - 1.0) + generation_time_ms) / total_generations;
+        self.generation_stats.average_generation_time_ms =
+            (self.generation_stats.average_generation_time_ms * (total_generations - 1.0)
+                + generation_time_ms)
+                / total_generations;
     }
 
     /// Initialize default proof types
     fn initialize_proof_types() -> HashMap<String, ProofTypeDefinition> {
         let mut proof_types = HashMap::new();
 
-        proof_types.insert("citizenship_proof".to_string(), ProofTypeDefinition {
-            proof_type: "citizenship_proof".to_string(),
-            name: "Citizenship Proof".to_string(),
-            description: "Zero-knowledge proof of citizenship status".to_string(),
-            required_inputs: vec!["nationality".to_string(), "residence".to_string()],
-            privacy_level: PrivacyLevel::Confidential,
-            complexity_level: ComplexityLevel::Advanced,
-            validity_duration_hours: 24,
-            supports_selective_disclosure: true,
-        });
+        proof_types.insert(
+            "citizenship_proof".to_string(),
+            ProofTypeDefinition {
+                proof_type: "citizenship_proof".to_string(),
+                name: "Citizenship Proof".to_string(),
+                description: "Zero-knowledge proof of citizenship status".to_string(),
+                required_inputs: vec!["nationality".to_string(), "residence".to_string()],
+                privacy_level: PrivacyLevel::Confidential,
+                complexity_level: ComplexityLevel::Advanced,
+                validity_duration_hours: 24,
+                supports_selective_disclosure: true,
+            },
+        );
 
-        proof_types.insert("age_proof".to_string(), ProofTypeDefinition {
-            proof_type: "age_proof".to_string(),
-            name: "Age Verification Proof".to_string(),
-            description: "Range proof for age verification without revealing exact age".to_string(),
-            required_inputs: vec!["date_of_birth".to_string()],
-            privacy_level: PrivacyLevel::Restricted,
-            complexity_level: ComplexityLevel::Standard,
-            validity_duration_hours: 168, // 1 week
-            supports_selective_disclosure: true,
-        });
+        proof_types.insert(
+            "age_proof".to_string(),
+            ProofTypeDefinition {
+                proof_type: "age_proof".to_string(),
+                name: "Age Verification Proof".to_string(),
+                description: "Range proof for age verification without revealing exact age"
+                    .to_string(),
+                required_inputs: vec!["date_of_birth".to_string()],
+                privacy_level: PrivacyLevel::Restricted,
+                complexity_level: ComplexityLevel::Standard,
+                validity_duration_hours: 168, // 1 week
+                supports_selective_disclosure: true,
+            },
+        );
 
-        proof_types.insert("identity_proof".to_string(), ProofTypeDefinition {
-            proof_type: "identity_proof".to_string(),
-            name: "Identity Ownership Proof".to_string(),
-            description: "Cryptographic proof of identity ownership".to_string(),
-            required_inputs: vec!["public_key".to_string()],
-            privacy_level: PrivacyLevel::Confidential,
-            complexity_level: ComplexityLevel::Complex,
-            validity_duration_hours: 1,
-            supports_selective_disclosure: false,
-        });
+        proof_types.insert(
+            "identity_proof".to_string(),
+            ProofTypeDefinition {
+                proof_type: "identity_proof".to_string(),
+                name: "Identity Ownership Proof".to_string(),
+                description: "Cryptographic proof of identity ownership".to_string(),
+                required_inputs: vec!["public_key".to_string()],
+                privacy_level: PrivacyLevel::Confidential,
+                complexity_level: ComplexityLevel::Complex,
+                validity_duration_hours: 1,
+                supports_selective_disclosure: false,
+            },
+        );
 
-        proof_types.insert("qualification_proof".to_string(), ProofTypeDefinition {
-            proof_type: "qualification_proof".to_string(),
-            name: "Qualification Proof".to_string(),
-            description: "Proof of educational or professional qualifications".to_string(),
-            required_inputs: vec!["qualifications".to_string()],
-            privacy_level: PrivacyLevel::Restricted,
-            complexity_level: ComplexityLevel::Standard,
-            validity_duration_hours: 720, // 30 days
-            supports_selective_disclosure: true,
-        });
+        proof_types.insert(
+            "qualification_proof".to_string(),
+            ProofTypeDefinition {
+                proof_type: "qualification_proof".to_string(),
+                name: "Qualification Proof".to_string(),
+                description: "Proof of educational or professional qualifications".to_string(),
+                required_inputs: vec!["qualifications".to_string()],
+                privacy_level: PrivacyLevel::Restricted,
+                complexity_level: ComplexityLevel::Standard,
+                validity_duration_hours: 720, // 30 days
+                supports_selective_disclosure: true,
+            },
+        );
 
         proof_types
     }

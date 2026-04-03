@@ -1,9 +1,9 @@
 //! Reward calculation types
-//! 
+//!
 //! Types needed for reward calculations in the economics system
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 /// Individual validator reward information
 #[derive(Debug, Clone, Serialize, Deserialize)]

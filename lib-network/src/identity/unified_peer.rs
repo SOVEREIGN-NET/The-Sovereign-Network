@@ -36,17 +36,17 @@
 //! let found = mapper.lookup_by_node_id(&node_id).await;
 //! ```
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use lib_crypto::PublicKey;
-use lib_identity::{DhtPeerIdentity, ZhtpIdentity, NodeId};
+use lib_identity::{DhtPeerIdentity, NodeId, ZhtpIdentity};
+use parking_lot::RwLock; // CRITICAL FIX C3: Use parking_lot for atomic operations
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
-use parking_lot::RwLock;  // CRITICAL FIX C3: Use parking_lot for atomic operations
 use std::fmt;
-use tracing::{warn, info, error};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{error, info, warn};
 
 // ============================================================================
 // CRITICAL-1 FIX: Metrics for legacy path usage tracking
@@ -141,15 +141,7 @@ pub(crate) fn validate_device_id(device_id: &str) -> Result<()> {
 
     // Reject common weak device names
     const WEAK_NAMES: &[&str] = &[
-        "test",
-        "device",
-        "phone",
-        "laptop",
-        "server",
-        "node",
-        "peer",
-        "client",
-        "device1",
+        "test", "device", "phone", "laptop", "server", "node", "peer", "client", "device1",
         "device2",
     ];
     let lower = device_id.to_lowercase();
@@ -161,7 +153,10 @@ pub(crate) fn validate_device_id(device_id: &str) -> Result<()> {
     }
 
     // Check for alphanumeric + hyphen/underscore only
-    if !device_id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+    if !device_id
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(anyhow!(
             "Device ID contains invalid characters: '{}' - use alphanumeric, hyphen, underscore only",
             device_id
@@ -379,7 +374,10 @@ impl UnifiedPeerId {
         let node_id = NodeId::from_bytes(*pk_hash.as_bytes());
 
         // Create a derived DID (marked as unverified)
-        let did = format!("did:zhtp:unverified:{}", hex::encode(&pk_hash.as_bytes()[..16]));
+        let did = format!(
+            "did:zhtp:unverified:{}",
+            hex::encode(&pk_hash.as_bytes()[..16])
+        );
 
         // MEDIUM-1: Generate unique device_id with entropy
         let timestamp = std::time::SystemTime::now()
@@ -550,8 +548,8 @@ pub struct PeerMapperConfig {
 impl Default for PeerMapperConfig {
     fn default() -> Self {
         Self {
-            max_peers: 100_000,         // 100K peers max
-            max_devices_per_did: 10,    // 10 devices per identity
+            max_peers: 100_000,      // 100K peers max
+            max_devices_per_did: 10, // 10 devices per identity
         }
     }
 }
@@ -713,10 +711,7 @@ impl PeerIdMapper {
 
         // Check 2: Duplicate registration (idempotency)
         if state.by_node_id.contains_key(&node_id) {
-            warn!(
-                "Duplicate peer registration attempt: {}",
-                node_id.to_hex()
-            );
+            warn!("Duplicate peer registration attempt: {}", node_id.to_hex());
             return Err(anyhow!("Peer already registered: {}", node_id.to_hex()));
         }
 
@@ -748,7 +743,11 @@ impl PeerIdMapper {
         state.by_public_key.insert(public_key, node_id.clone());
 
         // Insert into DID index (supports multi-device)
-        state.by_did.entry(did.clone()).or_insert_with(Vec::new).push(node_id.clone());
+        state
+            .by_did
+            .entry(did.clone())
+            .or_insert_with(Vec::new)
+            .push(node_id.clone());
 
         // Audit log successful registration
         info!(
@@ -812,11 +811,10 @@ impl PeerIdMapper {
         let state = self.state.read();
 
         match state.by_did.get(did) {
-            Some(ids) => {
-                ids.iter()
-                    .filter_map(|id| state.by_node_id.get(id).map(|arc| (**arc).clone()))
-                    .collect()
-            }
+            Some(ids) => ids
+                .iter()
+                .filter_map(|id| state.by_node_id.get(id).map(|arc| (**arc).clone()))
+                .collect(),
             None => Vec::new(),
         }
     }
@@ -824,7 +822,11 @@ impl PeerIdMapper {
     /// Get all registered peers
     pub fn all_peers(&self) -> Vec<UnifiedPeerId> {
         let state = self.state.read();
-        state.by_node_id.values().map(|arc| (**arc).clone()).collect()
+        state
+            .by_node_id
+            .values()
+            .map(|arc| (**arc).clone())
+            .collect()
     }
 
     /// Get total peer count
@@ -891,7 +893,10 @@ mod tests {
         let peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
 
         assert_eq!(peer_id.did(), identity.did);
-        assert_eq!(peer_id.public_key().as_bytes(), identity.public_key.as_bytes());
+        assert_eq!(
+            peer_id.public_key().as_bytes(),
+            identity.public_key.as_bytes()
+        );
         assert_eq!(peer_id.node_id(), &identity.node_id);
         assert_eq!(peer_id.device_id(), identity.primary_device);
 
@@ -935,7 +940,10 @@ mod tests {
         let peer2 = UnifiedPeerId::from_zhtp_identity(&identity2)?;
 
         // CRITICAL-2: Different PublicKeys = NOT equal (prevents collision attacks)
-        assert_ne!(peer1, peer2, "Peers with different keys should NOT be equal");
+        assert_ne!(
+            peer1, peer2,
+            "Peers with different keys should NOT be equal"
+        );
 
         println!("Peer ID inequality (different keys) test passed");
         Ok(())
@@ -1072,17 +1080,17 @@ mod tests {
             .collect();
 
         // Wait for all and collect results
-        let results: Vec<_> = handles
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
         // Verify exactly 1 succeeded, 99 failed
         let successes = results.iter().filter(|r| r.is_ok()).count();
         let failures = results.iter().filter(|r| r.is_err()).count();
 
         assert_eq!(successes, 1, "Exactly one registration should succeed");
-        assert_eq!(failures, 99, "99 registrations should fail (already registered)");
+        assert_eq!(
+            failures, 99,
+            "99 registrations should fail (already registered)"
+        );
 
         // Verify only 1 peer in mapper
         assert_eq!(mapper.peer_count(), 1);
@@ -1117,10 +1125,7 @@ mod tests {
             .collect();
 
         // Wait for all and collect results
-        let results: Vec<_> = handles
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
         // Count successes and failures
         let successes = results.iter().filter(|r| r.is_ok()).count();
@@ -1167,7 +1172,10 @@ mod tests {
         let result = mapper.register(peer_id);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Peer limit reached"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Peer limit reached"));
 
         // Verify still 10 peers
         assert_eq!(mapper.peer_count(), 10);
@@ -1201,7 +1209,10 @@ mod tests {
         let result = mapper.register(peer_id);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Device limit reached"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Device limit reached"));
 
         // Verify still 3 devices
         assert_eq!(mapper.peer_count(), 3);
@@ -1216,9 +1227,7 @@ mod tests {
 
         // Create identity with future timestamp (1 hour from now)
         let mut identity = create_test_identity("future-device", None)?;
-        let future_timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs() + 3600; // +1 hour
+        let future_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 3600; // +1 hour
 
         // Manually construct UnifiedPeerId with future timestamp
         let mut peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
@@ -1228,7 +1237,10 @@ mod tests {
         let result = mapper.register(peer_id);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Timestamp in future"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Timestamp in future"));
 
         println!("Future timestamp rejection test passed");
         Ok(())
@@ -1240,9 +1252,8 @@ mod tests {
 
         // Create identity with old timestamp (2 years ago)
         let mut identity = create_test_identity("old-device", None)?;
-        let old_timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs() - (2 * 365 * 24 * 3600); // -2 years
+        let old_timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() - (2 * 365 * 24 * 3600); // -2 years
 
         // Manually construct UnifiedPeerId with old timestamp
         let mut peer_id = UnifiedPeerId::from_zhtp_identity(&identity)?;
@@ -1252,7 +1263,10 @@ mod tests {
         let result = mapper.register(peer_id);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Timestamp too old"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Timestamp too old"));
 
         println!("Old timestamp rejection test passed");
         Ok(())
@@ -1269,7 +1283,9 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         println!("Error message: {}", err_msg);
-        assert!(err_msg.contains("predates protocol launch") || err_msg.contains("Timestamp too old"));
+        assert!(
+            err_msg.contains("predates protocol launch") || err_msg.contains("Timestamp too old")
+        );
 
         println!("Protocol epoch validation test passed");
         Ok(())
@@ -1304,7 +1320,11 @@ mod tests {
         for weak_name in weak_names {
             // Test validation function directly
             let result = validate_device_id(weak_name);
-            assert!(result.is_err(), "Weak name '{}' should be rejected", weak_name);
+            assert!(
+                result.is_err(),
+                "Weak name '{}' should be rejected",
+                weak_name
+            );
             assert!(result.unwrap_err().to_string().contains("too common/weak"));
         }
 
@@ -1359,10 +1379,7 @@ mod tests {
             .collect();
 
         // Wait for all and collect results
-        let results: Vec<_> = handles
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
         // Verify exactly 1 returned Some, 9 returned None
         let successes = results.iter().filter(|r| r.is_some()).count();
@@ -1384,18 +1401,25 @@ mod tests {
     #[test]
     fn test_device_id_special_chars_rejected() -> Result<()> {
         let invalid_devices = vec![
-            "device@123",  // @ not allowed
-            "device#123",  // # not allowed
-            "device$123",  // $ not allowed
-            "device 123",  // space not allowed
-            "device.123",  // . not allowed
+            "device@123", // @ not allowed
+            "device#123", // # not allowed
+            "device$123", // $ not allowed
+            "device 123", // space not allowed
+            "device.123", // . not allowed
         ];
 
         for invalid_device in invalid_devices {
             // Test validation function directly
             let result = validate_device_id(invalid_device);
-            assert!(result.is_err(), "Device ID '{}' should be rejected", invalid_device);
-            assert!(result.unwrap_err().to_string().contains("invalid characters"));
+            assert!(
+                result.is_err(),
+                "Device ID '{}' should be rejected",
+                invalid_device
+            );
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid characters"));
         }
 
         println!("Device ID special character rejection test passed");
@@ -1416,16 +1440,34 @@ mod tests {
         #[allow(deprecated)]
         let legacy_peer = UnifiedPeerId::from_public_key_legacy(identity.public_key.clone());
 
-        assert!(legacy_peer.bootstrap_mode, "Legacy peer should be in bootstrap mode");
-        assert!(legacy_peer.is_bootstrap_mode(), "is_bootstrap_mode() should return true");
-        assert!(!legacy_peer.is_verified(), "is_verified() should return false");
+        assert!(
+            legacy_peer.bootstrap_mode,
+            "Legacy peer should be in bootstrap mode"
+        );
+        assert!(
+            legacy_peer.is_bootstrap_mode(),
+            "is_bootstrap_mode() should return true"
+        );
+        assert!(
+            !legacy_peer.is_verified(),
+            "is_verified() should return false"
+        );
 
         // Verified path should NOT create bootstrap-mode peer
         let verified_peer = UnifiedPeerId::from_zhtp_identity(&identity)?;
 
-        assert!(!verified_peer.bootstrap_mode, "Verified peer should NOT be in bootstrap mode");
-        assert!(!verified_peer.is_bootstrap_mode(), "is_bootstrap_mode() should return false");
-        assert!(verified_peer.is_verified(), "is_verified() should return true");
+        assert!(
+            !verified_peer.bootstrap_mode,
+            "Verified peer should NOT be in bootstrap mode"
+        );
+        assert!(
+            !verified_peer.is_bootstrap_mode(),
+            "is_bootstrap_mode() should return false"
+        );
+        assert!(
+            verified_peer.is_verified(),
+            "is_verified() should return true"
+        );
 
         println!("CRITICAL-1: Bootstrap mode flag test passed");
         Ok(())
@@ -1444,9 +1486,15 @@ mod tests {
         let _ = UnifiedPeerId::from_public_key_legacy(identity.public_key.clone());
 
         let new_count = get_legacy_path_usage_count();
-        assert!(new_count > initial_count, "Legacy path usage counter should increment");
+        assert!(
+            new_count > initial_count,
+            "Legacy path usage counter should increment"
+        );
 
-        println!("CRITICAL-1: Audit trail test passed (count: {} -> {})", initial_count, new_count);
+        println!(
+            "CRITICAL-1: Audit trail test passed (count: {} -> {})",
+            initial_count, new_count
+        );
         Ok(())
     }
 
@@ -1577,7 +1625,10 @@ mod tests {
         )?;
 
         // Should NOT be in bootstrap mode
-        assert!(!peer.bootstrap_mode, "from_verified_public_key should NOT create bootstrap-mode peer");
+        assert!(
+            !peer.bootstrap_mode,
+            "from_verified_public_key should NOT create bootstrap-mode peer"
+        );
         assert!(peer.is_verified(), "Peer should be verified");
 
         println!("from_verified_public_key test passed");
@@ -1598,7 +1649,10 @@ mod tests {
             "valid-device-001".to_string(),
         );
 
-        assert!(result.is_err(), "Should reject unverified DID in from_verified_public_key");
+        assert!(
+            result.is_err(),
+            "Should reject unverified DID in from_verified_public_key"
+        );
         assert!(
             result.unwrap_err().to_string().contains("unverified"),
             "Error should mention unverified DID"

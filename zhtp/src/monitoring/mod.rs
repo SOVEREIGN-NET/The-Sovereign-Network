@@ -2,20 +2,86 @@
 //!
 //! Provides comprehensive monitoring, logging, and metrics for all ZHTP components
 
-pub mod metrics;
-pub mod health_check;
 pub mod alerting;
 pub mod dashboard;
+pub mod health_check;
+pub mod metrics;
 
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tracing::info;
 
-pub use metrics::*;
-pub use health_check::*;
 pub use alerting::*;
 pub use dashboard::*;
+pub use health_check::*;
+pub use metrics::*;
+
+// **Restart-safe global alert manager**
+//
+// Using RwLock<Option<>> instead of OnceCell allows:
+// 1. Clearing the global after stop() (prevents stale manager reuse)
+// 2. Replacing with a fresh instance on restart (idempotent start())
+// 3. Safe concurrent access without deadlock risk
+//
+// Invariants:
+// - After stop(), global is None
+// - Each start() atomically replaces the global with a fresh Arc
+// - Producers can safely check and emit without blocking the writer
+static GLOBAL_ALERT_MANAGER: RwLock<Option<Arc<AlertManager>>> = RwLock::new(None);
+
+/// Set the global alert manager (replaces any existing instance)
+///
+/// Called during MonitoringSystem::start() to install a fresh manager.
+/// This is not idempotent by design: every start() replaces the global,
+/// preventing restart from using a stale stopped instance.
+///
+/// If the RwLock is poisoned (another thread panicked while holding it),
+/// this function will attempt recovery by clearing the poisoned state.
+pub fn set_global_alert_manager(manager: Arc<AlertManager>) {
+    match GLOBAL_ALERT_MANAGER.write() {
+        Ok(mut g) => *g = Some(manager),
+        Err(poisoned) => {
+            // RwLock poisoned - recover by clearing and setting fresh
+            let mut g = poisoned.into_inner();
+            *g = Some(manager);
+        }
+    }
+}
+
+/// Clear the global alert manager
+///
+/// Called during MonitoringSystem::stop() to prevent subsequent operations
+/// from using a stopped manager. Callers attempting to emit after this
+/// will get None and must handle degraded mode.
+///
+/// If the RwLock is poisoned, this function will still clear it (no-op if already None).
+pub fn clear_global_alert_manager() {
+    match GLOBAL_ALERT_MANAGER.write() {
+        Ok(mut g) => *g = None,
+        Err(poisoned) => {
+            // RwLock poisoned - recover by clearing
+            let mut g = poisoned.into_inner();
+            *g = None;
+        }
+    }
+}
+
+/// Get the global alert manager
+///
+/// Returns None if monitoring has not been started or has been stopped.
+/// Safe to call from any thread/task.
+///
+/// If the RwLock is poisoned, this function returns None (safe fallback).
+pub fn get_global_alert_manager() -> Option<Arc<AlertManager>> {
+    match GLOBAL_ALERT_MANAGER.read() {
+        Ok(g) => g.clone(),
+        Err(poisoned) => {
+            // RwLock poisoned - treat as "no manager available" (safe fallback)
+            (*poisoned.into_inner()).clone()
+        }
+    }
+}
 
 // **Restart-safe global alert manager**
 //
@@ -89,25 +155,24 @@ pub struct MonitoringSystem {
     metrics_collector: Arc<MetricsCollector>,
     health_monitor: Arc<HealthMonitor>,
     alert_manager: Arc<AlertManager>,
-    dashboard_server: Option<Arc<DashboardServer>>,
+    _dashboard_server: Option<Arc<DashboardServer>>,
 }
 
 impl MonitoringSystem {
     /// Create a new monitoring system
     pub async fn new() -> Result<Self> {
         let metrics_collector = Arc::new(MetricsCollector::new().await?);
-        let alert_manager = Arc::new(
-            AlertManager::with_thresholds(alerting::AlertThresholds::default()).await?,
-        );
+        let alert_manager =
+            Arc::new(AlertManager::with_thresholds(alerting::AlertThresholds::default()).await?);
         let mut health_monitor = HealthMonitor::new().await?;
         health_monitor.set_alert_manager(alert_manager.clone());
         let health_monitor = Arc::new(health_monitor);
-        
+
         Ok(Self {
             metrics_collector,
             health_monitor,
             alert_manager,
-            dashboard_server: None,
+            _dashboard_server: None,
         })
     }
 
@@ -130,19 +195,11 @@ impl MonitoringSystem {
         // This ensures restarts use a new instance, not a stale stopped one
         set_global_alert_manager(self.alert_manager.clone());
 
-        // Start dashboard server if enabled
-        if let Ok(mut dashboard) = DashboardServer::new(8081).await {
-            dashboard.set_monitors(
-                self.metrics_collector.clone(),
-                self.health_monitor.clone(),
-                self.alert_manager.clone(),
-            );
-            let dashboard_arc = Arc::new(dashboard);
-            dashboard_arc.start().await?;
-            self.dashboard_server = Some(dashboard_arc);
-        }
+        // NOTE: TCP HTTP dashboard removed - ZHTP uses QUIC-only architecture
+        // All monitoring data is available via QUIC protocol endpoints
+        // See: zhtp/src/server/quic_handler.rs for monitoring QUIC handlers
 
-        info!("Monitoring system started successfully");
+        info!("Monitoring system started successfully (QUIC-only, no TCP dashboard)");
         Ok(())
     }
 
@@ -153,12 +210,7 @@ impl MonitoringSystem {
     pub async fn stop(&self) -> Result<()> {
         info!("Stopping monitoring system...");
 
-        // Stop dashboard server
-        if let Some(dashboard) = &self.dashboard_server {
-            dashboard.stop().await?;
-        }
-
-        // Stop other components
+        // Stop other components (no TCP dashboard to stop - QUIC-only)
         self.alert_manager.stop().await?;
         self.health_monitor.stop().await?;
         self.metrics_collector.stop().await?;
@@ -182,8 +234,15 @@ impl MonitoringSystem {
     }
 
     /// Record a custom metric
-    pub async fn record_metric(&self, name: &str, value: f64, tags: HashMap<String, String>) -> Result<()> {
-        self.metrics_collector.record_metric(name, value, tags).await
+    pub async fn record_metric(
+        &self,
+        name: &str,
+        value: f64,
+        tags: HashMap<String, String>,
+    ) -> Result<()> {
+        self.metrics_collector
+            .record_metric(name, value, tags)
+            .await
     }
 
     /// Trigger an alert
@@ -211,8 +270,8 @@ impl Default for MonitoringConfig {
             metrics_enabled: true,
             health_check_interval: std::time::Duration::from_secs(30),
             alert_thresholds: AlertThresholds::default(),
-            dashboard_enabled: true,
-            dashboard_port: 8081,
+            dashboard_enabled: false, // TCP dashboard removed - QUIC-only architecture
+            dashboard_port: 0,        // Not used - monitoring via QUIC endpoints
             log_level: "info".to_string(),
             export_prometheus: false,
             prometheus_port: 9090,
@@ -235,11 +294,11 @@ pub struct AlertThresholds {
 impl Default for AlertThresholds {
     fn default() -> Self {
         Self {
-            cpu_usage: 80.0,              // 80% CPU usage
-            memory_usage: 85.0,           // 85% memory usage
-            disk_usage: 90.0,             // 90% disk usage
-            network_errors: 100,          // 100 network errors per minute
-            peer_count_min: 3,            // Minimum 3 peers
+            cpu_usage: 80.0,                                          // 80% CPU usage
+            memory_usage: 85.0,                                       // 85% memory usage
+            disk_usage: 90.0,                                         // 90% disk usage
+            network_errors: 100, // 100 network errors per minute
+            peer_count_min: 3,   // Minimum 3 peers
             block_time_max: std::time::Duration::from_secs(30), // 30 second block time
             transaction_timeout: std::time::Duration::from_secs(300), // 5 minute transaction timeout
         }

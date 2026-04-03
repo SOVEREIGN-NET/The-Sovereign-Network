@@ -9,15 +9,14 @@ const PER_SECOND: usize = 2;
 #[derive(Clone)]
 pub struct SpamThrottle {
     hit_counter: Arc<Mutex<HashMap<IpAddr, usize>>>,
-    last_decay_time: Arc<Mutex<Instant>>
+    last_decay_time: Arc<Mutex<Instant>>,
 }
 
 impl SpamThrottle {
-
     pub fn new() -> Self {
         Self {
             hit_counter: Arc::new(Mutex::new(HashMap::new())),
-            last_decay_time: Arc::new(Mutex::new(Instant::now()))
+            last_decay_time: Arc::new(Mutex::new(Instant::now())),
         }
     }
 

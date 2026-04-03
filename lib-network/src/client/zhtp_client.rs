@@ -3,21 +3,24 @@
 //! This client provides authenticated QUIC transport for all API calls.
 //! It handles connection establishment, UHP handshake, and request/response framing.
 
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Context, Result};
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{info, debug, warn};
+use std::sync::{Arc, OnceLock};
+use tracing::{debug, info, warn};
 
-use quinn::{Endpoint, Connection, ClientConfig};
+/// Singleton bootstrap NonceCache — opened once, shared (via Arc<Db>) across all bootstrap clients.
+/// This prevents the OOM bug where a unique sled DB path was created per bootstrap connection.
+static BOOTSTRAP_NONCE_CACHE: OnceLock<NonceCache> = OnceLock::new();
+static BOOTSTRAP_NONCE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+use quinn::{ClientConfig, Connection, Endpoint};
 
 use lib_identity::ZhtpIdentity;
-use lib_protocols::wire::{
-    ZhtpRequestWire, ZhtpResponseWire,
-    read_response, write_request,
-};
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpMethod};
+use lib_protocols::types::{ZhtpRequest, ZhtpResponse};
+use lib_protocols::wire::{read_response, write_request, ZhtpRequestWire};
 
+use crate::handshake::security::derive_v2_session_keys;
 use crate::handshake::{HandshakeContext, NonceCache};
 use crate::protocols::quic_handshake;
 use crate::web4::trust::{TrustConfig, ZhtpTrustVerifier};
@@ -69,19 +72,19 @@ pub struct ZhtpClient {
     config: ZhtpClientConfig,
 }
 
-/// Connection with completed UHP+Kyber handshake
+/// Connection with completed UHP v2 handshake
 struct AuthenticatedConnection {
     /// QUIC connection
     quic_conn: Connection,
 
-    /// Application-layer MAC key (derived from master_key)
-    app_key: [u8; 32],
+    /// V2 MAC key (derived via HKDF-SHA3-256 from session_key + handshake_hash)
+    mac_key: [u8; 32],
 
     /// Peer's verified DID (from UHP handshake)
     peer_did: String,
 
-    /// Session ID
-    session_id: [u8; 16],
+    /// Session ID (UHP v2, 32 bytes)
+    session_id: [u8; 32],
 
     /// Request sequence counter (for replay protection)
     sequence: AtomicU64,
@@ -90,21 +93,6 @@ struct AuthenticatedConnection {
 impl AuthenticatedConnection {
     fn next_sequence(&self) -> u64 {
         self.sequence.fetch_add(1, Ordering::SeqCst)
-    }
-
-    /// Derive application-layer MAC key from master key
-    ///
-    /// MUST match server-side derivation in quic_api_dispatcher.rs.
-    /// Label: "zhtp-web4-app-mac"
-    /// Order: server_did (peer from client's view) then client_did
-    fn derive_app_key(master_key: &[u8; 32], session_id: &[u8; 16], peer_did: &str, client_did: &str) -> [u8; 32] {
-        let mut input = Vec::new();
-        input.extend_from_slice(b"zhtp-web4-app-mac"); // Must match server
-        input.extend_from_slice(master_key);
-        input.extend_from_slice(session_id);
-        input.extend_from_slice(peer_did.as_bytes());  // Server's DID
-        input.extend_from_slice(client_did.as_bytes()); // Client's DID
-        *blake3::hash(&input).as_bytes()
     }
 }
 
@@ -119,29 +107,100 @@ impl ZhtpClient {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         // Create QUIC endpoint
-        let endpoint = Endpoint::client("0.0.0.0:0".parse()?)
-            .context("Failed to create QUIC endpoint")?;
+        let endpoint =
+            Endpoint::client("0.0.0.0:0".parse()?).context("Failed to create QUIC endpoint")?;
 
-        // Configure transport
-        let mut transport = quinn::TransportConfig::default();
-        transport.max_idle_timeout(Some(std::time::Duration::from_secs(60).try_into()?));
-        let transport = Arc::new(transport);
-
-        // Create nonce cache
-        let nonce_db_path = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".zhtp")
-            .join("client_nonce_cache");
-
-        // Safely get parent directory, defaulting to current dir if path is malformed
-        if let Some(parent) = nonce_db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        // Derive network epoch from genesis hash (uses environment-appropriate fallback)
-        let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
-        let nonce_cache = NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
-            .context("Failed to open nonce cache")?;
+        // Create nonce cache.
+        // Bootstrap clients share a single NonceCache instance (opened once via OnceLock).
+        // NonceCache::clone() is cheap — it shares the Arc<sled::Db> without reopening.
+        // This prevents the OOM bug (unique sled path per bootstrap call) and the
+        // concurrent-open bug (sled only allows one opener per path at a time).
+        let nonce_cache = if config.allow_bootstrap {
+            // Fast path: already initialized
+            if let Some(cached) = BOOTSTRAP_NONCE_CACHE.get() {
+                cached.clone()
+            } else {
+                // Slow path: initialize once under mutex to prevent races
+                let _guard = BOOTSTRAP_NONCE_MUTEX
+                    .lock()
+                    .map_err(|_| anyhow!("Bootstrap nonce mutex poisoned"))?;
+                // Double-check after acquiring lock
+                if let Some(cached) = BOOTSTRAP_NONCE_CACHE.get() {
+                    cached.clone()
+                } else {
+                    // Use per-process subdirectory to avoid cross-process contention
+                    // when running multiple nodes on the same host (common in local testing)
+                    let pid = std::process::id();
+                    let nonce_db_path = std::env::temp_dir()
+                        .join("zhtp_bootstrap_nonce")
+                        .join(pid.to_string())
+                        .join("db");
+                    if let Some(parent) = nonce_db_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    let network_epoch = match crate::handshake::NetworkEpoch::from_global_or_fail()
+                    {
+                        Ok(epoch) => epoch,
+                        Err(_) => {
+                            warn!(
+                                "Network genesis not yet available (bootstrap mode) - \
+                                 using chain_id=0 for initial sync connection"
+                            );
+                            crate::handshake::NetworkEpoch::from_chain_id(0)
+                        }
+                    };
+                    // Open bootstrap nonce cache. If it fails due to epoch mismatch (stale
+                    // sled from a previous run with different genesis), wipe and recreate.
+                    // The bootstrap nonce cache is ephemeral — cross-restart replay protection
+                    // for bootstrap connections is not a security requirement.
+                    let cache = match NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
+                    {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let err_str = e.to_string();
+                            // Only wipe and retry on epoch mismatch - not on lock contention,
+                            // permission errors, or I/O failures (which would be unsafe to delete)
+                            if err_str.contains("Network epoch mismatch") {
+                                warn!("Bootstrap nonce cache epoch mismatch ({}); clearing stale DB and retrying", e);
+                                let _ = std::fs::remove_dir_all(&nonce_db_path);
+                                std::fs::create_dir_all(&nonce_db_path)?;
+                                NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
+                                    .context(
+                                        "Failed to open nonce cache after epoch mismatch retry",
+                                    )?
+                            } else {
+                                // Don't wipe on lock contention, I/O errors, etc.
+                                return Err(e.into());
+                            }
+                        }
+                    };
+                    let _ = BOOTSTRAP_NONCE_CACHE.set(cache.clone());
+                    cache
+                }
+            }
+        } else {
+            let nonce_db_path = dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".zhtp")
+                .join("client_nonce_cache");
+            if let Some(parent) = nonce_db_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let network_epoch = crate::handshake::NetworkEpoch::from_global_or_fail()?;
+            match NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch) {
+                Ok(c) => c,
+                Err(e) if e.to_string().contains("Network epoch mismatch") => {
+                    warn!(
+                        "Client nonce cache epoch mismatch — clearing and retrying: {}",
+                        e
+                    );
+                    let _ = std::fs::remove_dir_all(&nonce_db_path);
+                    NonceCache::open(&nonce_db_path, 3600, 10_000, network_epoch)
+                        .context("Failed to open nonce cache after epoch mismatch clear")?
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
 
         let handshake_ctx = HandshakeContext::new(nonce_cache);
 
@@ -162,7 +221,10 @@ impl ZhtpClient {
     }
 
     /// Create client in bootstrap mode with explicit config (DEV ONLY - no TLS verification)
-    pub async fn new_bootstrap_with_config(identity: ZhtpIdentity, config: ZhtpClientConfig) -> Result<Self> {
+    pub async fn new_bootstrap_with_config(
+        identity: ZhtpIdentity,
+        config: ZhtpClientConfig,
+    ) -> Result<Self> {
         if !config.allow_bootstrap {
             return Err(anyhow!(
                 "Bootstrap mode requires ZhtpClientConfig::allow_bootstrap to be true"
@@ -176,7 +238,10 @@ impl ZhtpClient {
     ///
     /// Deprecated: Use `new_bootstrap_with_config()` with explicit config instead.
     /// This method is maintained for backwards compatibility.
-    #[deprecated(since = "1.1.0", note = "Use new_bootstrap_with_config with explicit config")]
+    #[deprecated(
+        since = "1.1.0",
+        note = "Use new_bootstrap_with_config with explicit config"
+    )]
     pub async fn new_bootstrap(identity: ZhtpIdentity) -> Result<Self> {
         warn!("ZHTP client in BOOTSTRAP MODE - NO TLS VERIFICATION");
         let config = ZhtpClientConfig {
@@ -223,8 +288,7 @@ impl ZhtpClient {
 
     /// Connect to a ZHTP node
     pub async fn connect(&mut self, addr: &str) -> Result<()> {
-        let socket_addr: SocketAddr = addr.parse()
-            .context("Invalid server address")?;
+        let socket_addr: SocketAddr = addr.parse().context("Invalid server address")?;
 
         info!("Connecting to ZHTP node at {}", socket_addr);
 
@@ -249,19 +313,22 @@ impl ZhtpClient {
         self.endpoint.set_default_client_config(client_config);
 
         // Establish QUIC connection
-        let connection = self.endpoint
+        let connection = self
+            .endpoint
             .connect(socket_addr, "zhtp-node")?
             .await
             .context("QUIC connection failed")?;
 
         info!("QUIC/TLS connection established");
 
-        // Perform UHP+Kyber handshake
+        // Perform UHP v2 handshake
         let handshake_result = quic_handshake::handshake_as_initiator(
             &connection,
             &self.identity,
             &self.handshake_ctx,
-        ).await.context("UHP+Kyber handshake failed")?;
+        )
+        .await
+        .context("UHP v2 handshake failed")?;
 
         let peer_did = handshake_result.verified_peer.identity.did.clone();
 
@@ -273,12 +340,20 @@ impl ZhtpClient {
             }
         }
 
-        // Derive application-layer MAC key
-        let app_key = AuthenticatedConnection::derive_app_key(
-            &handshake_result.master_key,
-            &handshake_result.session_id,
-            &peer_did,
-            &self.identity.did,
+        // Derive V2 session keys using HKDF-SHA3-256 (MUST match server)
+        // Key schedule: HKDF(session_key, handshake_hash, label)
+        let v2_keys = derive_v2_session_keys(
+            &handshake_result.session_key,
+            &handshake_result.handshake_hash,
+        )
+        .context("Failed to derive V2 session keys")?;
+
+        debug!(
+            peer_did = %peer_did,
+            session_id_prefix = ?hex::encode(&handshake_result.session_id[..8]),
+            handshake_hash_prefix = ?hex::encode(&handshake_result.handshake_hash[..8]),
+            mac_key_prefix = ?hex::encode(&v2_keys.mac_key[..8]),
+            "V2 key material derived (client)"
         );
 
         info!(
@@ -289,10 +364,10 @@ impl ZhtpClient {
 
         self.connection = Some(AuthenticatedConnection {
             quic_conn: connection,
-            app_key,
+            mac_key: v2_keys.mac_key,
             peer_did,
             session_id: handshake_result.session_id,
-            sequence: AtomicU64::new(0),
+            sequence: AtomicU64::new(1), // Start at 1 (server's last_counter starts at 0)
         });
 
         Ok(())
@@ -312,7 +387,7 @@ impl ZhtpClient {
         crypto.alpn_protocols = crate::constants::client_control_plane_alpns();
 
         let mut config = ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?
+            quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,
         ));
 
         let mut transport = quinn::TransportConfig::default();
@@ -324,24 +399,39 @@ impl ZhtpClient {
 
     /// Send a request and receive response
     pub async fn request(&self, request: ZhtpRequest) -> Result<ZhtpResponse> {
-        let conn = self.connection.as_ref()
+        let conn = self
+            .connection
+            .as_ref()
             .ok_or_else(|| anyhow!("Not connected to node"))?;
 
-        // Mutations always require auth
-        let is_mutation = matches!(request.method, ZhtpMethod::Post | ZhtpMethod::Put | ZhtpMethod::Delete);
+        // V2 protocol requires auth on ALL requests (not just mutations)
+        let seq = conn.next_sequence();
+        let wire_request = ZhtpRequestWire::new_authenticated(
+            request,
+            conn.session_id,
+            self.identity.did.clone(),
+            seq,
+            &conn.mac_key,
+        );
 
-        let wire_request = if is_mutation {
-            let seq = conn.next_sequence();
-            ZhtpRequestWire::new_authenticated(
-                request,
-                conn.session_id,
-                self.identity.did.clone(),
-                seq,
-                &conn.app_key,
-            )
-        } else {
-            ZhtpRequestWire::new(request)
-        };
+        if let Some(auth) = &wire_request.auth_context {
+            // Canonical size is a useful invariant to debug MAC mismatches.
+            let canonical_len = 1
+                + 2
+                + wire_request.request.uri.as_bytes().len()
+                + 4
+                + wire_request.request.body.len();
+            debug!(
+                request_id = %wire_request.request_id_hex(),
+                seq = seq,
+                session_id_prefix = ?hex::encode(&conn.session_id[..8]),
+                mac_key_prefix = ?hex::encode(&conn.mac_key[..8]),
+                request_mac_prefix = ?hex::encode(&auth.request_mac[..8]),
+                canonical_len = canonical_len,
+                uri = %wire_request.request.uri,
+                "V2 request MAC computed (client)"
+            );
+        }
 
         let request_id = wire_request.request_id;
 
@@ -353,19 +443,23 @@ impl ZhtpClient {
         );
 
         // Open bidirectional stream
-        let (mut send, mut recv) = conn.quic_conn.open_bi().await
+        let (mut send, mut recv) = conn
+            .quic_conn
+            .open_bi()
+            .await
             .context("Failed to open QUIC stream")?;
 
         // Send request
-        write_request(&mut send, &wire_request).await
+        write_request(&mut send, &wire_request)
+            .await
             .context("Failed to send request")?;
 
         // Finish sending
-        send.finish()
-            .context("Failed to finish send stream")?;
+        send.finish().context("Failed to finish send stream")?;
 
         // Read response
-        let wire_response = read_response(&mut recv).await
+        let wire_response = read_response(&mut recv)
+            .await
             .context("Failed to read response")?;
 
         // Verify request ID matches
@@ -425,8 +519,7 @@ impl ZhtpClient {
                 response.status_message
             ));
         }
-        serde_json::from_slice(&response.body)
-            .context("Failed to parse response JSON")
+        serde_json::from_slice(&response.body).context("Failed to parse response JSON")
     }
 }
 

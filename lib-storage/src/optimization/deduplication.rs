@@ -27,7 +27,7 @@ impl Deduplicator {
 
         for chunk in chunks {
             let hash = hash_blake3(&chunk);
-            
+
             // Check if chunk exists
             if self.chunk_store.contains_key(&hash) {
                 // Duplicate found
@@ -185,11 +185,7 @@ mod tests {
     fn test_reconstruct() {
         let mut dedup = Deduplicator::new();
 
-        let chunks = vec![
-            b"chunk1".to_vec(),
-            b"chunk2".to_vec(),
-            b"chunk1".to_vec(),
-        ];
+        let chunks = vec![b"chunk1".to_vec(), b"chunk2".to_vec(), b"chunk1".to_vec()];
 
         let refs = dedup.deduplicate_chunks(chunks.clone()).unwrap();
         let reconstructed = dedup.reconstruct(&refs).unwrap();
@@ -204,12 +200,7 @@ mod tests {
     fn test_dedup_stats() {
         let mut dedup = Deduplicator::new();
 
-        let chunks = vec![
-            b"a".to_vec(),
-            b"b".to_vec(),
-            b"a".to_vec(),
-            b"c".to_vec(),
-        ];
+        let chunks = vec![b"a".to_vec(), b"b".to_vec(), b"a".to_vec(), b"c".to_vec()];
 
         dedup.deduplicate_chunks(chunks).unwrap();
 

@@ -22,15 +22,14 @@
 //! The WelfareIssuerAdapter routes approval verification through the
 //! appropriate verifier implementation.
 
-pub mod traits;
+pub mod delegated;
 pub mod governance_vote;
 pub mod multisig;
-pub mod delegated;
+pub mod traits;
 
-pub use traits::{
-    ApprovalProof, IssuanceApprovalVerifier, IssuanceRequest, VerificationError,
-    VerificationResult,
-};
+pub use delegated::DelegatedVerifier;
 pub use governance_vote::GovernanceVoteVerifier;
 pub use multisig::MultisigVerifier;
-pub use delegated::DelegatedVerifier;
+pub use traits::{
+    ApprovalProof, IssuanceApprovalVerifier, IssuanceRequest, VerificationError, VerificationResult,
+};

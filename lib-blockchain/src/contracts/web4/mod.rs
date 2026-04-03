@@ -1,6 +1,6 @@
 //! # Web4 Website Smart Contracts
 //!
-//! Smart contracts for decentralized website hosting, domain management, and content 
+//! Smart contracts for decentralized website hosting, domain management, and content
 //! distribution through the ZHTP blockchain and DHT network.
 //!
 //! ## Features
@@ -14,23 +14,22 @@ pub mod core;
 pub mod functions;
 pub mod types;
 
-pub use core::{Web4Contract, ContentStatistics};
+pub use core::{ContentStatistics, Web4Contract};
 pub use functions::*;
 pub use types::{
-    WebsiteMetadata, ContentRoute, DomainRecord, WebsiteDeploymentData, DomainStatus, 
-    Web4Operation, Web4Query, Web4Response, Web4Error,
-    DirectoryNode, NodeType, FileMetadata, WebsiteManifest, DeploymentPackage, DependencyRef,
-    ExecutableRef, WasmDeployment, WasmPermission, WasmMetadata
+    ContentRoute, DependencyRef, DeploymentPackage, DirectoryNode, DomainRecord, DomainStatus,
+    ExecutableRef, FileMetadata, NodeType, WasmDeployment, WasmMetadata, WasmPermission, Web4Error,
+    Web4Operation, Web4Query, Web4Response, WebsiteDeploymentData, WebsiteManifest,
+    WebsiteMetadata,
 };
-
 
 /// Re-export core Web4 contract functionality
 pub use core::Web4Contract as WebsiteContract;
 
 /// Web4 contract gas costs
 pub const GAS_DOMAIN_REGISTER: u64 = 5000; // Domain registration
-pub const GAS_CONTENT_UPDATE: u64 = 3000;  // Content update
-pub const GAS_ROUTE_ADD: u64 = 2000;       // Add new route
+pub const GAS_CONTENT_UPDATE: u64 = 3000; // Content update
+pub const GAS_ROUTE_ADD: u64 = 2000; // Add new route
 pub const GAS_METADATA_UPDATE: u64 = 1500; // Update metadata
 pub const GAS_OWNERSHIP_TRANSFER: u64 = 4000; // Transfer ownership
 

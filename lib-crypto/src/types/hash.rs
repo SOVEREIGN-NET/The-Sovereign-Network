@@ -1,9 +1,9 @@
 //! Hash wrapper type implementation - preserving ZHTP Hash functionality
-//! 
+//!
 //! implementation from crypto.rs, line 22-50
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Hash wrapper type for ZHTP - implementation from production codebase
 ///
@@ -31,8 +31,8 @@ impl Hash {
     /// Create hash from hex string
     pub fn from_hex(hex_str: &str) -> Result<Self> {
         let hex_str = hex_str.trim_start_matches("0x");
-        let bytes = hex::decode(hex_str)
-            .map_err(|e| anyhow::anyhow!("Invalid hex string: {}", e))?;
+        let bytes =
+            hex::decode(hex_str).map_err(|e| anyhow::anyhow!("Invalid hex string: {}", e))?;
         Ok(Hash::from_bytes(&bytes))
     }
 }

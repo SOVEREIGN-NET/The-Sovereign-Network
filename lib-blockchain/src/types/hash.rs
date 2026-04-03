@@ -3,8 +3,8 @@
 //! Provides hash computation and verification utilities used throughout
 //! the blockchain implementation. Integrates with lib-crypto for hashing.
 
-use serde::{Serialize, Deserialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Hash wrapper type for ZHTP blockchain
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -40,7 +40,7 @@ impl Hash {
         if hex_str.len() != 64 {
             return Err(anyhow::anyhow!("Invalid hex string length"));
         }
-        
+
         match hex::decode(hex_str) {
             Ok(bytes) => {
                 if bytes.len() != 32 {

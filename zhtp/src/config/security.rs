@@ -1,6 +1,6 @@
 //! Security Configuration Management
-//! 
-//! Handles post-quantum cryptography settings, ZK proof parameters, 
+//!
+//! Handles post-quantum cryptography settings, ZK proof parameters,
 //! and security levels across all packages
 
 use serde::{Deserialize, Serialize};
@@ -49,16 +49,14 @@ pub struct PostQuantumConfig {
 /// CRYSTALS-Dilithium security levels
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DilithiumLevel {
-    Level2,  // 128-bit security
-    Level3,  // 192-bit security  
-    Level5,  // 256-bit security
+    Level2, // 128-bit security
+    Level3, // 192-bit security
+    Level5, // 256-bit security
 }
 
 /// CRYSTALS-Kyber security levels
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KyberLevel {
-    Kyber512,  // 128-bit security
-    Kyber768,  // 192-bit security
     Kyber1024, // 256-bit security
 }
 
@@ -86,9 +84,9 @@ pub struct ZkSecurityConfig {
 /// Supported zero-knowledge proof systems
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProofSystem {
-    Plonky2,  // Primary system - no trusted setup required
-    Groth16,  // Alternative - requires trusted setup
-    STARK,    // Alternative - no trusted setup, larger proofs
+    Plonky2, // Primary system - no trusted setup required
+    Groth16, // Alternative - requires trusted setup
+    STARK,   // Alternative - no trusted setup, larger proofs
 }
 
 impl SecurityLevel {
@@ -98,21 +96,21 @@ impl SecurityLevel {
             SecurityLevel::Basic => PostQuantumConfig {
                 enabled: false, // Classical crypto only for development
                 dilithium_level: DilithiumLevel::Level2,
-                kyber_level: KyberLevel::Kyber512,
+                kyber_level: KyberLevel::Kyber1024,
                 hybrid_mode: true,
                 migration_strategy: MigrationStrategy::Classical,
             },
             SecurityLevel::Medium => PostQuantumConfig {
                 enabled: true,
                 dilithium_level: DilithiumLevel::Level2,
-                kyber_level: KyberLevel::Kyber512,
+                kyber_level: KyberLevel::Kyber1024,
                 hybrid_mode: true,
                 migration_strategy: MigrationStrategy::Gradual,
             },
             SecurityLevel::High => PostQuantumConfig {
                 enabled: true,
                 dilithium_level: DilithiumLevel::Level3,
-                kyber_level: KyberLevel::Kyber768,
+                kyber_level: KyberLevel::Kyber1024,
                 hybrid_mode: true,
                 migration_strategy: MigrationStrategy::Gradual,
             },
@@ -125,7 +123,7 @@ impl SecurityLevel {
             },
         }
     }
-    
+
     /// Get zero-knowledge proof configuration for this security level
     pub fn get_zk_security_config(&self) -> ZkSecurityConfig {
         match self {
@@ -159,18 +157,21 @@ impl SecurityLevel {
             },
         }
     }
-    
+
     /// Get memory security settings for this level
     pub fn get_memory_security_config(&self) -> MemorySecurityConfig {
         MemorySecurityConfig {
             secure_memory_wiping: matches!(self, SecurityLevel::High | SecurityLevel::Maximum),
-            stack_protection: matches!(self, SecurityLevel::Medium | SecurityLevel::High | SecurityLevel::Maximum),
+            stack_protection: matches!(
+                self,
+                SecurityLevel::Medium | SecurityLevel::High | SecurityLevel::Maximum
+            ),
             heap_protection: matches!(self, SecurityLevel::High | SecurityLevel::Maximum),
             constant_time_operations: true, // Always enabled
             side_channel_protection: matches!(self, SecurityLevel::High | SecurityLevel::Maximum),
         }
     }
-    
+
     /// Get network security settings for this level
     pub fn get_network_security_config(&self) -> NetworkSecurityConfig {
         NetworkSecurityConfig {
@@ -184,11 +185,11 @@ impl SecurityLevel {
             post_quantum_tls: matches!(self, SecurityLevel::Maximum),
         }
     }
-    
+
     /// Validate that security level is appropriate for environment
     pub fn validate_for_environment(&self, environment: &super::Environment) -> Result<(), String> {
         use super::Environment;
-        
+
         match (self, environment) {
             (SecurityLevel::Basic, Environment::Mainnet) => {
                 Err("Basic security level not allowed in mainnet environment".to_string())
@@ -201,7 +202,7 @@ impl SecurityLevel {
                 tracing::warn!("Medium security level not recommended for mainnet");
                 Ok(())
             }
-            _ => Ok(())
+            _ => Ok(()),
         }
     }
 }
@@ -238,7 +239,7 @@ impl Default for PostQuantumConfig {
         Self {
             enabled: true,
             dilithium_level: DilithiumLevel::Level3,
-            kyber_level: KyberLevel::Kyber768,
+            kyber_level: KyberLevel::Kyber1024,
             hybrid_mode: true,
             migration_strategy: MigrationStrategy::Gradual,
         }

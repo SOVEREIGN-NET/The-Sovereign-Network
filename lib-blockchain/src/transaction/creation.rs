@@ -2,9 +2,15 @@
 //!
 //! Provides functionality for creating new transactions in the ZHTP blockchain.
 
-use crate::transaction::core::{Transaction, TransactionInput, TransactionOutput, IdentityTransactionData, WalletTransactionData};
+use crate::integration::crypto_integration::{
+    PrivateKey, PublicKey, Signature, SignatureAlgorithm,
+};
+use crate::transaction::contract_deployment::ContractDeploymentPayloadV1;
+use crate::transaction::core::{
+    IdentityTransactionData, Transaction, TransactionInput, TransactionOutput, TransactionPayload,
+    WalletTransactionData, TX_VERSION_V8,
+};
 use crate::types::transaction_type::TransactionType;
-use crate::integration::crypto_integration::{Signature, PublicKey, PrivateKey, SignatureAlgorithm};
 use tracing::debug;
 
 /// Error types for transaction creation
@@ -13,6 +19,7 @@ pub enum TransactionCreateError {
     InsufficientFunds,
     InvalidInputs,
     InvalidOutputs,
+    InvalidContractDeploymentPayload(String),
     SigningError,
     ZkProofError,
     IdentityError,
@@ -24,9 +31,16 @@ impl std::fmt::Display for TransactionCreateError {
             TransactionCreateError::InsufficientFunds => write!(f, "Insufficient funds"),
             TransactionCreateError::InvalidInputs => write!(f, "Invalid transaction inputs"),
             TransactionCreateError::InvalidOutputs => write!(f, "Invalid transaction outputs"),
+            TransactionCreateError::InvalidContractDeploymentPayload(msg) => {
+                write!(f, "Invalid contract deployment payload: {}", msg)
+            }
             TransactionCreateError::SigningError => write!(f, "Transaction signing failed"),
-            TransactionCreateError::ZkProofError => write!(f, "Zero-knowledge proof generation failed"),
-            TransactionCreateError::IdentityError => write!(f, "Identity transaction creation failed"),
+            TransactionCreateError::ZkProofError => {
+                write!(f, "Zero-knowledge proof generation failed")
+            }
+            TransactionCreateError::IdentityError => {
+                write!(f, "Identity transaction creation failed")
+            }
         }
     }
 }
@@ -142,25 +156,37 @@ impl TransactionBuilder {
 
         // Check if inputs already have ZK proofs (they should be pre-generated in most cases)
         // Check both legacy 'proof' field and new 'proof_data' field
-        let needs_proofs = self.inputs.is_empty() || 
-                          self.inputs.iter().any(|i| {
-                              i.zk_proof.amount_proof.proof.is_empty() && 
-                              i.zk_proof.amount_proof.proof_data.is_empty()
-                          });
-        
+        let needs_proofs = self.inputs.is_empty()
+            || self.inputs.iter().any(|i| {
+                i.zk_proof.amount_proof.proof.is_empty()
+                    && i.zk_proof.amount_proof.proof_data.is_empty()
+            });
+
         let inputs_with_proofs = if needs_proofs {
             // Generate ZK proofs only if inputs don't have them yet
             tracing::debug!("Generating ZK proofs for {} inputs", self.inputs.len());
             self.generate_zk_proofs_for_inputs(private_key)?
         } else {
             // Use existing ZK proofs from inputs
-            tracing::debug!("Using pre-generated ZK proofs for {} inputs", self.inputs.len());
+            tracing::debug!(
+                "Using pre-generated ZK proofs for {} inputs",
+                self.inputs.len()
+            );
             self.inputs
+        };
+
+        // Build payload from legacy builder fields
+        let payload = if let Some(id) = self.identity_data {
+            TransactionPayload::Identity(id)
+        } else if let Some(wd) = self.wallet_data {
+            TransactionPayload::Wallet(wd)
+        } else {
+            TransactionPayload::None
         };
 
         // Create unsigned transaction
         let mut transaction = Transaction {
-            version: self.version,
+            version: TX_VERSION_V8,
             chain_id: 0x03, // Default to development network
             transaction_type: self.transaction_type,
             inputs: inputs_with_proofs,
@@ -173,14 +199,7 @@ impl TransactionBuilder {
                 timestamp: 0,
             }, // Will be set below
             memo: self.memo,
-            validator_data: None,
-            identity_data: self.identity_data,
-            wallet_data: self.wallet_data,
-            dao_proposal_data: None,
-            dao_vote_data: None,
-            dao_execution_data: None,
-            ubi_claim_data: None,
-            profit_declaration_data: None,
+            payload,
         };
 
         // Sign the transaction
@@ -189,17 +208,22 @@ impl TransactionBuilder {
 
         Ok(transaction)
     }
-    
+
     /// Generate ZK proofs for all transaction inputs using lib-proofs
-    fn generate_zk_proofs_for_inputs(&self, private_key: &PrivateKey) -> Result<Vec<TransactionInput>, TransactionCreateError> {
-        use lib_proofs::ZkTransactionProof;
+    fn generate_zk_proofs_for_inputs(
+        &self,
+        private_key: &PrivateKey,
+    ) -> Result<Vec<TransactionInput>, TransactionCreateError> {
         use lib_crypto::random::generate_nonce;
-        
+        use lib_proofs::ZkTransactionProof;
+
         let mut inputs_with_proofs = Vec::with_capacity(self.inputs.len());
-        
+
         // Calculate total output amount for proper proof generation
         // This is critical: the ZK proof must prove sender_balance >= amount + fee
-        let total_output_amount: u64 = self.outputs.iter()
+        let total_output_amount: u64 = self
+            .outputs
+            .iter()
             .map(|_| {
                 // In a full implementation, we'd extract the actual amount from the commitment
                 // For now, we estimate based on typical transaction patterns
@@ -207,72 +231,85 @@ impl TransactionBuilder {
                 1000u64 // Reasonable estimate per output
             })
             .sum();
-        
+
         // The sender balance must be at least the sum of outputs + fee
         // We add a buffer to ensure proof generation succeeds
         let estimated_sender_balance = total_output_amount.max(self.fee + 1000);
-        
+
         tracing::debug!(
             "Generating ZK proofs: outputs={}, total_amount={}, fee={}, estimated_balance={}",
-            self.outputs.len(), total_output_amount, self.fee, estimated_sender_balance
+            self.outputs.len(),
+            total_output_amount,
+            self.fee,
+            estimated_sender_balance
         );
-        
+
         for (idx, input) in self.inputs.iter().enumerate() {
             // Generate cryptographic parameters for ZK proof using private key
             let sender_nonce = generate_nonce();
             let nullifier_nonce = generate_nonce();
-            
+
             // Use private key bytes to derive sender secret for ZK proof
             let mut sender_secret = [0u8; 32];
             let mut nullifier_secret = [0u8; 32];
-            
+
             // Combine private key with nonce for enhanced security
             let pk_bytes = &private_key.dilithium_sk[..12.min(private_key.dilithium_sk.len())];
             for i in 0..pk_bytes.len() {
                 sender_secret[i] = pk_bytes[i] ^ sender_nonce[i % sender_nonce.len()];
                 nullifier_secret[i] = pk_bytes[i] ^ nullifier_nonce[i % nullifier_nonce.len()];
             }
-            
+
             // Generate ZK proof for this input
             let zk_proof = match ZkTransactionProof::prove_transaction(
                 estimated_sender_balance, // sender_balance (must be >= amount + fee)
-                0,                       // receiver_balance (not needed for inputs)
-                total_output_amount,     // amount (sum of outputs)
-                self.fee,               // fee
-                sender_secret,          // sender_blinding
-                [0u8; 32],             // receiver_blinding (not needed)
-                nullifier_secret,       // nullifier
+                0,                        // receiver_balance (not needed for inputs)
+                total_output_amount,      // amount (sum of outputs)
+                self.fee,                 // fee
+                sender_secret,            // sender_blinding
+                [0u8; 32],                // receiver_blinding (not needed)
+                nullifier_secret,         // nullifier
             ) {
                 Ok(proof) => {
                     tracing::debug!("Successfully generated ZK proof for input {}", idx);
                     proof
-                },
+                }
                 Err(e) => {
                     // If ZK proof generation fails, log detailed error and return
                     tracing::error!(
                         "ZK proof generation failed for input {}: {:?}\n\
                          Parameters: balance={}, amount={}, fee={}",
-                        idx, e, estimated_sender_balance, total_output_amount, self.fee
+                        idx,
+                        e,
+                        estimated_sender_balance,
+                        total_output_amount,
+                        self.fee
                     );
                     return Err(TransactionCreateError::ZkProofError);
                 }
             };
-            
+
             // Create new input with ZK proof
             let mut input_with_proof = input.clone();
             input_with_proof.zk_proof = zk_proof;
-            
+
             inputs_with_proofs.push(input_with_proof);
         }
-        
-        tracing::debug!("Successfully generated ZK proofs for all {} inputs", inputs_with_proofs.len());
+
+        tracing::debug!(
+            "Successfully generated ZK proofs for all {} inputs",
+            inputs_with_proofs.len()
+        );
         Ok(inputs_with_proofs)
     }
 
     /// Sign a transaction with the given private key using lib-crypto
-    fn sign_transaction(transaction: &Transaction, private_key: &PrivateKey) -> Result<Signature, String> {
-        use lib_crypto::post_quantum::dilithium::{dilithium2_sign, dilithium5_sign};
-        
+    fn sign_transaction(
+        transaction: &Transaction,
+        private_key: &PrivateKey,
+    ) -> Result<Signature, String> {
+        use lib_crypto::post_quantum::dilithium::dilithium_sign;
+
         // Create transaction hash for signing (without signature)
         let mut tx_for_signing = transaction.clone();
         tx_for_signing.signature = Signature {
@@ -281,25 +318,33 @@ impl TransactionBuilder {
             algorithm: SignatureAlgorithm::Dilithium5,
             timestamp: 0,
         };
-        
+
         let tx_hash = crate::transaction::hashing::hash_transaction(&tx_for_signing);
-        
-        // Use the provided private key for signing
-        let signature_result = if private_key.dilithium_sk.len() == 2528 { // Dilithium2 size
-            dilithium2_sign(tx_hash.as_bytes(), &private_key.dilithium_sk)
-        } else { // Assume Dilithium5
-            dilithium5_sign(tx_hash.as_bytes(), &private_key.dilithium_sk)
-        };
-        
+
+        // Key size constants (from pqcrypto_dilithium)
+        const DILITHIUM2_SECRETKEY_BYTES: usize = 2560;
+
+        // Use the public key stored alongside the private key
+        // The public key must be stored with the private key since Dilithium
+        // doesn't allow deriving pk from sk after generation
+        if private_key.dilithium_pk.is_empty() {
+            return Err(
+                "Private key missing dilithium_pk - keypair must store both keys".to_string(),
+            );
+        }
+
+        // Use auto-detecting sign function
+        let signature_result = dilithium_sign(tx_hash.as_bytes(), &private_key.dilithium_sk);
+
         match signature_result {
             Ok(signature_bytes) => {
                 let signature = Signature {
                     signature: signature_bytes,
-                    public_key: PublicKey::new(private_key.dilithium_sk[..32].to_vec()), // Derive public key
-                    algorithm: if private_key.dilithium_sk.len() == 2528 { 
-                        SignatureAlgorithm::Dilithium2 
-                    } else { 
-                        SignatureAlgorithm::Dilithium5 
+                    public_key: PublicKey::new(private_key.dilithium_pk.clone()),
+                    algorithm: if private_key.dilithium_sk.len() == DILITHIUM2_SECRETKEY_BYTES {
+                        SignatureAlgorithm::Dilithium2
+                    } else {
+                        SignatureAlgorithm::Dilithium5
                     },
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -307,8 +352,8 @@ impl TransactionBuilder {
                         .as_secs(),
                 };
                 Ok(signature)
-            },
-            Err(e) => Err(format!("Failed to create keypair: {}", e))
+            }
+            Err(e) => Err(format!("Failed to sign transaction: {}", e)),
         }
     }
 }
@@ -355,6 +400,9 @@ pub fn create_wallet_transaction(
 }
 
 /// Create a contract deployment transaction
+#[deprecated(
+    note = "use create_contract_deployment_transaction() so ContractDeployment memo schema is enforced"
+)]
 pub fn create_contract_transaction(
     inputs: Vec<TransactionInput>,
     outputs: Vec<TransactionOutput>,
@@ -365,6 +413,27 @@ pub fn create_contract_transaction(
         .transaction_type(TransactionType::ContractDeployment)
         .add_inputs(inputs)
         .add_outputs(outputs)
+        .fee(fee)
+        .build(private_key)
+}
+
+/// Create a canonical contract deployment transaction with schema-validated payload.
+pub fn create_contract_deployment_transaction(
+    inputs: Vec<TransactionInput>,
+    outputs: Vec<TransactionOutput>,
+    payload: ContractDeploymentPayloadV1,
+    fee: u64,
+    private_key: &PrivateKey,
+) -> Result<Transaction, TransactionCreateError> {
+    let memo = payload
+        .encode_memo()
+        .map_err(TransactionCreateError::InvalidContractDeploymentPayload)?;
+
+    TransactionBuilder::new()
+        .transaction_type(TransactionType::ContractDeployment)
+        .add_inputs(inputs)
+        .add_outputs(outputs)
+        .memo(memo)
         .fee(fee)
         .build(private_key)
 }
@@ -388,23 +457,106 @@ pub fn create_token_transaction(
 pub mod utils {
     use super::*;
 
-    /// Calculate the minimum fee for a transaction based on size
+    /// Calculate the minimum fee for a transaction based on effective size
+    ///
+    /// # Overview
+    /// Post-quantum signatures (Dilithium5) are ~7KB, dwarfing actual payload.
+    /// To avoid penalizing PQ crypto adoption, we cap witness overhead while still
+    /// charging something for large witnesses to discourage spam.
+    ///
+    /// # Fee Structure
+    /// - **BASE_FEE**: 100 SOV (reduced from 1000 to make transactions affordable)
+    /// - **Size Fee**: 1 SOV per 100 bytes of "effective size"
+    /// - **Effective Size**: payload_bytes + min(witness_bytes, WITNESS_CAP)
+    ///
+    /// # Economic Rationale
+    /// The BASE_FEE reduction from 1000 to 100 SOV makes small transactions 10x cheaper,
+    /// improving accessibility while still providing economic spam prevention. Combined
+    /// with the witness cap, this ensures post-quantum transactions remain affordable
+    /// without creating a spam vector through zero-cost large witnesses.
     pub fn calculate_minimum_fee(transaction_size: usize) -> u64 {
-        // Dynamic fee calculation based on transaction size
-        let base_fee = 1000u64;
-        let bytes_per_zhtp = 100; // 100 bytes per 1 ZHTP fee unit
-        let size_fee = (transaction_size as u64 / bytes_per_zhtp).max(1); // Minimum 1 ZHTP for size
-        
-        // Apply size multiplier for larger transactions
-        let total_fee = if transaction_size > 10000 { // Large transaction threshold
-            base_fee + (size_fee * 2) // Double the size fee for large transactions
-        } else {
-            base_fee + size_fee
-        };
-        
-        debug!("Calculated fee for {} byte transaction: {} ZHTP (base: {}, size: {})", 
-               transaction_size, total_fee, base_fee, size_fee);
-        
+        calculate_minimum_fee_with_config(
+            transaction_size,
+            &crate::transaction::TxFeeConfig::default(),
+        )
+    }
+
+    /// Calculate the minimum fee for a transaction using governance-configurable parameters.
+    pub fn calculate_minimum_fee_with_config(
+        transaction_size: usize,
+        config: &crate::transaction::TxFeeConfig,
+    ) -> u64 {
+        // Post-quantum witness overhead (signature + pubkey)
+        // Dilithium5: 4627 byte sig + 2592 byte pk = 7219 bytes total
+        // Dilithium2: 2420 byte sig + 1312 byte pk = 3732 bytes total
+        // This constant assumes Dilithium5 as it's the highest-security variant.
+        const PQ_WITNESS_SIZE: usize = 7219;
+
+        // Cap witness contribution to fee calculation at 500 bytes.
+        //
+        // Rationale for 500 bytes:
+        // - Classical signatures (Ed25519): ~64 bytes signature + 32 bytes pubkey = ~96 bytes
+        //   plus metadata (algorithm, timestamp) and message overhead = ~150-200 bytes.
+        // - A 500-byte cap comfortably covers classical crypto plus extensions without
+        //   overcharging, while being well below both Dilithium2 (~3.7KB) and Dilithium5
+        //   (~7.2KB) witness sizes.
+        // - For PQ transactions: Capping at 500 bytes means users pay only a bounded
+        //   premium (~5x classical) rather than 36-72x, encouraging PQ adoption.
+        // - Economic defense: Not treating witness size as completely free discourages
+        //   spam attacks with artificially inflated witnesses.
+        // - Empirically chosen as a conservative trade-off between fee fairness
+        //   (not linearly penalizing PQ size) and economic integrity (charging something
+        //   for large witnesses to prevent abuse).
+        let witness_cap = config.witness_cap as usize;
+
+        // Base transaction fee - reduced from 1000 to 100 SOV.
+        //
+        // Economic justification:
+        // - Makes small transactions affordable for everyday use (e.g., token transfers).
+        // - A 10x reduction still provides spam protection via computational + bandwidth costs.
+        // - Combined with size-based fees, prevents both tiny spam and large payload abuse.
+        // - Aligns with network goal of accessible, usable cryptocurrency vs. high-fee networks.
+        let base_fee: u64 = config.base_fee;
+        let bytes_per_sov: u64 = config.bytes_per_sov;
+
+        // Estimate payload vs witness
+        //
+        // This calculation assumes Dilithium5 post-quantum signatures (largest witness).
+        // For transaction_size >= PQ_WITNESS_SIZE (7219 bytes):
+        //   - payload_bytes = transaction_size - 7219
+        //   - witness_bytes = 7219
+        //
+        // For transaction_size < PQ_WITNESS_SIZE (small or non-PQ5 transactions):
+        //   - payload_bytes = 0 (saturating_sub floors at 0)
+        //   - witness_bytes = transaction_size (all bytes treated as witness)
+        //
+        // This means:
+        // - Small transactions (< 7219 bytes) have all bytes counted as witness
+        // - Dilithium2 transactions (~3732 byte witness) are treated as all-witness
+        // - Classical crypto transactions (~200 bytes) are treated as all-witness
+        // - BUT: witness is capped at WITNESS_CAP (500 bytes) for fee purposes
+        //
+        // Result: All transactions < 7219 bytes pay roughly the same base fee
+        // (BASE_FEE + ~5 SOV for capped witness), which simplifies economics and
+        // avoids penalizing Dilithium2 or classical signatures.
+        let payload_bytes = transaction_size.saturating_sub(PQ_WITNESS_SIZE);
+        let witness_bytes = transaction_size.saturating_sub(payload_bytes);
+
+        // Effective size = payload + capped witness
+        // Examples:
+        // - 500 byte classical tx: 0 payload + 500 witness (capped) = 500 bytes → 105 SOV
+        // - 3732 byte D2 tx: 0 payload + 500 witness (capped) = 500 bytes → 105 SOV
+        // - 10000 byte D5 tx: 2781 payload + 500 witness (capped) = 3281 bytes → 132 SOV
+        let effective_size = payload_bytes + witness_bytes.min(witness_cap);
+        let size_fee = (effective_size as u64 / bytes_per_sov).max(1);
+
+        let total_fee = base_fee + size_fee;
+
+        debug!(
+            "Fee calc: tx={}B, payload={}B, witness={}B, effective={}B, fee={} SOV",
+            transaction_size, payload_bytes, witness_bytes, effective_size, total_fee
+        );
+
         total_fee
     }
 
@@ -430,7 +582,7 @@ pub mod utils {
         transaction_type: &TransactionType,
         inputs: &[TransactionInput],
         outputs: &[TransactionOutput],
-        identity_data: &Option<IdentityTransactionData>,
+        has_identity_data: bool,
     ) -> Result<(), TransactionCreateError> {
         match transaction_type {
             TransactionType::Transfer => {
@@ -438,10 +590,10 @@ pub mod utils {
                     return Err(TransactionCreateError::InvalidInputs);
                 }
             }
-            TransactionType::IdentityRegistration |
-            TransactionType::IdentityUpdate |
-            TransactionType::IdentityRevocation => {
-                if identity_data.is_none() {
+            TransactionType::IdentityRegistration
+            | TransactionType::IdentityUpdate
+            | TransactionType::IdentityRevocation => {
+                if !has_identity_data {
                     return Err(TransactionCreateError::IdentityError);
                 }
             }
@@ -450,8 +602,10 @@ pub mod utils {
                     return Err(TransactionCreateError::InvalidInputs);
                 }
             }
-            TransactionType::SessionCreation | TransactionType::SessionTermination |
-            TransactionType::ContentUpload | TransactionType::UbiDistribution => {
+            TransactionType::SessionCreation
+            | TransactionType::SessionTermination
+            | TransactionType::ContentUpload
+            | TransactionType::UbiDistribution => {
                 // Audit transactions - no specific validation needed here
                 // Memo validation will be handled during transaction validation
             }
@@ -459,16 +613,20 @@ pub mod utils {
                 // Wallet registration transactions should have wallet data
                 // Validation will be handled during transaction validation
             }
-            TransactionType::ValidatorRegistration |
-            TransactionType::ValidatorUpdate |
-            TransactionType::ValidatorUnregister => {
+            TransactionType::WalletUpdate => {
+                // Wallet update transactions should have wallet data
+                // Validation will be handled during transaction validation
+            }
+            TransactionType::ValidatorRegistration
+            | TransactionType::ValidatorUpdate
+            | TransactionType::ValidatorUnregister => {
                 // Validator transactions - no specific validation needed here
                 // Validation will be handled during transaction validation
             }
-            TransactionType::DaoProposal |
-            TransactionType::DaoVote |
-            TransactionType::DaoExecution |
-            TransactionType::DifficultyUpdate => {
+            TransactionType::DaoProposal
+            | TransactionType::DaoVote
+            | TransactionType::DaoExecution
+            | TransactionType::DifficultyUpdate => {
                 // DAO transactions - validation will be handled during transaction validation
             }
             TransactionType::UBIClaim => {
@@ -478,6 +636,81 @@ pub mod utils {
             TransactionType::ProfitDeclaration => {
                 // Profit declaration transactions - enforces 20% tribute (Week 7)
                 // Validation will be handled during transaction validation
+            }
+            TransactionType::Coinbase => {
+                // Coinbase transactions must have outputs but no inputs
+                if !inputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidInputs);
+                }
+                if outputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidOutputs);
+                }
+            }
+            TransactionType::TokenTransfer => {
+                // Token transfers need outputs
+                if outputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidOutputs);
+                }
+            }
+            TransactionType::GovernanceConfigUpdate => {
+                // Governance config updates - validation will be handled during transaction validation
+                // Requires governance_config_data and caller must have Governance role
+            }
+            TransactionType::TokenMint => {
+                // System-controlled token mint - validation handled at consensus layer
+            }
+            TransactionType::TokenCreation
+            | TransactionType::TokenSwap
+            | TransactionType::CreatePool
+            | TransactionType::AddLiquidity
+            | TransactionType::RemoveLiquidity => {
+                // AMM/Token operations - validation handled at consensus layer
+            }
+            TransactionType::BondingCurveDeploy => {
+                // Bonding curve token deployment - validation handled at consensus layer
+            }
+            TransactionType::BondingCurveBuy => {
+                // Bonding curve token purchase - validation handled at consensus layer
+            }
+            TransactionType::BondingCurveSell => {
+                // Bonding curve token sale - validation handled at consensus layer
+            }
+            TransactionType::BondingCurveGraduate => {
+                // Bonding curve graduation - validation handled at consensus layer
+            }
+            TransactionType::UpdateOracleCommittee => {
+                // Oracle committee update - validation handled at consensus layer
+            }
+            TransactionType::UpdateOracleConfig => {
+                // Oracle config update - validation handled at consensus layer
+            }
+            TransactionType::OracleAttestation => {
+                // Oracle price attestation - validation handled at block execution layer
+            }
+            TransactionType::CancelOracleUpdate => {
+                // Cancel oracle update - validation handled at consensus layer
+            }
+            TransactionType::InitEntityRegistry => {
+                // Entity registry init - must have no inputs/outputs
+                if !inputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidInputs);
+                }
+                if !outputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidOutputs);
+                }
+            }
+            TransactionType::RecordOnRampTrade
+            | TransactionType::TreasuryAllocation
+            | TransactionType::InitCbeToken
+            | TransactionType::CreateEmploymentContract
+            | TransactionType::ProcessPayroll => {
+                // Threshold-approval and CBE transactions - must have no inputs/outputs
+                if !inputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidInputs);
+                }
+                if !outputs.is_empty() {
+                    return Err(TransactionCreateError::InvalidOutputs);
+                }
             }
         }
 

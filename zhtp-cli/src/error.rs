@@ -59,7 +59,11 @@ pub enum CliError {
     ConnectionFailed { addr: String, reason: String },
 
     #[error("API call to {endpoint} failed: {status} - {reason}")]
-    ApiCallFailed { endpoint: String, status: u16, reason: String },
+    ApiCallFailed {
+        endpoint: String,
+        status: u16,
+        reason: String,
+    },
 
     // Configuration
     #[error("Configuration error: {0}")]
@@ -88,10 +92,6 @@ pub enum CliError {
     // Serialization
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
-
-    // HTTP/Network
-    #[error("HTTP request failed: {0}")]
-    HttpError(#[from] reqwest::Error),
 
     // Generic
     #[error("{0}")]

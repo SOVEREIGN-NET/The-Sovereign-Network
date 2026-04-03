@@ -1,7 +1,9 @@
 //! Integration tests for the main consensus engine
 
 use anyhow::Result;
-use lib_consensus::{ConsensusConfig, ConsensusEngine, ConsensusError, ConsensusType, NoOpBroadcaster};
+use lib_consensus::{
+    ConsensusConfig, ConsensusEngine, ConsensusError, ConsensusType, NoOpBroadcaster,
+};
 use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::sync::Arc;
@@ -11,11 +13,19 @@ fn create_test_identity(name: &str) -> IdentityId {
     Hash::from_bytes(&hash_blake3(name.as_bytes()))
 }
 
+fn validator_keys(seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    (
+        vec![seed; 32],
+        vec![seed.wrapping_add(64); 32],
+        vec![seed.wrapping_add(128); 32],
+    )
+}
+
 /// Helper function to create test consensus config
 fn create_test_config() -> ConsensusConfig {
     ConsensusConfig {
-        consensus_type: ConsensusType::Hybrid,
-        min_stake: 1000 * 1_000_000,           // 1000 ZHTP
+        consensus_type: ConsensusType::ByzantineFaultTolerance,
+        min_stake: 1000 * 1_000_000,           // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 10,
         block_time: 1, // Fast for testing
@@ -57,9 +67,9 @@ async fn test_validator_registration_success() -> Result<()> {
     let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     let identity = create_test_identity("alice");
-    let stake = 2000 * 1_000_000; // 2000 ZHTP
+    let stake = 2000 * 1_000_000; // 2000 SOV
     let storage = 200 * 1024 * 1024 * 1024; // 200 GB
-    let consensus_key = vec![1u8; 32];
+    let (consensus_key, networking_key, rewards_key) = validator_keys(1);
     let commission_rate = 5;
 
     let result = consensus_engine
@@ -68,6 +78,8 @@ async fn test_validator_registration_success() -> Result<()> {
             stake,
             storage,
             consensus_key,
+            networking_key,
+            rewards_key,
             commission_rate,
             true, // Genesis validator
         )
@@ -91,9 +103,9 @@ async fn test_validator_registration_insufficient_stake() -> Result<()> {
     let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
     let identity = create_test_identity("bob");
-    let insufficient_stake = 500 * 1_000_000; // 500 ZHTP (below minimum)
+    let insufficient_stake = 500 * 1_000_000; // 500 SOV (below minimum)
     let storage = 200 * 1024 * 1024 * 1024;
-    let consensus_key = vec![2u8; 32];
+    let (consensus_key, networking_key, rewards_key) = validator_keys(2);
     let commission_rate = 5;
 
     let result = consensus_engine
@@ -102,6 +114,8 @@ async fn test_validator_registration_insufficient_stake() -> Result<()> {
             insufficient_stake,
             storage,
             consensus_key,
+            networking_key,
+            rewards_key,
             commission_rate,
             false,
         )
@@ -126,7 +140,7 @@ async fn test_validator_registration_insufficient_storage() -> Result<()> {
     let identity = create_test_identity("charlie");
     let stake = 2000 * 1_000_000;
     let insufficient_storage = 50 * 1024 * 1024 * 1024; // 50 GB (below minimum)
-    let consensus_key = vec![3u8; 32];
+    let (consensus_key, networking_key, rewards_key) = validator_keys(3);
     let commission_rate = 5;
 
     let result = consensus_engine
@@ -135,6 +149,8 @@ async fn test_validator_registration_insufficient_storage() -> Result<()> {
             stake,
             insufficient_storage,
             consensus_key,
+            networking_key,
+            rewards_key,
             commission_rate,
             false,
         )
@@ -164,7 +180,7 @@ async fn test_multiple_validator_registration() -> Result<()> {
 
     for (i, (name, stake, storage)) in validators.iter().enumerate() {
         let identity = create_test_identity(name);
-        let consensus_key = vec![(i + 1) as u8; 32];
+        let (consensus_key, networking_key, rewards_key) = validator_keys((i + 1) as u8);
         let commission_rate = 5;
 
         let result = consensus_engine
@@ -173,6 +189,8 @@ async fn test_multiple_validator_registration() -> Result<()> {
                 *stake,
                 *storage,
                 consensus_key,
+                networking_key,
+                rewards_key,
                 commission_rate,
                 i == 0, // First is genesis
             )
@@ -198,7 +216,7 @@ async fn test_proposer_selection() -> Result<()> {
     let validators = vec!["alice", "bob", "charlie"];
     for (i, name) in validators.iter().enumerate() {
         let identity = create_test_identity(name);
-        let consensus_key = vec![(i + 1) as u8; 32];
+        let (consensus_key, networking_key, rewards_key) = validator_keys((i + 1) as u8);
 
         consensus_engine
             .register_validator(
@@ -206,6 +224,8 @@ async fn test_proposer_selection() -> Result<()> {
                 2000 * 1_000_000,
                 200 * 1024 * 1024 * 1024,
                 consensus_key,
+                networking_key,
+                rewards_key,
                 5,
                 i == 0,
             )
@@ -241,7 +261,7 @@ async fn test_byzantine_threshold_calculation() -> Result<()> {
 
     for (i, (name, stake)) in validators.iter().enumerate() {
         let identity = create_test_identity(name);
-        let consensus_key = vec![(i + 1) as u8; 32];
+        let (consensus_key, networking_key, rewards_key) = validator_keys((i + 1) as u8);
 
         consensus_engine
             .register_validator(
@@ -249,6 +269,8 @@ async fn test_byzantine_threshold_calculation() -> Result<()> {
                 *stake,
                 200 * 1024 * 1024 * 1024,
                 consensus_key,
+                networking_key,
+                rewards_key,
                 5,
                 i == 0,
             )
@@ -285,12 +307,15 @@ async fn test_insufficient_validators_for_consensus() -> Result<()> {
 
     // Register only one validator (insufficient for BFT)
     let identity = create_test_identity("alice");
+    let (consensus_key, networking_key, rewards_key) = validator_keys(1);
     consensus_engine
         .register_validator(
             identity,
             2000 * 1_000_000,
             200 * 1024 * 1024 * 1024,
-            vec![1u8; 32],
+            consensus_key,
+            networking_key,
+            rewards_key,
             5,
             true,
         )
@@ -304,12 +329,15 @@ async fn test_insufficient_validators_for_consensus() -> Result<()> {
     // Add more validators
     for i in 2..=4 {
         let identity = create_test_identity(&format!("validator_{}", i));
+        let (consensus_key, networking_key, rewards_key) = validator_keys(i as u8);
         consensus_engine
             .register_validator(
                 identity,
                 1000 * 1_000_000,
                 100 * 1024 * 1024 * 1024,
-                vec![i as u8; 32],
+                consensus_key,
+                networking_key,
+                rewards_key,
                 5,
                 false,
             )
@@ -347,34 +375,49 @@ async fn test_consensus_round_initialization() -> Result<()> {
 #[tokio::test]
 async fn test_maximum_validator_limit() -> Result<()> {
     let mut config = create_test_config();
-    config.max_validators = 2; // Set low limit for testing
+    // MIN_VALIDATORS = 4 is the lowest value max_validators can be set to
+    // (the ValidatorManager constructor clamps max_validators to at least MIN_VALIDATORS).
+    // Set exactly at the minimum to test the upper-bound enforcement with the
+    // smallest possible active set.
+    config.max_validators = 4;
 
     let mut consensus_engine = ConsensusEngine::new(config, Arc::new(NoOpBroadcaster))?;
 
-    // Register up to the limit
-    for i in 1..=2 {
+    // Register up to the limit (4 validators = MIN_VALIDATORS)
+    for i in 1..=4 {
         let identity = create_test_identity(&format!("validator_{}", i));
+        let (consensus_key, networking_key, rewards_key) = validator_keys(i as u8);
         let result = consensus_engine
             .register_validator(
                 identity,
                 1000 * 1_000_000,
                 100 * 1024 * 1024 * 1024,
-                vec![i as u8; 32],
+                consensus_key,
+                networking_key,
+                rewards_key,
                 5,
                 i == 1,
             )
             .await;
-        assert!(result.is_ok());
+        assert!(
+            result.is_ok(),
+            "Expected validator {} registration to succeed: {:?}",
+            i,
+            result
+        );
     }
 
-    // Try to register one more (should fail)
+    // Try to register one more (should fail — max limit reached)
     let identity = create_test_identity("extra_validator");
+    let (consensus_key, networking_key, rewards_key) = validator_keys(99);
     let result = consensus_engine
         .register_validator(
             identity,
             1000 * 1_000_000,
             100 * 1024 * 1024 * 1024,
-            vec![99u8; 32],
+            consensus_key,
+            networking_key,
+            rewards_key,
             5,
             false,
         )

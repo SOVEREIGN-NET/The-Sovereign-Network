@@ -4,11 +4,11 @@ use tokio::sync::RwLock;
 
 use crate::identity::unified_peer::UnifiedPeerId;
 use crate::peer_registry::PeerEndpoint;
-use crate::protocols::NetworkProtocol;
 use crate::protocols::bluetooth::classic::BluetoothClassicProtocol;
 use crate::protocols::lorawan::LoRaWANMeshProtocol;
 use crate::protocols::quic_mesh::QuicMeshProtocol;
 use crate::protocols::wifi_direct::WiFiDirectMeshProtocol;
+use crate::protocols::NetworkProtocol;
 use crate::types::mesh_message::ZhtpMeshMessage;
 use crate::types::node_address::NodeAddress;
 
@@ -34,7 +34,10 @@ pub struct TransportManager {
     bluetooth: Option<Arc<RwLock<BluetoothClassicProtocol>>>,
     wifi: Option<Arc<RwLock<WiFiDirectMeshProtocol>>>,
     lora: Option<Arc<RwLock<LoRaWANMeshProtocol>>>,
-    quic: Option<Arc<RwLock<QuicMeshProtocol>>>,
+    /// QUIC handler is stored directly as Arc (Issue #167)
+    /// QuicMeshProtocol doesn't implement Clone, so we can't wrap it in RwLock.
+    /// It's safe to store as Arc<QuicMeshProtocol> because it's shared globally (Issue #907).
+    quic: Option<Arc<QuicMeshProtocol>>,
 }
 
 impl TransportManager {
@@ -53,7 +56,8 @@ impl TransportManager {
         self
     }
 
-    pub fn with_quic(mut self, handler: Arc<RwLock<QuicMeshProtocol>>) -> Self {
+    /// Set QUIC handler (stored as Arc<QuicMeshProtocol> - see struct comment)
+    pub fn with_quic(mut self, handler: Arc<QuicMeshProtocol>) -> Self {
         self.quic = Some(handler);
         self
     }
@@ -73,13 +77,15 @@ impl TransportManager {
                     .bluetooth
                     .as_ref()
                     .ok_or_else(|| anyhow!("Bluetooth handler not available"))?;
-                
+
                 // Extract Bluetooth address string from NodeAddress
                 let addr_str = match &endpoint.address {
-                    NodeAddress::BluetoothClassic(addr) | NodeAddress::BluetoothLE(addr) => addr.as_str(),
+                    NodeAddress::BluetoothClassic(addr) | NodeAddress::BluetoothLE(addr) => {
+                        addr.as_str()
+                    }
                     _ => return Err(anyhow!("Invalid address type for Bluetooth protocol")),
                 };
-                
+
                 handler
                     .read()
                     .await
@@ -91,13 +97,13 @@ impl TransportManager {
                     .wifi
                     .as_ref()
                     .ok_or_else(|| anyhow!("WiFi Direct handler not available"))?;
-                
+
                 // Extract WiFi Direct address string from NodeAddress
                 let addr_str = match &endpoint.address {
                     NodeAddress::WiFiDirect { addr, .. } => addr.to_string(),
                     _ => return Err(anyhow!("Invalid address type for WiFi Direct protocol")),
                 };
-                
+
                 handler
                     .read()
                     .await
@@ -109,13 +115,13 @@ impl TransportManager {
                     .lora
                     .as_ref()
                     .ok_or_else(|| anyhow!("LoRaWAN handler not available"))?;
-                
+
                 // Extract LoRaWAN address string from NodeAddress
                 let addr_str = match &endpoint.address {
                     NodeAddress::LoRaWAN { dev_addr, .. } => dev_addr.as_str(),
                     _ => return Err(anyhow!("Invalid address type for LoRaWAN protocol")),
                 };
-                
+
                 handler
                     .read()
                     .await
@@ -127,9 +133,9 @@ impl TransportManager {
                     .quic
                     .as_ref()
                     .ok_or_else(|| anyhow!("QUIC handler not available"))?;
+                // QUIC handler is Arc<QuicMeshProtocol> directly (not wrapped in RwLock)
+                // because QuicMeshProtocol doesn't implement Clone - it's stored globally (Issue #907)
                 handler
-                    .read()
-                    .await
                     .send_to_peer(peer.node_id().as_bytes(), message.clone())
                     .await
             }

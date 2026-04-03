@@ -1,11 +1,13 @@
 //! Wallet-Content Integration
 //! Links content ownership with wallet management
 
-use anyhow::{Result, anyhow};
-use lib_crypto::Hash;
-use lib_identity::wallets::wallet_types::{WalletId, ContentOwnershipRecord, ContentTransfer, ContentTransferType, ContentMetadataSnapshot};
-use crate::types::ContentHash;
 use crate::types::storage_types::ContentMetadata;
+use crate::types::ContentHash;
+use anyhow::{anyhow, Result};
+use lib_crypto::Hash;
+use lib_identity::wallets::wallet_types::{
+    ContentMetadataSnapshot, ContentOwnershipRecord, ContentTransfer, ContentTransferType, WalletId,
+};
 use std::collections::HashMap;
 
 /// Manager for tracking content ownership by wallets
@@ -25,7 +27,7 @@ impl WalletContentManager {
             wallet_content_index: HashMap::new(),
         }
     }
-    
+
     /// Associate content with a wallet (after upload)
     pub fn register_content_ownership(
         &mut self,
@@ -38,7 +40,7 @@ impl WalletContentManager {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         // Create metadata snapshot
         let metadata_snapshot = ContentMetadataSnapshot {
             content_type: metadata.content_type.clone(),
@@ -47,7 +49,7 @@ impl WalletContentManager {
             tags: metadata.tags.clone(),
             created_at: metadata.created_at,
         };
-        
+
         // Create ownership record
         let ownership_record = ContentOwnershipRecord {
             content_hash: content_hash.clone(),
@@ -58,19 +60,20 @@ impl WalletContentManager {
             transfer_history: Vec::new(),
             metadata_snapshot,
         };
-        
+
         // Store ownership record
-        self.ownership_records.insert(content_hash.clone(), ownership_record);
-        
+        self.ownership_records
+            .insert(content_hash.clone(), ownership_record);
+
         // Update wallet content index
         self.wallet_content_index
             .entry(wallet_id)
             .or_insert_with(Vec::new)
             .push(content_hash);
-        
+
         Ok(())
     }
-    
+
     /// Transfer content ownership from one wallet to another
     pub fn transfer_content_ownership(
         &mut self,
@@ -82,19 +85,21 @@ impl WalletContentManager {
         transfer_type: ContentTransferType,
     ) -> Result<()> {
         // Get ownership record
-        let ownership_record = self.ownership_records.get_mut(content_hash)
+        let ownership_record = self
+            .ownership_records
+            .get_mut(content_hash)
             .ok_or_else(|| anyhow!("Content not found in ownership records"))?;
-        
+
         // Verify current owner
         if ownership_record.owner_wallet_id != from_wallet {
             return Err(anyhow!("Transfer from wallet does not own this content"));
         }
-        
+
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         // Create transfer record
         let transfer = ContentTransfer {
             from_wallet: from_wallet.clone(),
@@ -104,29 +109,29 @@ impl WalletContentManager {
             tx_hash,
             transfer_type,
         };
-        
+
         // Update ownership record
         ownership_record.previous_owner = Some(from_wallet.clone());
         ownership_record.owner_wallet_id = to_wallet.clone();
         ownership_record.purchase_price = price;
         ownership_record.acquired_at = current_time;
         ownership_record.transfer_history.push(transfer);
-        
+
         // Update wallet content indices
         // Remove from old wallet
         if let Some(content_list) = self.wallet_content_index.get_mut(&from_wallet) {
             content_list.retain(|h| h != content_hash);
         }
-        
+
         // Add to new wallet
         self.wallet_content_index
             .entry(to_wallet)
             .or_insert_with(Vec::new)
             .push(content_hash.clone());
-        
+
         Ok(())
     }
-    
+
     /// Get all content owned by a wallet
     pub fn get_wallet_content(&self, wallet_id: &WalletId) -> Vec<ContentHash> {
         self.wallet_content_index
@@ -134,19 +139,22 @@ impl WalletContentManager {
             .cloned()
             .unwrap_or_default()
     }
-    
+
     /// Get ownership record for content
-    pub fn get_ownership_record(&self, content_hash: &ContentHash) -> Option<&ContentOwnershipRecord> {
+    pub fn get_ownership_record(
+        &self,
+        content_hash: &ContentHash,
+    ) -> Option<&ContentOwnershipRecord> {
         self.ownership_records.get(content_hash)
     }
-    
+
     /// Get owner wallet for content
     pub fn get_content_owner(&self, content_hash: &ContentHash) -> Option<WalletId> {
         self.ownership_records
             .get(content_hash)
             .map(|record| record.owner_wallet_id.clone())
     }
-    
+
     /// Verify wallet owns content
     pub fn verify_ownership(&self, content_hash: &ContentHash, wallet_id: &WalletId) -> bool {
         self.ownership_records
@@ -154,23 +162,25 @@ impl WalletContentManager {
             .map(|record| &record.owner_wallet_id == wallet_id)
             .unwrap_or(false)
     }
-    
+
     /// Get content statistics for a wallet
     pub fn get_wallet_content_statistics(&self, wallet_id: &WalletId) -> WalletContentStatistics {
         let content_list = self.get_wallet_content(wallet_id);
-        
+
         let mut total_size = 0u64;
         let mut total_value = 0u64;
         let mut content_types: HashMap<String, usize> = HashMap::new();
-        
+
         for content_hash in &content_list {
             if let Some(record) = self.ownership_records.get(content_hash) {
                 total_size += record.metadata_snapshot.size;
                 total_value += record.purchase_price;
-                *content_types.entry(record.metadata_snapshot.content_type.clone()).or_insert(0) += 1;
+                *content_types
+                    .entry(record.metadata_snapshot.content_type.clone())
+                    .or_insert(0) += 1;
             }
         }
-        
+
         WalletContentStatistics {
             wallet_id: wallet_id.clone(),
             total_items: content_list.len(),
@@ -179,7 +189,7 @@ impl WalletContentManager {
             content_types,
         }
     }
-    
+
     /// Get all transfers for content
     pub fn get_content_transfer_history(&self, content_hash: &ContentHash) -> Vec<ContentTransfer> {
         self.ownership_records
@@ -202,13 +212,13 @@ pub struct WalletContentStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_content_ownership_registration() {
         let mut manager = WalletContentManager::new();
         let content_hash = Hash::from_bytes(b"test_content_hash_32_bytes_long!");
         let wallet_id = Hash::from_bytes(b"test_wallet_id_32_bytes_long!!!!");
-        
+
         let metadata = ContentMetadata {
             hash: content_hash.clone(),
             content_hash: content_hash.clone(),
@@ -234,12 +244,14 @@ mod tests {
             expires_at: None,
             checksum: content_hash.clone(),
         };
-        
-        manager.register_content_ownership(content_hash.clone(), wallet_id.clone(), &metadata, 0).unwrap();
-        
+
+        manager
+            .register_content_ownership(content_hash.clone(), wallet_id.clone(), &metadata, 0)
+            .unwrap();
+
         // Verify ownership
         assert!(manager.verify_ownership(&content_hash, &wallet_id));
-        
+
         // Verify wallet content
         let wallet_content = manager.get_wallet_content(&wallet_id);
         assert_eq!(wallet_content.len(), 1);
@@ -258,16 +270,12 @@ mod tests {
         };
         let private_key = PrivateKey {
             dilithium_sk: vec![4, 5, 6],
+            dilithium_pk: vec![1, 2, 3], // Matches public_key.dilithium_pk
             kyber_sk: vec![],
             master_seed: vec![7, 8, 9],
         };
-        let ownership_proof = ZeroKnowledgeProof::new(
-            "test".to_string(),
-            vec![],
-            vec![],
-            vec![],
-            None,
-        );
+        let ownership_proof =
+            ZeroKnowledgeProof::new("test".to_string(), vec![], vec![], vec![], None);
 
         lib_identity::ZhtpIdentity::new(
             IdentityType::Human,

@@ -1,13 +1,15 @@
-use std::any::Any;
-use std::fmt;
-use std::fmt::Formatter;
-use std::str::FromStr;
 use crate::messages::inter::rr_types::RRTypes;
-use crate::messages::wire::{FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError};
+use crate::messages::wire::{
+    FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError,
+};
 use crate::rr_data::inter::rr_data::{RRData, RRDataError};
 use crate::utils::{base32, hex};
 use crate::zone::inter::zone_rr_data::ZoneRRData;
 use crate::zone::zone_reader::{ErrorKind, ZoneReaderError};
+use std::any::Any;
+use std::fmt;
+use std::fmt::Formatter;
+use std::str::FromStr;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NSec3RRData {
@@ -16,11 +18,10 @@ pub struct NSec3RRData {
     iterations: u16,
     salt: Vec<u8>,
     next_hash: Vec<u8>,
-    types: Vec<RRTypes>
+    types: Vec<RRTypes>,
 }
 
 impl Default for NSec3RRData {
-
     fn default() -> Self {
         Self {
             algorithm: 0,
@@ -28,13 +29,12 @@ impl Default for NSec3RRData {
             iterations: 0,
             salt: Vec::new(),
             next_hash: Vec::new(),
-            types: Vec::new()
+            types: Vec::new(),
         }
     }
 }
 
 impl RRData for NSec3RRData {
-
     fn from_bytes(buf: &[u8]) -> Result<Self, RRDataError> {
         if buf.len() < 5 {
             return Err(RRDataError("NSEC3 data too short".to_string()));
@@ -50,7 +50,7 @@ impl RRData for NSec3RRData {
         }
         let salt = buf[5..5 + salt_length].to_vec();
 
-        let mut i = 5+salt_length;
+        let mut i = 5 + salt_length;
         if i >= buf.len() {
             return Err(RRDataError("NSEC3 hash length field missing".to_string()));
         }
@@ -58,34 +58,34 @@ impl RRData for NSec3RRData {
         if i + 1 + next_hash_length > buf.len() {
             return Err(RRDataError("NSEC3 hash data truncated".to_string()));
         }
-        let next_hash = buf[i+1..i+1+next_hash_length].to_vec();
-        i += 1+next_hash_length;
-
+        let next_hash = buf[i + 1..i + 1 + next_hash_length].to_vec();
+        i += 1 + next_hash_length;
 
         let mut types = Vec::new();
 
         while i < buf.len() {
-            if i+2 > buf.len() {
+            if i + 2 > buf.len() {
                 return Err(RRDataError("truncated NSEC window header".to_string()));
             }
 
             let window = buf[i];
-            let data_length = buf[i+1] as usize;
+            let data_length = buf[i + 1] as usize;
             i += 2;
 
             if data_length == 0 || data_length > 32 {
                 return Err(RRDataError("invalid NSEC window length".to_string()));
             }
 
-            if i+data_length > buf.len() {
+            if i + data_length > buf.len() {
                 return Err(RRDataError("truncated NSEC bitmap".to_string()));
             }
 
-            for (i, &byte) in buf[i..i+data_length].iter().enumerate() {
+            for (i, &byte) in buf[i..i + data_length].iter().enumerate() {
                 for bit in 0..8 {
                     if (byte & (1 << (7 - bit))) != 0 {
-                        let _type = RRTypes::try_from((window as u16) * 256 + (i as u16 * 8 + bit as u16))
-                            .map_err(|e| RRDataError(e.to_string()))?;
+                        let _type =
+                            RRTypes::try_from((window as u16) * 256 + (i as u16 * 8 + bit as u16))
+                                .map_err(|e| RRDataError(e.to_string()))?;
                         types.push(_type);
                     }
                 }
@@ -100,7 +100,7 @@ impl RRData for NSec3RRData {
             iterations,
             salt,
             next_hash,
-            types
+            types,
         })
     }
 
@@ -123,7 +123,8 @@ impl RRData for NSec3RRData {
         // Write type windows (if any)
         if !self.types.is_empty() {
             // Group types by window number
-            let mut windows: std::collections::BTreeMap<u16, Vec<u16>> = std::collections::BTreeMap::new();
+            let mut windows: std::collections::BTreeMap<u16, Vec<u16>> =
+                std::collections::BTreeMap::new();
             for typ in &self.types {
                 let type_num = *typ as u16;
                 let window = type_num / 256;
@@ -172,20 +173,29 @@ impl RRData for NSec3RRData {
     }
 
     fn eq_box(&self, other: &dyn RRData) -> bool {
-        other.as_any().downcast_ref::<Self>().map_or(false, |o| self == o)
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .map_or(false, |o| self == o)
     }
 }
 
 impl NSec3RRData {
-
-    pub fn new(algorithm: u8, flags: u8, iterations: u16, salt: &[u8], next_hash: &[u8], types: Vec<RRTypes>) -> Self {
+    pub fn new(
+        algorithm: u8,
+        flags: u8,
+        iterations: u16,
+        salt: &[u8],
+        next_hash: &[u8],
+        types: Vec<RRTypes>,
+    ) -> Self {
         Self {
             algorithm,
             flags,
             iterations,
             salt: salt.to_vec(),
             next_hash: next_hash.to_vec(),
-            types
+            types,
         }
     }
 
@@ -243,7 +253,6 @@ impl NSec3RRData {
 }
 
 impl FromWireLen for NSec3RRData {
-
     fn from_wire_len(context: &mut FromWireContext, len: u16) -> Result<Self, WireError> {
         let algorithm = u8::from_wire(context)?;
         let flags = u8::from_wire(context)?;
@@ -296,33 +305,68 @@ impl FromWireLen for NSec3RRData {
             iterations,
             salt,
             next_hash,
-            types
+            types,
         })
     }
 }
 
 impl ToWire for NSec3RRData {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
         todo!()
     }
 }
 
 impl ZoneRRData for NSec3RRData {
-
     fn set_data(&mut self, index: usize, value: &str) -> Result<(), ZoneReaderError> {
         Ok(match index {
-            0 => self.algorithm = value.parse().map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse algorithm param for record type NSEC3"))?,
-            1 => self.flags = value.parse().map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse flags param for record type NSEC3"))?,
-            2 => self.iterations = value.parse().map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse iterations param for record type NSEC3"))?,
+            0 => {
+                self.algorithm = value.parse().map_err(|_| {
+                    ZoneReaderError::new(
+                        ErrorKind::Format,
+                        "unable to parse algorithm param for record type NSEC3",
+                    )
+                })?
+            }
+            1 => {
+                self.flags = value.parse().map_err(|_| {
+                    ZoneReaderError::new(
+                        ErrorKind::Format,
+                        "unable to parse flags param for record type NSEC3",
+                    )
+                })?
+            }
+            2 => {
+                self.iterations = value.parse().map_err(|_| {
+                    ZoneReaderError::new(
+                        ErrorKind::Format,
+                        "unable to parse iterations param for record type NSEC3",
+                    )
+                })?
+            }
             3 => {
                 if !value.eq("-") {
-                    self.salt = hex::decode(value).map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse salt param for record type NSEC3"))?
+                    self.salt = hex::decode(value).map_err(|_| {
+                        ZoneReaderError::new(
+                            ErrorKind::Format,
+                            "unable to parse salt param for record type NSEC3",
+                        )
+                    })?
                 }
             }
-            4 => self.next_hash = base32::hex_decode(value).map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse next_hash param for record type NSEC3"))?,
-            _ => self.types.push(RRTypes::from_str(value)
-                .map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse types param for record type NSEC3"))?)
+            4 => {
+                self.next_hash = base32::hex_decode(value).map_err(|_| {
+                    ZoneReaderError::new(
+                        ErrorKind::Format,
+                        "unable to parse next_hash param for record type NSEC3",
+                    )
+                })?
+            }
+            _ => self.types.push(RRTypes::from_str(value).map_err(|_| {
+                ZoneReaderError::new(
+                    ErrorKind::Format,
+                    "unable to parse types param for record type NSEC3",
+                )
+            })?),
         })
     }
 
@@ -332,16 +376,20 @@ impl ZoneRRData for NSec3RRData {
 }
 
 impl fmt::Display for NSec3RRData {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {} {} {} {}", self.algorithm,
-               self.flags,
-               self.iterations,
-               base32::hex_encode_nopad(&self.salt),
-               self.types.iter()
-                   .map(|t| t.to_string())
-                   .collect::<Vec<_>>()
-                   .join(" "))
+        write!(
+            f,
+            "{} {} {} {} {}",
+            self.algorithm,
+            self.flags,
+            self.iterations,
+            base32::hex_encode_nopad(&self.salt),
+            self.types
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
     }
 }
 

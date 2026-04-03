@@ -7,9 +7,7 @@
 //! - Recovery from consensus stalls
 
 use lib_consensus::network::{HeartbeatTracker, LivenessMonitor};
-use lib_consensus::types::ConsensusStep;
-use lib_consensus::validators::validator_protocol::NetworkSummary;
-use lib_crypto::{hash_blake3, Hash, PostQuantumSignature, PublicKey, SignatureAlgorithm};
+use lib_crypto::{hash_blake3, Hash};
 use lib_identity::IdentityId;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -29,54 +27,6 @@ fn current_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
-}
-
-/// Helper to create a valid test signature for testing
-fn create_test_signature(timestamp: u64) -> PostQuantumSignature {
-    let mut sig_bytes = vec![timestamp as u8; 64];
-    for i in 0..32 {
-        sig_bytes[i] = sig_bytes[i].wrapping_add(i as u8);
-    }
-
-    PostQuantumSignature {
-        signature: sig_bytes,
-        public_key: PublicKey {
-            dilithium_pk: vec![],
-            kyber_pk: vec![],
-            key_id: [0u8; 32],
-        },
-        algorithm: SignatureAlgorithm::Dilithium2,
-        timestamp,
-    }
-}
-
-/// Helper to create a placeholder network summary for testing
-fn create_test_network_summary(active_count: u32) -> NetworkSummary {
-    NetworkSummary {
-        active_validators: active_count,
-        health_score: 0.95,
-        block_rate: 0.1,
-    }
-}
-
-/// Helper to create a HeartbeatMessage for testing
-fn create_test_heartbeat(
-    validator: IdentityId,
-    height: u64,
-    round: u32,
-    step: ConsensusStep,
-    timestamp: u64,
-) -> lib_consensus::validators::validator_protocol::HeartbeatMessage {
-    lib_consensus::validators::validator_protocol::HeartbeatMessage {
-        message_id: Hash::from_bytes(&[0u8; 32]),
-        validator,
-        height,
-        round,
-        step,
-        network_summary: create_test_network_summary(4),
-        timestamp,
-        signature: create_test_signature(timestamp),
-    }
 }
 
 /// Test watch_timeouts integration with HeartbeatTracker

@@ -5,5 +5,19 @@
 pub mod core;
 pub mod creation;
 
-pub use core::*;
-pub use creation::*;
+// Explicit re-exports from block core module
+pub use core::{
+    create_genesis_block, Block, BlockHeader, BlockValidationError, BlockValidationResult,
+    MAX_BLOCK_SIZE, MAX_BLOCK_TIME, MAX_TRANSACTIONS_PER_BLOCK, MIN_BLOCK_TIME,
+};
+
+// Explicit re-exports from block creation module
+pub use creation::{
+    create_block,
+    create_genesis_block_with_transactions,
+    estimate_block_time,
+    mine_block,             // Deprecated stub - BFT-A-935
+    mine_block_with_config, // Deprecated stub - BFT-A-935
+    select_transactions_for_block,
+    BlockBuilder,
+};

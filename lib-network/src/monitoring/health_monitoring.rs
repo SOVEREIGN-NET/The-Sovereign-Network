@@ -2,14 +2,14 @@
 //!
 //! Comprehensive health monitoring for ZHTP mesh network
 
+use crate::mesh::MeshProtocolStats;
+use crate::relays::LongRangeRelay;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing::{info, warn};
-use crate::mesh::MeshProtocolStats;
-use crate::relays::LongRangeRelay;
 
 /// Network health monitoring system
 ///
@@ -42,35 +42,35 @@ impl HealthMonitor {
             monitoring_active: Arc::new(RwLock::new(false)),
         }
     }
-    
+
     /// Start network health monitoring
     pub async fn start_monitoring(&self) -> Result<()> {
         info!("Starting network health monitoring...");
-        
+
         // Set monitoring active
         *self.monitoring_active.write().await = true;
-        
+
         // Start monitoring loops
         self.start_statistics_collection().await?;
         self.start_connection_health_check().await?;
         self.start_relay_health_check().await?;
         self.start_coverage_analysis().await?;
-        
+
         info!(" Network health monitoring started");
         Ok(())
     }
-    
+
     /// Stop network health monitoring
     pub async fn stop_monitoring(&self) -> Result<()> {
         info!("🛑 Stopping network health monitoring...");
-        
+
         // Set monitoring inactive
         *self.monitoring_active.write().await = false;
-        
+
         info!(" Network health monitoring stopped");
         Ok(())
     }
-    
+
     /// Start statistics collection loop
     /// TODO (Ticket #149): Update to use peer_registry methods
     async fn start_statistics_collection(&self) -> Result<()> {
@@ -78,103 +78,129 @@ impl HealthMonitor {
         let peer_registry = self.peer_registry.clone();
         let long_range_relays = self.long_range_relays.clone();
         let monitoring_active = self.monitoring_active.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Check if monitoring is still active
                 if !*monitoring_active.read().await {
                     break;
                 }
-                
+
                 // Update network statistics (Ticket #149: using peer_registry)
                 let mut network_stats = stats.write().await;
                 let registry = peer_registry.read().await;
                 let relays = long_range_relays.read().await;
-                
+
                 // Update connection count
                 let peer_count = registry.all_peers().count();
                 network_stats.active_connections = peer_count as u32;
                 network_stats.long_range_relays = relays.len() as u32;
-                
+
                 // Calculate total data routed (use getter for atomic counter)
-                network_stats.total_data_routed = registry.all_peers()
+                network_stats.total_data_routed = registry
+                    .all_peers()
                     .map(|entry| entry.get_data_transferred())
                     .sum();
-                
+
                 // Calculate average latency
                 if peer_count > 0 {
-                    network_stats.average_latency_ms = registry.all_peers()
+                    network_stats.average_latency_ms = registry
+                        .all_peers()
                         .map(|entry| entry.connection_metrics.latency_ms)
-                        .sum::<u32>() / peer_count as u32;
+                        .sum::<u32>()
+                        / peer_count as u32;
                 } else {
                     network_stats.average_latency_ms = 0;
                 }
-                
+
                 // Estimate coverage area (π * r²) for all relays
-                network_stats.coverage_area_km2 = relays.values()
+                network_stats.coverage_area_km2 = relays
+                    .values()
                     .map(|relay| {
                         let radius = relay.coverage_radius_km;
                         std::f64::consts::PI * radius * radius
                     })
                     .sum();
-                
+
                 // Estimate people with free internet access
                 // Rough estimate: 100 people per km² in coverage areas
-                network_stats.people_with_free_internet = 
+                network_stats.people_with_free_internet =
                     (network_stats.coverage_area_km2 * 100.0) as u32;
-                
+
                 // Calculate total UBI distributed through mesh networking (Ticket #149: using peer_registry)
                 let registry_read = registry.all_peers().collect::<Vec<_>>();
-                network_stats.total_ubi_distributed = registry_read.iter()
+                network_stats.total_ubi_distributed = registry_read
+                    .iter()
                     .map(|entry| entry.get_data_transferred())
                     .sum();
-                
+
                 info!("Network Health Update:");
-                info!("   Active connections: {}", network_stats.active_connections);
+                info!(
+                    "   Active connections: {}",
+                    network_stats.active_connections
+                );
                 info!("   Mesh connections: {}", registry_read.len());
                 info!("   Long-range relays: {}", network_stats.long_range_relays);
-                info!("   Data routed: {:.2} MB", network_stats.total_data_routed as f64 / 1_000_000.0);
-                info!("   Average latency: {} ms", network_stats.average_latency_ms);
-                info!("   Coverage area: {:.0} km²", network_stats.coverage_area_km2);
-                info!("   People with free internet: {}", network_stats.people_with_free_internet);
-                info!("   UBI distributed: {} tokens", network_stats.total_ubi_distributed);
+                info!(
+                    "   Data routed: {:.2} MB",
+                    network_stats.total_data_routed as f64 / 1_000_000.0
+                );
+                info!(
+                    "   Average latency: {} ms",
+                    network_stats.average_latency_ms
+                );
+                info!(
+                    "   Coverage area: {:.0} km²",
+                    network_stats.coverage_area_km2
+                );
+                info!(
+                    "   People with free internet: {}",
+                    network_stats.people_with_free_internet
+                );
+                info!(
+                    "   UBI distributed: {} tokens",
+                    network_stats.total_ubi_distributed
+                );
             }
         });
-        
+
         Ok(())
     }
-    
+
     /// Start connection health checking
     /// TODO (Ticket #149): Fully migrate to peer_registry methods
     async fn start_connection_health_check(&self) -> Result<()> {
         let peer_registry = self.peer_registry.clone();
         let monitoring_active = self.monitoring_active.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(300)); // Check every 5 minutes
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Check if monitoring is still active
                 if !*monitoring_active.read().await {
                     break;
                 }
-                
+
                 // Check connection health (Ticket #149: using peer_registry)
                 let registry = peer_registry.read().await;
                 let mut unhealthy_connections = Vec::new();
-                
+
                 for peer_entry in registry.all_peers() {
                     let peer_id = &peer_entry.peer_id;
                     // Check connection stability
                     if peer_entry.connection_metrics.stability_score < 0.3 {
-                        warn!(" Unstable connection detected: peer {} (stability: {:.2})",
-                              hex::encode(&peer_id.public_key().key_id[0..4]), peer_entry.connection_metrics.stability_score);
+                        warn!(
+                            " Unstable connection detected: peer {} (stability: {:.2})",
+                            hex::encode(&peer_id.public_key().key_id[0..4]),
+                            peer_entry.connection_metrics.stability_score
+                        );
                         unhealthy_connections.push(peer_id.clone());
                     }
 
@@ -186,15 +212,21 @@ impl HealthMonitor {
 
                     let connection_age = current_time - peer_entry.connection_metrics.connected_at;
                     if connection_age > 3600 && peer_entry.get_data_transferred() == 0 {
-                        warn!(" Stale connection detected: peer {} (age: {} minutes, no data)",
-                              hex::encode(&peer_id.public_key().key_id[0..4]), connection_age / 60);
+                        warn!(
+                            " Stale connection detected: peer {} (age: {} minutes, no data)",
+                            hex::encode(&peer_id.public_key().key_id[0..4]),
+                            connection_age / 60
+                        );
                         unhealthy_connections.push(peer_id.clone());
                     }
 
                     // Check for high latency
                     if peer_entry.connection_metrics.latency_ms > 1000 {
-                        warn!(" High latency connection: peer {} (latency: {} ms)",
-                              hex::encode(&peer_id.public_key().key_id[0..4]), peer_entry.connection_metrics.latency_ms);
+                        warn!(
+                            " High latency connection: peer {} (latency: {} ms)",
+                            hex::encode(&peer_id.public_key().key_id[0..4]),
+                            peer_entry.connection_metrics.latency_ms
+                        );
                     }
                 }
 
@@ -202,187 +234,221 @@ impl HealthMonitor {
                 drop(registry); // Release read lock
                 let mut registry_write = peer_registry.write().await;
                 for peer_id in unhealthy_connections {
-                    info!(" Removing unhealthy connection: {}",
-                          hex::encode(&peer_id.public_key().key_id[0..4]));
-                    registry_write.remove(&peer_id);
+                    info!(
+                        " Removing unhealthy connection: {}",
+                        hex::encode(&peer_id.public_key().key_id[0..4])
+                    );
+                    registry_write.remove(&peer_id).await;
                 }
                 let active_count = registry_write.all_peers().count();
                 drop(registry_write);
-                
-                info!("Connection health check completed: {} active connections", 
-                      active_count);
+
+                info!(
+                    "Connection health check completed: {} active connections",
+                    active_count
+                );
             }
         });
-        
+
         Ok(())
     }
-    
+
     /// Start relay health checking
     async fn start_relay_health_check(&self) -> Result<()> {
         let long_range_relays = self.long_range_relays.clone();
         let monitoring_active = self.monitoring_active.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(600)); // Check every 10 minutes
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Check if monitoring is still active
                 if !*monitoring_active.read().await {
                     break;
                 }
-                
+
                 // Check relay health
                 let relays = long_range_relays.read().await;
                 let mut healthy_relays = 0;
                 let mut total_throughput = 0;
                 let mut total_coverage = 0.0;
-                
+
                 for (relay_id, relay) in relays.iter() {
                     // Simple health check - in production would ping each relay
                     let relay_healthy = Self::check_relay_health(relay).await;
-                    
+
                     if relay_healthy {
                         healthy_relays += 1;
                         total_throughput += relay.max_throughput_mbps;
                         total_coverage += relay.coverage_radius_km;
-                        
-                        info!(" Relay {} healthy: {} Mbps, {:.0} km coverage", 
-                              relay_id, relay.max_throughput_mbps, relay.coverage_radius_km);
+
+                        info!(
+                            " Relay {} healthy: {} Mbps, {:.0} km coverage",
+                            relay_id, relay.max_throughput_mbps, relay.coverage_radius_km
+                        );
                     } else {
                         warn!("Relay {} unhealthy or unreachable", relay_id);
                     }
                 }
-                
+
                 info!("Relay health summary:");
                 info!("    Healthy relays: {}/{}", healthy_relays, relays.len());
                 info!("   Total throughput: {} Mbps", total_throughput);
                 info!("   Total coverage: {:.0} km", total_coverage);
-                
+
                 // Alert if too few relays are healthy
                 if healthy_relays < relays.len() / 2 {
                     warn!(" WARNING: Less than 50% of relays are healthy!");
                 }
             }
         });
-        
+
         Ok(())
     }
-    
+
     /// Start coverage analysis
     /// TODO (Ticket #149): Fully migrated to peer_registry
     async fn start_coverage_analysis(&self) -> Result<()> {
         let long_range_relays = self.long_range_relays.clone();
         let peer_registry = self.peer_registry.clone();
-        let stats = self.stats.clone();
+        let _stats = self.stats.clone();
         let monitoring_active = self.monitoring_active.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(900)); // Check every 15 minutes
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Check if monitoring is still active
                 if !*monitoring_active.read().await {
                     break;
                 }
-                
+
                 // Analyze network coverage (Ticket #149: using peer_registry)
                 let relays = long_range_relays.read().await;
                 let registry = peer_registry.read().await;
-                let network_stats = stats.write().await;
-                
                 // Calculate coverage metrics
-                let has_satellite = relays.values()
-                    .any(|relay| matches!(relay.relay_type, crate::types::relay_type::LongRangeRelayType::Satellite));
-                
-                let has_internet_bridge = relays.values()
-                    .any(|relay| matches!(relay.relay_type, crate::types::relay_type::LongRangeRelayType::WiFiRelay));
-                
-                let total_relay_coverage: f64 = relays.values()
-                    .map(|relay| relay.coverage_radius_km)
-                    .sum();
-                
-                let total_mesh_bandwidth: u32 = registry.all_peers()
+                let has_satellite = relays.values().any(|relay| {
+                    matches!(
+                        relay.relay_type,
+                        crate::types::relay_type::LongRangeRelayType::Satellite
+                    )
+                });
+
+                let has_internet_bridge = relays.values().any(|relay| {
+                    matches!(
+                        relay.relay_type,
+                        crate::types::relay_type::LongRangeRelayType::WiFiRelay
+                    )
+                });
+
+                let total_relay_coverage: f64 =
+                    relays.values().map(|relay| relay.coverage_radius_km).sum();
+
+                let total_mesh_bandwidth: u32 = registry
+                    .all_peers()
                     .map(|entry| (entry.connection_metrics.bandwidth_capacity / 1_000_000) as u32) // Convert to Mbps
                     .sum();
-                
+
                 // Update coverage analysis
                 info!("Network Coverage Analysis:");
                 info!("   Total relay coverage: {:.0} km", total_relay_coverage);
-                info!("   🛰️ Satellite access: {}", if has_satellite { " GLOBAL" } else { "Regional only" });
-                info!("    Internet bridges: {}", if has_internet_bridge { " Available" } else { "None" });
+                info!(
+                    "   🛰️ Satellite access: {}",
+                    if has_satellite {
+                        " GLOBAL"
+                    } else {
+                        "Regional only"
+                    }
+                );
+                info!(
+                    "    Internet bridges: {}",
+                    if has_internet_bridge {
+                        " Available"
+                    } else {
+                        "None"
+                    }
+                );
                 info!("  Total mesh bandwidth: {} Mbps", total_mesh_bandwidth);
-                
+
                 // Coverage quality assessment
-                let coverage_quality = if has_satellite && has_internet_bridge && total_relay_coverage > 1000.0 {
-                    "GLOBAL"
-                } else if total_relay_coverage > 500.0 || has_internet_bridge {
-                    "REGIONAL"
-                } else if total_relay_coverage > 100.0 {
-                    "LOCAL"
-                } else {
-                    "LIMITED"
-                };
-                
+                let coverage_quality =
+                    if has_satellite && has_internet_bridge && total_relay_coverage > 1000.0 {
+                        "GLOBAL"
+                    } else if total_relay_coverage > 500.0 || has_internet_bridge {
+                        "REGIONAL"
+                    } else if total_relay_coverage > 100.0 {
+                        "LOCAL"
+                    } else {
+                        "LIMITED"
+                    };
+
                 info!("   Coverage quality: {}", coverage_quality);
-                
+
                 // Identify coverage gaps
                 if !has_satellite {
                     info!("   Recommendation: Add satellite uplinks for global coverage");
                 }
-                
+
                 if !has_internet_bridge {
                     info!("   Recommendation: Add internet bridges for external connectivity");
                 }
-                
+
                 if total_mesh_bandwidth < 100 {
                     info!("   Recommendation: Encourage more mesh connections for bandwidth");
                 }
-                
+
                 // Performance analysis (Ticket #149: using peer_registry)
                 let peer_entries: Vec<_> = registry.all_peers().collect();
                 let avg_connection_quality: f64 = if !peer_entries.is_empty() {
                     // Simplified quality metric based on signal strength
-                    peer_entries.iter().map(|entry| entry.connection_metrics.signal_strength).sum::<f64>() / peer_entries.len() as f64
+                    peer_entries
+                        .iter()
+                        .map(|entry| entry.connection_metrics.signal_strength)
+                        .sum::<f64>()
+                        / peer_entries.len() as f64
                 } else {
                     0.0
                 };
 
-                info!("   Average connection quality: {:.1} Mbps per node", avg_connection_quality);
+                info!(
+                    "   Average connection quality: {:.1} Mbps per node",
+                    avg_connection_quality
+                );
             }
         });
-        
+
         Ok(())
     }
-    
+
     /// Check health of a specific relay
     async fn check_relay_health(relay: &LongRangeRelay) -> bool {
         // In production, this would actually ping or test the relay
         // For now, simulate realistic health check with some failures
-        
+
         match relay.relay_type {
             crate::types::relay_type::LongRangeRelayType::Satellite => {
                 // Satellites are usually reliable but can have weather issues
                 rand::random::<f32>() > 0.05 // 95% uptime
-            },
+            }
             crate::types::relay_type::LongRangeRelayType::LoRaWAN => {
                 // LoRaWAN gateways are very reliable
                 rand::random::<f32>() > 0.02 // 98% uptime
-            },
+            }
             crate::types::relay_type::LongRangeRelayType::WiFiRelay => {
                 // WiFi relays can be less reliable
                 rand::random::<f32>() > 0.10 // 90% uptime
-            },
+            }
             _ => {
                 // Other relay types
                 rand::random::<f32>() > 0.08 // 92% uptime
             }
         }
     }
-    
+
     /// Get current network health summary
     /// TODO (Ticket #149): Fully migrated to peer_registry
     pub async fn get_health_summary(&self) -> NetworkHealthSummary {
@@ -390,23 +456,26 @@ impl HealthMonitor {
         let registry = self.peer_registry.read().await;
         // WiFi sharing removed for legal compliance
         let relays = self.long_range_relays.read().await;
-        
+
         // Calculate health metrics (Ticket #149: using peer_registry)
         let peer_entries: Vec<_> = registry.all_peers().collect();
         let connection_health = if peer_entries.is_empty() {
             0.0
         } else {
-            peer_entries.iter()
+            peer_entries
+                .iter()
                 .map(|entry| entry.connection_metrics.stability_score)
-                .sum::<f64>() / peer_entries.len() as f64
+                .sum::<f64>()
+                / peer_entries.len() as f64
         };
-        
+
         let bandwidth_utilization = if stats.active_connections > 0 {
-            (stats.total_data_routed as f64 / (stats.active_connections as f64 * 1_000_000.0)) * 100.0
+            (stats.total_data_routed as f64 / (stats.active_connections as f64 * 1_000_000.0))
+                * 100.0
         } else {
             0.0
         };
-        
+
         let coverage_score = if relays.is_empty() {
             0.0
         } else {
@@ -415,10 +484,10 @@ impl HealthMonitor {
             let coverage_score = (stats.coverage_area_km2 / 10000.0).min(1.0); // Up to 10,000 km² = 100%
             (relay_score + coverage_score) / 2.0
         };
-        
+
         // Overall health score
         let overall_health = (connection_health + coverage_score) / 2.0;
-        
+
         NetworkHealthSummary {
             overall_health_score: overall_health,
             connection_health_score: connection_health,
@@ -437,10 +506,10 @@ impl HealthMonitor {
 /// Network health summary
 #[derive(Debug, Clone)]
 pub struct NetworkHealthSummary {
-    pub overall_health_score: f64, // 0.0 to 1.0
+    pub overall_health_score: f64,    // 0.0 to 1.0
     pub connection_health_score: f64, // 0.0 to 1.0
-    pub coverage_score: f64, // 0.0 to 1.0
-    pub bandwidth_utilization: f64, // Percentage
+    pub coverage_score: f64,          // 0.0 to 1.0
+    pub bandwidth_utilization: f64,   // Percentage
     pub active_connections: u32,
     pub total_relays: u32,
     pub coverage_area_km2: f64,
@@ -454,38 +523,30 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use tokio::sync::RwLock;
-    
+
     #[tokio::test]
     async fn test_health_monitor_creation() {
         let stats = Arc::new(RwLock::new(MeshProtocolStats::default()));
         // Ticket #149: Use peer_registry instead of mesh_connections
         let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
-        
-        let monitor = HealthMonitor::new(
-            stats,
-            peer_registry,
-            long_range_relays,
-        );
-        
+
+        let monitor = HealthMonitor::new(stats, peer_registry, long_range_relays);
+
         assert!(!*monitor.monitoring_active.read().await);
     }
-    
+
     #[tokio::test]
     async fn test_health_summary() {
         let stats = Arc::new(RwLock::new(MeshProtocolStats::default()));
         // Ticket #149: Use peer_registry instead of mesh_connections
         let peer_registry = Arc::new(RwLock::new(crate::peer_registry::PeerRegistry::new()));
         let long_range_relays = Arc::new(RwLock::new(HashMap::new()));
-        
-        let monitor = HealthMonitor::new(
-            stats,
-            peer_registry,
-            long_range_relays,
-        );
-        
+
+        let monitor = HealthMonitor::new(stats, peer_registry, long_range_relays);
+
         let summary = monitor.get_health_summary().await;
-        
+
         // With no connections, health should be 0
         assert_eq!(summary.overall_health_score, 0.0);
         assert_eq!(summary.active_connections, 0);

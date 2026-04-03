@@ -6,7 +6,7 @@ use crate::messages::inter::rr_types::RRTypes;
 pub enum Scopes {
     Zone,
     Name,
-    Subtree
+    Subtree,
 }
 
 #[allow(dead_code)]
@@ -14,7 +14,7 @@ pub enum Scopes {
 pub enum Actions {
     Create,
     Update,
-    Delete
+    Delete,
 }
 
 #[allow(dead_code)]
@@ -23,5 +23,5 @@ pub struct Grant {
     //zone_id: ???
     scope: Scopes,
     actions: Actions,
-    rtypes: Option<Vec<RRTypes>>
+    rtypes: Option<Vec<RRTypes>>,
 }

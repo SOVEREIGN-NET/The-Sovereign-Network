@@ -1,17 +1,19 @@
 //! ZHTP Session Management System
-//! 
+//!
 //! Advanced session lifecycle management with multi-factor authentication,
 //! zero-knowledge session proofs, economic session incentives, distributed
 //! session storage, and Web4-specific session features including DAO governance
 //! and identity verification.
 
+#![allow(dead_code)]
+
 use crate::types::ZhtpRequest;
 use crate::zhtp::ZhtpResult;
 
+use anyhow::Result as AnyhowResult;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
-use anyhow::Result as AnyhowResult;
 use uuid::Uuid;
 
 /// Session authentication methods
@@ -410,10 +412,10 @@ pub enum ActivityType {
 pub trait AuthProvider: Send + Sync {
     /// Verify authentication credentials
     fn verify_credentials(&self, credentials: &AuthCredential) -> AnyhowResult<bool>;
-    
+
     /// Get authentication strength score
     fn get_strength_score(&self, credentials: &AuthCredential) -> f64;
-    
+
     /// Check if MFA is required
     fn requires_mfa(&self, user_id: &str) -> bool;
 }
@@ -430,37 +432,49 @@ impl ZhtpSessionManager {
             encryption_keys: HashMap::new(),
         }
     }
-    
+
     /// Create new session
-    pub async fn create_session(&mut self, request: SessionCreateRequest) -> ZhtpResult<SessionInfo> {
+    pub async fn create_session(
+        &mut self,
+        request: SessionCreateRequest,
+    ) -> ZhtpResult<SessionInfo> {
         // Validate user session limits
         self.validate_session_limits(&request.user_id)?;
-        
+
         // Authenticate user
         let auth_result = self.authenticate_user(&request.credentials).await?;
         if !auth_result.success {
-            self.log_activity(&request.user_id, ActivityType::AuthFailure,
-                            "Authentication failed".to_string(), &request.client_info.ip_address).await;
-            return Err(anyhow::anyhow!("Authentication failed: {}", auth_result.error_message));
+            self.log_activity(
+                &request.user_id,
+                ActivityType::AuthFailure,
+                "Authentication failed".to_string(),
+                &request.client_info.ip_address,
+            )
+            .await;
+            return Err(anyhow::anyhow!(
+                "Authentication failed: {}",
+                auth_result.error_message
+            ));
         }
-        
+
         // Calculate session timeout
-        let timeout = request.timeout
+        let timeout = request
+            .timeout
             .unwrap_or(self.config.default_timeout)
             .min(self.config.max_timeout);
-        
+
         // Calculate economic fees
         let economic_assessment = self.calculate_session_fees(&request, &auth_result).await?;
-        
+
         // Generate session ID
         let session_id = Uuid::new_v4().to_string();
-        
+
         // Create session info
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let session_info = SessionInfo {
             session_id: session_id.clone(),
             user_id: request.user_id.clone(),
@@ -468,12 +482,19 @@ impl ZhtpSessionManager {
             last_activity: current_time,
             expires_at: current_time + timeout,
             state: SessionState::Active,
-            auth_methods: request.credentials.iter().map(|c| c.method.clone()).collect(),
+            auth_methods: request
+                .credentials
+                .iter()
+                .map(|c| c.method.clone())
+                .collect(),
             security_level: auth_result.security_level.clone(),
             permissions: request.permissions,
             metadata: request.metadata,
             client_info: request.client_info.clone(),
-            geo_info: self.get_geo_info(&request.client_info.ip_address).await.ok(),
+            geo_info: self
+                .get_geo_info(&request.client_info.ip_address)
+                .await
+                .ok(),
             economic_info: SessionEconomicInfo {
                 total_fees_paid: economic_assessment.total_fees,
                 dao_fees_contributed: economic_assessment.dao_fees,
@@ -481,37 +502,55 @@ impl ZhtpSessionManager {
                 ..Default::default()
             },
             zk_proof_info: if self.config.enable_zk_proofs {
-                Some(self.generate_zk_proof(&session_id, &request.user_id).await?)
+                Some(
+                    self.generate_zk_proof(&session_id, &request.user_id)
+                        .await?,
+                )
             } else {
                 None
             },
             stats: SessionStats::default(),
         };
-        
+
         // Store session
-        self.sessions.insert(session_id.clone(), session_info.clone());
-        
+        self.sessions
+            .insert(session_id.clone(), session_info.clone());
+
         // Update user sessions mapping
-        self.user_sessions.entry(request.user_id.clone())
+        self.user_sessions
+            .entry(request.user_id.clone())
             .or_default()
             .push(session_id.clone());
-        
+
         // Log activity
-        self.log_activity(&request.user_id, ActivityType::Created,
-                         format!("Session created with ID: {}", session_id),
-                         &request.client_info.ip_address).await;
-        
+        self.log_activity(
+            &request.user_id,
+            ActivityType::Created,
+            format!("Session created with ID: {}", session_id),
+            &request.client_info.ip_address,
+        )
+        .await;
+
         // Distribute economic incentives
-        self.distribute_session_incentives(&session_id, &economic_assessment).await?;
-        
-        tracing::info!("Session created: {} for user {} (security level: {:?})",
-                      session_id, request.user_id, auth_result.security_level);
-        
+        self.distribute_session_incentives(&session_id, &economic_assessment)
+            .await?;
+
+        tracing::info!(
+            "Session created: {} for user {} (security level: {:?})",
+            session_id,
+            request.user_id,
+            auth_result.security_level
+        );
+
         Ok(session_info)
     }
-    
+
     /// Validate session
-    pub async fn validate_session(&mut self, session_id: &str, request: &ZhtpRequest) -> ZhtpResult<SessionValidation> {
+    pub async fn validate_session(
+        &mut self,
+        session_id: &str,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<SessionValidation> {
         let session = match self.sessions.get_mut(session_id) {
             Some(session) => session,
             None => {
@@ -525,12 +564,12 @@ impl ZhtpSessionManager {
                 });
             }
         };
-        
+
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let mut validation = SessionValidation {
             is_valid: true,
             session_info: Some(session.clone()),
@@ -539,84 +578,114 @@ impl ZhtpSessionManager {
             time_until_expiration: Some(session.expires_at.saturating_sub(current_time)),
             should_renew: false,
         };
-        
+
         // Check session state
         if session.state != SessionState::Active {
             validation.is_valid = false;
-            validation.errors.push(format!("Session state is {:?}", session.state));
+            validation
+                .errors
+                .push(format!("Session state is {:?}", session.state));
         }
-        
+
         // Check expiration
         if current_time >= session.expires_at {
             validation.is_valid = false;
             validation.errors.push("Session has expired".to_string());
             session.state = SessionState::Expired;
         }
-        
+
         // Check for renewal
         let time_until_expiration = session.expires_at.saturating_sub(current_time);
         if time_until_expiration <= self.config.renewal_threshold {
             validation.should_renew = true;
-            validation.warnings.push("Session should be renewed soon".to_string());
+            validation
+                .warnings
+                .push("Session should be renewed soon".to_string());
         }
-        
+
         // Check IP address consistency
-        if let Some(session_ip) = request.headers.get("X-Forwarded-For")
-            .or_else(|| request.headers.get("X-Real-IP")) {
+        if let Some(session_ip) = request
+            .headers
+            .get("X-Forwarded-For")
+            .or_else(|| request.headers.get("X-Real-IP"))
+        {
             if session_ip != session.client_info.ip_address {
-                validation.warnings.push("IP address has changed".to_string());
+                validation
+                    .warnings
+                    .push("IP address has changed".to_string());
             }
         }
-        
+
         // Update last activity
         if validation.is_valid {
             let user_id = session.user_id.clone();
             let ip_address = session.client_info.ip_address.clone();
             let uri = request.uri.clone();
-            
+
             session.last_activity = current_time;
             session.stats.total_requests += 1;
-            
+
             // Log activity (using captured values)
-            self.log_activity(&user_id, ActivityType::ApiRequest,
-                             format!("API request: {}", uri),
-                             &ip_address).await;
+            self.log_activity(
+                &user_id,
+                ActivityType::ApiRequest,
+                format!("API request: {}", uri),
+                &ip_address,
+            )
+            .await;
         }
-        
+
         Ok(validation)
     }
-    
+
     /// Renew session
-    pub async fn renew_session(&mut self, session_id: &str, extend_by: Option<u64>) -> ZhtpResult<SessionInfo> {
+    pub async fn renew_session(
+        &mut self,
+        session_id: &str,
+        extend_by: Option<u64>,
+    ) -> ZhtpResult<SessionInfo> {
         // Calculate renewal fees first (before getting mutable reference)
         let extension = extend_by.unwrap_or(self.config.default_timeout);
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         // Get session data needed for fee calculation
         let (user_id, session_clone, ip_address) = {
-            let session = self.sessions.get(session_id)
+            let session = self
+                .sessions
+                .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
-            
+
             // Check if session can be renewed
             if session.state != SessionState::Active && session.state != SessionState::Expired {
-                return Err(anyhow::anyhow!("Session cannot be renewed in state: {:?}", session.state));
+                return Err(anyhow::anyhow!(
+                    "Session cannot be renewed in state: {:?}",
+                    session.state
+                ));
             }
-            
-            (session.user_id.clone(), session.clone(), session.client_info.ip_address.clone())
+
+            (
+                session.user_id.clone(),
+                session.clone(),
+                session.client_info.ip_address.clone(),
+            )
         };
-        
-        let renewal_assessment = self.calculate_renewal_fees(&session_clone, extension).await?;
-        
+
+        let renewal_assessment = self
+            .calculate_renewal_fees(&session_clone, extension)
+            .await?;
+
         // Now get mutable reference and update
-        let session = self.sessions.get_mut(session_id)
+        let session = self
+            .sessions
+            .get_mut(session_id)
             .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
-        
+
         // Calculate new expiration
         let new_expiration = current_time + extension.min(self.config.max_timeout);
-        
+
         // Update session
         session.expires_at = new_expiration;
         session.last_activity = current_time;
@@ -624,98 +693,118 @@ impl ZhtpSessionManager {
         session.economic_info.total_fees_paid += renewal_assessment.total_fees;
         session.economic_info.dao_fees_contributed += renewal_assessment.dao_fees;
         session.economic_info.ubi_contributions += renewal_assessment.ubi_contribution;
-        
+
         // Clone session for return value before calling other methods
         let session_clone = session.clone();
-        
+
         // Log activity (using captured values instead of session references)
-        self.log_activity(&user_id, ActivityType::Renewed,
-                         format!("Session renewed until {}", new_expiration),
-                         &ip_address).await;
-        
+        self.log_activity(
+            &user_id,
+            ActivityType::Renewed,
+            format!("Session renewed until {}", new_expiration),
+            &ip_address,
+        )
+        .await;
+
         // Distribute renewal incentives
-        self.distribute_session_incentives(session_id, &renewal_assessment).await?;
-        
-        tracing::info!(" Session renewed: {} (new expiration: {})", session_id, new_expiration);
-        
+        self.distribute_session_incentives(session_id, &renewal_assessment)
+            .await?;
+
+        tracing::info!(
+            " Session renewed: {} (new expiration: {})",
+            session_id,
+            new_expiration
+        );
+
         Ok(session_clone)
     }
-    
+
     /// Terminate session
     pub async fn terminate_session(&mut self, session_id: &str, reason: &str) -> ZhtpResult<bool> {
         // Get needed data before mutable borrow
         let (user_id, ip_address) = match self.sessions.get(session_id) {
-            Some(session) => (session.user_id.clone(), session.client_info.ip_address.clone()),
+            Some(session) => (
+                session.user_id.clone(),
+                session.client_info.ip_address.clone(),
+            ),
             None => return Ok(false),
         };
-        
+
         // Now get mutable reference
         let session = self.sessions.get_mut(session_id).unwrap();
-        
+
         // Update session state
         session.state = SessionState::Terminated;
-        
+
         // Log activity using captured values
-        self.log_activity(&user_id, ActivityType::Terminated,
-                         format!("Session terminated: {}", reason),
-                         &ip_address).await;
-        
+        self.log_activity(
+            &user_id,
+            ActivityType::Terminated,
+            format!("Session terminated: {}", reason),
+            &ip_address,
+        )
+        .await;
+
         // Remove from user sessions mapping (using captured user_id)
         if let Some(user_sessions) = self.user_sessions.get_mut(&user_id) {
             user_sessions.retain(|id| id != session_id);
         }
-        
+
         // Remove session
         self.sessions.remove(session_id);
-        
+
         tracing::info!("Session terminated: {} (reason: {})", session_id, reason);
-        
+
         Ok(true)
     }
-    
+
     /// Get session info
     pub fn get_session(&self, session_id: &str) -> Option<&SessionInfo> {
         self.sessions.get(session_id)
     }
-    
+
     /// List user sessions
     pub fn list_user_sessions(&self, user_id: &str) -> Vec<&SessionInfo> {
-        self.user_sessions.get(user_id)
+        self.user_sessions
+            .get(user_id)
             .map(|session_ids| {
-                session_ids.iter()
+                session_ids
+                    .iter()
                     .filter_map(|id| self.sessions.get(id))
                     .collect()
             })
             .unwrap_or_default()
     }
-    
+
     /// Cleanup expired sessions
     pub async fn cleanup_expired_sessions(&mut self) -> ZhtpResult<u32> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
-        let expired_sessions: Vec<String> = self.sessions.iter()
+
+        let expired_sessions: Vec<String> = self
+            .sessions
+            .iter()
             .filter(|(_, session)| current_time >= session.expires_at)
             .map(|(id, _)| id.clone())
             .collect();
-        
+
         let count = expired_sessions.len() as u32;
-        
+
         for session_id in expired_sessions {
             self.terminate_session(&session_id, "Expired").await?;
         }
-        
+
         if count > 0 {
             tracing::info!(" Cleaned up {} expired sessions", count);
         }
-        
+
         Ok(count)
     }
-    
+
     // Helper methods implementation
-    
+
     async fn authenticate_user(&self, _credentials: &[AuthCredential]) -> ZhtpResult<AuthResult> {
         // Simplified authentication implementation
         Ok(AuthResult {
@@ -724,46 +813,72 @@ impl ZhtpSessionManager {
             error_message: "".to_string(),
         })
     }
-    
-    async fn calculate_session_fees(&self, _request: &SessionCreateRequest, auth_result: &AuthResult) -> ZhtpResult<EconomicAssessment> {
+
+    async fn calculate_session_fees(
+        &self,
+        _request: &SessionCreateRequest,
+        auth_result: &AuthResult,
+    ) -> ZhtpResult<EconomicAssessment> {
         let base_fee = self.config.economic_incentives.session_creation_fee;
-        let security_multiplier = self.config.economic_incentives.security_level_multipliers
+        let security_multiplier = self
+            .config
+            .economic_incentives
+            .security_level_multipliers
             .get(&auth_result.security_level)
             .unwrap_or(&1.0);
-        
+
         let total_fees = (base_fee as f64 * security_multiplier) as u64;
-        let dao_fees = (total_fees as f64 * self.config.economic_incentives.dao_session_fee_percentage) as u64;
-        let ubi_contribution = (total_fees as f64 * self.config.economic_incentives.ubi_session_percentage) as u64;
-        
+        let dao_fees =
+            (total_fees as f64 * self.config.economic_incentives.dao_session_fee_percentage) as u64;
+        let ubi_contribution =
+            (total_fees as f64 * self.config.economic_incentives.ubi_session_percentage) as u64;
+
         Ok(EconomicAssessment {
             total_fees,
             dao_fees,
             ubi_contribution,
         })
     }
-    
-    async fn calculate_renewal_fees(&self, session: &SessionInfo, extension: u64) -> ZhtpResult<EconomicAssessment> {
+
+    async fn calculate_renewal_fees(
+        &self,
+        session: &SessionInfo,
+        extension: u64,
+    ) -> ZhtpResult<EconomicAssessment> {
         let hours = (extension as f64 / 3600.0).ceil() as u64;
-        let base_fee = hours * self.config.economic_incentives.session_maintenance_fee_per_hour;
-        
-        let security_multiplier = self.config.economic_incentives.security_level_multipliers
+        let base_fee = hours
+            * self
+                .config
+                .economic_incentives
+                .session_maintenance_fee_per_hour;
+
+        let security_multiplier = self
+            .config
+            .economic_incentives
+            .security_level_multipliers
             .get(&session.security_level)
             .unwrap_or(&1.0);
-        
+
         let total_fees = (base_fee as f64 * security_multiplier) as u64;
-        let dao_fees = (total_fees as f64 * self.config.economic_incentives.dao_session_fee_percentage) as u64;
-        let ubi_contribution = (total_fees as f64 * self.config.economic_incentives.ubi_session_percentage) as u64;
-        
+        let dao_fees =
+            (total_fees as f64 * self.config.economic_incentives.dao_session_fee_percentage) as u64;
+        let ubi_contribution =
+            (total_fees as f64 * self.config.economic_incentives.ubi_session_percentage) as u64;
+
         Ok(EconomicAssessment {
             total_fees,
             dao_fees,
             ubi_contribution,
         })
     }
-    
+
     fn validate_session_limits(&self, user_id: &str) -> ZhtpResult<()> {
-        let current_sessions = self.user_sessions.get(user_id).map(|v| v.len()).unwrap_or(0);
-        
+        let current_sessions = self
+            .user_sessions
+            .get(user_id)
+            .map(|v| v.len())
+            .unwrap_or(0);
+
         if current_sessions >= self.config.max_concurrent_sessions as usize {
             return Err(anyhow::anyhow!(
                 "Maximum concurrent sessions ({}) exceeded for user {}",
@@ -771,10 +886,10 @@ impl ZhtpSessionManager {
                 user_id
             ));
         }
-        
+
         Ok(())
     }
-    
+
     async fn get_geo_info(&self, _ip_address: &str) -> AnyhowResult<GeoInfo> {
         // Simplified geo lookup implementation
         Ok(GeoInfo {
@@ -787,24 +902,34 @@ impl ZhtpSessionManager {
             timezone: Some("America/Los_Angeles".to_string()),
         })
     }
-    
-    async fn generate_zk_proof(&self, _session_id: &str, _user_id: &str) -> ZhtpResult<ZkProofInfo> {
+
+    async fn generate_zk_proof(
+        &self,
+        _session_id: &str,
+        _user_id: &str,
+    ) -> ZhtpResult<ZkProofInfo> {
         // Simplified ZK proof generation
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         Ok(ZkProofInfo {
             proof_type: "session_proof".to_string(),
-            commitment: vec![0; 32], // Simplified
+            commitment: vec![0; 32],       // Simplified
             verification_key: vec![0; 64], // Simplified
             generated_at: current_time,
             expires_at: current_time + 3600, // 1 hour
         })
     }
-    
-    async fn log_activity(&mut self, user_id: &str, activity_type: ActivityType, description: String, client_ip: &str) {
+
+    async fn log_activity(
+        &mut self,
+        user_id: &str,
+        activity_type: ActivityType,
+        description: String,
+        client_ip: &str,
+    ) {
         let activity = SessionActivity {
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -815,15 +940,24 @@ impl ZhtpSessionManager {
             client_ip: client_ip.to_string(),
             economic_impact: 0,
         };
-        
-        self.activity_tracker.entry(user_id.to_string())
+
+        self.activity_tracker
+            .entry(user_id.to_string())
             .or_default()
             .push(activity);
     }
-    
-    async fn distribute_session_incentives(&self, session_id: &str, assessment: &EconomicAssessment) -> ZhtpResult<()> {
+
+    async fn distribute_session_incentives(
+        &self,
+        session_id: &str,
+        assessment: &EconomicAssessment,
+    ) -> ZhtpResult<()> {
         // Simplified incentive distribution
-        tracing::debug!("Distributing session incentives for {}: {} wei", session_id, assessment.total_fees);
+        tracing::debug!(
+            "Distributing session incentives for {}: {} wei",
+            session_id,
+            assessment.total_fees
+        );
         Ok(())
     }
 }
@@ -858,10 +992,10 @@ impl Default for SessionConfig {
         security_multipliers.insert(SecurityLevel::High, 2.0);
         security_multipliers.insert(SecurityLevel::Maximum, 3.0);
         security_multipliers.insert(SecurityLevel::QuantumResistant, 5.0);
-        
+
         Self {
-            default_timeout: 3600, // 1 hour
-            max_timeout: 86400, // 24 hours
+            default_timeout: 3600,  // 1 hour
+            max_timeout: 86400,     // 24 hours
             renewal_threshold: 300, // 5 minutes
             max_concurrent_sessions: 10,
             enable_encryption: true,
@@ -870,11 +1004,11 @@ impl Default for SessionConfig {
             required_security_level: SecurityLevel::Standard,
             enable_economic_incentives: true,
             economic_incentives: SessionEconomicConfig {
-                session_creation_fee: 1000, // 1000 wei
+                session_creation_fee: 1000,            // 1000 wei
                 session_maintenance_fee_per_hour: 100, // 100 wei per hour
                 premium_session_multiplier: 2.0,
                 dao_session_fee_percentage: 0.02, // 2%
-                ubi_session_percentage: 0.8, // 80%
+                ubi_session_percentage: 0.8,      // 80%
                 security_level_multipliers: security_multipliers,
             },
             enable_analytics: true,
@@ -891,7 +1025,7 @@ mod tests {
     async fn test_session_creation() {
         let config = SessionConfig::default();
         let mut manager = ZhtpSessionManager::new(config);
-        
+
         let create_request = SessionCreateRequest {
             user_id: "test_user".to_string(),
             credentials: vec![AuthCredential {
@@ -911,7 +1045,7 @@ mod tests {
             },
             metadata: HashMap::new(),
         };
-        
+
         let session = manager.create_session(create_request).await.unwrap();
         assert!(!session.session_id.is_empty());
         assert_eq!(session.user_id, "test_user");
@@ -922,7 +1056,7 @@ mod tests {
     async fn test_session_validation() {
         let config = SessionConfig::default();
         let mut manager = ZhtpSessionManager::new(config);
-        
+
         // Create session first
         let create_request = SessionCreateRequest {
             user_id: "test_user".to_string(),
@@ -943,15 +1077,15 @@ mod tests {
             },
             metadata: HashMap::new(),
         };
-        
+
         let session = manager.create_session(create_request).await.unwrap();
-        
+
         // Validate session
         let headers = crate::types::ZhtpHeaders::new();
-        
+
         // Create a test economic model
         let economic_model = lib_economy::EconomicModel::new();
-        
+
         let request = crate::types::ZhtpRequest::new(
             crate::types::ZhtpMethod::Get,
             "/api/test".to_string(),
@@ -959,9 +1093,13 @@ mod tests {
             None, // requester
             lib_economy::Priority::Normal,
             &economic_model,
-        ).unwrap();
-        
-        let validation = manager.validate_session(&session.session_id, &request).await.unwrap();
+        )
+        .unwrap();
+
+        let validation = manager
+            .validate_session(&session.session_id, &request)
+            .await
+            .unwrap();
         assert!(validation.is_valid);
         assert!(validation.session_info.is_some());
     }

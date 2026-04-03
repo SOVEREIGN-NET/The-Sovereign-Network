@@ -9,39 +9,46 @@ pub struct UID {
 }
 
 impl From<[u8; ID_LENGTH]> for UID {
-
     fn from(bid: [u8; ID_LENGTH]) -> Self {
-        Self {
-            bid
-        }
+        Self { bid }
     }
 }
 
 impl TryFrom<&str> for UID {
-
     type Error = String;
 
     fn try_from(key: &str) -> Result<Self, Self::Error> {
         if key.len() != ID_LENGTH * 2 {
-            return Err(format!("Node ID is not correct length, given string is {} chars, required {} chars", key.len(), ID_LENGTH));
+            return Err(format!(
+                "Node ID is not correct length, given string is {} chars, required {} chars",
+                key.len(),
+                ID_LENGTH
+            ));
         }
 
         let mut bid = [0u8; ID_LENGTH];
         for (i, chunk) in key.as_bytes().chunks(2).enumerate() {
-            let byte = u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).map_err(|e| e.to_string())?;
+            let byte = u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16)
+                .map_err(|e| e.to_string())?;
             bid[i] = byte;
         }
 
-        Ok(Self {
-            bid
-        })
+        Ok(Self { bid })
     }
 }
 
 impl UID {
-
     pub fn distance(&self, k: &UID) -> usize {
-        ID_LENGTH*8-self.xor(k).first_set_bit_index()
+        ID_LENGTH * 8 - self.xor(k).first_set_bit_index()
+    }
+
+    /// XOR distance as raw bytes (for sorting by proximity).
+    pub fn xor_bytes(&self, k: &UID) -> [u8; ID_LENGTH] {
+        let mut result = [0u8; ID_LENGTH];
+        for i in 0..ID_LENGTH {
+            result[i] = self.bid[i] ^ k.bid[i];
+        }
+        result
     }
 
     fn xor(&self, k: &UID) -> UID {
@@ -117,14 +124,12 @@ impl UID {
 }
 
 impl PartialEq for UID {
-
     fn eq(&self, other: &Self) -> bool {
         self.bid == other.bid
     }
 }
 
 impl fmt::Display for UID {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut hex_string = String::with_capacity(ID_LENGTH * 2);
 

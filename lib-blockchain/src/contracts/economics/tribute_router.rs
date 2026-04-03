@@ -89,30 +89,28 @@ pub enum TributeRouterError {
 impl std::fmt::Display for TributeRouterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TributeRouterError::NotInitialized =>
-                write!(f, "Tribute Router not yet initialized"),
-            TributeRouterError::AlreadyInitialized =>
-                write!(f, "Tribute Router already initialized"),
-            TributeRouterError::Unauthorized =>
-                write!(f, "Unauthorized operation"),
-            TributeRouterError::ZeroProfit =>
-                write!(f, "Profit amount cannot be zero"),
-            TributeRouterError::InsufficientBalance =>
-                write!(f, "Insufficient balance for tribute"),
-            TributeRouterError::SignatureVerificationFailed =>
-                write!(f, "Signature verification failed"),
-            TributeRouterError::TributePaymentFailed =>
-                write!(f, "Tribute payment failed"),
-            TributeRouterError::InvalidProfitDeclaration =>
-                write!(f, "Invalid profit declaration"),
-            TributeRouterError::Overflow =>
-                write!(f, "Arithmetic overflow"),
-            TributeRouterError::NonprofitTreasuryNotSet =>
-                write!(f, "Nonprofit treasury address not set"),
-            TributeRouterError::ProfitNotFound =>
-                write!(f, "Profit declaration not found"),
-            TributeRouterError::CircumventionAttempt =>
-                write!(f, "Anti-circumvention rule violation"),
+            TributeRouterError::NotInitialized => write!(f, "Tribute Router not yet initialized"),
+            TributeRouterError::AlreadyInitialized => {
+                write!(f, "Tribute Router already initialized")
+            }
+            TributeRouterError::Unauthorized => write!(f, "Unauthorized operation"),
+            TributeRouterError::ZeroProfit => write!(f, "Profit amount cannot be zero"),
+            TributeRouterError::InsufficientBalance => {
+                write!(f, "Insufficient balance for tribute")
+            }
+            TributeRouterError::SignatureVerificationFailed => {
+                write!(f, "Signature verification failed")
+            }
+            TributeRouterError::TributePaymentFailed => write!(f, "Tribute payment failed"),
+            TributeRouterError::InvalidProfitDeclaration => write!(f, "Invalid profit declaration"),
+            TributeRouterError::Overflow => write!(f, "Arithmetic overflow"),
+            TributeRouterError::NonprofitTreasuryNotSet => {
+                write!(f, "Nonprofit treasury address not set")
+            }
+            TributeRouterError::ProfitNotFound => write!(f, "Profit declaration not found"),
+            TributeRouterError::CircumventionAttempt => {
+                write!(f, "Anti-circumvention rule violation")
+            }
         }
     }
 }
@@ -296,13 +294,15 @@ impl TributeRouter {
         let default_rule = AntiCircumventionRule {
             rule_id: self.next_rule_id,
             max_payout_before_tribute_percentage: 10, // Max 10% before tribute
-            min_declaration_interval: 86400, // 1 day minimum between declarations
-            max_declarations_per_period: 10, // Max 10 per week
+            min_declaration_interval: 86400,          // 1 day minimum between declarations
+            max_declarations_per_period: 10,          // Max 10 per week
             is_active: true,
         };
 
         self.rules.insert(self.next_rule_id, default_rule);
-        self.next_rule_id = self.next_rule_id.checked_add(1)
+        self.next_rule_id = self
+            .next_rule_id
+            .checked_add(1)
             .ok_or(TributeRouterError::Overflow)?;
 
         Ok(())
@@ -358,7 +358,8 @@ impl TributeRouter {
 
         // Calculate tribute (TR1: 20% of profit)
         let tribute = (profit_amount as u128 * TRIBUTE_RATE_PERCENTAGE as u128 / 100) as u64;
-        let remaining = profit_amount.checked_sub(tribute)
+        let remaining = profit_amount
+            .checked_sub(tribute)
             .ok_or(TributeRouterError::Overflow)?;
 
         // Create settlement record
@@ -377,15 +378,20 @@ impl TributeRouter {
         };
 
         self.settlements.insert(settlement_id, settlement);
-        self.next_settlement_id = self.next_settlement_id.checked_add(1)
+        self.next_settlement_id = self
+            .next_settlement_id
+            .checked_add(1)
             .ok_or(TributeRouterError::Overflow)?;
 
         // Update totals (TR4: log transaction)
-        self.total_profit_declared = self.total_profit_declared.checked_add(profit_amount)
+        self.total_profit_declared = self
+            .total_profit_declared
+            .checked_add(profit_amount)
             .ok_or(TributeRouterError::Overflow)?;
 
         // Record in history for anti-circumvention checks
-        self.declaration_history.entry(source)
+        self.declaration_history
+            .entry(source)
             .or_insert_with(Vec::new)
             .push((self.current_timestamp, profit_amount));
 
@@ -415,15 +421,14 @@ impl TributeRouter {
     /// - `NotInitialized` if router is not initialized
     /// - `ProfitNotFound` if settlement doesn't exist
     /// - `InvalidProfitDeclaration` if already settled
-    pub fn settle_tribute(
-        &mut self,
-        settlement_id: u64,
-    ) -> Result<u64, TributeRouterError> {
+    pub fn settle_tribute(&mut self, settlement_id: u64) -> Result<u64, TributeRouterError> {
         if !self.initialized {
             return Err(TributeRouterError::NotInitialized);
         }
 
-        let settlement = self.settlements.get_mut(&settlement_id)
+        let settlement = self
+            .settlements
+            .get_mut(&settlement_id)
             .ok_or(TributeRouterError::ProfitNotFound)?;
 
         if settlement.status != SettlementStatus::Declared {
@@ -437,7 +442,9 @@ impl TributeRouter {
         settlement.settled_at = Some(self.current_timestamp);
 
         // Update total tribute collected (TR1: log the tribute)
-        self.total_tribute_collected = self.total_tribute_collected.checked_add(tribute)
+        self.total_tribute_collected = self
+            .total_tribute_collected
+            .checked_add(tribute)
             .ok_or(TributeRouterError::Overflow)?;
 
         Ok(tribute)
@@ -450,14 +457,17 @@ impl TributeRouter {
     /// Check anti-circumvention rules for profit declaration
     fn check_anti_circumvention_rules(&self, source: &[u8; 32]) -> Result<(), TributeRouterError> {
         // Get the active rule
-        let rule = self.rules.values()
+        let rule = self
+            .rules
+            .values()
             .find(|r| r.is_active)
             .ok_or(TributeRouterError::CircumventionAttempt)?;
 
         // Check declaration frequency
         if let Some(history) = self.declaration_history.get(source) {
             let cutoff_time = self.current_timestamp.saturating_sub(7 * 86400); // Last 7 days
-            let recent_declarations = history.iter()
+            let recent_declarations = history
+                .iter()
                 .filter(|(timestamp, _)| *timestamp > cutoff_time)
                 .count();
 
@@ -498,12 +508,15 @@ impl TributeRouter {
 
     /// Get remaining profit to be distributed for a settlement
     pub fn get_remaining_amount(&self, settlement_id: u64) -> Option<u64> {
-        self.settlements.get(&settlement_id).map(|s| s.remaining_amount)
+        self.settlements
+            .get(&settlement_id)
+            .map(|s| s.remaining_amount)
     }
 
     /// Check if tribute is settled for a profit declaration
     pub fn is_tribute_settled(&self, settlement_id: u64) -> bool {
-        self.settlements.get(&settlement_id)
+        self.settlements
+            .get(&settlement_id)
             .map(|s| s.status == SettlementStatus::Settled)
             .unwrap_or(false)
     }
@@ -569,7 +582,9 @@ impl TributeRouter {
         };
 
         self.rules.insert(rule_id, new_rule);
-        self.next_rule_id = self.next_rule_id.checked_add(1)
+        self.next_rule_id = self
+            .next_rule_id
+            .checked_add(1)
             .ok_or(TributeRouterError::Overflow)?;
 
         Ok(rule_id)
@@ -598,7 +613,10 @@ impl TributeRouter {
 
     /// Get the number of times an entity has declared
     pub fn declaration_count(&self, entity: [u8; 32]) -> usize {
-        self.declaration_history.get(&entity).map(|v| v.len()).unwrap_or(0)
+        self.declaration_history
+            .get(&entity)
+            .map(|v| v.len())
+            .unwrap_or(0)
     }
 
     /// Check if a declaration can be made based on anti-circumvention rules
@@ -610,7 +628,8 @@ impl TributeRouter {
 
         // Check max per period rule
         if let Some(declarations) = self.declaration_history.get(&entity) {
-            let period_declarations = declarations.iter()
+            let period_declarations = declarations
+                .iter()
                 .filter(|(ts, _)| {
                     self.current_timestamp.saturating_sub(*ts) < rule.min_declaration_interval
                 })

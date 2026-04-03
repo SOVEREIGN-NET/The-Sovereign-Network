@@ -1,12 +1,12 @@
 //! ZK Integration Module  
 //! Re-exports from lib-proofs for blockchain use
 
-pub use lib_proofs::{
-    ZkTransactionProof,
-    transaction::verification::verify_transaction,
-    types::{ZkProof, VerificationResult},
-};
 use anyhow::Result;
+pub use lib_proofs::{
+    transaction::verification::verify_transaction,
+    types::{VerificationResult, ZkProof},
+    ZkTransactionProof,
+};
 
 // Helper functions for backwards compatibility
 pub fn verify_transaction_proof(proof: &ZkTransactionProof) -> Result<bool, String> {
@@ -15,18 +15,33 @@ pub fn verify_transaction_proof(proof: &ZkTransactionProof) -> Result<bool, Stri
 
 pub fn is_valid_proof_structure(proof: &ZkTransactionProof) -> bool {
     println!("DEBUG: Checking proof structure...");
-    println!("DEBUG: amount_proof.is_empty() = {}", proof.amount_proof.is_empty());
-    println!("DEBUG: balance_proof.is_empty() = {}", proof.balance_proof.is_empty());
-    println!("DEBUG: nullifier_proof.is_empty() = {}", proof.nullifier_proof.is_empty());
-    
-    println!("DEBUG: amount_proof.proof_system = '{}'", proof.amount_proof.proof_system);
-    println!("DEBUG: amount_proof.plonky2_proof.is_some() = {}", proof.amount_proof.plonky2_proof.is_some());
-    
+    println!(
+        "DEBUG: amount_proof.is_empty() = {}",
+        proof.amount_proof.is_empty()
+    );
+    println!(
+        "DEBUG: balance_proof.is_empty() = {}",
+        proof.balance_proof.is_empty()
+    );
+    println!(
+        "DEBUG: nullifier_proof.is_empty() = {}",
+        proof.nullifier_proof.is_empty()
+    );
+
+    println!(
+        "DEBUG: amount_proof.proof_system = '{}'",
+        proof.amount_proof.proof_system
+    );
+    println!(
+        "DEBUG: amount_proof.plonky2_proof.is_some() = {}",
+        proof.amount_proof.plonky2_proof.is_some()
+    );
+
     // Check if the proof has the required fields
-    let valid = !proof.amount_proof.is_empty() && 
-               !proof.balance_proof.is_empty() &&
-               !proof.nullifier_proof.is_empty();
-    
+    let valid = !proof.amount_proof.is_empty()
+        && !proof.balance_proof.is_empty()
+        && !proof.nullifier_proof.is_empty();
+
     println!("DEBUG: Overall proof structure valid = {}", valid);
     valid
 }
@@ -44,10 +59,10 @@ pub fn generate_proofs_transaction_proof(
     // For now, return a mock proof for testing
     let mock_proof = ZkProof::new(
         "plonky2".to_string(),
-        vec![1, 2, 3, 4], // proof_data
+        vec![1, 2, 3, 4],              // proof_data
         vec![amount as u8, fee as u8], // public_inputs
-        vec![5, 6, 7, 8], // verification_key
-        None, // plonky2_proof
+        vec![5, 6, 7, 8],              // verification_key
+        None,                          // plonky2_proof
     );
 
     Ok(ZkTransactionProof::new(
@@ -75,10 +90,10 @@ pub fn generate_identity_proof_for_transaction(
     // Mock identity proof for testing
     Ok(ZkProof::new(
         "plonky2".to_string(),
-        vec![9, 10, 11, 12], // proof_data
+        vec![9, 10, 11, 12],                            // proof_data
         vec![transaction_hash[0], transaction_hash[1]], // public_inputs
-        vec![13, 14, 15, 16], // verification_key
-        None, // plonky2_proof
+        vec![13, 14, 15, 16],                           // verification_key
+        None,                                           // plonky2_proof
     ))
 }
 
@@ -86,10 +101,10 @@ pub fn generate_simple_transaction_proof(amount: u64, hash: [u8; 32]) -> Result<
     // Simple transaction proof for testing
     Ok(ZkProof::new(
         "plonky2".to_string(),
-        vec![17, 18, 19, 20], // proof_data
+        vec![17, 18, 19, 20],        // proof_data
         vec![amount as u8, hash[0]], // public_inputs
-        vec![21, 22, 23, 24], // verification_key
-        None, // plonky2_proof
+        vec![21, 22, 23, 24],        // verification_key
+        None,                        // plonky2_proof
     ))
 }
 

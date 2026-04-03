@@ -9,43 +9,43 @@
 
 #[cfg(test)]
 mod sov_token_tests {
-    /// SOV Token Constants
-    const SOV_TOTAL_SUPPLY: u64 = 1_000_000_000_000; // 1 trillion
-    const SOV_DECIMALS: u8 = 8;
+    use lib_types::{SOV_DECIMALS, SOV_TOTAL_SUPPLY_TOKENS};
 
     #[test]
     fn test_sov_total_supply_is_1_trillion() {
-        assert_eq!(SOV_TOTAL_SUPPLY, 1_000_000_000_000);
-        assert_eq!(SOV_TOTAL_SUPPLY, 1_000_000_000_000, "SOV supply must be exactly 1 trillion");
+        assert_eq!(SOV_TOTAL_SUPPLY_TOKENS, 1_000_000_000_000);
+        assert_eq!(
+            SOV_TOTAL_SUPPLY_TOKENS, 1_000_000_000_000,
+            "SOV supply must be exactly 1 trillion"
+        );
     }
 
     #[test]
     fn test_sov_supply_immutable_after_init() {
         // Verify constant is compile-time checked
-        const _: () = assert!(SOV_TOTAL_SUPPLY == 1_000_000_000_000);
+        const _: () = assert!(SOV_TOTAL_SUPPLY_TOKENS == 1_000_000_000_000);
     }
 
     #[test]
     fn test_sov_no_minting_after_init() {
         // This test verifies the invariant that no additional minting is allowed
         // after initial distribution
-        let initial_supply = SOV_TOTAL_SUPPLY;
+        let initial_supply = SOV_TOTAL_SUPPLY_TOKENS;
 
         // After init, attempting to mint should fail
         // (tested in integration tests with actual contract)
-        assert_eq!(initial_supply, SOV_TOTAL_SUPPLY);
+        assert_eq!(initial_supply, SOV_TOTAL_SUPPLY_TOKENS);
     }
 
     #[test]
     fn test_sov_decimals_correct() {
-        assert_eq!(SOV_DECIMALS, 8);
+        assert_eq!(SOV_DECIMALS, 18);
     }
 
     #[test]
     fn test_sov_supply_fits_in_u64() {
-        // Ensure supply doesn't overflow u64
-        assert!(SOV_TOTAL_SUPPLY < u64::MAX);
-        assert!(SOV_TOTAL_SUPPLY > 0);
+        assert!(SOV_TOTAL_SUPPLY_TOKENS < u64::MAX as u128);
+        assert!(SOV_TOTAL_SUPPLY_TOKENS > 0);
     }
 
     #[test]
@@ -69,12 +69,13 @@ mod sov_token_tests {
 
 #[cfg(test)]
 mod cbe_token_tests {
-    /// CBE Token Constants
-    const CBE_TOTAL_SUPPLY: u64 = 100_000_000_000; // 100 billion
-    const CBE_COMPENSATION_POOL: u64 = 40_000_000_000; // 40%
-    const CBE_OPERATIONAL_TREASURY: u64 = 30_000_000_000; // 30%
-    const CBE_PERFORMANCE_INCENTIVES: u64 = 20_000_000_000; // 20%
-    const CBE_STRATEGIC_RESERVES: u64 = 10_000_000_000; // 10%
+    use lib_types::{CBE_TOTAL_SUPPLY_TOKENS, TOKEN_SCALE_18};
+
+    const CBE_TOTAL_SUPPLY: u128 = CBE_TOTAL_SUPPLY_TOKENS;
+    const CBE_COMPENSATION_POOL: u128 = 40_000_000_000;
+    const CBE_OPERATIONAL_TREASURY: u128 = 30_000_000_000;
+    const CBE_PERFORMANCE_INCENTIVES: u128 = 20_000_000_000;
+    const CBE_STRATEGIC_RESERVES: u128 = 10_000_000_000;
 
     #[test]
     fn test_cbe_total_supply_is_100_billion() {
@@ -125,6 +126,14 @@ mod cbe_token_tests {
         // After initial distribution, no additional minting allowed
         let initial_supply = CBE_TOTAL_SUPPLY;
         assert_eq!(initial_supply, 100_000_000_000);
+    }
+
+    #[test]
+    fn test_cbe_atomic_supply_uses_18_decimals() {
+        assert_eq!(
+            CBE_TOTAL_SUPPLY_TOKENS * TOKEN_SCALE_18,
+            lib_types::CBE_MAX_SUPPLY
+        );
     }
 
     #[test]
@@ -331,13 +340,7 @@ mod fee_router_tests {
     #[test]
     fn test_five_sector_daos() {
         // Verify 5 Sector DAOs
-        let daos = vec![
-            "Healthcare",
-            "Education",
-            "Energy",
-            "Housing",
-            "Food",
-        ];
+        let daos = vec!["Healthcare", "Education", "Energy", "Housing", "Food"];
         assert_eq!(daos.len(), 5);
         assert_eq!(daos.len() as u8, NUM_SECTOR_DAOS);
     }
@@ -362,8 +365,10 @@ mod fee_router_tests {
 
 #[cfg(test)]
 mod week1_financial_validation {
-    const SOV_TOTAL_SUPPLY: u64 = 1_000_000_000_000;
-    const CBE_TOTAL_SUPPLY: u64 = 100_000_000_000;
+    use lib_types::{CBE_TOTAL_SUPPLY_TOKENS, SOV_TOTAL_SUPPLY_TOKENS};
+
+    const SOV_TOTAL_SUPPLY: u128 = SOV_TOTAL_SUPPLY_TOKENS;
+    const CBE_TOTAL_SUPPLY: u128 = CBE_TOTAL_SUPPLY_TOKENS;
     const FEE_RATE_BASIS_POINTS: u16 = 100;
     const UBI_ALLOCATION_PERCENT: u8 = 45;
     const DAO_ALLOCATION_PERCENT: u8 = 30;
@@ -392,11 +397,17 @@ mod week1_financial_validation {
 
         // Per citizen calculation
         let per_citizen_ubi = ubi_total / citizens;
-        assert_eq!(per_citizen_ubi, 450, "Year 1 UBI should be $0.45 per citizen"); // $0.45 = 450 smallest units
+        assert_eq!(
+            per_citizen_ubi, 450,
+            "Year 1 UBI should be $0.45 per citizen"
+        ); // $0.45 = 450 smallest units
 
         // Per DAO calculation
         let per_dao = dao_total / 5;
-        assert_eq!(per_dao, 600_000, "Each DAO should receive $600/month in Year 1");
+        assert_eq!(
+            per_dao, 600_000,
+            "Each DAO should receive $600/month in Year 1"
+        );
     }
 
     #[test]
@@ -414,18 +425,27 @@ mod week1_financial_validation {
 
         // Verify exact projections
         assert_eq!(fees, 5_000_000_000, "Year 3 fees should be $5M");
-        assert_eq!(ubi_total, 2_250_000_000, "Year 3 UBI total should be $2.25M");
+        assert_eq!(
+            ubi_total, 2_250_000_000,
+            "Year 3 UBI total should be $2.25M"
+        );
         assert_eq!(dao_total, 1_500_000_000, "Year 3 DAO total should be $1.5M");
         assert_eq!(emergency, 750_000_000, "Year 3 Emergency should be $750K");
         assert_eq!(dev, 500_000_000, "Year 3 Dev should be $500K");
 
         // Per citizen calculation
         let per_citizen_ubi = ubi_total / citizens;
-        assert_eq!(per_citizen_ubi, 4_500, "Year 3 UBI should be $4.50 per citizen"); // $4.50
+        assert_eq!(
+            per_citizen_ubi, 4_500,
+            "Year 3 UBI should be $4.50 per citizen"
+        ); // $4.50
 
         // Per DAO calculation
         let per_dao = dao_total / 5;
-        assert_eq!(per_dao, 300_000_000, "Each DAO should receive $300K/month in Year 3");
+        assert_eq!(
+            per_dao, 300_000_000,
+            "Each DAO should receive $300K/month in Year 3"
+        );
     }
 
     #[test]
@@ -443,18 +463,27 @@ mod week1_financial_validation {
 
         // Verify exact projections
         assert_eq!(fees, 50_000_000_000, "Year 5 fees should be $50M");
-        assert_eq!(ubi_total, 22_500_000_000, "Year 5 UBI total should be $22.5M");
+        assert_eq!(
+            ubi_total, 22_500_000_000,
+            "Year 5 UBI total should be $22.5M"
+        );
         assert_eq!(dao_total, 15_000_000_000, "Year 5 DAO total should be $15M");
         assert_eq!(emergency, 7_500_000_000, "Year 5 Emergency should be $7.5M");
         assert_eq!(dev, 5_000_000_000, "Year 5 Dev should be $5M");
 
         // Per citizen calculation
         let per_citizen_ubi = ubi_total / citizens;
-        assert_eq!(per_citizen_ubi, 22_500, "Year 5 UBI should be $22.50 per citizen"); // $22.50
+        assert_eq!(
+            per_citizen_ubi, 22_500,
+            "Year 5 UBI should be $22.50 per citizen"
+        ); // $22.50
 
         // Per DAO calculation
         let per_dao = dao_total / 5;
-        assert_eq!(per_dao, 3_000_000_000, "Each DAO should receive $3M/month in Year 5");
+        assert_eq!(
+            per_dao, 3_000_000_000,
+            "Each DAO should receive $3M/month in Year 5"
+        );
     }
 
     #[test]

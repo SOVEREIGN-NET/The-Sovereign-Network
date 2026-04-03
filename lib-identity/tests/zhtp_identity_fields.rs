@@ -1,13 +1,14 @@
 // P1-5: Add new identity fields to ZhtpIdentity struct
 // Acceptance Criteria Tests
 
+use lib_crypto::{PrivateKey, PublicKey};
 use lib_identity::identity::ZhtpIdentity;
-use lib_identity::types::{IdentityType, NodeId, IdentityId, AccessLevel};
-use lib_identity::wallets::WalletManager;
-use lib_crypto::{PublicKey, PrivateKey};
+use lib_identity::types::{IdentityType, NodeId};
 use lib_proofs::ZeroKnowledgeProof;
-use blake3;
 use std::collections::HashMap;
+
+mod common;
+use common::test_helpers::create_test_identity;
 
 // AC1: New fields added to ZhtpIdentity
 // Given: ZhtpIdentity struct in lib_identity.rs
@@ -34,13 +35,22 @@ fn test_zhtp_identity_has_required_fields() {
 
     // Secrets should be derived (non-zero) from private key
     assert_eq!(identity.zk_identity_secret.len(), 32);
-    assert_ne!(identity.zk_identity_secret, [0u8; 32], "zk_identity_secret should not be zero");
+    assert_ne!(
+        identity.zk_identity_secret, [0u8; 32],
+        "zk_identity_secret should not be zero"
+    );
 
     assert_eq!(identity.zk_credential_hash.len(), 32);
-    assert_ne!(identity.zk_credential_hash, [0u8; 32], "zk_credential_hash should not be zero");
+    assert_ne!(
+        identity.zk_credential_hash, [0u8; 32],
+        "zk_credential_hash should not be zero"
+    );
 
     assert_eq!(identity.wallet_master_seed.len(), 64);
-    assert_ne!(identity.wallet_master_seed, [0u8; 64], "wallet_master_seed should not be zero");
+    assert_ne!(
+        identity.wallet_master_seed, [0u8; 64],
+        "wallet_master_seed should not be zero"
+    );
 }
 
 // AC2: Correct types from lib-crypto
@@ -64,19 +74,22 @@ fn test_zhtp_identity_uses_lib_crypto_types() {
 fn test_private_key_not_serialized() {
     use serde_json;
 
-    let mut identity = create_test_identity();
+    let identity = create_test_identity();
     // PrivateKey doesn't have Default, skip setting it for test
 
-    let json = serde_json::to_string(&identity)
-        .expect("Serialization should succeed");
+    let json = serde_json::to_string(&identity).expect("Serialization should succeed");
 
     // Verify private_key is not in JSON
-    assert!(!json.contains("private_key"),
-            "private_key should be skipped in serialization");
+    assert!(
+        !json.contains("private_key"),
+        "private_key should be skipped in serialization"
+    );
 
     // Verify did IS in JSON (sanity check) - check for the prefix since DID is derived
-    assert!(json.contains("did:zhtp:"),
-            "did should be present in serialization");
+    assert!(
+        json.contains("did:zhtp:"),
+        "did should be present in serialization"
+    );
 }
 
 // AC4: Type corrections for existing fields
@@ -102,10 +115,8 @@ fn test_field_type_corrections() {
 // Then: it maps device names (String) to NodeId
 #[test]
 fn test_device_node_ids_mapping() {
-    let laptop_id = NodeId::from_did_device("did:zhtp:test123", "laptop")
-        .expect("Valid NodeId");
-    let phone_id = NodeId::from_did_device("did:zhtp:test123", "phone")
-        .expect("Valid NodeId");
+    let laptop_id = NodeId::from_did_device("did:zhtp:test123", "laptop").expect("Valid NodeId");
+    let phone_id = NodeId::from_did_device("did:zhtp:test123", "phone").expect("Valid NodeId");
 
     let mut device_node_ids = HashMap::new();
     device_node_ids.insert("laptop".to_string(), laptop_id);
@@ -187,58 +198,20 @@ fn test_citizenship_fields() {
     assert_eq!(identity.jurisdiction, None);
 }
 
-// Helper function to create test identity using proper new() constructor
-// This ensures all cryptographic fields are derived correctly per spec
-fn create_test_identity() -> ZhtpIdentity {
-    // Use realistic Dilithium2 key sizes for testing
-    // Dilithium2: PK = 1312 bytes, SK = 2528 bytes
-    // Using deterministic values for repeatability in tests
-    let public_key = PublicKey {
-        dilithium_pk: vec![42u8; 1312],  // Real Dilithium2 public key size
-        kyber_pk: vec![],
-        key_id: [42u8; 32],
-    };
-    let private_key = PrivateKey {
-        dilithium_sk: vec![1u8; 2528],   // Real Dilithium2 secret key size
-        kyber_sk: vec![],
-        master_seed: vec![],
-    };
-
-    let ownership_proof = ZeroKnowledgeProof {
-        proof_system: "test".to_string(),
-        proof_data: vec![],
-        public_inputs: vec![],
-        verification_key: vec![],
-        plonky2_proof: None,
-        proof: vec![],
-    };
-
-    // Use new() to get proper derivation of all fields
-    let mut identity = ZhtpIdentity::new(
-        IdentityType::Human,
-        public_key,
-        private_key,
-        "laptop".to_string(),
-        Some(30u64),
-        Some("US".to_string()),
-        true,  // Verified citizen for testing
-        ownership_proof,
-    ).expect("Failed to create test identity");
-
-    // Override reputation for testing (in real usage, this would be managed separately)
-    identity.reputation = 1000u64;
-
-    identity
-}
-
 // SECURITY TEST: Validate secrets are properly derived
 #[test]
 fn test_secrets_validation() {
     let identity = create_test_identity();
 
     // Secrets should be properly derived (non-zero)
-    assert!(identity.is_secrets_derived(), "Secrets should be derived after new()");
-    assert!(identity.validate_secrets_derived().is_ok(), "Validation should pass for derived secrets");
+    assert!(
+        identity.is_secrets_derived(),
+        "Secrets should be derived after new()"
+    );
+    assert!(
+        identity.validate_secrets_derived().is_ok(),
+        "Validation should pass for derived secrets"
+    );
 }
 
 // SECURITY TEST: Direct deserialization is blocked, must use from_serialized
@@ -254,14 +227,22 @@ fn test_deserialization_requires_rederive() {
 
     // BLOCKED: Direct deserialization is now forbidden
     let deserialization_result: Result<ZhtpIdentity, _> = serde_json::from_str(&json);
-    assert!(deserialization_result.is_err(),
-        "Direct deserialization should be forbidden");
-    assert!(deserialization_result.unwrap_err().to_string().contains("forbidden"),
-        "Error message should indicate deserialization is forbidden");
+    assert!(
+        deserialization_result.is_err(),
+        "Direct deserialization should be forbidden"
+    );
+    assert!(
+        deserialization_result
+            .unwrap_err()
+            .to_string()
+            .contains("forbidden"),
+        "Error message should indicate deserialization is forbidden"
+    );
 
     // SAFE PATH: Using from_serialized helper (enforces re-derivation)
     let private_key = PrivateKey {
-        dilithium_sk: vec![1u8; 2528],
+        dilithium_sk: vec![1u8; 2560],
+        dilithium_pk: vec![2u8; 1312], // Test placeholder
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -270,20 +251,29 @@ fn test_deserialization_requires_rederive() {
         .expect("Safe deserialization should succeed");
 
     // Secrets should be properly derived via new()
-    assert!(deserialized.is_secrets_derived(),
-        "Secrets should be derived immediately with from_serialized()");
-    assert!(deserialized.validate_secrets_derived().is_ok(),
-        "Validation should pass for from_serialized()");
+    assert!(
+        deserialized.is_secrets_derived(),
+        "Secrets should be derived immediately with from_serialized()"
+    );
+    assert!(
+        deserialized.validate_secrets_derived().is_ok(),
+        "Validation should pass for from_serialized()"
+    );
 
     // Verify derivation matches original
-    assert_eq!(deserialized.did, identity.did,
-        "DID should match original");
-    assert_eq!(deserialized.zk_identity_secret, identity.zk_identity_secret,
-        "ZK secret should match original");
-    assert_eq!(deserialized.zk_credential_hash, identity.zk_credential_hash,
-        "Credential hash should match original");
-    assert_eq!(deserialized.wallet_master_seed, identity.wallet_master_seed,
-        "Wallet seed should match original");
+    assert_eq!(deserialized.did, identity.did, "DID should match original");
+    assert_eq!(
+        deserialized.zk_identity_secret, identity.zk_identity_secret,
+        "ZK secret should match original"
+    );
+    assert_eq!(
+        deserialized.zk_credential_hash, identity.zk_credential_hash,
+        "Credential hash should match original"
+    );
+    assert_eq!(
+        deserialized.wallet_master_seed, identity.wallet_master_seed,
+        "Wallet seed should match original"
+    );
 }
 
 // GOLDEN VECTOR TEST: Validate deterministic derivation with expected outputs
@@ -294,12 +284,13 @@ fn test_deterministic_derivation_golden_vector() {
 
     // Test vector 1: All zeros (simple case for validation)
     let public_key_zeros = PublicKey {
-        dilithium_pk: vec![0u8; 1312],  // Real Dilithium2 PK size
+        dilithium_pk: vec![0u8; 1312], // Real Dilithium2 PK size
         kyber_pk: vec![],
         key_id: [0u8; 32],
     };
     let private_key_zeros = PrivateKey {
-        dilithium_sk: vec![0u8; 2528],  // Real Dilithium2 SK size
+        dilithium_sk: vec![0u8; 2560], // Real Dilithium2 SK size
+        dilithium_pk: vec![0u8; 1312], // Matches public_key_zeros.dilithium_pk
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -359,31 +350,49 @@ fn test_deterministic_derivation_golden_vector() {
         Some("US".to_string()),
         true,
         ownership_proof.clone(),
-    ).expect("Failed to create identity with zero keys");
+    )
+    .expect("Failed to create identity with zero keys");
 
     // Validate DID derivation
-    assert_eq!(identity_zeros.did, expected_did_zeros,
-        "DID should match hex(key_id) for zero keys");
-    assert_eq!(identity_zeros.did.len(), 73, "DID should be 73 chars (did:zhtp: + 64 hex)");
+    assert_eq!(
+        identity_zeros.did, expected_did_zeros,
+        "DID should match hex(key_id) for zero keys"
+    );
+    assert_eq!(
+        identity_zeros.did.len(),
+        73,
+        "DID should be 73 chars (did:zhtp: + 64 hex)"
+    );
 
     // Validate ZK secret derivation
-    assert_eq!(identity_zeros.zk_identity_secret, *expected_zk_secret_zeros.as_bytes(),
-        "ZK secret should match expected hash for zero keys");
-    assert_eq!(identity_zeros.zk_credential_hash, *expected_zk_cred_hash_zeros.as_bytes(),
-        "ZK credential hash should match expected hash for zero keys");
-    assert_eq!(identity_zeros.wallet_master_seed, expected_wallet_seed_zeros,
-        "Wallet seed should match expected XOF output for zero keys");
-    assert_eq!(identity_zeros.dao_member_id, expected_dao_member_id_zeros,
-        "DAO member ID should match expected hash for zero keys");
+    assert_eq!(
+        identity_zeros.zk_identity_secret,
+        *expected_zk_secret_zeros.as_bytes(),
+        "ZK secret should match expected hash for zero keys"
+    );
+    assert_eq!(
+        identity_zeros.zk_credential_hash,
+        *expected_zk_cred_hash_zeros.as_bytes(),
+        "ZK credential hash should match expected hash for zero keys"
+    );
+    assert_eq!(
+        identity_zeros.wallet_master_seed, expected_wallet_seed_zeros,
+        "Wallet seed should match expected XOF output for zero keys"
+    );
+    assert_eq!(
+        identity_zeros.dao_member_id, expected_dao_member_id_zeros,
+        "DAO member ID should match expected hash for zero keys"
+    );
 
     // Test vector 2: Non-zero pattern (validates different inputs produce different outputs)
     let public_key_pattern = PublicKey {
-        dilithium_pk: vec![0xAB; 1312],  // Pattern: 0xAB repeated
+        dilithium_pk: vec![0xAB; 1312], // Pattern: 0xAB repeated
         kyber_pk: vec![],
         key_id: [0xCD; 32],
     };
     let private_key_pattern = PrivateKey {
-        dilithium_sk: vec![0xEF; 2528],  // Pattern: 0xEF repeated
+        dilithium_sk: vec![0xEF; 2560], // Pattern: 0xEF repeated
+        dilithium_pk: vec![0xAB; 1312], // Matches public_key_pattern.dilithium_pk
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -397,13 +406,18 @@ fn test_deterministic_derivation_golden_vector() {
         Some("US".to_string()),
         true,
         ownership_proof.clone(),
-    ).expect("Failed to create identity with pattern keys");
+    )
+    .expect("Failed to create identity with pattern keys");
 
     // Different inputs should produce different outputs
-    assert_ne!(identity_pattern.did, identity_zeros.did,
-        "Different public keys should produce different DIDs");
-    assert_ne!(identity_pattern.zk_identity_secret, identity_zeros.zk_identity_secret,
-        "Different private keys should produce different ZK secrets");
+    assert_ne!(
+        identity_pattern.did, identity_zeros.did,
+        "Different public keys should produce different DIDs"
+    );
+    assert_ne!(
+        identity_pattern.zk_identity_secret, identity_zeros.zk_identity_secret,
+        "Different private keys should produce different ZK secrets"
+    );
 
     // Test vector 3: Determinism check - same inputs produce same outputs
     let identity_pattern_2 = ZhtpIdentity::new(
@@ -415,26 +429,43 @@ fn test_deterministic_derivation_golden_vector() {
         Some("US".to_string()),
         true,
         ownership_proof.clone(),
-    ).expect("Failed to create second identity with pattern keys");
+    )
+    .expect("Failed to create second identity with pattern keys");
 
-    assert_eq!(identity_pattern.did, identity_pattern_2.did,
-        "Same inputs should produce same DID (deterministic)");
-    assert_eq!(identity_pattern.zk_identity_secret, identity_pattern_2.zk_identity_secret,
-        "Same inputs should produce same ZK secret (deterministic)");
-    assert_eq!(identity_pattern.zk_credential_hash, identity_pattern_2.zk_credential_hash,
-        "Same inputs should produce same credential hash (deterministic)");
-    assert_eq!(identity_pattern.wallet_master_seed, identity_pattern_2.wallet_master_seed,
-        "Same inputs should produce same wallet seed (deterministic)");
-    assert_eq!(identity_pattern.dao_member_id, identity_pattern_2.dao_member_id,
-        "Same inputs should produce same DAO member ID (deterministic)");
+    assert_eq!(
+        identity_pattern.did, identity_pattern_2.did,
+        "Same inputs should produce same DID (deterministic)"
+    );
+    assert_eq!(
+        identity_pattern.zk_identity_secret, identity_pattern_2.zk_identity_secret,
+        "Same inputs should produce same ZK secret (deterministic)"
+    );
+    assert_eq!(
+        identity_pattern.zk_credential_hash, identity_pattern_2.zk_credential_hash,
+        "Same inputs should produce same credential hash (deterministic)"
+    );
+    assert_eq!(
+        identity_pattern.wallet_master_seed, identity_pattern_2.wallet_master_seed,
+        "Same inputs should produce same wallet seed (deterministic)"
+    );
+    assert_eq!(
+        identity_pattern.dao_member_id, identity_pattern_2.dao_member_id,
+        "Same inputs should produce same DAO member ID (deterministic)"
+    );
 
     // Validate all secrets are non-zero for non-zero input
-    assert_ne!(identity_pattern.zk_identity_secret, [0u8; 32],
-        "ZK secret should be non-zero for non-zero input");
-    assert_ne!(identity_pattern.zk_credential_hash, [0u8; 32],
-        "Credential hash should be non-zero for non-zero input");
-    assert_ne!(identity_pattern.wallet_master_seed, [0u8; 64],
-        "Wallet seed should be non-zero for non-zero input");
+    assert_ne!(
+        identity_pattern.zk_identity_secret, [0u8; 32],
+        "ZK secret should be non-zero for non-zero input"
+    );
+    assert_ne!(
+        identity_pattern.zk_credential_hash, [0u8; 32],
+        "Credential hash should be non-zero for non-zero input"
+    );
+    assert_ne!(
+        identity_pattern.wallet_master_seed, [0u8; 64],
+        "Wallet seed should be non-zero for non-zero input"
+    );
 }
 
 // TEST: Voting power follows citizenship rules
@@ -446,7 +477,8 @@ fn test_dao_voting_power_rules() {
         key_id: [42u8; 32],
     };
     let private_key = PrivateKey {
-        dilithium_sk: vec![1u8; 2528],
+        dilithium_sk: vec![1u8; 2560],
+        dilithium_pk: vec![42u8; 1312], // Matches public_key.dilithium_pk
         kyber_sk: vec![],
         master_seed: vec![],
     };
@@ -467,10 +499,14 @@ fn test_dao_voting_power_rules() {
         "device1".to_string(),
         Some(30),
         Some("US".to_string()),
-        true,  // verified
+        true, // verified
         ownership_proof.clone(),
-    ).expect("Failed to create verified citizen");
-    assert_eq!(verified_citizen.dao_voting_power, 10, "Verified citizen should have voting power 10");
+    )
+    .expect("Failed to create verified citizen");
+    assert_eq!(
+        verified_citizen.dao_voting_power, 10,
+        "Verified citizen should have voting power 10"
+    );
 
     // Unverified human: voting power = 1
     let unverified_human = ZhtpIdentity::new(
@@ -480,10 +516,14 @@ fn test_dao_voting_power_rules() {
         "device2".to_string(),
         Some(30),
         Some("US".to_string()),
-        false,  // not verified
+        false, // not verified
         ownership_proof.clone(),
-    ).expect("Failed to create unverified human");
-    assert_eq!(unverified_human.dao_voting_power, 1, "Unverified human should have voting power 1");
+    )
+    .expect("Failed to create unverified human");
+    assert_eq!(
+        unverified_human.dao_voting_power, 1,
+        "Unverified human should have voting power 1"
+    );
 
     // Device type: voting power = 0
     let device = ZhtpIdentity::new(
@@ -495,6 +535,10 @@ fn test_dao_voting_power_rules() {
         None,
         false,
         ownership_proof.clone(),
-    ).expect("Failed to create device");
-    assert_eq!(device.dao_voting_power, 0, "Device should have voting power 0");
+    )
+    .expect("Failed to create device");
+    assert_eq!(
+        device.dao_voting_power, 0,
+        "Device should have voting power 0"
+    );
 }

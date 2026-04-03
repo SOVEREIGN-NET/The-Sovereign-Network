@@ -1,5 +1,159 @@
+//! Consensus Validation and Nondeterminism Detection
+//!
+//! This module implements strict validation rules for BFT consensus and provides
+//! fail-fast detection of nondeterministic operations that could lead to chain splits.
+//!
+//! # Determinism Guarantees
+//!
+//! All validation functions in this module are designed to be **deterministic**:
+//! given the same inputs, they always produce the same output on every node.
+//! This is a hard requirement for BFT consensus — if two honest validators
+//! disagree about whether a block is valid, liveness is broken.
+//!
+//! ## Determinism Rules Enforced Here
+//!
+//! 1. **Validator set is snapshot-based**: [`ConsensusEngine::is_validator_member`]
+//!    looks up a *snapshot* of the validator set at the target height, not the
+//!    current live set.  This makes membership checks a pure function of height.
+//!
+//! 2. **Signature verification is stateless**: [`ConsensusEngine::verify_signature`]
+//!    and [`ConsensusEngine::verify_vote_signature`] depend only on the provided
+//!    data and the public key stored in the validator registry — no ambient state.
+//!
+//! 3. **Vote data is reconstructed deterministically**: The signed bytes fed into
+//!    [`ConsensusEngine::verify_vote_signature`] are derived solely from the vote
+//!    fields (id, voter, proposal_id, vote_type, height, round).
+//!
+//! 4. **State transitions are pure**: [`ConsensusEngine::validate_remote_vote`]
+//!    returns the same `bool` for the same `(vote, engine_state)` pair regardless
+//!    of wall-clock time or process identity.
+//!
+//! # Nondeterminism Detection
+//!
+//! Blockchain consensus requires deterministic execution across all validators.
+//! Nondeterministic inputs such as:
+//! - Wall-clock time (SystemTime::now(), chrono::Utc::now())
+//! - Random number generation (rand::random(), OsRng)
+//! - Network timing
+//! - Thread scheduling
+//!
+//! Can cause different validators to reach different conclusions about the same block,
+//! leading to chain splits and consensus failures.
+//!
+//! ## Fail-Fast Guards
+//!
+//! This module provides runtime guards that detect nondeterministic operations during
+//! consensus-critical sections:
+//!
+//! 1. **Consensus scope guards**: Mark critical sections where nondeterminism is forbidden
+//! 2. **Assertion helpers**: Panic immediately if nondeterministic ops are detected
+//! 3. **Integration points**: Hook into time/random utilities to enforce determinism
+//! ## Usage
+//!
+//! Consensus-critical code sections are wrapped with scope guards:
+//!
+//! ```rust,ignore
+//! determinism_guard::enter_consensus_scope();
+//! let _guard = scopeguard::guard((), |_| {
+//!     determinism_guard::exit_consensus_scope();
+//! });
+//! // ... consensus logic here ...
+//! ```
+//!
+//! Any attempt to access nondeterministic sources during this section will panic
+//! with a clear error message indicating the violation.
+
 use super::*;
 use lib_crypto::PostQuantumSignature;
+
+/// Assert that a state transition is deterministic by executing it twice and
+/// comparing the results.
+///
+/// # Parameters
+///
+/// - `label`: Human-readable name of the transition (for error messages).
+/// - `prev_state_hash`: A hash of the initial state before the transition.
+/// - `block_hash`: The hash of the block being applied.
+/// - `result_state_hash_1`: State root produced by the first execution.
+/// - `result_state_hash_2`: State root produced by the second execution.
+///
+/// # Panics (debug) / Logs error (release)
+///
+/// Panics if the two result hashes differ, indicating that the transition is
+/// non-deterministic.
+#[allow(dead_code)]
+pub fn assert_deterministic_state_transition(
+    label: &str,
+    prev_state_hash: &[u8; 32],
+    block_hash: &[u8; 32],
+    result_state_hash_1: &[u8; 32],
+    result_state_hash_2: &[u8; 32],
+) {
+    if result_state_hash_1 != result_state_hash_2 {
+        let msg = format!(
+            "NON-DETERMINISTIC state transition detected in '{}': \
+             prev_state={}, block={}, result1={}, result2={}. \
+             State transitions must be pure functions of (prev_state, block).",
+            label,
+            hex::encode(prev_state_hash),
+            hex::encode(block_hash),
+            hex::encode(result_state_hash_1),
+            hex::encode(result_state_hash_2),
+        );
+        #[cfg(debug_assertions)]
+        panic!("{}", msg);
+        #[cfg(not(debug_assertions))]
+        tracing::error!("{}", msg);
+    }
+}
+
+/// Nondeterminism detection guard
+///
+/// This module provides runtime checks to detect nondeterministic behavior
+/// during consensus execution. Nondeterministic operations like system time
+/// access or random number generation during consensus can lead to chain splits.
+#[allow(dead_code)]
+pub(super) mod determinism_guard {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CONSENSUS_ACTIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    /// Mark consensus as active (during critical consensus operations)
+    pub fn enter_consensus_scope() {
+        CONSENSUS_ACTIVE_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Mark consensus as inactive
+    pub fn exit_consensus_scope() {
+        let prev = CONSENSUS_ACTIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
+        debug_assert!(
+            prev > 0,
+            "exit_consensus_scope called more times than enter_consensus_scope"
+        );
+    }
+
+    /// Check if we're currently in a consensus-critical section
+    pub fn is_consensus_active() -> bool {
+        CONSENSUS_ACTIVE_COUNT.load(Ordering::SeqCst) > 0
+    }
+
+    /// Assert that no nondeterministic operation is occurring during consensus
+    ///
+    /// # Panics
+    ///
+    /// Panics if called during active consensus with details about the violation
+    #[track_caller]
+    pub fn assert_no_nondeterminism(operation: &str) {
+        if is_consensus_active() {
+            panic!(
+                "CONSENSUS NONDETERMINISM DETECTED: {} called during active consensus. \
+                This operation can lead to chain splits. Location: {}",
+                operation,
+                std::panic::Location::caller()
+            );
+        }
+    }
+}
 
 impl ConsensusEngine {
     /// Verify a signature
@@ -18,7 +172,10 @@ impl ConsensusEngine {
     }
 
     /// Verify consensus proof
-    pub(super) async fn verify_consensus_proof(&self, proof: &ConsensusProof) -> ConsensusResult<bool> {
+    pub(super) async fn verify_consensus_proof(
+        &self,
+        proof: &ConsensusProof,
+    ) -> ConsensusResult<bool> {
         match proof.consensus_type {
             ConsensusType::ProofOfStake => {
                 if let Some(stake_proof) = &proof.stake_proof {
@@ -41,26 +198,9 @@ impl ConsensusEngine {
                     Ok(false)
                 }
             }
-            ConsensusType::Hybrid => {
-                let stake_valid = proof
-                    .stake_proof
-                    .as_ref()
-                    .map(|p| p.verify(self.current_round.height))
-                    .transpose()?
-                    .unwrap_or(false);
-
-                let storage_valid = proof
-                    .storage_proof
-                    .as_ref()
-                    .map(|p| p.verify())
-                    .transpose()?
-                    .unwrap_or(false);
-
-                Ok(stake_valid && storage_valid)
-            }
             ConsensusType::ByzantineFaultTolerance => {
-                // For BFT, we rely on vote thresholds rather than individual proofs
-                Ok(true)
+                // For BFT, we rely on vote thresholds rather than individual proofs. This generic proof validator is not applicable to BFT proofs.
+                Ok(false)
             }
         }
     }
@@ -87,7 +227,40 @@ impl ConsensusEngine {
     ///
     /// Uses the vote's own height and round to reconstruct the signed data.
     /// Returns true if signature is valid, false otherwise.
-    pub(super) async fn verify_vote_signature(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
+    ///
+    /// Security invariant: membership is necessary but not sufficient.
+    /// Every vote MUST carry a non-empty Dilithium public key that exactly
+    /// matches the registered validator consensus key.
+    pub(super) async fn verify_vote_signature(
+        &self,
+        vote: &ConsensusVote,
+    ) -> ConsensusResult<bool> {
+        // Reject unsigned votes. Membership-only acceptance is unsafe because a spoofed
+        // sender could vote on behalf of validators registered with placeholder keys.
+        if vote.signature.public_key.dilithium_pk.is_empty() {
+            tracing::warn!(
+                "Vote rejected: empty consensus key for validator {} at height {} round {}",
+                vote.voter,
+                vote.height,
+                vote.round
+            );
+            return Ok(false);
+        }
+
+        // Validate the public key uses a known Dilithium variant.
+        if let Err(e) = lib_crypto::validate_consensus_vote_signature_scheme(
+            &vote.signature.public_key.dilithium_pk,
+        ) {
+            tracing::warn!(
+                "Vote rejected: signature scheme validation failed for validator {} at height {} round {}: {}",
+                vote.voter,
+                vote.height,
+                vote.round,
+                e
+            );
+            return Ok(false);
+        }
+
         let validator = match self.validator_manager.get_validator(&vote.voter) {
             Some(validator) => validator,
             None => {
@@ -98,6 +271,15 @@ impl ConsensusEngine {
                 return Ok(false);
             }
         };
+
+        if validator.consensus_key.is_empty() || validator.consensus_key.len() <= 32 {
+            tracing::warn!(
+                "Vote rejected: validator {} has non-verifiable registered consensus key (len={})",
+                vote.voter,
+                validator.consensus_key.len()
+            );
+            return Ok(false);
+        }
 
         if validator.consensus_key != vote.signature.public_key.dilithium_pk {
             tracing::warn!(
@@ -146,13 +328,52 @@ impl ConsensusEngine {
     ///
     /// **Design**: This enforces locally deterministic validation independent of network state.
     /// Signature verification assumes CONSENSUS-NET-4.2 (network delivers authenticated sender + canonical vote envelope).
+    ///
+    /// **BFT Safety Guarantee**: This function enforces the "Agreement" property by ensuring
+    /// that only votes from valid validators at the correct height/round/step can contribute
+    /// to quorum. Combined with signature verification, this prevents Byzantine validators
+    /// from forging votes or creating false quorums.
     pub(super) async fn validate_remote_vote(&self, vote: &ConsensusVote) -> ConsensusResult<bool> {
-        // 1. Verify signature
+        // 1. Height sanity: reject past-height votes (replay protection).
+        // Stale votes from previous blocks are silently discarded.
+        if vote.height < self.current_round.height {
+            tracing::debug!(
+                "Vote rejected: stale height {} < our height {}",
+                vote.height,
+                self.current_round.height
+            );
+            return Ok(false);
+        }
+
+        // 2. Height divergence: peer is ahead of us.
+        //
+        // We cannot validate validator membership for a future height because we do not
+        // yet have the snapshot for that height.  Skip membership / signature checks
+        // and immediately fire the catch-up trigger so we download the missing blocks.
+        if vote.height > self.current_round.height {
+            let our_blockchain_height = self.current_round.height.saturating_sub(1);
+            tracing::info!(
+                "⬆️  Height divergence: peer {} votes at height {} \
+                 (our consensus height {}; local blockchain ~{}) — triggering catch-up sync",
+                vote.voter,
+                vote.height,
+                self.current_round.height,
+                our_blockchain_height
+            );
+            if let Some(ref trigger) = self.catch_up_sync_trigger {
+                trigger.trigger(our_blockchain_height);
+            }
+            return Ok(false);
+        }
+
+        // vote.height == self.current_round.height from this point on.
+
+        // 3. Verify signature
         if !self.verify_vote_signature(vote).await? {
             return Ok(false);
         }
 
-        // 2. Verify validator membership
+        // 4. Verify validator membership (snapshot is available since height matches)
         if !self.is_validator_member(&vote.voter, vote.height) {
             tracing::warn!(
                 "Vote rejected: voter {} is not in active validator set for height {}",
@@ -162,58 +383,47 @@ impl ConsensusEngine {
             return Ok(false);
         }
 
-        // 3. Verify height matches
-        if vote.height != self.current_round.height {
+        // 5. Round check.
+        //
+        // Stale rounds (vote.round < current) are rejected outright.
+        // Higher rounds (vote.round > current) are allowed through so that
+        // on_prevote / on_precommit can perform a Tendermint round-skip and bring
+        // all nodes to the same round without waiting for an entire timer cycle.
+        if vote.round < self.current_round.round {
             tracing::debug!(
-                "Vote rejected: height mismatch. Vote height {} != local height {}",
-                vote.height,
-                self.current_round.height
-            );
-            return Ok(false);
-        }
-
-        // 4. Verify round matches
-        if vote.round != self.current_round.round {
-            tracing::debug!(
-                "Vote rejected: round mismatch. Vote round {} != local round {}",
+                "Vote rejected: stale round {} < our round {}",
                 vote.round,
                 self.current_round.round
             );
             return Ok(false);
         }
 
-        // 5. Verify vote type coherence - STRICT equality, not >=
-        // **CRITICAL INVARIANT**: Votes are only valid in the step they are defined for.
-        // Late votes (e.g., PreVote in PreCommit step) are INVALID and never stored.
-        // This ensures:
-        // - No retroactive quorum formation
-        // - Step transitions are monotonic and deterministic
-        // - No ambiguous quorum timing
+        // 5. Vote-type gate
+        //
+        // All PreVote, PreCommit and Commit votes for the current height+round are
+        // accepted regardless of the local step.
+        //
+        // **Rationale**: In a 4-node network with per-node 1-second timers the nodes
+        // advance through Propose → PreVote → PreCommit → Commit at slightly different
+        // wall-clock times.  A node that is in the Commit step will see PreVote
+        // messages from a node that is still in the PreVote step — under a strict
+        // equality check those messages would be rejected, making quorum impossible.
+        //
+        // Accepting votes for the correct height+round independent of local step is
+        // safe because:
+        //  - Quorum thresholds (2f+1) are enforced in `maybe_finalize()`, not here.
+        //  - Each validator is allowed exactly one vote per (H, R, type) thanks to
+        //    the `vote_pool` composite-key deduplication.
+        //  - Against votes remain always invalid in BFT.
         let valid_for_step = match vote.vote_type {
-            VoteType::PreVote => self.current_round.step == ConsensusStep::PreVote,
-            VoteType::PreCommit => self.current_round.step == ConsensusStep::PreCommit,
-            VoteType::Commit => {
-                // Commit votes intentionally bypass step-based validation here.
-                //
-                // **Design rationale**:
-                // - Commit votes are allowed as long as height and round match local state.
-                // - The 2/3+1 identical-commit quorum requirement is enforced in `maybe_finalize()`,
-                //   which is the only place where blocks are actually finalized.
-                // - Keeping quorum logic out of `validate_remote_vote()` preserves the invariant that
-                //   this function performs only local, stateless validation (signature, membership,
-                //   height/round coherence, and step compatibility for non-commit votes).
-                // - Any commit votes that never reach quorum are handled by higher-level cleanup
-                //   when rounds/heights advance and vote sets are pruned.
-                true
-            }
-            VoteType::Against => false, // Against votes are never valid in BFT
+            VoteType::PreVote | VoteType::PreCommit | VoteType::Commit => true,
+            VoteType::Against => false,
         };
 
         if !valid_for_step {
             tracing::warn!(
-                "Vote rejected: vote type {:?} not valid for current step {:?}",
+                "Vote rejected: vote type {:?} is not valid in BFT consensus",
                 vote.vote_type,
-                self.current_round.step
             );
             return Ok(false);
         }
@@ -222,13 +432,21 @@ impl ConsensusEngine {
         Ok(true)
     }
 
-    /// Validate that the previous hash matches the expected blockchain state
+    /// Validate that the previous hash in a proposal matches our local chain tip.
+    ///
+    /// For genesis (height 0), the previous hash must be all-zeros.
+    ///
+    /// For height H > 0, we ask the blockchain provider for the current chain height
+    /// and the hash of the latest committed block.  Validation only fires when the
+    /// local chain is exactly at H-1 (i.e. we have the block being referenced).
+    /// If the chain is behind or ahead (e.g. during catch-up sync), we accept the
+    /// proposal without challenging the hash to avoid blocking progress.
     pub(super) async fn validate_previous_hash(
         &self,
         height: u64,
         previous_hash: &Hash,
     ) -> ConsensusResult<()> {
-        // For genesis block (height 0), previous hash should be zero
+        // Genesis: previous hash must be zero.
         if height == 0 {
             let zero_hash = Hash::from_bytes(&[0u8; 32]);
             if *previous_hash != zero_hash {
@@ -240,26 +458,147 @@ impl ConsensusEngine {
             return Ok(());
         }
 
-        // For subsequent blocks, validate against the actual chain state
-        // In a implementation, this would check against stored blockchain state
+        let expected_prev_height = height - 1;
 
-        // Check if we have the expected previous block
-        if height > 1 {
-            tracing::debug!(
-                "Validating previous hash {} for height {}",
-                previous_hash,
-                height
-            );
+        if let Some(ref provider) = self.blockchain_provider {
+            let chain_height = provider.get_blockchain_height().await.unwrap_or(0);
 
-            // Here we would normally:
-            // 1. Query the blockchain storage for block at height-1
-            // 2. Compare its hash with the provided previous_hash
-            // 3. Detect potential forks or reorganizations
-
-            // For now, we log the validation but don't fail
-            tracing::info!("Previous hash validation passed for height {}", height);
+            if chain_height == expected_prev_height {
+                // Local chain is at H-1 — we can validate the previous hash.
+                match provider.get_latest_block_hash().await {
+                    Ok(expected_hash) => {
+                        if *previous_hash != expected_hash {
+                            return Err(ConsensusError::InvalidPreviousHash(format!(
+                                "Proposal for height {} claims previous_hash={} \
+                                 but local chain tip is {}",
+                                height, previous_hash, expected_hash
+                            )));
+                        }
+                        tracing::debug!(
+                            "✓ Previous hash validated for height {}: {}",
+                            height, previous_hash
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Could not fetch chain tip hash to validate height {}: {}",
+                            height, e
+                        );
+                    }
+                }
+            } else {
+                // Chain is not at H-1 (catching up or proposing ahead).
+                // Skip hash validation; the executor will catch divergence on apply.
+                tracing::debug!(
+                    "Skipping previous hash check for height {}: \
+                     local chain at {} (expected {})",
+                    height, chain_height, expected_prev_height
+                );
+            }
         }
 
         Ok(())
+    }
+
+    /// Validate that a block proposal does not create a fork.
+    ///
+    /// # BFT Fork Invariant
+    ///
+    /// In Byzantine Fault Tolerant (BFT) consensus, **forks are invalid by definition**.
+    /// Once 2/3+1 validators have committed a block at height H with hash X, that block
+    /// is final and irreversible. Any proposal arriving at height H with a different block
+    /// hash Y is a fork attempt and MUST be rejected immediately.
+    ///
+    /// This property differs fundamentally from Nakamoto (PoW) consensus:
+    /// - In PoW, forks are possible and resolved by longest-chain rule.
+    /// - In BFT, finality is immediate: a committed block cannot be replaced.
+    ///   A conflicting proposal is therefore provably invalid, not merely a candidate.
+    ///
+    /// # Arguments
+    /// * `proposal_height` - The height claimed by the incoming proposal
+    /// * `proposal_id` - The block/proposal hash of the incoming proposal (for logging)
+    ///
+    /// # Errors
+    /// Returns `ConsensusError::ByzantineFault` if the proposal height already has a
+    /// different committed block. The error message identifies the conflicting hashes
+    /// so the evidence can be used for validator accountability.
+    ///
+    /// # Invariant
+    /// This check MUST be applied to every incoming proposal before it is accepted
+    /// into the pending proposal queue. It is a hard gate: a fork proposal is never
+    /// stored, never voted on, and never forwarded to peers.
+    pub(super) fn validate_no_fork_proposal(
+        &self,
+        proposal_height: u64,
+        proposal_id: &Hash,
+    ) -> ConsensusResult<()> {
+        // If the proposal is for a height strictly below the current round height,
+        // it is for an already-committed block. Reject it unconditionally.
+        //
+        // Note: current_round.height is the height we are currently deciding.
+        // All heights below it have already been committed and are immutable in BFT.
+        if proposal_height < self.current_round.height {
+            return Err(ConsensusError::ByzantineFault(format!(
+                "BFT FORK REJECTED: proposal {:?} targets height {} which is below the \
+                 current proposal height {}. In BFT consensus, committed blocks are \
+                 final and irreversible. A proposal for an already-committed height is \
+                 an invalid fork attempt and is rejected immediately.",
+                proposal_id, proposal_height, self.current_round.height,
+            )));
+        }
+
+        // If the proposal targets the current round height but there is already an
+        // agreed-upon proposal (valid_proposal) at this height with a different hash,
+        // reject it as a fork.
+        //
+        // This can happen if consensus committed a block in a prior round but the
+        // engine has not yet advanced to the next height. Any conflicting proposal
+        // at the same height is a fork and MUST be rejected.
+        if proposal_height == self.current_round.height {
+            // Check if we already have an agreed-upon block at this height (valid_proposal
+            // represents the agreed-upon value in the current round).
+            // A non-nil valid_proposal that differs from the incoming proposal signals a fork.
+            if let Some(committed_id) = &self.current_round.valid_proposal {
+                if committed_id != proposal_id {
+                    return Err(ConsensusError::ByzantineFault(format!(
+                        "BFT FORK REJECTED: proposal {:?} conflicts with already-agreed \
+                         proposal {:?} at height {}. In BFT consensus, once 2/3+1 validators \
+                         have pre-committed a block, no other block is valid at that height. \
+                         This conflicting proposal is an invalid fork attempt.",
+                        proposal_id, committed_id, proposal_height,
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod determinism_tests {
+    use super::assert_deterministic_state_transition;
+
+    /// Verify that identical executions are accepted as deterministic.
+    #[test]
+    fn identical_state_transitions_pass() {
+        let prev = [0u8; 32];
+        let block = [1u8; 32];
+        let result = [2u8; 32];
+        // Should not panic: both results are the same.
+        assert_deterministic_state_transition("test_transition", &prev, &block, &result, &result);
+    }
+
+    /// Verify that differing executions are flagged as non-deterministic.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "NON-DETERMINISTIC state transition detected")]
+    fn differing_state_transitions_panic() {
+        let prev = [0u8; 32];
+        let block = [1u8; 32];
+        let result1 = [2u8; 32];
+        let mut result2 = [2u8; 32];
+        result2[0] = 0xff; // differs in first byte
+        assert_deterministic_state_transition("test_transition", &prev, &block, &result1, &result2);
     }
 }

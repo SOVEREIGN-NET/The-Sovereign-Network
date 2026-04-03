@@ -6,15 +6,18 @@
 //! - Payload is pre-serialized to avoid double serialization overhead
 //! - MessageType discriminator enables type identification without deserializing
 
-use serde::{Deserialize, Serialize};
-use anyhow::{Result, anyhow};
-use lib_crypto::PublicKey;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::types::connection_details::ConnectionDetails;
 use crate::types::geographic::GeographicLocation;
 use crate::types::mesh_capability::{MeshCapability, SharedResources};
-use crate::types::connection_details::ConnectionDetails;
-use lib_protocols::types::{ZhtpRequest as ProtocolZhtpRequest, ZhtpResponse as ProtocolZhtpResponse};
+use anyhow::{anyhow, Result};
+use lib_crypto::PublicKey;
+use lib_protocols::types::IdentityEnvelope;
 use lib_protocols::types::{ZhtpMethod, ZhtpStatus};
+use lib_protocols::types::{
+    ZhtpRequest as ProtocolZhtpRequest, ZhtpResponse as ProtocolZhtpResponse,
+};
+use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Default TTL for mesh messages (32 hops)
 pub const DEFAULT_TTL: u8 = 32;
@@ -60,6 +63,12 @@ pub enum MessageType {
     /// Opaque consensus message (Proposal, Vote, Commit, RoundChange, or Heartbeat)
     /// lib-network treats this as opaque bytes and never interprets message kind
     ConsensusMessage = 29,
+    /// Identity envelope (per-device fan-out)
+    IdentityEnvelope = 30,
+    /// Identity delivery acknowledgement (store-and-forward)
+    IdentityDeliveryAck = 31,
+    /// Oracle price attestation gossip payload.
+    OracleAttestation = 32,
 }
 
 /// Message envelope for multi-hop routing
@@ -90,7 +99,7 @@ pub struct MeshMessageEnvelope {
     /// For ZHTP messages: contains (headers, body) tuple
     /// For other messages: contains full message
     pub payload: Vec<u8>,
-    
+
     // ZHTP-specific fields for single-pass serialization (only populated for ZhtpRequest/Response)
     /// ZHTP request method (for routing decisions without deserializing)
     #[serde(default)]
@@ -102,7 +111,6 @@ pub struct MeshMessageEnvelope {
     #[serde(default)]
     pub zhtp_status: Option<ZhtpStatus>,
 }
-
 
 impl MeshMessageEnvelope {
     /// Create a new message envelope from pre-serialized payload
@@ -151,14 +159,20 @@ impl MeshMessageEnvelope {
         match &message {
             ZhtpMeshMessage::ZhtpRequest(request) => {
                 Self::from_zhtp_request(message_id, origin, destination, request.clone())
-            },
+            }
             ZhtpMeshMessage::ZhtpResponse(response) => {
                 Self::from_zhtp_response(message_id, origin, destination, response.clone())
-            },
+            }
             _ => {
                 // For non-ZHTP messages, use standard serialization
                 let (message_type, payload) = message.serialize_with_type()?;
-                Ok(Self::new(message_id, origin, destination, message_type, payload))
+                Ok(Self::new(
+                    message_id,
+                    origin,
+                    destination,
+                    message_type,
+                    payload,
+                ))
             }
         }
     }
@@ -175,9 +189,14 @@ impl MeshMessageEnvelope {
         // SECURITY: Serialize headers, body, requester, and proof data (not full ZkProof with custom serialization)
         // This preserves authentication data through mesh routing without bincode incompatibility
         let auth_proof_data = request.auth_proof.as_ref().map(|p| p.proof_data.clone());
-        let payload = bincode::serialize(&(&request.headers, &request.body, &request.requester, &auth_proof_data))
-            .map_err(|e| anyhow!("Failed to serialize ZHTP request: {}", e))?;
-        
+        let payload = bincode::serialize(&(
+            &request.headers,
+            &request.body,
+            &request.requester,
+            &auth_proof_data,
+        ))
+        .map_err(|e| anyhow!("Failed to serialize ZHTP request: {}", e))?;
+
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -210,9 +229,14 @@ impl MeshMessageEnvelope {
     ) -> Result<Self> {
         // SECURITY: Serialize headers, body, server, and validity_proof (not the full response)
         // This preserves response authentication data through mesh routing
-        let payload = bincode::serialize(&(&response.headers, &response.body, &response.server, &response.validity_proof))
-            .map_err(|e| anyhow!("Failed to serialize ZHTP response: {}", e))?;
-        
+        let payload = bincode::serialize(&(
+            &response.headers,
+            &response.body,
+            &response.server,
+            &response.validity_proof,
+        ))
+        .map_err(|e| anyhow!("Failed to serialize ZHTP response: {}", e))?;
+
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -243,11 +267,11 @@ impl MeshMessageEnvelope {
             MessageType::ZhtpRequest => {
                 let request = self.to_zhtp_request()?;
                 Ok(ZhtpMeshMessage::ZhtpRequest(request))
-            },
+            }
             MessageType::ZhtpResponse => {
                 let response = self.to_zhtp_response()?;
                 Ok(ZhtpMeshMessage::ZhtpResponse(response))
-            },
+            }
             _ => {
                 // For non-ZHTP messages, use standard deserialization
                 ZhtpMeshMessage::deserialize_from_type(self.message_type, &self.payload)
@@ -274,29 +298,35 @@ impl MeshMessageEnvelope {
             .map_err(|e| anyhow!("Failed to deserialize ZHTP request payload: {}", e))?;
 
         // Reconstruct auth proof from proof data if available
-        let auth_proof = auth_proof_data.map(|proof_data| {
-            lib_proofs::ZeroKnowledgeProof {
-                proof_system: "Plonky2".to_string(),
-                proof_data,
-                public_inputs: Vec::new(),
-                verification_key: Vec::new(),
-                plonky2_proof: None,
-                proof: Vec::new(),
-            }
+        let auth_proof = auth_proof_data.map(|proof_data| lib_proofs::ZeroKnowledgeProof {
+            proof_system: "Plonky2".to_string(),
+            proof_data,
+            public_inputs: Vec::new(),
+            verification_key: Vec::new(),
+            plonky2_proof: None,
+            proof: Vec::new(),
         });
 
         // Extract version from headers if available, otherwise use default
-        let version = headers.lib_version.clone().unwrap_or_else(|| "ZHTP/1.0".to_string());
+        let version = headers
+            .lib_version
+            .clone()
+            .unwrap_or_else(|| "ZHTP/1.0".to_string());
 
         Ok(ProtocolZhtpRequest {
-            method: self.zhtp_method.ok_or_else(|| anyhow!("Missing ZHTP method in envelope"))?,
-            uri: self.zhtp_uri.clone().ok_or_else(|| anyhow!("Missing ZHTP URI in envelope"))?,
+            method: self
+                .zhtp_method
+                .ok_or_else(|| anyhow!("Missing ZHTP method in envelope"))?,
+            uri: self
+                .zhtp_uri
+                .clone()
+                .ok_or_else(|| anyhow!("Missing ZHTP URI in envelope"))?,
             version,
             headers,
             body,
             timestamp: self.timestamp,
-            requester,   // SECURITY: Authentication preserved through mesh routing
-            auth_proof,  // SECURITY: ZK proof data preserved for validation
+            requester,  // SECURITY: Authentication preserved through mesh routing
+            auth_proof, // SECURITY: ZK proof data preserved for validation
         })
     }
 
@@ -318,9 +348,14 @@ impl MeshMessageEnvelope {
             .map_err(|e| anyhow!("Failed to deserialize ZHTP response payload: {}", e))?;
 
         // Extract version from headers if available, otherwise use default
-        let version = headers.lib_version.clone().unwrap_or_else(|| "ZHTP/1.0".to_string());
+        let version = headers
+            .lib_version
+            .clone()
+            .unwrap_or_else(|| "ZHTP/1.0".to_string());
 
-        let status = self.zhtp_status.ok_or_else(|| anyhow!("Missing ZHTP status in envelope"))?;
+        let status = self
+            .zhtp_status
+            .ok_or_else(|| anyhow!("Missing ZHTP status in envelope"))?;
 
         Ok(ProtocolZhtpResponse {
             version,
@@ -329,15 +364,14 @@ impl MeshMessageEnvelope {
             headers,
             body,
             timestamp: self.timestamp,
-            server,          // SECURITY: Server identity preserved through mesh routing
-            validity_proof,  // SECURITY: Validity proof preserved for verification
+            server,         // SECURITY: Server identity preserved through mesh routing
+            validity_proof, // SECURITY: Validity proof preserved for verification
         })
     }
 
     /// Serialize to bytes using bincode
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self)
-            .map_err(|e| anyhow!("Failed to serialize envelope: {}", e))
+        bincode::serialize(self).map_err(|e| anyhow!("Failed to serialize envelope: {}", e))
     }
 
     /// Deserialize from bytes using bincode
@@ -346,8 +380,7 @@ impl MeshMessageEnvelope {
             return Err(anyhow!("Message exceeds maximum size"));
         }
 
-        bincode::deserialize(bytes)
-            .map_err(|e| anyhow!("Failed to deserialize envelope: {}", e))
+        bincode::deserialize(bytes).map_err(|e| anyhow!("Failed to deserialize envelope: {}", e))
     }
 
     /// Check if this message is for the current node
@@ -375,7 +408,9 @@ impl MeshMessageEnvelope {
 
     /// Check if a node is already in the route (prevent loops)
     pub fn contains_in_route(&self, peer_id: &PublicKey) -> bool {
-        self.route_history.iter().any(|p| p.key_id == peer_id.key_id)
+        self.route_history
+            .iter()
+            .any(|p| p.key_id == peer_id.key_id)
     }
 
     /// Get message size in bytes
@@ -387,7 +422,6 @@ impl MeshMessageEnvelope {
 /// Mesh message payload types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ZhtpMeshMessage {
-
     /// Peer discovery and capability announcement
     PeerDiscovery {
         capabilities: Vec<MeshCapability>,
@@ -495,10 +529,7 @@ pub enum ZhtpMeshMessage {
     },
 
     /// Route discovery probe
-    RouteProbe {
-        probe_id: u64,
-        target: PublicKey,
-    },
+    RouteProbe { probe_id: u64, target: PublicKey },
 
     /// Route discovery response
     RouteResponse {
@@ -627,22 +658,39 @@ pub enum ZhtpMeshMessage {
     },
 
     /// DHT Pong - response to ping
-    DhtPong {
-        request_id: u64,
-        timestamp: u64,
-    },
+    DhtPong { request_id: u64, timestamp: u64 },
 
     /// DHT Generic Payload - serialized DHT message (Ticket #154)
     /// Used for routing DHT messages without circular dependencies
     DhtGenericPayload {
         requester: PublicKey,
-        payload: Vec<u8>, // Bincode-serialized DhtMessage
+        payload: Vec<u8>,   // Bincode-serialized DhtMessage
         signature: Vec<u8>, // ED25519 signature of (requester + payload)
     },
 
     /// Consensus validator message (Proposal, Vote, Commit, etc.)
     /// Fully signed and validated by consensus layer before transmission
     ValidatorMessage(lib_consensus::validators::ValidatorMessage),
+
+    /// Identity envelope (per-device fan-out)
+    IdentityEnvelope(IdentityEnvelope),
+
+    /// Acknowledgement for store-and-forward delivery
+    IdentityDeliveryAck(IdentityDeliveryAck),
+
+    /// Oracle attestation payload.
+    ///
+    /// Contains canonical serialized attestation bytes produced by oracle logic.
+    OracleAttestation { payload: Vec<u8> },
+}
+
+/// Acknowledgement for store-and-forward message delivery
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityDeliveryAck {
+    pub recipient_did: String,
+    pub message_id: u64,
+    pub device_id: String,
+    pub retain_until_ttl: bool,
 }
 
 impl ZhtpMeshMessage {
@@ -652,100 +700,284 @@ impl ZhtpMeshMessage {
     /// and returns the type separately, eliminating enum tag overhead.
     pub fn serialize_with_type(&self) -> Result<(MessageType, Vec<u8>)> {
         let (msg_type, payload) = match self {
-            Self::PeerDiscovery { capabilities, location, shared_resources } => {
-                (MessageType::PeerDiscovery, bincode::serialize(&(capabilities, location, shared_resources))?)
-            },
-            Self::PeerAnnouncement { sender, timestamp, signature } => {
-                (MessageType::PeerAnnouncement, bincode::serialize(&(sender, timestamp, signature))?)
-            },
-            Self::ConnectivityRequest { requester, bandwidth_needed_kbps, duration_minutes, payment_tokens } => {
-                (MessageType::ConnectivityRequest, bincode::serialize(&(requester, bandwidth_needed_kbps, duration_minutes, payment_tokens))?)
-            },
-            Self::ConnectivityResponse { provider, accepted, available_bandwidth_kbps, cost_tokens_per_mb, connection_details } => {
-                (MessageType::ConnectivityResponse, bincode::serialize(&(provider, accepted, available_bandwidth_kbps, cost_tokens_per_mb, connection_details))?)
-            },
-            Self::LongRangeRoute { destination, relay_chain, payload, max_hops } => {
-                (MessageType::LongRangeRoute, bincode::serialize(&(destination, relay_chain, payload, max_hops))?)
-            },
-            Self::UbiDistribution { recipient, amount_tokens, distribution_round, proof } => {
-                (MessageType::UbiDistribution, bincode::serialize(&(recipient, amount_tokens, distribution_round, proof))?)
-            },
-            Self::HealthReport { reporter, network_quality, available_bandwidth, connected_peers, uptime_hours } => {
-                (MessageType::HealthReport, bincode::serialize(&(reporter, network_quality, available_bandwidth, connected_peers, uptime_hours))?)
-            },
+            Self::PeerDiscovery {
+                capabilities,
+                location,
+                shared_resources,
+            } => (
+                MessageType::PeerDiscovery,
+                bincode::serialize(&(capabilities, location, shared_resources))?,
+            ),
+            Self::PeerAnnouncement {
+                sender,
+                timestamp,
+                signature,
+            } => (
+                MessageType::PeerAnnouncement,
+                bincode::serialize(&(sender, timestamp, signature))?,
+            ),
+            Self::ConnectivityRequest {
+                requester,
+                bandwidth_needed_kbps,
+                duration_minutes,
+                payment_tokens,
+            } => (
+                MessageType::ConnectivityRequest,
+                bincode::serialize(&(
+                    requester,
+                    bandwidth_needed_kbps,
+                    duration_minutes,
+                    payment_tokens,
+                ))?,
+            ),
+            Self::ConnectivityResponse {
+                provider,
+                accepted,
+                available_bandwidth_kbps,
+                cost_tokens_per_mb,
+                connection_details,
+            } => (
+                MessageType::ConnectivityResponse,
+                bincode::serialize(&(
+                    provider,
+                    accepted,
+                    available_bandwidth_kbps,
+                    cost_tokens_per_mb,
+                    connection_details,
+                ))?,
+            ),
+            Self::LongRangeRoute {
+                destination,
+                relay_chain,
+                payload,
+                max_hops,
+            } => (
+                MessageType::LongRangeRoute,
+                bincode::serialize(&(destination, relay_chain, payload, max_hops))?,
+            ),
+            Self::UbiDistribution {
+                recipient,
+                amount_tokens,
+                distribution_round,
+                proof,
+            } => (
+                MessageType::UbiDistribution,
+                bincode::serialize(&(recipient, amount_tokens, distribution_round, proof))?,
+            ),
+            Self::HealthReport {
+                reporter,
+                network_quality,
+                available_bandwidth,
+                connected_peers,
+                uptime_hours,
+            } => (
+                MessageType::HealthReport,
+                bincode::serialize(&(
+                    reporter,
+                    network_quality,
+                    available_bandwidth,
+                    connected_peers,
+                    uptime_hours,
+                ))?,
+            ),
             Self::ZhtpRequest(request) => {
                 // OPTIMIZED: Single-pass serialization - only serialize headers + body
                 // Method, URI, timestamp extracted to envelope fields
-                (MessageType::ZhtpRequest, bincode::serialize(&(&request.headers, &request.body))?)
-            },
+                (
+                    MessageType::ZhtpRequest,
+                    bincode::serialize(&(&request.headers, &request.body))?,
+                )
+            }
             Self::ZhtpResponse(response) => {
                 // OPTIMIZED: Single-pass serialization - only serialize headers + body
                 // Status extracted to envelope field
-                (MessageType::ZhtpResponse, bincode::serialize(&(&response.headers, &response.body))?)
-            },
-            Self::BlockchainRequest { requester, request_id, request_type } => {
-                (MessageType::BlockchainRequest, bincode::serialize(&(requester, request_id, request_type))?)
-            },
-            Self::BlockchainData { sender, request_id, chunk_index, total_chunks, data, complete_data_hash } => {
-                (MessageType::BlockchainData, bincode::serialize(&(sender, request_id, chunk_index, total_chunks, data, complete_data_hash))?)
-            },
-            Self::NewBlock { block, sender, height, timestamp } => {
-                (MessageType::NewBlock, bincode::serialize(&(block, sender, height, timestamp))?)
-            },
-            Self::NewTransaction { transaction, sender, tx_hash, fee } => {
-                (MessageType::NewTransaction, bincode::serialize(&(transaction, sender, tx_hash, fee))?)
-            },
-            Self::RouteProbe { probe_id, target } => {
-                (MessageType::RouteProbe, bincode::serialize(&(probe_id, target))?)
-            },
-            Self::RouteResponse { probe_id, route_quality, latency_ms } => {
-                (MessageType::RouteResponse, bincode::serialize(&(probe_id, route_quality, latency_ms))?)
-            },
-            Self::BootstrapProofRequest { requester, request_id, current_height } => {
-                (MessageType::BootstrapProofRequest, bincode::serialize(&(requester, request_id, current_height))?)
-            },
-            Self::BootstrapProofResponse { request_id, proof_data, proof_height, headers } => {
-                (MessageType::BootstrapProofResponse, bincode::serialize(&(request_id, proof_data, proof_height, headers))?)
-            },
-            Self::HeadersRequest { requester, request_id, start_height, count } => {
-                (MessageType::HeadersRequest, bincode::serialize(&(requester, request_id, start_height, count))?)
-            },
-            Self::HeadersResponse { request_id, headers, start_height } => {
-                (MessageType::HeadersResponse, bincode::serialize(&(request_id, headers, start_height))?)
-            },
-            Self::DhtStore { requester, request_id, key, value, ttl, signature } => {
-                (MessageType::DhtStore, bincode::serialize(&(requester, request_id, key, value, ttl, signature))?)
-            },
-            Self::DhtStoreAck { request_id, success, stored_count } => {
-                (MessageType::DhtStoreAck, bincode::serialize(&(request_id, success, stored_count))?)
-            },
-            Self::DhtFindValue { requester, request_id, key, max_hops } => {
-                (MessageType::DhtFindValue, bincode::serialize(&(requester, request_id, key, max_hops))?)
-            },
-            Self::DhtFindValueResponse { request_id, found, value, closer_nodes } => {
-                (MessageType::DhtFindValueResponse, bincode::serialize(&(request_id, found, value, closer_nodes))?)
-            },
-            Self::DhtFindNode { requester, request_id, target_id, max_hops } => {
-                (MessageType::DhtFindNode, bincode::serialize(&(requester, request_id, target_id, max_hops))?)
-            },
-            Self::DhtFindNodeResponse { request_id, closer_nodes } => {
-                (MessageType::DhtFindNodeResponse, bincode::serialize(&(request_id, closer_nodes))?)
-            },
-            Self::DhtPing { requester, request_id, timestamp } => {
-                (MessageType::DhtPing, bincode::serialize(&(requester, request_id, timestamp))?)
-            },
-            Self::DhtPong { request_id, timestamp } => {
-                (MessageType::DhtPong, bincode::serialize(&(request_id, timestamp))?)
-            },
-            Self::DhtGenericPayload { requester, payload, signature } => {
-                (MessageType::DhtGenericPayload, bincode::serialize(&(requester, payload, signature))?)
-            },
+                (
+                    MessageType::ZhtpResponse,
+                    bincode::serialize(&(&response.headers, &response.body))?,
+                )
+            }
+            Self::BlockchainRequest {
+                requester,
+                request_id,
+                request_type,
+            } => (
+                MessageType::BlockchainRequest,
+                bincode::serialize(&(requester, request_id, request_type))?,
+            ),
+            Self::BlockchainData {
+                sender,
+                request_id,
+                chunk_index,
+                total_chunks,
+                data,
+                complete_data_hash,
+            } => (
+                MessageType::BlockchainData,
+                bincode::serialize(&(
+                    sender,
+                    request_id,
+                    chunk_index,
+                    total_chunks,
+                    data,
+                    complete_data_hash,
+                ))?,
+            ),
+            Self::NewBlock {
+                block,
+                sender,
+                height,
+                timestamp,
+            } => (
+                MessageType::NewBlock,
+                bincode::serialize(&(block, sender, height, timestamp))?,
+            ),
+            Self::NewTransaction {
+                transaction,
+                sender,
+                tx_hash,
+                fee,
+            } => (
+                MessageType::NewTransaction,
+                bincode::serialize(&(transaction, sender, tx_hash, fee))?,
+            ),
+            Self::RouteProbe { probe_id, target } => (
+                MessageType::RouteProbe,
+                bincode::serialize(&(probe_id, target))?,
+            ),
+            Self::RouteResponse {
+                probe_id,
+                route_quality,
+                latency_ms,
+            } => (
+                MessageType::RouteResponse,
+                bincode::serialize(&(probe_id, route_quality, latency_ms))?,
+            ),
+            Self::BootstrapProofRequest {
+                requester,
+                request_id,
+                current_height,
+            } => (
+                MessageType::BootstrapProofRequest,
+                bincode::serialize(&(requester, request_id, current_height))?,
+            ),
+            Self::BootstrapProofResponse {
+                request_id,
+                proof_data,
+                proof_height,
+                headers,
+            } => (
+                MessageType::BootstrapProofResponse,
+                bincode::serialize(&(request_id, proof_data, proof_height, headers))?,
+            ),
+            Self::HeadersRequest {
+                requester,
+                request_id,
+                start_height,
+                count,
+            } => (
+                MessageType::HeadersRequest,
+                bincode::serialize(&(requester, request_id, start_height, count))?,
+            ),
+            Self::HeadersResponse {
+                request_id,
+                headers,
+                start_height,
+            } => (
+                MessageType::HeadersResponse,
+                bincode::serialize(&(request_id, headers, start_height))?,
+            ),
+            Self::DhtStore {
+                requester,
+                request_id,
+                key,
+                value,
+                ttl,
+                signature,
+            } => (
+                MessageType::DhtStore,
+                bincode::serialize(&(requester, request_id, key, value, ttl, signature))?,
+            ),
+            Self::DhtStoreAck {
+                request_id,
+                success,
+                stored_count,
+            } => (
+                MessageType::DhtStoreAck,
+                bincode::serialize(&(request_id, success, stored_count))?,
+            ),
+            Self::DhtFindValue {
+                requester,
+                request_id,
+                key,
+                max_hops,
+            } => (
+                MessageType::DhtFindValue,
+                bincode::serialize(&(requester, request_id, key, max_hops))?,
+            ),
+            Self::DhtFindValueResponse {
+                request_id,
+                found,
+                value,
+                closer_nodes,
+            } => (
+                MessageType::DhtFindValueResponse,
+                bincode::serialize(&(request_id, found, value, closer_nodes))?,
+            ),
+            Self::DhtFindNode {
+                requester,
+                request_id,
+                target_id,
+                max_hops,
+            } => (
+                MessageType::DhtFindNode,
+                bincode::serialize(&(requester, request_id, target_id, max_hops))?,
+            ),
+            Self::DhtFindNodeResponse {
+                request_id,
+                closer_nodes,
+            } => (
+                MessageType::DhtFindNodeResponse,
+                bincode::serialize(&(request_id, closer_nodes))?,
+            ),
+            Self::DhtPing {
+                requester,
+                request_id,
+                timestamp,
+            } => (
+                MessageType::DhtPing,
+                bincode::serialize(&(requester, request_id, timestamp))?,
+            ),
+            Self::DhtPong {
+                request_id,
+                timestamp,
+            } => (
+                MessageType::DhtPong,
+                bincode::serialize(&(request_id, timestamp))?,
+            ),
+            Self::DhtGenericPayload {
+                requester,
+                payload,
+                signature,
+            } => (
+                MessageType::DhtGenericPayload,
+                bincode::serialize(&(requester, payload, signature))?,
+            ),
             Self::ValidatorMessage(msg) => {
                 // INVARIANT MB-1/MB-7: Treat as opaque bytes
                 // lib-network never branches on message kind (Propose, Vote, etc.)
                 // That's a consensus-layer concern, not networking's
                 (MessageType::ConsensusMessage, bincode::serialize(&msg)?)
-            },
+            }
+            Self::IdentityEnvelope(envelope) => {
+                (MessageType::IdentityEnvelope, bincode::serialize(envelope)?)
+            }
+            Self::IdentityDeliveryAck(ack) => {
+                (MessageType::IdentityDeliveryAck, bincode::serialize(ack)?)
+            }
+            Self::OracleAttestation { payload } => {
+                // Use raw bytes directly to avoid bincode's 8-byte length prefix overhead
+                (MessageType::OracleAttestation, payload.clone())
+            }
         };
         Ok((msg_type, payload))
     }
@@ -757,53 +989,105 @@ impl ZhtpMeshMessage {
         let message = match msg_type {
             MessageType::PeerDiscovery => {
                 let (capabilities, location, shared_resources) = bincode::deserialize(payload)?;
-                Self::PeerDiscovery { capabilities, location, shared_resources }
-            },
+                Self::PeerDiscovery {
+                    capabilities,
+                    location,
+                    shared_resources,
+                }
+            }
             MessageType::PeerAnnouncement => {
                 let (sender, timestamp, signature) = bincode::deserialize(payload)?;
-                Self::PeerAnnouncement { sender, timestamp, signature }
-            },
+                Self::PeerAnnouncement {
+                    sender,
+                    timestamp,
+                    signature,
+                }
+            }
             MessageType::ConnectivityRequest => {
-                let (requester, bandwidth_needed_kbps, duration_minutes, payment_tokens) = bincode::deserialize(payload)?;
-                Self::ConnectivityRequest { requester, bandwidth_needed_kbps, duration_minutes, payment_tokens }
-            },
+                let (requester, bandwidth_needed_kbps, duration_minutes, payment_tokens) =
+                    bincode::deserialize(payload)?;
+                Self::ConnectivityRequest {
+                    requester,
+                    bandwidth_needed_kbps,
+                    duration_minutes,
+                    payment_tokens,
+                }
+            }
             MessageType::ConnectivityResponse => {
-                let (provider, accepted, available_bandwidth_kbps, cost_tokens_per_mb, connection_details) = bincode::deserialize(payload)?;
-                Self::ConnectivityResponse { provider, accepted, available_bandwidth_kbps, cost_tokens_per_mb, connection_details }
-            },
+                let (
+                    provider,
+                    accepted,
+                    available_bandwidth_kbps,
+                    cost_tokens_per_mb,
+                    connection_details,
+                ) = bincode::deserialize(payload)?;
+                Self::ConnectivityResponse {
+                    provider,
+                    accepted,
+                    available_bandwidth_kbps,
+                    cost_tokens_per_mb,
+                    connection_details,
+                }
+            }
             MessageType::LongRangeRoute => {
                 let (destination, relay_chain, payload, max_hops) = bincode::deserialize(payload)?;
-                Self::LongRangeRoute { destination, relay_chain, payload, max_hops }
-            },
+                Self::LongRangeRoute {
+                    destination,
+                    relay_chain,
+                    payload,
+                    max_hops,
+                }
+            }
             MessageType::UbiDistribution => {
-                let (recipient, amount_tokens, distribution_round, proof) = bincode::deserialize(payload)?;
-                Self::UbiDistribution { recipient, amount_tokens, distribution_round, proof }
-            },
+                let (recipient, amount_tokens, distribution_round, proof) =
+                    bincode::deserialize(payload)?;
+                Self::UbiDistribution {
+                    recipient,
+                    amount_tokens,
+                    distribution_round,
+                    proof,
+                }
+            }
             MessageType::HealthReport => {
-                let (reporter, network_quality, available_bandwidth, connected_peers, uptime_hours) = bincode::deserialize(payload)?;
-                Self::HealthReport { reporter, network_quality, available_bandwidth, connected_peers, uptime_hours }
-            },
+                let (reporter, network_quality, available_bandwidth, connected_peers, uptime_hours) =
+                    bincode::deserialize(payload)?;
+                Self::HealthReport {
+                    reporter,
+                    network_quality,
+                    available_bandwidth,
+                    connected_peers,
+                    uptime_hours,
+                }
+            }
             MessageType::ZhtpRequest => {
                 // OPTIMIZED: Should not be called directly - use MeshMessageEnvelope::deserialize_message() instead
                 // This fallback deserializes headers + body and creates a minimal request
-                let (headers, body): (lib_protocols::types::ZhtpHeaders, Vec<u8>) = bincode::deserialize(payload)?;
+                let (headers, body): (lib_protocols::types::ZhtpHeaders, Vec<u8>) =
+                    bincode::deserialize(payload)?;
                 Self::ZhtpRequest(ProtocolZhtpRequest {
                     method: lib_protocols::types::ZhtpMethod::Get, // Default, should be overridden from envelope
                     uri: "".to_string(), // Default, should be overridden from envelope
-                    version: headers.lib_version.clone().unwrap_or_else(|| "ZHTP/1.0".to_string()),
+                    version: headers
+                        .lib_version
+                        .clone()
+                        .unwrap_or_else(|| "ZHTP/1.0".to_string()),
                     headers,
                     body,
                     timestamp: 0, // Should be overridden from envelope
                     requester: None,
                     auth_proof: None,
                 })
-            },
+            }
             MessageType::ZhtpResponse => {
                 // OPTIMIZED: Should not be called directly - use MeshMessageEnvelope::deserialize_message() instead
                 // This fallback deserializes headers + body and creates a minimal response
-                let (headers, body): (lib_protocols::types::ZhtpHeaders, Vec<u8>) = bincode::deserialize(payload)?;
+                let (headers, body): (lib_protocols::types::ZhtpHeaders, Vec<u8>) =
+                    bincode::deserialize(payload)?;
                 Self::ZhtpResponse(ProtocolZhtpResponse {
-                    version: headers.lib_version.clone().unwrap_or_else(|| "ZHTP/1.0".to_string()),
+                    version: headers
+                        .lib_version
+                        .clone()
+                        .unwrap_or_else(|| "ZHTP/1.0".to_string()),
                     status: lib_protocols::types::ZhtpStatus::Ok, // Default, should be overridden from envelope
                     status_message: "OK".to_string(),
                     headers,
@@ -812,90 +1096,190 @@ impl ZhtpMeshMessage {
                     server: None,
                     validity_proof: None,
                 })
-            },
+            }
             MessageType::BlockchainRequest => {
                 let (requester, request_id, request_type) = bincode::deserialize(payload)?;
-                Self::BlockchainRequest { requester, request_id, request_type }
-            },
+                Self::BlockchainRequest {
+                    requester,
+                    request_id,
+                    request_type,
+                }
+            }
             MessageType::BlockchainData => {
-                let (sender, request_id, chunk_index, total_chunks, data, complete_data_hash) = bincode::deserialize(payload)?;
-                Self::BlockchainData { sender, request_id, chunk_index, total_chunks, data, complete_data_hash }
-            },
+                let (sender, request_id, chunk_index, total_chunks, data, complete_data_hash) =
+                    bincode::deserialize(payload)?;
+                Self::BlockchainData {
+                    sender,
+                    request_id,
+                    chunk_index,
+                    total_chunks,
+                    data,
+                    complete_data_hash,
+                }
+            }
             MessageType::NewBlock => {
                 let (block, sender, height, timestamp) = bincode::deserialize(payload)?;
-                Self::NewBlock { block, sender, height, timestamp }
-            },
+                Self::NewBlock {
+                    block,
+                    sender,
+                    height,
+                    timestamp,
+                }
+            }
             MessageType::NewTransaction => {
                 let (transaction, sender, tx_hash, fee) = bincode::deserialize(payload)?;
-                Self::NewTransaction { transaction, sender, tx_hash, fee }
-            },
+                Self::NewTransaction {
+                    transaction,
+                    sender,
+                    tx_hash,
+                    fee,
+                }
+            }
             MessageType::RouteProbe => {
                 let (probe_id, target) = bincode::deserialize(payload)?;
                 Self::RouteProbe { probe_id, target }
-            },
+            }
             MessageType::RouteResponse => {
                 let (probe_id, route_quality, latency_ms) = bincode::deserialize(payload)?;
-                Self::RouteResponse { probe_id, route_quality, latency_ms }
-            },
+                Self::RouteResponse {
+                    probe_id,
+                    route_quality,
+                    latency_ms,
+                }
+            }
             MessageType::BootstrapProofRequest => {
                 let (requester, request_id, current_height) = bincode::deserialize(payload)?;
-                Self::BootstrapProofRequest { requester, request_id, current_height }
-            },
+                Self::BootstrapProofRequest {
+                    requester,
+                    request_id,
+                    current_height,
+                }
+            }
             MessageType::BootstrapProofResponse => {
-                let (request_id, proof_data, proof_height, headers) = bincode::deserialize(payload)?;
-                Self::BootstrapProofResponse { request_id, proof_data, proof_height, headers }
-            },
+                let (request_id, proof_data, proof_height, headers) =
+                    bincode::deserialize(payload)?;
+                Self::BootstrapProofResponse {
+                    request_id,
+                    proof_data,
+                    proof_height,
+                    headers,
+                }
+            }
             MessageType::HeadersRequest => {
                 let (requester, request_id, start_height, count) = bincode::deserialize(payload)?;
-                Self::HeadersRequest { requester, request_id, start_height, count }
-            },
+                Self::HeadersRequest {
+                    requester,
+                    request_id,
+                    start_height,
+                    count,
+                }
+            }
             MessageType::HeadersResponse => {
                 let (request_id, headers, start_height) = bincode::deserialize(payload)?;
-                Self::HeadersResponse { request_id, headers, start_height }
-            },
+                Self::HeadersResponse {
+                    request_id,
+                    headers,
+                    start_height,
+                }
+            }
             MessageType::DhtStore => {
-                let (requester, request_id, key, value, ttl, signature) = bincode::deserialize(payload)?;
-                Self::DhtStore { requester, request_id, key, value, ttl, signature }
-            },
+                let (requester, request_id, key, value, ttl, signature) =
+                    bincode::deserialize(payload)?;
+                Self::DhtStore {
+                    requester,
+                    request_id,
+                    key,
+                    value,
+                    ttl,
+                    signature,
+                }
+            }
             MessageType::DhtStoreAck => {
                 let (request_id, success, stored_count) = bincode::deserialize(payload)?;
-                Self::DhtStoreAck { request_id, success, stored_count }
-            },
+                Self::DhtStoreAck {
+                    request_id,
+                    success,
+                    stored_count,
+                }
+            }
             MessageType::DhtFindValue => {
                 let (requester, request_id, key, max_hops) = bincode::deserialize(payload)?;
-                Self::DhtFindValue { requester, request_id, key, max_hops }
-            },
+                Self::DhtFindValue {
+                    requester,
+                    request_id,
+                    key,
+                    max_hops,
+                }
+            }
             MessageType::DhtFindValueResponse => {
                 let (request_id, found, value, closer_nodes) = bincode::deserialize(payload)?;
-                Self::DhtFindValueResponse { request_id, found, value, closer_nodes }
-            },
+                Self::DhtFindValueResponse {
+                    request_id,
+                    found,
+                    value,
+                    closer_nodes,
+                }
+            }
             MessageType::DhtFindNode => {
                 let (requester, request_id, target_id, max_hops) = bincode::deserialize(payload)?;
-                Self::DhtFindNode { requester, request_id, target_id, max_hops }
-            },
+                Self::DhtFindNode {
+                    requester,
+                    request_id,
+                    target_id,
+                    max_hops,
+                }
+            }
             MessageType::DhtFindNodeResponse => {
                 let (request_id, closer_nodes) = bincode::deserialize(payload)?;
-                Self::DhtFindNodeResponse { request_id, closer_nodes }
-            },
+                Self::DhtFindNodeResponse {
+                    request_id,
+                    closer_nodes,
+                }
+            }
             MessageType::DhtPing => {
                 let (requester, request_id, timestamp) = bincode::deserialize(payload)?;
-                Self::DhtPing { requester, request_id, timestamp }
-            },
+                Self::DhtPing {
+                    requester,
+                    request_id,
+                    timestamp,
+                }
+            }
             MessageType::DhtPong => {
                 let (request_id, timestamp) = bincode::deserialize(payload)?;
-                Self::DhtPong { request_id, timestamp }
-            },
+                Self::DhtPong {
+                    request_id,
+                    timestamp,
+                }
+            }
             MessageType::DhtGenericPayload => {
                 let (requester, payload, signature) = bincode::deserialize(payload)?;
-                Self::DhtGenericPayload { requester, payload, signature }
-            },
+                Self::DhtGenericPayload {
+                    requester,
+                    payload,
+                    signature,
+                }
+            }
             MessageType::ConsensusMessage => {
                 // INVARIANT MB-1/MB-7: Treat as opaque bytes
                 // lib-network never branches on message kind (Propose, Vote, etc.)
                 // That's a consensus-layer concern, not networking's
                 let msg = bincode::deserialize(payload)?;
                 Self::ValidatorMessage(msg)
-            },
+            }
+            MessageType::IdentityEnvelope => {
+                let envelope: IdentityEnvelope = bincode::deserialize(payload)?;
+                Self::IdentityEnvelope(envelope)
+            }
+            MessageType::IdentityDeliveryAck => {
+                let ack: IdentityDeliveryAck = bincode::deserialize(payload)?;
+                Self::IdentityDeliveryAck(ack)
+            }
+            MessageType::OracleAttestation => {
+                // Use raw bytes directly (payload is the opaque attestation bytes)
+                Self::OracleAttestation {
+                    payload: payload.to_vec(),
+                }
+            }
         };
         Ok(message)
     }
@@ -907,37 +1291,37 @@ pub enum BlockchainRequestType {
     /// Request full blockchain (FULL NODES)
     /// Returns complete blocks with all transactions via BlockchainData chunks
     FullChain,
-    
+
     /// Request blocks after a specific height (FULL NODES)
     /// Used for catching up to chain tip with complete block data
     BlocksAfter(u64),
-    
+
     /// Request specific block by height (FULL NODES)
     /// Returns single complete block with all transactions
     Block(u64),
-    
+
     /// Request transaction by ID (ANY NODE)
     /// Returns single transaction data
     Transaction(String),
-    
+
     /// Request mempool contents (FULL NODES)
     /// Returns pending transactions not yet in blocks
     Mempool,
-    
+
     /// Request headers only - DEPRECATED, use HeadersRequest message instead
     /// (EDGE NODES - use HeadersRequest message for better protocol design)
     HeadersOnly { start_height: u64, count: u32 },
-    
+
     /// Request bootstrap proof with headers - DEPRECATED, use BootstrapProofRequest instead
     /// (EDGE NODES - use BootstrapProofRequest message for better protocol design)
     BootstrapWithHeaders { current_height: u64 },
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lib_protocols::types::{ZhtpHeaders, ZhtpRequest, ZhtpMethod};
+    use lib_protocols::types::{DevicePayload, IdentityEnvelope, MessageTtl};
+    use lib_protocols::types::{ZhtpHeaders, ZhtpMethod, ZhtpRequest};
 
     #[test]
     fn test_envelope_creation() {
@@ -965,7 +1349,7 @@ mod tests {
     #[test]
     fn test_zhtp_request_single_serialization() {
         use lib_protocols::types::{ZhtpHeaders, ZhtpMethod};
-        
+
         let origin = PublicKey::new(vec![1, 2, 3]);
         let dest = PublicKey::new(vec![4, 5, 6]);
 
@@ -1006,7 +1390,7 @@ mod tests {
                 assert_eq!(req.method, ZhtpMethod::Get);
                 assert_eq!(req.uri, "/test/endpoint");
                 assert_eq!(req.body, b"test body");
-            },
+            }
             _ => panic!("Wrong message type after deserialization"),
         }
     }
@@ -1037,7 +1421,7 @@ mod tests {
     #[test]
     fn test_zhtp_response_single_serialization() {
         use lib_protocols::types::{ZhtpHeaders, ZhtpStatus};
-        
+
         let origin = PublicKey::new(vec![1, 2, 3]);
         let dest = PublicKey::new(vec![4, 5, 6]);
 
@@ -1075,7 +1459,7 @@ mod tests {
             ZhtpMeshMessage::ZhtpResponse(resp) => {
                 assert_eq!(resp.status, ZhtpStatus::Ok);
                 assert_eq!(resp.body, b"response body");
-            },
+            }
             _ => panic!("Wrong message type"),
         }
     }
@@ -1111,15 +1495,16 @@ mod tests {
             auth_proof: Some(auth_proof),
         };
 
-        let sender = PublicKey::new(vec![10u8; 1952]); // Dilithium3 public key size
-        let receiver = PublicKey::new(vec![20u8; 1952]);
+        let sender = PublicKey::new(vec![10u8; 2592]); // Dilithium5 public key size
+        let receiver = PublicKey::new(vec![20u8; 2592]);
 
         let mut envelope = MeshMessageEnvelope::from_zhtp_request(
             99,
             sender.clone(),
             receiver.clone(),
             original_request.clone(),
-        ).expect("Failed to create envelope");
+        )
+        .expect("Failed to create envelope");
 
         // Simulate 10 hops through mesh network (typical production routing path)
         for _hop in 1..=10 {
@@ -1134,34 +1519,53 @@ mod tests {
         }
 
         // Reconstruct at destination
-        let final_request = envelope.to_zhtp_request()
+        let final_request = envelope
+            .to_zhtp_request()
             .expect("Failed to reconstruct after multi-hop");
 
         // Verify complete integrity
         assert_eq!(final_request.method, original_request.method);
         assert_eq!(final_request.uri, original_request.uri);
         assert_eq!(final_request.body, original_request.body);
-        assert_eq!(final_request.headers.get("Host"), original_request.headers.get("Host"));
+        assert_eq!(
+            final_request.headers.get("Host"),
+            original_request.headers.get("Host")
+        );
 
         // SECURITY: Verify authentication fields preserved through mesh routing
-        assert_eq!(final_request.requester, original_request.requester, "Requester identity must survive multi-hop routing");
-        assert!(final_request.auth_proof.is_some(), "Auth proof must survive multi-hop routing");
-        assert_eq!(final_request.auth_proof.unwrap().proof_data, original_request.auth_proof.unwrap().proof_data);
+        assert_eq!(
+            final_request.requester, original_request.requester,
+            "Requester identity must survive multi-hop routing"
+        );
+        assert!(
+            final_request.auth_proof.is_some(),
+            "Auth proof must survive multi-hop routing"
+        );
+        assert_eq!(
+            final_request.auth_proof.unwrap().proof_data,
+            original_request.auth_proof.unwrap().proof_data
+        );
 
-        println!("✅ Production test: ZHTP request routed through {} hops successfully", envelope.hop_count);
-        println!("✅ Security test: Authentication preserved through {} hops", envelope.hop_count);
+        println!(
+            "✅ Production test: ZHTP request routed through {} hops successfully",
+            envelope.hop_count
+        );
+        println!(
+            "✅ Security test: Authentication preserved through {} hops",
+            envelope.hop_count
+        );
     }
 
     #[test]
     fn test_optimization_memory_benefit() {
         use lib_crypto::Hash;
         use lib_proofs::ZeroKnowledgeProof;
-        
-        // Verify single-pass serialization: the payload only contains (headers, body), not full request        
+
+        // Verify single-pass serialization: the payload only contains (headers, body), not full request
         let mut headers = ZhtpHeaders::new();
         headers.set("Host", "test.zhtp".to_string());
         headers.set("Authorization", "Bearer token123".to_string());
-        
+
         // SECURITY: POST requests MUST have authentication in production
         let requester_id = Hash::from_bytes(b"test-uploader-identity-hash");
         let auth_proof = ZeroKnowledgeProof {
@@ -1172,7 +1576,7 @@ mod tests {
             plonky2_proof: None,
             proof: Vec::new(),
         };
-        
+
         let payload = vec![b'X'; 1024]; // 1KB body
         let request = ZhtpRequest {
             method: ZhtpMethod::Post,
@@ -1185,41 +1589,144 @@ mod tests {
             auth_proof: Some(auth_proof),
         };
 
-        let sender = PublicKey::new(vec![1u8; 1952]);
-        let receiver = PublicKey::new(vec![2u8; 1952]);
+        let sender = PublicKey::new(vec![1u8; 2592]);
+        let receiver = PublicKey::new(vec![2u8; 2592]);
 
         // OLD APPROACH: Double serialization - serialize full request into payload
         let full_request_serialized = bincode::serialize(&request).unwrap();
-        
+
         // NEW APPROACH: Single-pass serialization - serialize (headers, body, requester, auth_proof_data) tuple
         // SECURITY: Must include authentication data to preserve it through mesh routing
         // NOTE: Only serialize proof_data (Vec<u8>) to avoid bincode incompatibility with custom ZkProof serialization
         let auth_proof_data = request.auth_proof.as_ref().map(|p| p.proof_data.clone());
-        let optimized_tuple = (&request.headers, &request.body, &request.requester, &auth_proof_data);
+        let optimized_tuple = (
+            &request.headers,
+            &request.body,
+            &request.requester,
+            &auth_proof_data,
+        );
         let optimized_payload = bincode::serialize(&optimized_tuple).unwrap();
-        
-        let envelope = MeshMessageEnvelope::from_zhtp_request(
-            100,
-            sender,
-            receiver,
-            request.clone(),
-        ).expect("Failed to create envelope");
+
+        let envelope =
+            MeshMessageEnvelope::from_zhtp_request(100, sender, receiver, request.clone())
+                .expect("Failed to create envelope");
 
         println!("📊 Memory optimization:");
-        println!("   Old approach (full request serialized): {} bytes", full_request_serialized.len());
-        println!("   New approach (headers+body+auth only): {} bytes", optimized_payload.len());
-        println!("   Savings: {} bytes ({:.1}%)", 
+        println!(
+            "   Old approach (full request serialized): {} bytes",
+            full_request_serialized.len()
+        );
+        println!(
+            "   New approach (headers+body+auth only): {} bytes",
+            optimized_payload.len()
+        );
+        println!(
+            "   Savings: {} bytes ({:.1}%)",
             full_request_serialized.len() - optimized_payload.len(),
             (1.0 - optimized_payload.len() as f64 / full_request_serialized.len() as f64) * 100.0
         );
-        
+
         // Verify payload contains (headers, body, requester, auth_proof) tuple, not full request
-        assert_eq!(envelope.payload, optimized_payload, "Payload should contain (headers, body, requester, auth_proof) tuple");
-        
+        assert_eq!(
+            envelope.payload, optimized_payload,
+            "Payload should contain (headers, body, requester, auth_proof) tuple"
+        );
+
         // Verify method and URI are extracted to envelope fields (not in payload)
         assert_eq!(envelope.zhtp_method, Some(ZhtpMethod::Post));
         assert_eq!(envelope.zhtp_uri, Some("/api/upload".to_string()));
-        
+
         println!("✅ Production test: Single-pass serialization verified - payload preserves authentication through mesh routing");
+    }
+
+    #[test]
+    fn test_identity_envelope_serialization() {
+        let origin = PublicKey::new(vec![1, 2, 3]);
+        let dest = PublicKey::new(vec![4, 5, 6]);
+
+        let identity_envelope = IdentityEnvelope {
+            message_id: 1,
+            sender_did: "did:zhtp:sender".to_string(),
+            recipient_did: "did:zhtp:recipient".to_string(),
+            created_at: 123,
+            ttl: MessageTtl::Days7,
+            retain_until_ttl: false,
+            pouw_stamp: None,
+            payloads: vec![DevicePayload {
+                device_id: "device-1".to_string(),
+                ciphertext: vec![1, 2, 3],
+            }],
+        };
+
+        let msg = ZhtpMeshMessage::IdentityEnvelope(identity_envelope.clone());
+        let envelope = MeshMessageEnvelope::from_message(999, origin, dest, msg)
+            .expect("Failed to create envelope");
+        assert_eq!(envelope.message_type, MessageType::IdentityEnvelope);
+
+        let bytes = envelope.to_bytes().unwrap();
+        let deserialized = MeshMessageEnvelope::from_bytes(&bytes).unwrap();
+        let reconstructed = deserialized.deserialize_message().unwrap();
+        match reconstructed {
+            ZhtpMeshMessage::IdentityEnvelope(inner) => {
+                assert_eq!(inner.sender_did, identity_envelope.sender_did);
+                assert_eq!(inner.payloads.len(), 1);
+            }
+            _ => panic!("Wrong message type after deserialization"),
+        }
+    }
+
+    #[test]
+    fn test_identity_delivery_ack_serialization() {
+        let origin = PublicKey::new(vec![7, 8, 9]);
+        let dest = PublicKey::new(vec![10, 11, 12]);
+
+        let ack = IdentityDeliveryAck {
+            recipient_did: "did:zhtp:recipient".to_string(),
+            message_id: 123,
+            device_id: "device-abc".to_string(),
+            retain_until_ttl: true,
+        };
+
+        let msg = ZhtpMeshMessage::IdentityDeliveryAck(ack.clone());
+        let envelope = MeshMessageEnvelope::from_message(1001, origin, dest, msg)
+            .expect("Failed to create envelope");
+        assert_eq!(envelope.message_type, MessageType::IdentityDeliveryAck);
+
+        let bytes = envelope.to_bytes().unwrap();
+        let deserialized = MeshMessageEnvelope::from_bytes(&bytes).unwrap();
+        let reconstructed = deserialized.deserialize_message().unwrap();
+        match reconstructed {
+            ZhtpMeshMessage::IdentityDeliveryAck(inner) => {
+                assert_eq!(inner.recipient_did, ack.recipient_did);
+                assert_eq!(inner.message_id, ack.message_id);
+                assert_eq!(inner.device_id, ack.device_id);
+                assert!(inner.retain_until_ttl);
+            }
+            _ => panic!("Wrong message type after deserialization"),
+        }
+    }
+
+    #[test]
+    fn test_oracle_attestation_serialization() {
+        let origin = PublicKey::new(vec![9, 9, 9]);
+        let dest = PublicKey::new(vec![8, 8, 8]);
+        let payload = vec![1u8, 2, 3, 5, 8, 13];
+
+        let msg = ZhtpMeshMessage::OracleAttestation {
+            payload: payload.clone(),
+        };
+        let envelope = MeshMessageEnvelope::from_message(2001, origin, dest, msg)
+            .expect("Failed to create envelope");
+        assert_eq!(envelope.message_type, MessageType::OracleAttestation);
+
+        let bytes = envelope.to_bytes().expect("serialize envelope");
+        let decoded = MeshMessageEnvelope::from_bytes(&bytes).expect("deserialize envelope");
+        let reconstructed = decoded.deserialize_message().expect("decode message");
+        match reconstructed {
+            ZhtpMeshMessage::OracleAttestation { payload: inner } => {
+                assert_eq!(inner, payload);
+            }
+            _ => panic!("Wrong message type after deserialization"),
+        }
     }
 }

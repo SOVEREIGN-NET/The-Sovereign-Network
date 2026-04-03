@@ -4,7 +4,7 @@
 //! Advanced consensus mechanisms are handled by lib-consensus package.
 
 use crate::types::Hash;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 /// Difficulty representation for proof-of-work
@@ -77,6 +77,59 @@ impl std::fmt::Display for Difficulty {
 /// This struct stores configurable parameters that control how mining difficulty
 /// adjusts over time. These parameters can be updated through governance proposals
 /// to adapt to changing network conditions.
+///
+/// # Design Principles
+///
+/// - **Determinism**: All calculations depend only on chain data, not wall-clock time
+/// - **Safety**: Clamping prevents extreme difficulty swings (max 4x by default)
+/// - **Governance**: Parameters can only be changed through DAO proposals
+/// - **Auditability**: `last_updated_at_height` tracks when config was modified
+///
+/// # Default Values
+///
+/// | Parameter | Default | Rationale |
+/// |-----------|---------|----------|
+/// | `target_timespan` | 1,209,600 sec (14 days) | Bitcoin-compatible |
+/// | `adjustment_interval` | 2016 blocks | ~2 weeks at 10-min blocks |
+/// | `max_difficulty_decrease_factor` | 4 | Prevents >75% difficulty drop |
+/// | `max_difficulty_increase_factor` | 4 | Prevents >4x difficulty jump |
+///
+/// # Example
+///
+/// ```rust
+/// use lib_blockchain::types::DifficultyConfig;
+///
+/// // Create with defaults (Bitcoin-compatible)
+/// let config = DifficultyConfig::default();
+/// assert_eq!(config.target_timespan, 14 * 24 * 60 * 60); // 2 weeks
+/// assert_eq!(config.adjustment_interval, 2016);
+/// assert_eq!(config.target_block_time(), 600); // 10 minutes
+///
+/// // Create with custom parameters
+/// let custom = DifficultyConfig::with_params(
+///     7 * 24 * 60 * 60,  // 1 week target
+///     1008,              // 1008 blocks
+///     4,                 // max 4x decrease
+///     4,                 // max 4x increase
+///     0,                 // genesis height
+/// ).expect("Valid parameters");
+/// assert_eq!(custom.target_block_time(), 600); // Still 10 minutes
+///
+/// // Clamping prevents extreme adjustments
+/// let fast_timespan = 1000; // Much faster than target
+/// let clamped = config.clamp_timespan(fast_timespan);
+/// assert!(clamped >= config.target_timespan / 4); // Clamped to min
+/// ```
+///
+/// # Governance Integration
+///
+/// To modify difficulty parameters through governance:
+///
+/// 1. Create a `DifficultyParameterUpdateData` proposal
+/// 2. Submit through DAO with `DaoProposalType::DifficultyParameterUpdate`
+/// 3. After voting passes and timelock expires, call `apply_difficulty_parameter_update()`
+///
+/// See [`DifficultyParameterUpdateData`](crate::types::DifficultyParameterUpdateData) for proposal creation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DifficultyConfig {
     /// Target timespan for difficulty adjustment period (in seconds)
@@ -153,7 +206,9 @@ impl DifficultyConfig {
         // If blocks came too fast, difficulty increases (timespan clamped to minimum)
         let min_timespan = self.target_timespan / self.max_difficulty_increase_factor.max(1);
         // If blocks came too slow, difficulty decreases (timespan clamped to maximum)
-        let max_timespan = self.target_timespan.saturating_mul(self.max_difficulty_decrease_factor);
+        let max_timespan = self
+            .target_timespan
+            .saturating_mul(self.max_difficulty_decrease_factor);
 
         actual_timespan.clamp(min_timespan, max_timespan)
     }
@@ -221,7 +276,7 @@ pub fn calculate_target(difficulty_bits: u32) -> [u8; 32] {
     let mut target = [0u8; 32];
     let exponent = (difficulty_bits >> 24) as usize;
     let mantissa = difficulty_bits & 0x00ffffff;
-    
+
     if exponent <= 3 {
         let mantissa_bytes = mantissa.to_be_bytes();
         target[32 - 3..].copy_from_slice(&mantissa_bytes[1..]);
@@ -229,7 +284,7 @@ pub fn calculate_target(difficulty_bits: u32) -> [u8; 32] {
         let mantissa_bytes = mantissa.to_be_bytes();
         target[32 - exponent..32 - exponent + 3].copy_from_slice(&mantissa_bytes[1..]);
     }
-    
+
     target
 }
 
@@ -248,17 +303,17 @@ pub fn target_to_difficulty(target: &Hash) -> u32 {
             break;
         }
     }
-    
+
     if exponent < 3 {
         return 0; // Invalid target
     }
-    
+
     // Get the first 3 bytes as mantissa
     let start_idx = 32 - exponent;
     let mut mantissa_bytes = [0u8; 4];
     mantissa_bytes[1..4].copy_from_slice(&target.as_bytes()[start_idx..start_idx + 3]);
     let mantissa = u32::from_be_bytes(mantissa_bytes);
-    
+
     ((exponent as u32) << 24) | mantissa
 }
 
@@ -321,15 +376,15 @@ pub fn difficulty_to_work(difficulty: u32) -> u128 {
     if difficulty == 0 {
         return 0;
     }
-    
+
     // Work is approximately 2^256 / target
     let target = calculate_target(difficulty);
     let target_big = target.iter().fold(0u128, |acc, &b| (acc << 8) | b as u128);
-    
+
     if target_big == 0 {
         return u128::MAX;
     }
-    
+
     // Simplified work calculation
     u128::MAX / target_big.max(1)
 }
@@ -356,12 +411,12 @@ mod tests {
     fn test_difficulty_adjustment() {
         let current_difficulty = Difficulty::from_bits(1000);
         let target_timespan = 600; // 10 minutes
-        
+
         // If blocks come too fast, difficulty should increase
         let fast_timespan = 300; // 5 minutes
         let new_difficulty = current_difficulty.adjust(fast_timespan, target_timespan);
         assert!(new_difficulty.bits() > current_difficulty.bits());
-        
+
         // If blocks come too slow, difficulty should decrease
         let slow_timespan = 1200; // 20 minutes
         let new_difficulty = current_difficulty.adjust(slow_timespan, target_timespan);
@@ -372,7 +427,7 @@ mod tests {
     fn test_difficulty_range() {
         let min_diff = Difficulty::minimum();
         let max_diff = Difficulty::maximum();
-        
+
         assert!(min_diff.bits() > max_diff.bits()); // Lower bits = higher difficulty
     }
 
@@ -390,7 +445,7 @@ mod tests {
     #[test]
     fn test_difficulty_config_target_block_time() {
         let config = DifficultyConfig::default();
-        
+
         // 14 days / 2016 blocks = 600 seconds (10 minutes)
         assert_eq!(config.target_block_time(), 600);
     }
@@ -398,20 +453,20 @@ mod tests {
     #[test]
     fn test_difficulty_config_clamp_timespan() {
         let config = DifficultyConfig::default();
-        
+
         // Target timespan is 14 days
         let target = 14 * 24 * 60 * 60;
-        
+
         // Test clamping at minimum (target / 4)
         let too_fast = 1000;
         let clamped = config.clamp_timespan(too_fast);
         assert_eq!(clamped, target / 4);
-        
+
         // Test clamping at maximum (target * 4)
         let too_slow = 100 * 24 * 60 * 60;
         let clamped = config.clamp_timespan(too_slow);
         assert_eq!(clamped, target * 4);
-        
+
         // Test no clamping for normal values
         let normal = target;
         let clamped = config.clamp_timespan(normal);
@@ -448,13 +503,13 @@ mod tests {
     #[test]
     fn test_difficulty_config_serialization() {
         let config = DifficultyConfig::default();
-        
+
         // Serialize to JSON
         let json = serde_json::to_string(&config).unwrap();
-        
+
         // Deserialize back
         let deserialized: DifficultyConfig = serde_json::from_str(&json).unwrap();
-        
+
         // Should be equal
         assert_eq!(config, deserialized);
     }
@@ -467,7 +522,8 @@ mod tests {
             2,                // Max 2x decrease
             2,                // Max 2x increase
             1000,             // Updated at block 1000
-        ).expect("Valid parameters should not fail");
+        )
+        .expect("Valid parameters should not fail");
 
         assert_eq!(config.target_timespan, 7 * 24 * 60 * 60);
         assert_eq!(config.adjustment_interval, 1008);
@@ -503,12 +559,14 @@ mod tests {
 
         // If blocks come too fast (half the expected time), difficulty should increase
         let fast_timespan = config.target_timespan / 2;
-        let new_difficulty = adjust_difficulty_with_config(current_difficulty, fast_timespan, &config);
+        let new_difficulty =
+            adjust_difficulty_with_config(current_difficulty, fast_timespan, &config);
         assert!(new_difficulty > current_difficulty);
 
         // If blocks come too slow (double the expected time), difficulty should decrease
         let slow_timespan = config.target_timespan * 2;
-        let new_difficulty = adjust_difficulty_with_config(current_difficulty, slow_timespan, &config);
+        let new_difficulty =
+            adjust_difficulty_with_config(current_difficulty, slow_timespan, &config);
         assert!(new_difficulty < current_difficulty);
 
         // Extreme fast should be clamped to 4x max increase

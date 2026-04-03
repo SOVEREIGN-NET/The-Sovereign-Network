@@ -46,7 +46,6 @@ pub fn unpack_fqdn(buf: &[u8], off: usize) -> (String, usize) {
             }
             pos = pointer_offset;
             jumped = true;
-
         } else {
             if pos + length > buf.len() {
                 break;
@@ -57,12 +56,7 @@ pub fn unpack_fqdn(buf: &[u8], off: usize) -> (String, usize) {
         }
     }
 
-    let final_pos = if jumped {
-        original_pos
-
-    } else {
-        pos
-    };
+    let final_pos = if jumped { original_pos } else { pos };
 
     (builder.join("."), final_pos - off)
 }

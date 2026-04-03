@@ -40,7 +40,11 @@ impl BluetoothMeshProtocol {
                 .as_millis() as u64;
 
             let fragments = gatt::fragment_large_message(message_id, &data, 512);
-            info!("📤 Sending {} fragments to {}", fragments.len(), peer_address);
+            info!(
+                "📤 Sending {} fragments to {}",
+                fragments.len(),
+                peer_address
+            );
 
             for (i, fragment) in fragments.iter().enumerate() {
                 self.write_gatt_characteristic_with_discovery(
@@ -57,7 +61,11 @@ impl BluetoothMeshProtocol {
                 );
             }
 
-            info!(" All {} fragments sent to {}", fragments.len(), peer_address);
+            info!(
+                " All {} fragments sent to {}",
+                fragments.len(),
+                peer_address
+            );
         } else {
             self.write_gatt_characteristic_with_discovery(
                 peer_address,

@@ -1,5 +1,5 @@
 //! DAO fee proof generation and verification
-//! 
+//!
 //! Provides cryptographic proofs for DAO fee calculations to ensure transparency.
 
 use crate::wasm::hash_blake3;
@@ -27,8 +27,10 @@ pub fn generate_ubi_transparency_proof(
     ubi_distributed: u64,
     citizen_count: u64,
 ) -> [u8; 32] {
-    let proof_data = format!("ubi_transparency_{}_{}_{}",
-        total_dao_fees, ubi_distributed, citizen_count);
+    let proof_data = format!(
+        "ubi_transparency_{}_{}_{}",
+        total_dao_fees, ubi_distributed, citizen_count
+    );
     hash_blake3(proof_data.as_bytes())
 }
 
@@ -39,6 +41,7 @@ pub fn verify_ubi_distribution_proof(
     ubi_distributed: u64,
     citizen_count: u64,
 ) -> bool {
-    let expected_proof = generate_ubi_transparency_proof(total_dao_fees, ubi_distributed, citizen_count);
+    let expected_proof =
+        generate_ubi_transparency_proof(total_dao_fees, ubi_distributed, citizen_count);
     proof == &expected_proof
 }

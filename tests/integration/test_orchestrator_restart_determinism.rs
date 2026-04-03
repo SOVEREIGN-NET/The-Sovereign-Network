@@ -17,17 +17,24 @@ const TEST_SEED: [u8; 64] = [42u8; 64];
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PrivateKeyDisk {
     dilithium_sk: Vec<u8>,
+    #[serde(default)]
+    dilithium_pk: Vec<u8>, // Optional for backward compatibility
     kyber_sk: Vec<u8>,
     master_seed: Vec<u8>,
 }
 
-fn write_identity_bundle(dir: &TempDir, identity: &ZhtpIdentity, private_key: &PrivateKey) -> Result<(PathBuf, PathBuf)> {
+fn write_identity_bundle(
+    dir: &TempDir,
+    identity: &ZhtpIdentity,
+    private_key: &PrivateKey,
+) -> Result<(PathBuf, PathBuf)> {
     let identity_path = dir.path().join("identity.json");
     let key_path = dir.path().join("private_key.json");
 
     to_writer_pretty(File::create(&identity_path)?, identity)?;
     let key_disk = PrivateKeyDisk {
         dilithium_sk: private_key.dilithium_sk.clone(),
+        dilithium_pk: private_key.dilithium_pk.clone(),
         kyber_sk: private_key.kyber_sk.clone(),
         master_seed: private_key.master_seed.clone(),
     };
@@ -42,6 +49,7 @@ fn reload_identity(identity_path: &PathBuf, key_path: &PathBuf) -> Result<ZhtpId
     let key_disk: PrivateKeyDisk = from_str(&key_data)?;
     let private_key = PrivateKey {
         dilithium_sk: key_disk.dilithium_sk,
+        dilithium_pk: key_disk.dilithium_pk,
         kyber_sk: key_disk.kyber_sk,
         master_seed: key_disk.master_seed,
     };
@@ -132,6 +140,7 @@ async fn test_identity_seed_persistence_across_restarts() -> Result<()> {
     let restored_key_disk: PrivateKeyDisk = from_str(&read_to_string(&key_path)?)?;
     let restored_key = PrivateKey {
         dilithium_sk: restored_key_disk.dilithium_sk,
+        dilithium_pk: restored_key_disk.dilithium_pk,
         kyber_sk: restored_key_disk.kyber_sk,
         master_seed: restored_key_disk.master_seed,
     };
@@ -156,7 +165,10 @@ async fn test_dht_routing_table_rebuild_with_same_nodeid() -> Result<()> {
     let initial_node_id = *identity.node_id.as_bytes();
 
     let initial_peer = example_dht_peer(initial_node_id);
-    assert_eq!(initial_peer.node_id, initial_node_id, "Initial DHT entry should use canonical NodeId");
+    assert_eq!(
+        initial_peer.node_id, initial_node_id,
+        "Initial DHT entry should use canonical NodeId"
+    );
 
     // Simulate restart by re-creating identity from stored data
     let mut clone_identity = identity.clone();
@@ -165,7 +177,8 @@ async fn test_dht_routing_table_rebuild_with_same_nodeid() -> Result<()> {
         .take()
         .ok_or_else(|| anyhow::anyhow!("identity missing private key"))?;
     let temp_dir = TempDir::new()?;
-    let (identity_path, key_path) = write_identity_bundle(&temp_dir, &clone_identity, &private_key)?;
+    let (identity_path, key_path) =
+        write_identity_bundle(&temp_dir, &clone_identity, &private_key)?;
     let restored = reload_identity(&identity_path, &key_path)?;
     let restored_peer = example_dht_peer(*restored.node_id.as_bytes());
 

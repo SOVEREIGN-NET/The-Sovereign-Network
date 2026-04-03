@@ -1,19 +1,95 @@
 pub mod platform_isolation;
 
-use crate::{
-    types::*,
-    contracts::tokens::*,
-    contracts::messaging::*,
-    contracts::contacts::*,
-    contracts::groups::*,
-};
-use crate::contracts::utils::{generate_storage_key, generate_contract_id};
+// Persistent contract storage module (for #841)
+#[cfg(feature = "persistent-contracts")]
+pub mod storage;
+
 use crate::contracts::files::SharedFile;
-use crate::contracts::runtime::{RuntimeFactory, RuntimeConfig, RuntimeContext, ContractRuntime};
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
+use crate::contracts::runtime::{RuntimeConfig, RuntimeContext, RuntimeFactory};
+use crate::contracts::utils::{generate_contract_id, generate_storage_key};
 use crate::integration::crypto_integration::{PublicKey, Signature};
+use crate::{
+    contracts::contacts::*, contracts::groups::*, contracts::messaging::*, contracts::tokens::*,
+    types::*,
+};
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+// ============================================================================
+// SYSTEM CONFIGURATION - Persistent consensus-critical state
+// ============================================================================
+
+/// Fixed stable identifiers for singleton contracts
+const UBI_INSTANCE_ID: &[u8] = b"contract:ubi:v1";
+const DEV_GRANTS_INSTANCE_ID: &[u8] = b"contract:dev_grants:v1";
+const SYSTEM_CONFIG_KEY: &[u8] = b"system:config:v1";
+const SOV_TOKEN_KEY: &[u8] = b"token:zhtp:v1"; // Legacy storage key (keep stable)
+
+/// Maximum allowed call depth to prevent infinite recursion
+/// Set to 10 to allow complex multi-contract workflows while preventing stack overflow
+pub const DEFAULT_MAX_CALL_DEPTH: u32 = 10;
+
+/// Error returned when call depth limit is exceeded
+pub const CALL_DEPTH_EXCEEDED: &str = "Call depth limit exceeded";
+
+/// Staged state changes awaiting block finalization (atomic persistence)
+///
+/// **Consensus-Critical**: All state changes within a block must be committed atomically.
+/// This struct accumulates changes until finalize_block_state() is called.
+#[derive(Debug, Clone)]
+struct PendingStateChanges {
+    /// Custom token mutations pending commit
+    pub token_changes: std::collections::HashMap<[u8; 32], TokenContract>,
+    /// UBI contract mutations pending commit
+    pub ubi_change: Option<crate::contracts::UbiDistributor>,
+    /// DevGrants contract mutations pending commit
+    pub dev_grants_change: Option<crate::contracts::DevGrants>,
+    /// Block height for which these changes apply
+    pub block_height: u64,
+}
+
+impl PendingStateChanges {
+    /// Create new pending state for the given block height
+    fn new(block_height: u64) -> Self {
+        Self {
+            token_changes: std::collections::HashMap::new(),
+            ubi_change: None,
+            dev_grants_change: None,
+            block_height,
+        }
+    }
+}
+
+/// System-level configuration persisted in storage
+///
+/// **Consensus-Critical**: Must be loaded from storage on executor startup.
+/// Never allow in-memory defaults to override persisted state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemConfig {
+    /// Governance authority - immutable after genesis
+    /// **Invariant**: Must be non-zero (key_id != [0; 32])
+    pub governance_authority: PublicKey,
+    /// Blocks per month for UBI scheduling
+    pub blocks_per_month: u64,
+}
+
+/// Discriminates the origin of a contract call for authorization purposes
+///
+/// Determines where token spending authority is derived from:
+/// - User: Caller initiated the call directly, debit from ctx.caller
+/// - Contract: Call originated from another contract, debit from ctx.contract
+/// - System: Reserved for system-level calls
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CallOrigin {
+    /// User-initiated call: debit from ctx.caller
+    User,
+    /// Contract-to-contract call: debit from ctx.contract
+    Contract,
+    /// System-level call: reserved
+    System,
+}
 
 // ============================================================================
 // SYSTEM CONFIGURATION - Persistent consensus-critical state
@@ -75,6 +151,10 @@ pub struct ExecutionContext {
     pub gas_used: u64,
     /// Transaction hash that triggered this execution
     pub tx_hash: [u8; 32],
+    /// Current call depth (0 = top-level user call)
+    pub call_depth: u32,
+    /// Maximum allowed call depth (default: 10)
+    pub max_call_depth: u32,
 }
 
 impl ExecutionContext {
@@ -108,6 +188,8 @@ impl ExecutionContext {
             gas_limit,
             gas_used: 0,
             tx_hash,
+            call_depth: 0,
+            max_call_depth: DEFAULT_MAX_CALL_DEPTH,
         }
     }
 
@@ -139,14 +221,48 @@ impl ExecutionContext {
             gas_limit,
             gas_used: 0,
             tx_hash,
+            call_depth: 0,
+            max_call_depth: DEFAULT_MAX_CALL_DEPTH,
         }
+    }
+
+    /// Create a nested execution context with incremented call depth
+    /// Used for cross-contract calls to prevent infinite recursion
+    ///
+    /// # Returns
+    /// - `Ok(ExecutionContext)` if depth limit not exceeded
+    /// - `Err` if incrementing depth would exceed max_call_depth
+    pub fn with_incremented_depth(&self) -> Result<ExecutionContext> {
+        if self.call_depth >= self.max_call_depth {
+            return Err(anyhow!(
+                "Call depth limit exceeded: {} >= {}",
+                self.call_depth,
+                self.max_call_depth
+            ));
+        }
+
+        Ok(ExecutionContext {
+            caller: self.caller.clone(),
+            contract: self.contract.clone(),
+            call_origin: self.call_origin,
+            block_number: self.block_number,
+            timestamp: self.timestamp,
+            gas_limit: self.gas_limit,
+            gas_used: self.gas_used,
+            tx_hash: self.tx_hash,
+            call_depth: self.call_depth + 1,
+            max_call_depth: self.max_call_depth,
+        })
     }
 
     /// Check if there's enough gas remaining
     pub fn check_gas(&self, required: u64) -> Result<()> {
         if self.gas_used + required > self.gas_limit {
-            return Err(anyhow!("Out of gas: required {}, available {}", 
-                required, self.gas_limit - self.gas_used));
+            return Err(anyhow!(
+                "Out of gas: required {}, available {}",
+                required,
+                self.gas_limit - self.gas_used
+            ));
         }
         Ok(())
     }
@@ -165,44 +281,66 @@ impl ExecutionContext {
 }
 
 /// Contract storage interface
+///
+/// All methods take `&self` to allow concurrent access. Implementations use
+/// interior mutability (e.g., `Arc<Mutex<>>` for MemoryStorage, Sled's internal
+/// synchronization for PersistentStorage) to ensure thread-safety.
 pub trait ContractStorage {
     /// Get value from storage
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
-    
+
     /// Set value in storage
-    fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()>;
-    
+    fn set(&self, key: &[u8], value: &[u8]) -> Result<()>;
+
     /// Delete value from storage
-    fn delete(&mut self, key: &[u8]) -> Result<()>;
-    
+    fn delete(&self, key: &[u8]) -> Result<()>;
+
     /// Check if key exists in storage
     fn exists(&self, key: &[u8]) -> Result<bool>;
 }
 
 /// Simple in-memory storage implementation for testing
-#[derive(Debug, Default)]
-#[derive(Clone)]
+///
+/// Uses interior mutability via `Arc<Mutex<>>` to allow `&self` methods
+/// while maintaining thread-safety for concurrent access.
+#[derive(Debug, Default, Clone)]
 pub struct MemoryStorage {
-    data: HashMap<Vec<u8>, Vec<u8>>,
+    data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
 }
 
 impl ContractStorage for MemoryStorage {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        Ok(self.data.get(key).cloned())
+        let data = self
+            .data
+            .lock()
+            .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        Ok(data.get(key).cloned())
     }
-    
-    fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.data.insert(key.to_vec(), value.to_vec());
+
+    fn set(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let mut data = self
+            .data
+            .lock()
+            .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        data.insert(key.to_vec(), value.to_vec());
         Ok(())
     }
-    
-    fn delete(&mut self, key: &[u8]) -> Result<()> {
-        self.data.remove(key);
+
+    fn delete(&self, key: &[u8]) -> Result<()> {
+        let mut data = self
+            .data
+            .lock()
+            .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        data.remove(key);
         Ok(())
     }
-    
+
     fn exists(&self, key: &[u8]) -> Result<bool> {
-        Ok(self.data.contains_key(key))
+        let data = self
+            .data
+            .lock()
+            .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        Ok(data.contains_key(key))
     }
 }
 
@@ -217,6 +355,9 @@ pub struct ContractExecutor<S: ContractStorage> {
     ubi_contract: Option<crate::contracts::UbiDistributor>,
     /// In-memory cache for DevGrants contract (singleton, loaded from storage)
     dev_grants_contract: Option<crate::contracts::DevGrants>,
+    /// Staged state changes awaiting block finalization (atomic persistence)
+    /// None = no pending changes, Some = changes staged for current block
+    pending_changes: Option<PendingStateChanges>,
     logs: Vec<ContractLog>,
     runtime_factory: RuntimeFactory,
     runtime_config: RuntimeConfig,
@@ -232,21 +373,36 @@ impl<S: ContractStorage> ContractExecutor<S> {
     pub fn with_runtime_config(storage: S, runtime_config: RuntimeConfig) -> Self {
         let runtime_factory = RuntimeFactory::new(runtime_config.clone());
 
-        let mut executor = Self {
+        let executor = Self {
             storage,
             system_config: None, // Will be loaded on first access
             token_contracts: HashMap::new(),
             web4_contracts: HashMap::new(),
             ubi_contract: None, // Will be loaded from storage on first access
             dev_grants_contract: None, // Will be loaded from storage on first access
+            pending_changes: None, // Will be created by begin_block()
             logs: Vec::new(),
             runtime_factory,
             runtime_config,
         };
 
-        // Initialize ZHTP native token (immutable protocol-level token)
-        let lib_token = TokenContract::new_zhtp();
-        executor.token_contracts.insert(lib_token.token_id, lib_token);
+        // SOV will be lazy-loaded on first access via get_or_load_sov()
+        // Genesis initialization happens in init_system()
+
+        // IMPORTANT: WAL recovery must be performed BEFORE executor initialization
+        //
+        // Callers using persistent storage must call WalRecoveryManager::recover_from_crash()
+        // on their storage before creating the executor:
+        //
+        //   #[cfg(feature = "persistent-contracts")]
+        //   {
+        //       let recovery = storage::WalRecoveryManager::new(storage.clone());
+        //       recovery.recover_from_crash()?;  // Must complete before executor processes transactions
+        //   }
+        //   let executor = ContractExecutor::new(storage);
+        //
+        // This ensures incomplete blocks from crashes are discarded before consensus
+        // proceeds with new transactions.
 
         executor
     }
@@ -270,14 +426,19 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 let config: SystemConfig = bincode::deserialize(&data)?;
                 // Enforce non-zero governance authority
                 if config.governance_authority.key_id == [0u8; 32] {
-                    return Err(anyhow!("SystemConfig loaded but governance authority is zero (invalid)"));
+                    return Err(anyhow!(
+                        "SystemConfig loaded but governance authority is zero (invalid)"
+                    ));
                 }
                 self.system_config = Some(config);
             } else {
                 return Err(anyhow!("SystemConfig not found in storage - chain not initialized. Call init_system() first."));
             }
         }
-        Ok(self.system_config.as_ref().unwrap())
+        Ok(self
+            .system_config
+            .as_ref()
+            .expect("SystemConfig must exist in memory after successful load check"))
     }
 
     /// Initialize system configuration at genesis
@@ -287,7 +448,9 @@ impl<S: ContractStorage> ContractExecutor<S> {
     pub fn init_system(&mut self, config: SystemConfig) -> Result<()> {
         // Reject zero governance authority
         if config.governance_authority.key_id == [0u8; 32] {
-            return Err(anyhow!("Cannot initialize system with zero governance authority"));
+            return Err(anyhow!(
+                "Cannot initialize system with zero governance authority"
+            ));
         }
         if config.blocks_per_month == 0 {
             return Err(anyhow!("blocks_per_month must be > 0"));
@@ -323,10 +486,8 @@ impl<S: ContractStorage> ContractExecutor<S> {
         self.system_config = Some(config);
 
         // Create and persist genesis UBI instance
-        let ubi = crate::contracts::UbiDistributor::new(
-            gov_authority.clone(),
-            blocks_per_month,
-        ).map_err(|e| anyhow!("Failed to initialize UBI: {:?}", e))?;
+        let ubi = crate::contracts::UbiDistributor::new(gov_authority.clone(), blocks_per_month)
+            .map_err(|e| anyhow!("Failed to initialize UBI: {:?}", e))?;
         self.persist_ubi(&ubi)?;
         self.ubi_contract = Some(ubi);
 
@@ -334,6 +495,12 @@ impl<S: ContractStorage> ContractExecutor<S> {
         let dev_grants = crate::contracts::DevGrants::new(gov_authority);
         self.persist_dev_grants(&dev_grants)?;
         self.dev_grants_contract = Some(dev_grants);
+
+        // Create and persist genesis SOV token
+        let sov_token = TokenContract::new_sov_native();
+        let sov_token_id = sov_token.token_id;
+        self.token_contracts.insert(sov_token_id, sov_token);
+        self.persist_sov(&sov_token_id)?;
 
         Ok(())
     }
@@ -348,10 +515,15 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 self.ubi_contract = Some(ubi);
             } else {
                 // No persisted UBI found - this should only happen if chain is not initialized
-                return Err(anyhow!("UBI contract not found in storage - call init_system() first"));
+                return Err(anyhow!(
+                    "UBI contract not found in storage - call init_system() first"
+                ));
             }
         }
-        Ok(self.ubi_contract.as_mut().unwrap())
+        Ok(self
+            .ubi_contract
+            .as_mut()
+            .expect("UBI contract must exist in memory after successful load check"))
     }
 
     /// Persist UBI contract state to storage
@@ -372,10 +544,15 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 self.dev_grants_contract = Some(dev_grants);
             } else {
                 // No persisted DevGrants found - this should only happen if chain is not initialized
-                return Err(anyhow!("DevGrants contract not found in storage - call init_system() first"));
+                return Err(anyhow!(
+                    "DevGrants contract not found in storage - call init_system() first"
+                ));
             }
         }
-        Ok(self.dev_grants_contract.as_mut().unwrap())
+        Ok(self
+            .dev_grants_contract
+            .as_mut()
+            .expect("DevGrants contract must exist in memory after successful load check"))
     }
 
     /// Persist DevGrants contract state to storage
@@ -386,19 +563,233 @@ impl<S: ContractStorage> ContractExecutor<S> {
         Ok(())
     }
 
+    /// Persist SOV token state to storage
+    fn persist_sov(&mut self, token_id: &[u8; 32]) -> Result<()> {
+        let token = self
+            .token_contracts
+            .get(token_id)
+            .ok_or_else(|| anyhow!("SOV token not found in memory"))?;
+        let storage_key = SOV_TOKEN_KEY.to_vec();
+        let token_data = bincode::serialize(token)?;
+        self.storage.set(&storage_key, &token_data)?;
+        Ok(())
+    }
+
+    /// Load or retrieve SOV token from storage (lazy-loading)
+    ///
+    /// **Consensus-Critical**: SOV must be loaded from persistent storage.
+    /// Never recreate in-memory to prevent balance loss.
+    pub fn get_or_load_sov(&mut self) -> Result<&mut TokenContract> {
+        let sov_token_id = TokenContract::new_sov_native().token_id;
+
+        if !self.token_contracts.contains_key(&sov_token_id) {
+            // Attempt to load from storage
+            let storage_key = SOV_TOKEN_KEY.to_vec();
+            if let Some(token_data) = self.storage.get(&storage_key)? {
+                let token: TokenContract = bincode::deserialize(&token_data)?;
+                self.token_contracts.insert(sov_token_id, token);
+            } else {
+                return Err(anyhow!(
+                    "SOV token not found in storage - call init_system() first"
+                ));
+            }
+        }
+
+        Ok(self
+            .token_contracts
+            .get_mut(&sov_token_id)
+            .expect("SOV token must exist in memory after successful load check"))
+    }
+
+    /// Load or retrieve custom token from storage (lazy-loading)
+    ///
+    /// Attempts to load token from in-memory cache first.
+    /// If not found, loads from persistent storage via standard token storage key.
+    /// Prevents "Token not found" errors after restart.
+    pub fn get_or_load_token(&mut self, token_id: &[u8; 32]) -> Result<&mut TokenContract> {
+        // Check if already in memory
+        if !self.token_contracts.contains_key(token_id) {
+            // Generate storage key for custom token
+            let storage_key = generate_storage_key("token", token_id);
+
+            // Attempt to load from persistent storage
+            if let Some(token_data) = self.storage.get(&storage_key)? {
+                let token: TokenContract = bincode::deserialize(&token_data)?;
+                self.token_contracts.insert(*token_id, token);
+            } else {
+                return Err(anyhow!(
+                    "Token {} not found in storage - must be created first",
+                    hex::encode(token_id)
+                ));
+            }
+        }
+
+        Ok(self
+            .token_contracts
+            .get_mut(token_id)
+            .expect("Token must exist in memory after successful load check"))
+    }
+
+    /// Begin staged block processing (atomic persistence)
+    ///
+    /// Initializes the pending state changes buffer for a block.
+    /// All state mutations during block execution are staged here.
+    /// Must be followed by finalize_block_state() or rollback_pending_state().
+    pub fn begin_block(&mut self, block_height: u64) {
+        self.pending_changes = Some(PendingStateChanges::new(block_height));
+    }
+
+    /// Atomically finalize all pending state changes to storage
+    ///
+    /// **Consensus-Critical**: All-or-nothing persistence.
+    /// Uses write-ahead logging (WAL) to ensure true atomicity.
+    /// If any write fails, the entire operation fails and storage remains unchanged.
+    /// This prevents partial state commits that could create divergence.
+    ///
+    /// Returns the state root hash for inclusion in block headers for cross-validator verification.
+    #[cfg_attr(not(feature = "persistent-contracts"), allow(unused_variables))]
+    pub fn finalize_block_state(&mut self, block_height: u64) -> Result<Hash> {
+        // Validate that pending changes match the block being finalized
+        let pending = match &self.pending_changes {
+            Some(p) if p.block_height == block_height => p.clone(),
+            Some(p) => {
+                return Err(anyhow!(
+                    "Pending changes are for block {} but attempting to finalize block {}",
+                    p.block_height,
+                    block_height
+                ))
+            }
+            None => {
+                // No pending changes - return empty state root (blake3 hash of "EMPTY_STATE_ROOT")
+                let empty_hash = blake3::hash(b"EMPTY_STATE_ROOT");
+                let mut root_bytes = [0u8; 32];
+                root_bytes.copy_from_slice(empty_hash.as_bytes());
+                return Ok(crate::types::Hash::new(root_bytes));
+            }
+        };
+
+        // Prepare all writes in a vector (atomic commit point)
+        let mut writes: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+
+        // Stage token changes
+        for (token_id, token) in &pending.token_changes {
+            let storage_key = generate_storage_key("token", token_id);
+            let token_data = bincode::serialize(token)?;
+            writes.push((storage_key, token_data));
+        }
+
+        // Stage UBI changes
+        if let Some(ref ubi) = pending.ubi_change {
+            let storage_key = UBI_INSTANCE_ID.to_vec();
+            let ubi_data = bincode::serialize(ubi)?;
+            writes.push((storage_key, ubi_data));
+        }
+
+        // Stage DevGrants changes
+        if let Some(ref dev_grants) = pending.dev_grants_change {
+            let storage_key = DEV_GRANTS_INSTANCE_ID.to_vec();
+            let dg_data = bincode::serialize(dev_grants)?;
+            writes.push((storage_key, dg_data));
+        }
+
+        // Derive a write-ahead log key specific to this block height
+        // MUST match format used by WalRecoveryManager: wal:{height_bytes}
+        let mut wal_key = Vec::new();
+        wal_key.extend_from_slice(b"wal:");
+        wal_key.extend_from_slice(&block_height.to_be_bytes());
+
+        // Persist the WAL record before applying any writes. This ensures that
+        // if a failure occurs during the write loop, the full set of intended
+        // writes is durably recorded for potential recovery.
+        let wal_data = bincode::serialize(&writes)?;
+        self.storage.set(&wal_key, &wal_data)?;
+
+        // Execute all writes; if any write fails, pending_changes remains and
+        // the WAL entry still contains the full set of intended updates.
+        for (key, value) in &writes {
+            self.storage.set(key, value)?;
+        }
+
+        // Clear the WAL only after all writes succeed. Overwriting with an
+        // empty payload acts as a logical "no pending WAL" marker.
+        self.storage.set(&wal_key, &[])?;
+
+        // Compute state root for consensus validation
+        // State root is computed from the writes being finalized to enable deterministic
+        // block-level consensus. With persistent-contracts feature, the storage layer
+        // can compute more comprehensive state roots post-finalization via StateRootComputation.
+        let state_root = {
+            // Compute hash over all writes being committed (deterministic ordering)
+            let mut hasher = blake3::Hasher::new();
+
+            // Hash token changes
+            for (token_id, token) in &writes {
+                hasher.update(token_id);
+                hasher.update(token);
+            }
+
+            // Hash block metadata
+            hasher.update(&block_height.to_be_bytes());
+
+            let hash_bytes = hasher.finalize();
+            let mut root_bytes = [0u8; 32];
+            root_bytes.copy_from_slice(hash_bytes.as_bytes());
+            crate::types::Hash::new(root_bytes)
+        };
+
+        // Clear pending changes only after successful commit
+        self.pending_changes = None;
+        Ok(state_root)
+    }
+
+    /// Rollback pending state changes (for chain reorganization)
+    ///
+    /// Discards all staged changes without persisting them.
+    /// Used when a block is replaced during chain reorganization.
+    pub fn rollback_pending_state(&mut self) {
+        self.pending_changes = None;
+    }
+
+    /// Stage a token change for atomic commit
+    ///
+    /// If a block has been started with begin_block(), stages the token change.
+    /// Otherwise, writes directly to storage (for backward compatibility).
+    fn stage_or_persist_token(&mut self, token_id: &[u8; 32], token: &TokenContract) -> Result<()> {
+        if let Some(ref mut pending) = self.pending_changes {
+            // Stage change for atomic commit
+            pending.token_changes.insert(*token_id, token.clone());
+            Ok(())
+        } else {
+            // No block started - write directly to storage (backward compatibility)
+            let storage_key = generate_storage_key("token", token_id);
+            let token_data = bincode::serialize(token)?;
+            self.storage.set(&storage_key, &token_data)?;
+            Ok(())
+        }
+    }
+
     /// Execute a contract call
     pub fn execute_call(
-        &mut self, 
+        &mut self,
         call: ContractCall,
         context: &mut ExecutionContext,
     ) -> Result<ContractResult> {
+        // Validate call depth before execution to prevent infinite recursion
+        if context.call_depth > context.max_call_depth {
+            return Err(anyhow!(
+                "Call depth limit exceeded: {} > {}",
+                context.call_depth,
+                context.max_call_depth
+            ));
+        }
+
         // Check basic gas cost
         context.consume_gas(crate::GAS_BASE)?;
-        
+
         // Store values needed for logging before moving call
         let contract_type = call.contract_type.clone();
         let method = call.method.clone();
-        
+
         let result = match call.contract_type {
             ContractType::Token => self.execute_token_call(call, context),
             ContractType::WhisperMessaging => self.execute_messaging_call(call, context),
@@ -440,7 +831,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
     ) -> Result<ContractResult> {
         // Check basic gas cost for WASM execution
         context.consume_gas(crate::GAS_BASE)?;
-        
+
         // Create runtime context
         let runtime_context = RuntimeContext {
             caller: context.caller.clone(),
@@ -452,7 +843,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         // Get WASM runtime
         let mut runtime = self.runtime_factory.create_runtime("wasm")?;
-        
+
         // Execute in sandboxed environment
         let runtime_result = runtime.execute(
             contract_code,
@@ -467,10 +858,17 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         // Convert runtime result to contract result
         if runtime_result.success {
-            Ok(ContractResult::with_return_data(&runtime_result.return_data, context.gas_used)?)
+            Ok(ContractResult::with_return_data(
+                &runtime_result.return_data,
+                context.gas_used,
+            )?)
         } else {
-            Err(anyhow!("WASM execution failed: {}", 
-                runtime_result.error.unwrap_or_else(|| "Unknown error".to_string())))
+            Err(anyhow!(
+                "WASM execution failed: {}",
+                runtime_result
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string())
+            ))
         }
     }
 
@@ -486,85 +884,135 @@ impl<S: ContractStorage> ContractExecutor<S> {
             "create_custom_token" => {
                 let params: (String, String, u64) = bincode::deserialize(&call.params)?;
                 let (name, symbol, initial_supply) = params;
-                
+
                 let token = TokenContract::new_custom(
                     name.clone(),
                     symbol.clone(),
                     initial_supply,
                     context.caller.clone(),
                 );
-                
+
                 let token_id = token.token_id;
-                self.token_contracts.insert(token_id, token);
-                
-                // Store token data
+                // Prevent duplicate token creation (deterministic token_id)
+                if self.token_contracts.contains_key(&token_id) {
+                    return Err(anyhow!("Token already exists"));
+                }
                 let storage_key = generate_storage_key("token", &token_id);
-                let token_data = bincode::serialize(&self.token_contracts[&token_id])?;
-                self.storage.set(&storage_key, &token_data)?;
-                
-                Ok(ContractResult::with_return_data(&token_id, context.gas_used)?)
-            },
+                if self.storage.get(&storage_key)?.is_some() {
+                    return Err(anyhow!("Token already exists in storage"));
+                }
+                self.token_contracts.insert(token_id, token.clone());
+
+                // Stage token change for atomic commit
+                self.stage_or_persist_token(&token_id, &token)?;
+
+                Ok(ContractResult::with_return_data(
+                    &token_id,
+                    context.gas_used,
+                )?)
+            }
             "transfer" => {
                 let params: ([u8; 32], PublicKey, u64) = bincode::deserialize(&call.params)?;
                 let (token_id, to, amount) = params;
 
-                if let Some(token) = self.token_contracts.get_mut(&token_id) {
-                    // Use new capability-bound transfer API with ExecutionContext
-                    let _burn_amount = token
-                        .transfer(context, &to, amount)
-                        .map_err(|e| anyhow!("{}", e))?;
+                // Use lazy-loading to get token (prevents "Token not found" after restart)
+                let token = self.get_or_load_token(&token_id)?;
 
-                    // Update storage
-                    let storage_key = generate_storage_key("token", &token_id);
-                    let token_data = bincode::serialize(token)?;
-                    self.storage.set(&storage_key, &token_data)?;
+                // Use new capability-bound transfer API with ExecutionContext
+                let _burn_amount = token
+                    .transfer(context, &to, amount)
+                    .map_err(|e| anyhow!("{}", e))?;
 
-                    Ok(ContractResult::with_return_data(&"Transfer successful", context.gas_used)?)
-                } else {
-                    Err(anyhow!("Token not found"))
-                }
-            },
+                // Stage token change for atomic commit
+                let token_clone = token.clone();
+                self.stage_or_persist_token(&token_id, &token_clone)?;
+
+                Ok(ContractResult::with_return_data(
+                    &"Transfer successful",
+                    context.gas_used,
+                )?)
+            }
             "mint" => {
                 let params: ([u8; 32], PublicKey, u64) = bincode::deserialize(&call.params)?;
                 let (token_id, to, amount) = params;
-                
-                if let Some(token) = self.token_contracts.get_mut(&token_id) {
-                    crate::contracts::tokens::functions::mint_tokens(
-                        token,
-                        &to,
-                        amount,
-                    ).map_err(|e| anyhow!("{}", e))?;
-                    
-                    // Update storage
-                    let storage_key = generate_storage_key("token", &token_id);
-                    let token_data = bincode::serialize(token)?;
-                    self.storage.set(&storage_key, &token_data)?;
-                    
-                    Ok(ContractResult::with_return_data(&"Mint successful", context.gas_used)?)
-                } else {
-                    Err(anyhow!("Token not found"))
+
+                // Use lazy-loading to get token (prevents "Token not found" after restart)
+                let token = self.get_or_load_token(&token_id)?;
+
+                // Enforce mint authorization in consensus
+                if let Some(authority) = &token.kernel_mint_authority {
+                    if authority != &context.caller {
+                        return Err(anyhow!("Unauthorized mint: kernel authority required"));
+                    }
+                } else if token.creator != context.caller {
+                    return Err(anyhow!("Unauthorized mint: only token creator can mint"));
                 }
-            },
+
+                // Kernel-authority tokens use mint_kernel_only() which re-validates
+                // the caller against kernel_mint_authority (defence in depth).
+                // Creator-gated tokens use mint() directly.
+                if token.kernel_mint_authority.is_some() {
+                    token
+                        .mint_kernel_only(&context.caller, &to, amount)
+                        .map_err(|e| anyhow!("{}", e))?;
+                } else {
+                    token.mint(&to, amount).map_err(|e| anyhow!("{}", e))?;
+                }
+
+                // Stage token change for atomic commit
+                let token_clone = token.clone();
+                self.stage_or_persist_token(&token_id, &token_clone)?;
+
+                Ok(ContractResult::with_return_data(
+                    &"Mint successful",
+                    context.gas_used,
+                )?)
+            }
+            "burn" => {
+                let params: ([u8; 32], u64) = bincode::deserialize(&call.params)?;
+                let (token_id, amount) = params;
+
+                // Use lazy-loading to get token (prevents "Token not found" after restart)
+                let token = self.get_or_load_token(&token_id)?;
+
+                // Burn from caller's own balance
+                token
+                    .burn(&context.caller, amount)
+                    .map_err(|e| anyhow!("{}", e))?;
+
+                // Stage token change for atomic commit
+                let token_clone = token.clone();
+                self.stage_or_persist_token(&token_id, &token_clone)?;
+
+                Ok(ContractResult::with_return_data(
+                    &"Burn successful",
+                    context.gas_used,
+                )?)
+            }
             "balance_of" => {
                 let params: ([u8; 32], PublicKey) = bincode::deserialize(&call.params)?;
                 let (token_id, owner) = params;
-                
-                if let Some(token) = self.token_contracts.get(&token_id) {
-                    let balance = crate::contracts::tokens::functions::get_balance(token, &owner);
-                    Ok(ContractResult::with_return_data(&balance, context.gas_used)?)
-                } else {
-                    Err(anyhow!("Token not found"))
-                }
-            },
+
+                // Use lazy-loading to get token (prevents "Token not found" after restart)
+                let token = self.get_or_load_token(&token_id)?;
+                let balance = crate::contracts::tokens::functions::get_balance(token, &owner);
+
+                Ok(ContractResult::with_return_data(
+                    &balance,
+                    context.gas_used,
+                )?)
+            }
             "total_supply" => {
                 let token_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
-                if let Some(token) = self.token_contracts.get(&token_id) {
-                    Ok(ContractResult::with_return_data(&token.total_supply, context.gas_used)?)
-                } else {
-                    Err(anyhow!("Token not found"))
-                }
-            },
+
+                // Use lazy-loading to get token (prevents "Token not found" after restart)
+                let token = self.get_or_load_token(&token_id)?;
+
+                Ok(ContractResult::with_return_data(
+                    &token.total_supply,
+                    context.gas_used,
+                )?)
+            }
             _ => Err(anyhow!("Unknown token method: {}", call.method)),
         }
     }
@@ -579,10 +1027,23 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         match call.method.as_str() {
             "send_message" => {
-                let params: (Option<PublicKey>, Option<[u8; 32]>, String, Option<[u8; 32]>, bool, Option<u64>) = 
-                    bincode::deserialize(&call.params)?;
-                let (recipient, group_id, content, _file_attachment, _is_auto_burn, _burn_timestamp) = params;
-                
+                let params: (
+                    Option<PublicKey>,
+                    Option<[u8; 32]>,
+                    String,
+                    Option<[u8; 32]>,
+                    bool,
+                    Option<u64>,
+                ) = bincode::deserialize(&call.params)?;
+                let (
+                    recipient,
+                    group_id,
+                    content,
+                    _file_attachment,
+                    _is_auto_burn,
+                    _burn_timestamp,
+                ) = params;
+
                 let message = if let Some(recipient) = recipient {
                     WhisperMessage::new_direct_message(
                         context.caller.clone(),
@@ -600,32 +1061,39 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 } else {
                     return Err(anyhow!("Must specify either recipient or group_id"));
                 };
-                
+
                 // Store message
                 let storage_key = generate_storage_key("message", &message.message_id);
                 let message_data = bincode::serialize(&message)?;
                 self.storage.set(&storage_key, &message_data)?;
-                
-                Ok(ContractResult::with_return_data(&message.message_id, context.gas_used)?)
-            },
+
+                Ok(ContractResult::with_return_data(
+                    &message.message_id,
+                    context.gas_used,
+                )?)
+            }
             "get_message" => {
                 let message_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
+
                 let storage_key = generate_storage_key("message", &message_id);
                 if let Some(message_data) = self.storage.get(&storage_key)? {
                     let message: WhisperMessage = bincode::deserialize(&message_data)?;
-                    
+
                     // Check access permissions
-                    if message.sender == context.caller || 
-                       message.recipient == Some(context.caller.clone()) {
-                        Ok(ContractResult::with_return_data(&message, context.gas_used)?)
+                    if message.sender == context.caller
+                        || message.recipient == Some(context.caller.clone())
+                    {
+                        Ok(ContractResult::with_return_data(
+                            &message,
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("Access denied"))
                     }
                 } else {
                     Err(anyhow!("Message not found"))
                 }
-            },
+            }
             _ => Err(anyhow!("Unknown messaging method: {}", call.method)),
         }
     }
@@ -642,60 +1110,65 @@ impl<S: ContractStorage> ContractExecutor<S> {
             "add_contact" => {
                 let params: (PublicKey, String) = bincode::deserialize(&call.params)?;
                 let (contact_key, display_name) = params;
-                
-                let contact = ContactEntry::new(
-                    context.caller.clone(),
-                    display_name,
-                    contact_key,
-                );
-                
+
+                let contact = ContactEntry::new(context.caller.clone(), display_name, contact_key);
+
                 // Store contact
                 let storage_key = contact.storage_key();
                 let contact_data = bincode::serialize(&contact)?;
                 self.storage.set(&storage_key, &contact_data)?;
-                
-                Ok(ContractResult::with_return_data(&contact.contact_id, context.gas_used)?)
-            },
+
+                Ok(ContractResult::with_return_data(
+                    &contact.contact_id,
+                    context.gas_used,
+                )?)
+            }
             "get_contact" => {
                 let contact_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
+
                 let storage_key = generate_storage_key("contact", &contact_id);
                 if let Some(contact_data) = self.storage.get(&storage_key)? {
                     let contact: ContactEntry = bincode::deserialize(&contact_data)?;
-                    
+
                     // Check access permissions
                     if contact.owner == context.caller {
-                        Ok(ContractResult::with_return_data(&contact, context.gas_used)?)
+                        Ok(ContractResult::with_return_data(
+                            &contact,
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("Access denied"))
                     }
                 } else {
                     Err(anyhow!("Contact not found"))
                 }
-            },
+            }
             "verify_contact" => {
                 let contact_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
+
                 let storage_key = generate_storage_key("contact", &contact_id);
                 if let Some(contact_data) = self.storage.get(&storage_key)? {
                     let mut contact: ContactEntry = bincode::deserialize(&contact_data)?;
-                    
+
                     // Only owner can verify
                     if contact.owner == context.caller {
                         contact.verify();
-                        
+
                         // Update storage
                         let updated_data = bincode::serialize(&contact)?;
                         self.storage.set(&storage_key, &updated_data)?;
-                        
-                        Ok(ContractResult::with_return_data(&"Contact verified", context.gas_used)?)
+
+                        Ok(ContractResult::with_return_data(
+                            &"Contact verified",
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("Access denied"))
                     }
                 } else {
                     Err(anyhow!("Contact not found"))
                 }
-            },
+            }
             _ => Err(anyhow!("Unknown contact method: {}", call.method)),
         }
     }
@@ -712,7 +1185,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
             "create_group" => {
                 let params: (String, String, u32, bool, u64) = bincode::deserialize(&call.params)?;
                 let (name, description, max_members, is_private, whisper_token_cost) = params;
-                
+
                 let group = GroupChat::new(
                     name,
                     description,
@@ -721,50 +1194,63 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     is_private,
                     whisper_token_cost,
                 );
-                
+
                 // Store group
                 let storage_key = group.storage_key();
                 let group_data = bincode::serialize(&group)?;
                 self.storage.set(&storage_key, &group_data)?;
-                
-                Ok(ContractResult::with_return_data(&group.group_id, context.gas_used)?)
-            },
+
+                Ok(ContractResult::with_return_data(
+                    &group.group_id,
+                    context.gas_used,
+                )?)
+            }
             "join_group" => {
                 let group_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
+
                 let storage_key = generate_storage_key("group", &group_id);
                 if let Some(group_data) = self.storage.get(&storage_key)? {
                     let mut group: GroupChat = bincode::deserialize(&group_data)?;
-                    
-                    group.add_member(context.caller.clone()).map_err(|e| anyhow!(e))?;
-                    
+
+                    group
+                        .add_member(context.caller.clone())
+                        .map_err(|e| anyhow!(e))?;
+
                     // Update storage
                     let updated_data = bincode::serialize(&group)?;
                     self.storage.set(&storage_key, &updated_data)?;
-                    
-                    Ok(ContractResult::with_return_data(&"Joined group", context.gas_used)?)
+
+                    Ok(ContractResult::with_return_data(
+                        &"Joined group",
+                        context.gas_used,
+                    )?)
                 } else {
                     Err(anyhow!("Group not found"))
                 }
-            },
+            }
             "leave_group" => {
                 let group_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
+
                 let storage_key = generate_storage_key("group", &group_id);
                 if let Some(group_data) = self.storage.get(&storage_key)? {
                     let mut group: GroupChat = bincode::deserialize(&group_data)?;
-                    
-                    group.remove_member(&context.caller).map_err(|e| anyhow!(e))?;
-                    
+
+                    group
+                        .remove_member(&context.caller)
+                        .map_err(|e| anyhow!(e))?;
+
                     // Update storage
                     let updated_data = bincode::serialize(&group)?;
                     self.storage.set(&storage_key, &updated_data)?;
-                    
-                    Ok(ContractResult::with_return_data(&"Left group", context.gas_used)?)
+
+                    Ok(ContractResult::with_return_data(
+                        &"Left group",
+                        context.gas_used,
+                    )?)
                 } else {
                     Err(anyhow!("Group not found"))
                 }
-            },
+            }
             _ => Err(anyhow!("Unknown group method: {}", call.method)),
         }
     }
@@ -779,11 +1265,33 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
         match call.method.as_str() {
             "share_file" => {
-                let params: (String, String, [u8; 32], u64, String, bool, u64, bool, Option<[u8; 32]>, Vec<String>, u64) =
-                    bincode::deserialize(&call.params)?;
-                let (filename, description, content_hash, file_size, mime_type, is_public, download_cost,
-                     is_encrypted, encryption_key_hash, tags, max_downloads) = params;
-                
+                let params: (
+                    String,
+                    String,
+                    [u8; 32],
+                    u64,
+                    String,
+                    bool,
+                    u64,
+                    bool,
+                    Option<[u8; 32]>,
+                    Vec<String>,
+                    u64,
+                ) = bincode::deserialize(&call.params)?;
+                let (
+                    filename,
+                    description,
+                    content_hash,
+                    file_size,
+                    mime_type,
+                    is_public,
+                    download_cost,
+                    is_encrypted,
+                    encryption_key_hash,
+                    tags,
+                    max_downloads,
+                ) = params;
+
                 let file = SharedFile::new(
                     filename,
                     description,
@@ -798,92 +1306,110 @@ impl<S: ContractStorage> ContractExecutor<S> {
                     tags,
                     max_downloads,
                 );
-                
+
                 // Store file
                 let storage_key = file.storage_key();
                 let file_data = bincode::serialize(&file)?;
                 self.storage.set(&storage_key, &file_data)?;
-                
-                Ok(ContractResult::with_return_data(&file.file_id, context.gas_used)?)
-            },
+
+                Ok(ContractResult::with_return_data(
+                    &file.file_id,
+                    context.gas_used,
+                )?)
+            }
             "download_file" => {
                 let file_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
-                let storage_key = crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
+
+                let storage_key =
+                    crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
                 if let Some(file_data) = self.storage.get(&storage_key)? {
                     let mut file: SharedFile = bincode::deserialize(&file_data)?;
-                    
+
                     // Check access and availability
                     if file.is_available_for_download(&context.caller) {
                         file.record_download().map_err(|e| anyhow!("{}", e))?;
-                        
+
                         // Update storage
                         let updated_data = bincode::serialize(&file)?;
                         self.storage.set(&storage_key, &updated_data)?;
-                        
-                        Ok(ContractResult::with_return_data(&file.content_hash, context.gas_used)?)
+
+                        Ok(ContractResult::with_return_data(
+                            &file.content_hash,
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("File not accessible or download limit reached"))
                     }
                 } else {
                     Err(anyhow!("File not found"))
                 }
-            },
+            }
             "grant_file_access" => {
-                let params: ([u8; 32], crate::integration::crypto_integration::PublicKey) = bincode::deserialize(&call.params)?;
+                let params: ([u8; 32], crate::integration::crypto_integration::PublicKey) =
+                    bincode::deserialize(&call.params)?;
                 let (file_id, user) = params;
-                
-                let storage_key = crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
+
+                let storage_key =
+                    crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
                 if let Some(file_data) = self.storage.get(&storage_key)? {
                     let mut file: SharedFile = bincode::deserialize(&file_data)?;
-                    
+
                     // Only owner can grant access
                     if file.owner == context.caller {
                         file.grant_access(user).map_err(|e| anyhow!("{}", e))?;
-                        
+
                         // Update storage
                         let updated_data = bincode::serialize(&file)?;
                         self.storage.set(&storage_key, &updated_data)?;
-                        
-                        Ok(ContractResult::with_return_data(&"Access granted", context.gas_used)?)
+
+                        Ok(ContractResult::with_return_data(
+                            &"Access granted",
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("Access denied"))
                     }
                 } else {
                     Err(anyhow!("File not found"))
                 }
-            },
+            }
             "revoke_file_access" => {
-                let params: ([u8; 32], crate::integration::crypto_integration::PublicKey) = bincode::deserialize(&call.params)?;
+                let params: ([u8; 32], crate::integration::crypto_integration::PublicKey) =
+                    bincode::deserialize(&call.params)?;
                 let (file_id, user) = params;
-                
-                let storage_key = crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
+
+                let storage_key =
+                    crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
                 if let Some(file_data) = self.storage.get(&storage_key)? {
                     let mut file: SharedFile = bincode::deserialize(&file_data)?;
-                    
+
                     // Only owner can revoke access
                     if file.owner == context.caller {
                         file.revoke_access(&user).map_err(|e| anyhow!("{}", e))?;
-                        
+
                         // Update storage
                         let updated_data = bincode::serialize(&file)?;
                         self.storage.set(&storage_key, &updated_data)?;
-                        
-                        Ok(ContractResult::with_return_data(&"Access revoked", context.gas_used)?)
+
+                        Ok(ContractResult::with_return_data(
+                            &"Access revoked",
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("Access denied"))
                     }
                 } else {
                     Err(anyhow!("File not found"))
                 }
-            },
+            }
             "get_file_info" => {
                 let file_id: [u8; 32] = bincode::deserialize(&call.params)?;
-                
-                let storage_key = crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
+
+                let storage_key =
+                    crate::contracts::utils::id_generation::generate_storage_key("file", &file_id);
                 if let Some(file_data) = self.storage.get(&storage_key)? {
                     let file: SharedFile = bincode::deserialize(&file_data)?;
-                    
+
                     // Only accessible users can get file info
                     if file.has_access(&context.caller) {
                         let file_info = (
@@ -896,14 +1422,17 @@ impl<S: ContractStorage> ContractExecutor<S> {
                             file.download_count,
                             file.tags,
                         );
-                        Ok(ContractResult::with_return_data(&file_info, context.gas_used)?)
+                        Ok(ContractResult::with_return_data(
+                            &file_info,
+                            context.gas_used,
+                        )?)
                     } else {
                         Err(anyhow!("File not accessible"))
                     }
                 } else {
                     Err(anyhow!("File not found"))
                 }
-            },
+            }
             _ => Err(anyhow!("Unknown file method: {}", call.method)),
         }
     }
@@ -919,8 +1448,11 @@ impl<S: ContractStorage> ContractExecutor<S> {
         match call.method.as_str() {
             "create_proposal" => {
                 // For now, return a simple success
-                Ok(ContractResult::with_return_data(&"Governance not fully implemented", context.gas_used)?)
-            },
+                Ok(ContractResult::with_return_data(
+                    &"Governance not fully implemented",
+                    context.gas_used,
+                )?)
+            }
             _ => Err(anyhow!("Unknown governance method: {}", call.method)),
         }
     }
@@ -931,7 +1463,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
         context: &mut ExecutionContext,
     ) -> Result<ContractResult> {
         use crate::contracts::web4::Web4Contract;
-        
+
         context.consume_gas(3000)?; // Base gas for Web4 operations
 
         // Get or create Web4 contract
@@ -949,7 +1481,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
             // Create new Web4 contract with basic initialization
             use crate::contracts::web4::types::*;
             use std::collections::HashMap;
-            
+
             let metadata = WebsiteMetadata {
                 title: "New Web4 Site".to_string(),
                 description: "Deployed via smart contract".to_string(),
@@ -1026,6 +1558,16 @@ impl<S: ContractStorage> ContractExecutor<S> {
         );
         contract_context.gas_used = context.gas_used;
 
+        // Validate call depth before making nested contract calls
+        contract_context.call_depth = context.call_depth + 1;
+        if contract_context.call_depth > contract_context.max_call_depth {
+            return Err(anyhow!(
+                "Cross-contract call depth limit exceeded: {} > {}",
+                contract_context.call_depth,
+                contract_context.max_call_depth
+            ));
+        }
+
         // Load UBI from persistent storage (never create defaults in-memory)
         // Clone to avoid borrow checker issues with multiple self borrows
         let mut ubi = self.get_or_load_ubi()?.clone();
@@ -1036,32 +1578,36 @@ impl<S: ContractStorage> ContractExecutor<S> {
                 // This prevents callers from picking arbitrary months and claiming multiple times
                 let citizen: PublicKey = bincode::deserialize(&call.params)?;
 
-                // Get mutable reference to token for transfer
-                if let Some(token) = self.token_contracts.get_mut(&TokenContract::new_zhtp().token_id) {
-                    ubi.claim_ubi(&citizen, context.block_number, token, &contract_context)
-                        .map_err(|e| anyhow!("{:?}", e))?;
+                // Get mutable reference to token for transfer using lazy-loading
+                let token = self.get_or_load_sov()?;
+                let sov_token_id = token.token_id;
 
-                    // CRITICAL: Persist token contract after mutations
-                    // Without this, token balances revert on restart even though UBI state persists
-                    let token_id = TokenContract::new_zhtp().token_id;
-                    let storage_key = generate_storage_key("token", &token_id);
-                    let token_data = bincode::serialize(token)?;
-                    self.storage.set(&storage_key, &token_data)?;
+                ubi.claim_ubi(
+                    &citizen,
+                    context.block_number,
+                    token,
+                    &contract_context,
+                    None,
+                )
+                .map_err(|e| anyhow!("{:?}", e))?;
 
-                    Ok(ContractResult::with_return_data(&"Claim UBI successful", contract_context.gas_used)?)
-                } else {
-                    Err(anyhow!("ZHTP token not found"))
-                }
-            },
+                // CRITICAL: Persist token contract after mutations using helper
+                // Without this, token balances revert on restart even though UBI state persists
+                self.persist_sov(&sov_token_id)?;
+
+                Ok(ContractResult::with_return_data(
+                    &"Claim UBI successful",
+                    contract_context.gas_used,
+                )?)
+            }
             "register" => {
                 let params: PublicKey = bincode::deserialize(&call.params)?;
 
-                ubi.register(&params)
-                    .map_err(|e| anyhow!("{:?}", e))?;
+                ubi.register(&params).map_err(|e| anyhow!("{:?}", e))?;
 
                 ContractResult::with_return_data(&"Citizen registered", contract_context.gas_used)
                     .map_err(|e| anyhow!("{:?}", e))
-            },
+            }
             "receive_funds" => {
                 let amount: u64 = bincode::deserialize(&call.params)?;
 
@@ -1072,7 +1618,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
                 ContractResult::with_return_data(&"Funds received", contract_context.gas_used)
                     .map_err(|e| anyhow!("{:?}", e))
-            },
+            }
             "set_month_amount" => {
                 let params: (u64, u64) = bincode::deserialize(&call.params)?;
                 let (month_index, amount) = params;
@@ -1083,7 +1629,7 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
                 ContractResult::with_return_data(&"Month amount set", contract_context.gas_used)
                     .map_err(|e| anyhow!("{:?}", e))
-            },
+            }
             "set_amount_range" => {
                 let params: (u64, u64, u64) = bincode::deserialize(&call.params)?;
                 let (start_month, end_month, amount) = params;
@@ -1094,7 +1640,55 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
                 ContractResult::with_return_data(&"Amount range set", contract_context.gas_used)
                     .map_err(|e| anyhow!("{:?}", e))
-            },
+            }
+            // Phase C: Treasury Kernel Client Methods
+            "record_claim_intent" => {
+                let params: (Vec<u8>, u64, u64) = bincode::deserialize(&call.params)?;
+                let citizen_id: [u8; 32] = params
+                    .0
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| anyhow!("Invalid citizen_id length"))?;
+                let amount = params.1;
+                let epoch = params.2;
+
+                ubi.record_claim_intent(citizen_id, amount, epoch)
+                    .map_err(|e| anyhow!("{:?}", e))?;
+
+                ContractResult::with_return_data(
+                    &"Claim intent recorded",
+                    contract_context.gas_used,
+                )
+                .map_err(|e| anyhow!("{:?}", e))
+            }
+            "query_ubi_claims" => {
+                let epoch: u64 = bincode::deserialize(&call.params)?;
+                let claims = ubi.query_ubi_claims(epoch);
+
+                ContractResult::with_return_data(&claims, contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            }
+            "has_claimed_this_epoch" => {
+                let params: (Vec<u8>, u64) = bincode::deserialize(&call.params)?;
+                let citizen_id: [u8; 32] = params
+                    .0
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| anyhow!("Invalid citizen_id length"))?;
+                let epoch = params.1;
+
+                let has_claimed = ubi.has_claimed_this_epoch(citizen_id, epoch);
+
+                ContractResult::with_return_data(&has_claimed, contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            }
+            "get_pool_status" => {
+                let epoch: u64 = bincode::deserialize(&call.params)?;
+                let status = ubi.get_pool_status(epoch);
+
+                ContractResult::with_return_data(&status, contract_context.gas_used)
+                    .map_err(|e| anyhow!("{:?}", e))
+            }
             _ => Err(anyhow!("Unknown UBI method: {}", call.method)),
         };
 
@@ -1144,6 +1738,16 @@ impl<S: ContractStorage> ContractExecutor<S> {
         );
         contract_context.gas_used = context.gas_used;
 
+        // Validate call depth before making nested contract calls
+        contract_context.call_depth = context.call_depth + 1;
+        if contract_context.call_depth > contract_context.max_call_depth {
+            return Err(anyhow!(
+                "Cross-contract call depth limit exceeded: {} > {}",
+                contract_context.call_depth,
+                contract_context.max_call_depth
+            ));
+        }
+
         // Load DevGrants from persistent storage (never create defaults in-memory)
         // Clone to avoid borrow checker issues with multiple self borrows
         let mut dev_grants = self.get_or_load_dev_grants()?.clone();
@@ -1154,41 +1758,62 @@ impl<S: ContractStorage> ContractExecutor<S> {
 
                 // Authorization check delegated to DevGrants.receive_fees()
                 // (consistent with approve_grant, execute_grant pattern)
-                dev_grants.receive_fees(&context.caller, amount)
+                dev_grants
+                    .receive_fees(&context.caller, amount)
                     .map_err(|e| anyhow!("{:?}", e))?;
 
-                Ok(ContractResult::with_return_data(&"Fees received", contract_context.gas_used)?)
-            },
+                Ok(ContractResult::with_return_data(
+                    &"Fees received",
+                    contract_context.gas_used,
+                )?)
+            }
             "approve_grant" => {
                 let params: (u64, PublicKey, u64) = bincode::deserialize(&call.params)?;
                 let (proposal_id, recipient, amount) = params;
 
-                dev_grants.approve_grant(&context.caller, proposal_id, &recipient, amount, context.block_number)
+                dev_grants
+                    .approve_grant(
+                        &context.caller,
+                        proposal_id,
+                        &recipient,
+                        amount,
+                        context.block_number,
+                    )
                     .map_err(|e| anyhow!("{:?}", e))?;
 
-                Ok(ContractResult::with_return_data(&"Grant approved", contract_context.gas_used)?)
-            },
+                Ok(ContractResult::with_return_data(
+                    &"Grant approved",
+                    contract_context.gas_used,
+                )?)
+            }
             "execute_grant" => {
                 let params: (u64, PublicKey) = bincode::deserialize(&call.params)?;
                 let (proposal_id, recipient) = params;
 
-                // Get mutable reference to token for transfer
-                if let Some(token) = self.token_contracts.get_mut(&TokenContract::new_zhtp().token_id) {
-                    dev_grants.execute_grant(&context.caller, proposal_id, &recipient, context.block_number, token, &contract_context)
-                        .map_err(|e| anyhow!("{:?}", e))?;
+                // Get mutable reference to token for transfer using lazy-loading
+                let token = self.get_or_load_sov()?;
+                let sov_token_id = token.token_id;
 
-                    // CRITICAL: Persist token contract after mutations
-                    // Without this, token balances revert on restart even though DevGrants state persists
-                    let token_id = TokenContract::new_zhtp().token_id;
-                    let storage_key = generate_storage_key("token", &token_id);
-                    let token_data = bincode::serialize(token)?;
-                    self.storage.set(&storage_key, &token_data)?;
+                dev_grants
+                    .execute_grant(
+                        &context.caller,
+                        proposal_id,
+                        &recipient,
+                        context.block_number,
+                        token,
+                        &contract_context,
+                    )
+                    .map_err(|e| anyhow!("{:?}", e))?;
 
-                    Ok(ContractResult::with_return_data(&"Grant executed", contract_context.gas_used)?)
-                } else {
-                    Err(anyhow!("ZHTP token not found"))
-                }
-            },
+                // CRITICAL: Persist token contract after mutations using helper
+                // Without this, token balances revert on restart even though DevGrants state persists
+                self.persist_sov(&sov_token_id)?;
+
+                Ok(ContractResult::with_return_data(
+                    &"Grant executed",
+                    contract_context.gas_used,
+                )?)
+            }
             _ => Err(anyhow!("Unknown DevGrants method: {}", call.method)),
         };
 
@@ -1213,6 +1838,64 @@ impl<S: ContractStorage> ContractExecutor<S> {
     /// Clear logs
     pub fn clear_logs(&mut self) {
         self.logs.clear();
+    }
+
+    /// Query events by type and epoch (used for UBI claim polling)
+    ///
+    /// # Arguments
+    /// * `epoch` - The epoch to query events for
+    /// * `event_type` - The type of event to query (e.g., "UbiClaimRecorded")
+    ///
+    /// # Returns
+    /// A vector of event data for the given epoch and type
+    pub fn query_events(&self, epoch: u64, event_type: &str) -> Result<Vec<Vec<u8>>> {
+        let counter_key = format!("event_index:{}:{}", epoch, event_type);
+        let count = match self.storage.get(counter_key.as_bytes())? {
+            Some(data) => bincode::deserialize::<u64>(&data).unwrap_or(0),
+            None => 0,
+        };
+
+        let mut events = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let key = format!("events:{}:{}:{}", epoch, event_type, i);
+            if let Some(data) = self.storage.get(key.as_bytes())? {
+                events.push(data);
+            }
+        }
+        Ok(events)
+    }
+
+    /// Emit an event to storage
+    ///
+    /// # Arguments
+    /// * `event_type` - Type of event (e.g., "UbiClaimRecorded")
+    /// * `event_data` - Serialized event data
+    /// * `epoch` - The epoch this event belongs to
+    ///
+    /// # Note
+    /// Events are stored with keys in format: `events:{epoch}:{event_type}:{index}`
+    pub fn emit_event(&mut self, event_type: &str, event_data: &[u8], epoch: u64) -> Result<()> {
+        let index = self.get_next_event_index(epoch, event_type)?;
+        let key = format!("events:{}:{}:{}", epoch, event_type, index);
+        self.storage.set(key.as_bytes(), event_data)?;
+
+        // Increment the counter so the next event gets a unique index.
+        let counter_key = format!("event_index:{}:{}", epoch, event_type);
+        let next_index = bincode::serialize(&(index + 1))?;
+        self.storage.set(counter_key.as_bytes(), &next_index)?;
+        Ok(())
+    }
+
+    /// Get the next event index for an epoch/type combination
+    fn get_next_event_index(&self, epoch: u64, event_type: &str) -> Result<u64> {
+        // For now, use a simple counter stored in storage
+        let counter_key = format!("event_index:{}:{}", epoch, event_type);
+        let current = if let Some(data) = self.storage.get(counter_key.as_bytes())? {
+            bincode::deserialize::<u64>(&data).unwrap_or(0)
+        } else {
+            0
+        };
+        Ok(current)
     }
 
     /// Get token contract
@@ -1295,41 +1978,36 @@ mod tests {
     #[test]
     fn test_execution_context() {
         let keypair = KeyPair::generate().unwrap();
-        let mut context = ExecutionContext::new(
-            keypair.public_key,
-            100,
-            1234567890,
-            10000,
-            [1u8; 32],
-        );
+        let mut context =
+            ExecutionContext::new(keypair.public_key, 100, 1234567890, 10000, [1u8; 32]);
 
         assert_eq!(context.remaining_gas(), 10000);
-        
+
         // Consume some gas
         assert!(context.consume_gas(1000).is_ok());
         assert_eq!(context.gas_used, 1000);
         assert_eq!(context.remaining_gas(), 9000);
-        
+
         // Try to consume more gas than available
         assert!(context.consume_gas(10000).is_err());
     }
 
     #[test]
     fn test_memory_storage() {
-        let mut storage = MemoryStorage::default();
-        
+        let storage = MemoryStorage::default();
+
         let key = b"test_key";
         let value = b"test_value";
-        
+
         // Initially empty
         assert!(!storage.exists(key).unwrap());
         assert!(storage.get(key).unwrap().is_none());
-        
+
         // Set value
         storage.set(key, value).unwrap();
         assert!(storage.exists(key).unwrap());
         assert_eq!(storage.get(key).unwrap().unwrap(), value);
-        
+
         // Delete value
         storage.delete(key).unwrap();
         assert!(!storage.exists(key).unwrap());
@@ -1339,9 +2017,23 @@ mod tests {
     #[test]
     fn test_contract_executor() {
         let storage = MemoryStorage::default();
-        let executor = ContractExecutor::new(storage);
-        
-        // Should have ZHTP token initialized
+        let mut executor = ContractExecutor::new(storage);
+
+        // Initialize system first (creates and persists SOV)
+        let governance = PublicKey {
+            dilithium_pk: vec![1],
+            kyber_pk: vec![1],
+            key_id: [1u8; 32],
+        };
+        let config = SystemConfig {
+            governance_authority: governance,
+            blocks_per_month: 2592000,
+        };
+        executor
+            .init_system(config)
+            .expect("System initialization should succeed");
+
+        // Should have SOV token initialized after init_system
         let lib_id = crate::contracts::utils::generate_lib_token_id();
         assert!(executor.get_token_contract(&lib_id).is_some());
     }
@@ -1350,7 +2042,7 @@ mod tests {
     fn test_token_execution() {
         let storage = MemoryStorage::default();
         let mut executor = ContractExecutor::new(storage);
-        
+
         let creator_keypair = KeyPair::generate().unwrap();
         let mut context = ExecutionContext::new(
             creator_keypair.public_key.clone(),
@@ -1364,13 +2056,14 @@ mod tests {
         let call = ContractCall {
             contract_type: ContractType::Token,
             method: "create_custom_token".to_string(),
-            params: bincode::serialize(&("Test Token".to_string(), "TEST".to_string(), 1000000u64)).unwrap(),
+            params: bincode::serialize(&("Test Token".to_string(), "TEST".to_string(), 1000000u64))
+                .unwrap(),
             permissions: crate::types::CallPermissions::Public,
         };
 
         let result = executor.execute_call(call, &mut context).unwrap();
         assert!(result.success);
-        
+
         let token_id: [u8; 32] = bincode::deserialize(&result.return_data).unwrap();
         assert!(executor.get_token_contract(&token_id).is_some());
     }
@@ -1412,10 +2105,13 @@ mod tests {
             governance_authority: gov_authority.clone(),
             blocks_per_month: 100,
         };
-        executor.init_system(config).expect("System initialization failed");
+        executor
+            .init_system(config)
+            .expect("System initialization failed");
 
         // Verify system config was persisted to storage by checking we can load it
-        let loaded_config = executor.get_system_config()
+        let loaded_config = executor
+            .get_system_config()
             .expect("System config should be loaded from storage");
         assert_eq!(loaded_config.governance_authority, gov_authority);
         assert_eq!(loaded_config.blocks_per_month, 100);
@@ -1424,13 +2120,8 @@ mod tests {
         let citizen_keypair = KeyPair::generate().unwrap();
         let citizen = citizen_keypair.public_key.clone();
 
-        let mut context = ExecutionContext::new(
-            citizen.clone(),
-            1000,
-            1234567890,
-            100000,
-            [1u8; 32],
-        );
+        let mut context =
+            ExecutionContext::new(citizen.clone(), 1000, 1234567890, 100000, [1u8; 32]);
 
         let register_call = ContractCall {
             contract_type: ContractType::UbiDistribution,
@@ -1439,7 +2130,8 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        executor.execute_call(register_call, &mut context)
+        executor
+            .execute_call(register_call, &mut context)
             .expect("Citizen registration failed");
 
         // Set monthly amount (governance-only)
@@ -1450,15 +2142,11 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut gov_context = ExecutionContext::new(
-            gov_authority.clone(),
-            1000,
-            1234567890,
-            100000,
-            [2u8; 32],
-        );
+        let mut gov_context =
+            ExecutionContext::new(gov_authority.clone(), 1000, 1234567890, 100000, [2u8; 32]);
 
-        executor.execute_call(set_amount_call, &mut gov_context)
+        executor
+            .execute_call(set_amount_call, &mut gov_context)
             .expect("set_month_amount failed");
 
         // Receive funds into UBI
@@ -1469,20 +2157,17 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut operator_context = ExecutionContext::new(
-            gov_authority.clone(),
-            1000,
-            1234567890,
-            100000,
-            [3u8; 32],
-        );
+        let mut operator_context =
+            ExecutionContext::new(gov_authority.clone(), 1000, 1234567890, 100000, [3u8; 32]);
 
-        executor.execute_call(receive_call, &mut operator_context)
+        executor
+            .execute_call(receive_call, &mut operator_context)
             .expect("Receive funds failed");
 
         // ====== PHASE 2: Verify persistence ======
         // After all these operations, verify the UBI state was persisted
-        let ubi = executor.get_or_load_ubi()
+        let ubi = executor
+            .get_or_load_ubi()
             .expect("UBI should be loaded from persistent storage");
 
         // Verify citizen was still registered (registered_count should be 1)
@@ -1534,7 +2219,9 @@ mod tests {
             governance_authority: gov_authority.clone(),
             blocks_per_month: 100,
         };
-        executor.init_system(config).expect("System initialization failed");
+        executor
+            .init_system(config)
+            .expect("System initialization failed");
 
         // ====== ATTACK TEST: Non-governance caller tries to set_month_amount ======
         let malicious_call = ContractCall {
@@ -1545,7 +2232,7 @@ mod tests {
         };
 
         let mut attacker_context = ExecutionContext::new(
-            attacker.clone(),  // NOT the governance authority!
+            attacker.clone(), // NOT the governance authority!
             1000,
             1234567890,
             100000,
@@ -1553,7 +2240,10 @@ mod tests {
         );
 
         let result = executor.execute_call(malicious_call, &mut attacker_context);
-        assert!(result.is_err(), "Non-governance caller should not be able to set_month_amount");
+        assert!(
+            result.is_err(),
+            "Non-governance caller should not be able to set_month_amount"
+        );
 
         // ====== ATTACK TEST: Non-governance caller tries to set_amount_range ======
         let malicious_range_call = ContractCall {
@@ -1564,7 +2254,10 @@ mod tests {
         };
 
         let result = executor.execute_call(malicious_range_call, &mut attacker_context);
-        assert!(result.is_err(), "Non-governance caller should not be able to set_amount_range");
+        assert!(
+            result.is_err(),
+            "Non-governance caller should not be able to set_amount_range"
+        );
 
         // ====== LEGITIMATE TEST: Governance authority CAN set_month_amount ======
         let legitimate_call = ContractCall {
@@ -1574,16 +2267,14 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut gov_context = ExecutionContext::new(
-            gov_authority.clone(),
-            1000,
-            1234567890,
-            100000,
-            [5u8; 32],
-        );
+        let mut gov_context =
+            ExecutionContext::new(gov_authority.clone(), 1000, 1234567890, 100000, [5u8; 32]);
 
         let result = executor.execute_call(legitimate_call, &mut gov_context);
-        assert!(result.is_ok(), "Governance authority should be able to set_month_amount");
+        assert!(
+            result.is_ok(),
+            "Governance authority should be able to set_month_amount"
+        );
     }
 
     #[test]
@@ -1609,7 +2300,9 @@ mod tests {
             governance_authority: gov_authority.clone(),
             blocks_per_month: 100,
         };
-        executor.init_system(config).expect("System initialization failed");
+        executor
+            .init_system(config)
+            .expect("System initialization failed");
 
         // ====== STEP 1: Fund DevGrants pool ======
         let fund_call = ContractCall {
@@ -1619,15 +2312,11 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut operator_context = ExecutionContext::new(
-            gov_authority.clone(),
-            1000,
-            1234567890,
-            100000,
-            [7u8; 32],
-        );
+        let mut operator_context =
+            ExecutionContext::new(gov_authority.clone(), 1000, 1234567890, 100000, [7u8; 32]);
 
-        executor.execute_call(fund_call, &mut operator_context)
+        executor
+            .execute_call(fund_call, &mut operator_context)
             .expect("DevGrants funding failed");
 
         // ====== STEP 2: Governance approves grant (proposal_id=1, amount=10000) ======
@@ -1638,15 +2327,11 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut gov_context2 = ExecutionContext::new(
-            gov_authority.clone(),
-            1000,
-            1234567890,
-            100000,
-            [8u8; 32],
-        );
+        let mut gov_context2 =
+            ExecutionContext::new(gov_authority.clone(), 1000, 1234567890, 100000, [8u8; 32]);
 
-        executor.execute_call(approve_call, &mut gov_context2)
+        executor
+            .execute_call(approve_call, &mut gov_context2)
             .expect("Grant approval failed");
 
         // ====== STEP 3: Execute grant (transfer 10000 tokens to recipient) ======
@@ -1657,13 +2342,8 @@ mod tests {
             permissions: crate::types::CallPermissions::Public,
         };
 
-        let mut executor_context = ExecutionContext::new(
-            applicant.clone(),
-            1000,
-            1234567890,
-            100000,
-            [9u8; 32],
-        );
+        let mut executor_context =
+            ExecutionContext::new(applicant.clone(), 1000, 1234567890, 100000, [9u8; 32]);
 
         let result = executor.execute_call(execute_call, &mut executor_context);
 

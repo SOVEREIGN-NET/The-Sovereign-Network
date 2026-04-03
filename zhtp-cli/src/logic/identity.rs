@@ -4,8 +4,8 @@
 //! No side effects - all functions are pure.
 
 use crate::error::{CliError, CliResult};
-use regex::Regex;
 use lib_identity::IdentityType;
+use regex::Regex;
 
 /// Identity key material (public view only)
 #[derive(Debug, Clone, PartialEq)]
@@ -138,11 +138,16 @@ pub fn extract_hash_from_did(did: &str) -> CliResult<String> {
 }
 
 /// Validate Dilithium public key format
+/// Accepts both Dilithium2 (1312 bytes) and Dilithium5 (2592 bytes)
 pub fn validate_dilithium_public_key(key: &[u8]) -> CliResult<()> {
-    // Dilithium-3 public key is 1952 bytes
-    if key.len() != 1952 {
+    const DILITHIUM2_PK_BYTES: usize = 1312;
+    const DILITHIUM5_PK_BYTES: usize = 2592;
+
+    if key.len() != DILITHIUM2_PK_BYTES && key.len() != DILITHIUM5_PK_BYTES {
         return Err(CliError::IdentityError(format!(
-            "Invalid Dilithium public key size: expected 1952 bytes, got {}",
+            "Invalid Dilithium public key size: expected {} (D2) or {} (D5) bytes, got {}",
+            DILITHIUM2_PK_BYTES,
+            DILITHIUM5_PK_BYTES,
             key.len()
         )));
     }
@@ -150,11 +155,14 @@ pub fn validate_dilithium_public_key(key: &[u8]) -> CliResult<()> {
 }
 
 /// Validate Kyber public key format
+/// Only Kyber1024 (1568 bytes) is supported by ZHTP
 pub fn validate_kyber_public_key(key: &[u8]) -> CliResult<()> {
-    // Kyber-768 public key is 1184 bytes
-    if key.len() != 1184 {
+    const KYBER1024_PK_BYTES: usize = 1568;
+
+    if key.len() != KYBER1024_PK_BYTES {
         return Err(CliError::IdentityError(format!(
-            "Invalid Kyber public key size: expected 1184 bytes, got {}",
+            "Invalid Kyber public key size: expected {} bytes (Kyber1024), got {}",
+            KYBER1024_PK_BYTES,
             key.len()
         )));
     }
@@ -256,8 +264,14 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_dilithium_key_correct_size() {
-        let key = vec![0u8; 1952];
+    fn test_validate_dilithium_key_correct_size_d2() {
+        let key = vec![0u8; 1312]; // Dilithium2 public key
+        assert!(validate_dilithium_public_key(&key).is_ok());
+    }
+
+    #[test]
+    fn test_validate_dilithium_key_correct_size_d5() {
+        let key = vec![0u8; 2592]; // Dilithium5 public key
         assert!(validate_dilithium_public_key(&key).is_ok());
     }
 
@@ -269,7 +283,7 @@ mod tests {
 
     #[test]
     fn test_validate_kyber_key_correct_size() {
-        let key = vec![0u8; 1184];
+        let key = vec![0u8; 1568]; // Kyber1024 public key
         assert!(validate_kyber_public_key(&key).is_ok());
     }
 
@@ -287,18 +301,42 @@ mod tests {
 
     #[test]
     fn test_parse_identity_type_valid() {
-        assert!(matches!(parse_identity_type("human"), Ok(IdentityType::Human)));
-        assert!(matches!(parse_identity_type("agent"), Ok(IdentityType::Agent)));
-        assert!(matches!(parse_identity_type("contract"), Ok(IdentityType::Contract)));
-        assert!(matches!(parse_identity_type("organization"), Ok(IdentityType::Organization)));
-        assert!(matches!(parse_identity_type("device"), Ok(IdentityType::Device)));
+        assert!(matches!(
+            parse_identity_type("human"),
+            Ok(IdentityType::Human)
+        ));
+        assert!(matches!(
+            parse_identity_type("agent"),
+            Ok(IdentityType::Agent)
+        ));
+        assert!(matches!(
+            parse_identity_type("contract"),
+            Ok(IdentityType::Contract)
+        ));
+        assert!(matches!(
+            parse_identity_type("organization"),
+            Ok(IdentityType::Organization)
+        ));
+        assert!(matches!(
+            parse_identity_type("device"),
+            Ok(IdentityType::Device)
+        ));
     }
 
     #[test]
     fn test_parse_identity_type_case_insensitive() {
-        assert!(matches!(parse_identity_type("HUMAN"), Ok(IdentityType::Human)));
-        assert!(matches!(parse_identity_type("Agent"), Ok(IdentityType::Agent)));
-        assert!(matches!(parse_identity_type("CoNtRaCt"), Ok(IdentityType::Contract)));
+        assert!(matches!(
+            parse_identity_type("HUMAN"),
+            Ok(IdentityType::Human)
+        ));
+        assert!(matches!(
+            parse_identity_type("Agent"),
+            Ok(IdentityType::Agent)
+        ));
+        assert!(matches!(
+            parse_identity_type("CoNtRaCt"),
+            Ok(IdentityType::Contract)
+        ));
     }
 
     #[test]

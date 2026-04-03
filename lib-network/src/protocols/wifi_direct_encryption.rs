@@ -38,7 +38,7 @@
 //! - Stats reflect actual operational state
 //! - Fallback is intentional, not silent failure
 
-use crate::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption, EncryptionStats};
+use crate::encryption::{ChaCha20Poly1305Encryption, EncryptionStats, ProtocolEncryption};
 use anyhow::Result;
 use tracing::{debug, warn};
 
@@ -76,10 +76,10 @@ mod core {
     /// Format: `wifi-direct\0v1\0<message_type>`
     pub fn build_aad(message_type: &str) -> Vec<u8> {
         let mut aad = Vec::new();
-        aad.extend_from_slice(b"wifi-direct");    // protocol_id
-        aad.push(0x00);                            // separator
-        aad.extend_from_slice(b"v1");              // version
-        aad.push(0x00);                            // separator
+        aad.extend_from_slice(b"wifi-direct"); // protocol_id
+        aad.push(0x00); // separator
+        aad.extend_from_slice(b"v1"); // version
+        aad.push(0x00); // separator
         aad.extend_from_slice(message_type.as_bytes()); // message_type
         aad
     }
@@ -105,9 +105,10 @@ mod shell {
         pub fn new_with_session_key(session_key: &[u8; 32]) -> Result<Self> {
             debug!("WiFi Direct: Creating with end-to-end encryption");
             Ok(Self {
-                state: WiFiDirectEncryptionState::EndToEndAead(
-                    ChaCha20Poly1305Encryption::new("wifi-direct", session_key)?,
-                ),
+                state: WiFiDirectEncryptionState::EndToEndAead(ChaCha20Poly1305Encryption::new(
+                    "wifi-direct",
+                    session_key,
+                )?),
             })
         }
 
@@ -120,7 +121,9 @@ mod shell {
         ///
         /// ⚠️  **Warning**: No application-level secrecy in this mode
         pub fn new_fallback() -> Self {
-            warn!("⚠️  WiFi Direct: Creating in LINK-LAYER-ONLY mode (no application E2E encryption)");
+            warn!(
+                "⚠️  WiFi Direct: Creating in LINK-LAYER-ONLY mode (no application E2E encryption)"
+            );
             Self {
                 state: WiFiDirectEncryptionState::LinkLayerOnly,
             }
@@ -244,7 +247,7 @@ mod shell {
 
         fn reset_stats(&mut self) {
             match &mut self.state {
-                WiFiDirectEncryptionState::EndToEndAead(enc) => {
+                WiFiDirectEncryptionState::EndToEndAead(_enc) => {
                     // Note: would need mutable access, which the trait provides
                     // This is a limitation of the current trait design
                 }
@@ -278,7 +281,10 @@ mod tests {
         assert!(aad.contains(&b'\0'));
 
         let aad2 = core::build_aad("go_negotiation");
-        assert_ne!(aad, aad2, "Different message types must produce different AAD");
+        assert_ne!(
+            aad, aad2,
+            "Different message types must produce different AAD"
+        );
     }
 
     #[test]
@@ -303,7 +309,9 @@ mod tests {
         let ciphertext = enc.encrypt_message(message, "service_discovery").unwrap();
         assert!(ciphertext.len() > message.len()); // Includes tag
 
-        let decrypted = enc.decrypt_message(&ciphertext, "service_discovery").unwrap();
+        let decrypted = enc
+            .decrypt_message(&ciphertext, "service_discovery")
+            .unwrap();
         assert_eq!(message, &decrypted[..]);
     }
 
@@ -358,8 +366,14 @@ mod tests {
         assert_eq!(message, &encrypted[..], "Fallback should return plaintext");
 
         // Decrypt returns same plaintext
-        let decrypted = enc.decrypt_message(&encrypted, "service_discovery").unwrap();
-        assert_eq!(message, &decrypted[..], "Fallback decrypt should return plaintext");
+        let decrypted = enc
+            .decrypt_message(&encrypted, "service_discovery")
+            .unwrap();
+        assert_eq!(
+            message,
+            &decrypted[..],
+            "Fallback decrypt should return plaintext"
+        );
     }
 
     #[test]
@@ -370,11 +384,19 @@ mod tests {
 
         // Encrypt
         let result1 = enc.encrypt_message(original, "go_negotiation").unwrap();
-        assert_eq!(original.len(), result1.len(), "Fallback should not change length");
+        assert_eq!(
+            original.len(),
+            result1.len(),
+            "Fallback should not change length"
+        );
 
         // Decrypt
         let result2 = enc.decrypt_message(&result1, "go_negotiation").unwrap();
-        assert_eq!(original, &result2[..], "Fallback roundtrip should preserve data");
+        assert_eq!(
+            original,
+            &result2[..],
+            "Fallback roundtrip should preserve data"
+        );
     }
 
     #[test]
@@ -389,7 +411,9 @@ mod tests {
 
         for msg in messages {
             let encrypted = enc.encrypt_message(&msg, "service_discovery").unwrap();
-            let decrypted = enc.decrypt_message(&encrypted, "service_discovery").unwrap();
+            let decrypted = enc
+                .decrypt_message(&encrypted, "service_discovery")
+                .unwrap();
 
             assert_eq!(msg, decrypted, "Fallback roundtrip failed");
         }
@@ -456,8 +480,12 @@ mod tests {
 
         let large_message = vec![0x42u8; 1024 * 1024]; // 1MB
 
-        let ciphertext = enc.encrypt_message(&large_message, "service_discovery").unwrap();
-        let decrypted = enc.decrypt_message(&ciphertext, "service_discovery").unwrap();
+        let ciphertext = enc
+            .encrypt_message(&large_message, "service_discovery")
+            .unwrap();
+        let decrypted = enc
+            .decrypt_message(&ciphertext, "service_discovery")
+            .unwrap();
 
         assert_eq!(large_message, decrypted, "Large message should round-trip");
     }
@@ -468,9 +496,14 @@ mod tests {
         let enc = WiFiDirectEncryption::new_with_session_key(&key).unwrap();
 
         let ciphertext = enc.encrypt_message(b"", "service_discovery").unwrap();
-        assert!(!ciphertext.is_empty(), "Even empty message produces ciphertext (tag)");
+        assert!(
+            !ciphertext.is_empty(),
+            "Even empty message produces ciphertext (tag)"
+        );
 
-        let decrypted = enc.decrypt_message(&ciphertext, "service_discovery").unwrap();
+        let decrypted = enc
+            .decrypt_message(&ciphertext, "service_discovery")
+            .unwrap();
         assert_eq!(decrypted.len(), 0, "Should decrypt to empty");
     }
 

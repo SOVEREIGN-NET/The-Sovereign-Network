@@ -37,7 +37,7 @@ thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-reqwest = { version = "0.11", features = ["json"] }
+toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 regex = "1.10"
@@ -49,9 +49,10 @@ lib-identity = { path = "../lib-identity" }
 lib-crypto = { path = "../lib-crypto" }
 lib-economy = { path = "../lib-economy" }
 lib-network = { path = "../lib-network" }
-lib-blockchain = { path = "../lib-blockchain", features = ["contracts"], optional = true }
+lib-blockchain = { path = "../lib-blockchain", features = ["contracts"] }
 lib-protocols = { path = "../lib-protocols" }
 lib-proofs = { path = "../lib-proofs" }
+zhtp_client = { package = "lib-client", path = "../lib-client" }
 
 # zhtp library as a dependency (core orchestrator)
 zhtp = { path = "../zhtp", default-features = false, features = ["full-blockchain"] }
@@ -104,11 +105,4 @@ relay = ["zhtp/relay"]
 edge = ["zhtp/edge"]
 rpi = ["zhtp/rpi"]
 
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-
-[profile.dev]
-opt-level = 0
-debug = true
+# Build profiles live at the workspace root `Cargo.toml`.

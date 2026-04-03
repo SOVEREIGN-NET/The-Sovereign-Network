@@ -1,35 +1,33 @@
-use std::path::PathBuf;
 use crate::journal::journal_reader::{JournalReader, JournalReaderError};
 use crate::messages::inter::rr_classes::RRClasses;
 use crate::messages::inter::rr_types::RRTypes;
-use crate::zone::rr_set::RRSet;
 use crate::rr_data::inter::rr_data::RRData;
 use crate::utils::fqdn_utils::{decode_fqdn, encode_fqdn};
 use crate::utils::trie::trie::Trie;
 use crate::zone::inter::zone_types::ZoneTypes;
+use crate::zone::rr_set::RRSet;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Zone {
     ztype: ZoneTypes,
     class: RRClasses,
     sets: Trie<Vec<RRSet>>,
-    journal_path: Option<PathBuf>
+    journal_path: Option<PathBuf>,
 }
 
 impl Default for Zone {
-
     fn default() -> Self {
         Self {
             ztype: Default::default(),
             class: Default::default(),
             sets: Trie::new(),
-            journal_path: None
+            journal_path: None,
         }
     }
 }
 
 impl Zone {
-
     pub fn new(ztype: ZoneTypes, class: RRClasses) -> Self {
         Self {
             ztype,
@@ -38,7 +36,11 @@ impl Zone {
         }
     }
 
-    pub fn new_with_jnl<P: Into<PathBuf>>(ztype: ZoneTypes, class: RRClasses, journal_path: P) -> Self {
+    pub fn new_with_jnl<P: Into<PathBuf>>(
+        ztype: ZoneTypes,
+        class: RRClasses,
+        journal_path: P,
+    ) -> Self {
         Self {
             ztype,
             class,
@@ -67,18 +69,14 @@ impl Zone {
         let key = encode_fqdn(query);
 
         match self.sets.get_mut(&key) {
-            Some(sets) => {
-                match sets
-                        .iter_mut()
-                        .find(|s| s.rtype().eq(&rtype)) {
-                    Some(set) => set.add_data(ttl, data),
-                    None => {
-                        let mut set = RRSet::new(rtype, ttl);
-                        set.add_data(ttl, data);
-                        sets.push(set);
-                    }
+            Some(sets) => match sets.iter_mut().find(|s| s.rtype().eq(&rtype)) {
+                Some(set) => set.add_data(ttl, data),
+                None => {
+                    let mut set = RRSet::new(rtype, ttl);
+                    set.add_data(ttl, data);
+                    sets.push(set);
                 }
-            }
+            },
             None => {
                 let mut set = RRSet::new(rtype, ttl);
                 set.add_data(ttl, data);
@@ -87,31 +85,35 @@ impl Zone {
         }
     }
 
-    pub fn remove_record(&mut self, query: &str, rtype: &RRTypes, data: &Box<dyn RRData>, min_records: usize) -> bool {
+    pub fn remove_record(
+        &mut self,
+        query: &str,
+        rtype: &RRTypes,
+        data: &Box<dyn RRData>,
+        min_records: usize,
+    ) -> bool {
         let key = encode_fqdn(query);
 
         match self.sets.get_mut(&key) {
-            Some(sets) => {
-                match sets.iter().position(|s| s.rtype().eq(rtype)) {
-                    Some(idx) => {
-                        let set = sets.get_mut(idx).unwrap();
+            Some(sets) => match sets.iter().position(|s| s.rtype().eq(rtype)) {
+                Some(idx) => {
+                    let set = sets.get_mut(idx).unwrap();
 
-                        let removed = set.remove_data(&data, min_records);
+                    let removed = set.remove_data(&data, min_records);
 
-                        if set.is_empty() {
-                            sets.swap_remove(idx);
-                        }
-
-                        if sets.is_empty() {
-                            self.sets.remove(&key);
-                        }
-
-                        removed
+                    if set.is_empty() {
+                        sets.swap_remove(idx);
                     }
-                    None => false
+
+                    if sets.is_empty() {
+                        self.sets.remove(&key);
+                    }
+
+                    removed
                 }
-            }
-            None => false
+                None => false,
+            },
+            None => false,
         }
     }
 
@@ -119,21 +121,19 @@ impl Zone {
         let key = encode_fqdn(query);
 
         match self.sets.get_mut(&key) {
-            Some(sets) => {
-                match sets.iter().position(|s| s.rtype().eq(rtype)) {
-                    Some(idx) => {
-                        let removed = sets.swap_remove(idx);
+            Some(sets) => match sets.iter().position(|s| s.rtype().eq(rtype)) {
+                Some(idx) => {
+                    let removed = sets.swap_remove(idx);
 
-                        if sets.is_empty() {
-                            self.sets.remove(&key);
-                        }
-
-                        Some(removed)
+                    if sets.is_empty() {
+                        self.sets.remove(&key);
                     }
-                    None => None
+
+                    Some(removed)
                 }
-            }
-            None => None
+                None => None,
+            },
+            None => None,
         }
     }
 
@@ -145,7 +145,7 @@ impl Zone {
                 sets.retain(|set| protected_types.contains(&set.rtype()));
                 sets.is_empty()
             }
-            None => false
+            None => false,
         } {
             self.sets.remove(&key);
         }
@@ -174,7 +174,10 @@ impl Zone {
     */
 
     pub fn rr_set(&self, query: &str, rtype: &RRTypes) -> Option<&RRSet> {
-        self.sets.get(&encode_fqdn(query))?.iter().find(|s| s.rtype().eq(rtype))
+        self.sets
+            .get(&encode_fqdn(query))?
+            .iter()
+            .find(|s| s.rtype().eq(rtype))
     }
 
     pub fn all_rr_sets(&self, query: &str) -> Option<&Vec<RRSet>> {
@@ -182,7 +185,9 @@ impl Zone {
     }
 
     pub fn all_rr_sets_recursive(&self) -> impl Iterator<Item = (String, &Vec<RRSet>)> {
-        self.sets.iter().map(|(key, records)| (decode_fqdn(key), records))
+        self.sets
+            .iter()
+            .map(|(key, records)| (decode_fqdn(key), records))
     }
 
     /*
@@ -205,13 +210,11 @@ impl Zone {
 
     pub fn delegation_point(&self, query: &str) -> Option<(String, &RRSet)> {
         match self.sets.get_shallowest(&encode_fqdn(query)) {
-            Some((name, sets)) => {
-                sets
-                    .iter()
-                    .find(|s| s.rtype().eq(&RRTypes::Ns))
-                    .map(|set| (decode_fqdn(name), set))
-            }
-            None => None
+            Some((name, sets)) => sets
+                .iter()
+                .find(|s| s.rtype().eq(&RRTypes::Ns))
+                .map(|set| (decode_fqdn(name), set)),
+            None => None,
         }
     }
 

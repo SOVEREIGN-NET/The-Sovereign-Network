@@ -1,36 +1,43 @@
 //! ZHTP Library Interface
-//! 
+//!
 //! Public exports and integration patterns for the ZHTP node orchestrator
 
 pub mod config;
-pub mod runtime;
-pub mod monitoring;
 pub mod integration;
-// CLI module moved to separate zhtp-cli crate
+pub mod monitoring;
+pub mod pouw;
+pub mod runtime; // Proof-of-Useful-Work (Phase 1: Challenge Generation)
+                 // CLI module moved to separate zhtp-cli crate
 pub mod api;
-pub mod server;
-pub mod unified_server;
-pub mod session_manager;
-pub mod security;
 pub mod discovery_coordinator;
-pub mod utils;
+pub mod keyfile_names;
+pub use keyfile_names as keystore_names;
 pub mod network_output_dispatcher;
+pub mod security;
+pub mod server;
+pub mod session_manager;
 pub mod storage_network_integration;
-pub mod web4_stub;
+pub mod unified_server;
+pub mod utils;
 pub mod web4_manifest;
-pub mod keystore_names;
+pub mod web4_stub;
 
 // Re-export key types for external use
-pub use config::{NodeConfig, CliArgs, Environment, MeshMode, SecurityLevel};
-pub use runtime::{RuntimeOrchestrator, ComponentStatus, ComponentId, Component};
-pub use monitoring::{MonitoringSystem, SystemMetrics, HealthStatus as MonitoringHealth};
-pub use integration::{IntegrationManager, ServiceContainer, EventBus};
-pub use api::{ZhtpServer, IdentityHandler, BlockchainHandler, StorageHandler, ProtocolHandler, MiddlewareStack};
-pub use unified_server::ZhtpUnifiedServer;
+pub use api::{
+    BlockchainHandler, IdentityHandler, MiddlewareStack, ProtocolHandler, StorageHandler,
+    ZhtpServer,
+};
+pub use config::{CliArgs, Environment, MeshMode, NodeConfig, SecurityLevel};
+pub use discovery_coordinator::{
+    DiscoveredPeer, DiscoveryCoordinator, DiscoveryProtocol, DiscoveryStrategy,
+};
+pub use integration::{EventBus, IntegrationManager, ServiceContainer};
+pub use monitoring::{HealthStatus as MonitoringHealth, MonitoringSystem, SystemMetrics};
+pub use runtime::{Component, ComponentId, ComponentStatus, RuntimeOrchestrator};
+pub use security::{Protocol, ProtocolFilter};
 pub use server::IncomingProtocol;
 pub use session_manager::SessionManager;
-pub use security::{Protocol, ProtocolFilter};
-pub use discovery_coordinator::{DiscoveryCoordinator, DiscoveryProtocol, DiscoveryStrategy, DiscoveredPeer};
+pub use unified_server::ZhtpUnifiedServer;
 
 /// ZHTP node version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -69,25 +76,25 @@ pub enum HealthStatus {
 pub enum ZhtpError {
     #[error("Configuration error: {0}")]
     Configuration(String),
-    
+
     #[error("Component initialization failed: {0}")]
     ComponentInit(String),
-    
+
     #[error("Runtime orchestration error: {0}")]
     Runtime(String),
-    
+
     #[error("Integration error between packages: {0}")]
     Integration(String),
-    
+
     #[error("Monitoring system error: {0}")]
     Monitoring(String),
-    
+
     #[error("Network coordination error: {0}")]
     Network(String),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 }

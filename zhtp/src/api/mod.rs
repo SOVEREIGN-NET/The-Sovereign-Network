@@ -1,5 +1,5 @@
 //! API Module
-//! 
+//!
 //! Clean, minimal API structure for ZHTP
 
 pub mod handlers;

@@ -1,17 +1,16 @@
 //! Reward System for Storage Providers
-//! 
+//!
 //! Implements a comprehensive reward system for storage providers based on:
 //! - Storage performance metrics
 //! - Reliability and uptime
 //! - Data integrity
 //! - Network participation
 
-use crate::types::{NodeId, RewardTier, RewardThreshold};
-use anyhow::{Result, anyhow};
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
+use crate::types::{NodeId, RewardThreshold, RewardTier};
+use anyhow::{anyhow, Result};
 use lib_crypto::Hash;
-
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Storage reward tracker for storage providers
 /// Tracks metrics and performance, delegates actual reward calculation to lib-economy
@@ -71,59 +70,74 @@ impl StorageRewardTracker {
         let mut tier_thresholds = HashMap::new();
 
         // Basic tier - entry level
-        tier_thresholds.insert(RewardTier::Basic, RewardThreshold {
-            min_reputation: 0.0,
-            min_uptime: 0.90,
-            min_contracts: 0,
-            min_storage: 0,
-            min_data_integrity: 0.95,
-            base_multiplier: 1.0,
-            bonus_multiplier: 1.0,
-        });
+        tier_thresholds.insert(
+            RewardTier::Basic,
+            RewardThreshold {
+                min_reputation: 0.0,
+                min_uptime: 0.90,
+                min_contracts: 0,
+                min_storage: 0,
+                min_data_integrity: 0.95,
+                base_multiplier: 1.0,
+                bonus_multiplier: 1.0,
+            },
+        );
 
         // Bronze tier
-        tier_thresholds.insert(RewardTier::Bronze, RewardThreshold {
-            min_reputation: 0.7,
-            min_uptime: 0.95,
-            min_contracts: 10,
-            min_storage: 1024 * 1024 * 1024, // 1GB
-            min_data_integrity: 0.97,
-            base_multiplier: 1.2,
-            bonus_multiplier: 1.1,
-        });
+        tier_thresholds.insert(
+            RewardTier::Bronze,
+            RewardThreshold {
+                min_reputation: 0.7,
+                min_uptime: 0.95,
+                min_contracts: 10,
+                min_storage: 1024 * 1024 * 1024, // 1GB
+                min_data_integrity: 0.97,
+                base_multiplier: 1.2,
+                bonus_multiplier: 1.1,
+            },
+        );
 
         // Silver tier
-        tier_thresholds.insert(RewardTier::Silver, RewardThreshold {
-            min_reputation: 0.8,
-            min_uptime: 0.98,
-            min_contracts: 50,
-            min_storage: 10 * 1024 * 1024 * 1024, // 10GB
-            min_data_integrity: 0.99,
-            base_multiplier: 1.5,
-            bonus_multiplier: 1.3,
-        });
+        tier_thresholds.insert(
+            RewardTier::Silver,
+            RewardThreshold {
+                min_reputation: 0.8,
+                min_uptime: 0.98,
+                min_contracts: 50,
+                min_storage: 10 * 1024 * 1024 * 1024, // 10GB
+                min_data_integrity: 0.99,
+                base_multiplier: 1.5,
+                bonus_multiplier: 1.3,
+            },
+        );
 
         // Gold tier
-        tier_thresholds.insert(RewardTier::Gold, RewardThreshold {
-            min_reputation: 0.9,
-            min_uptime: 0.995,
-            min_contracts: 100,
-            min_storage: 100 * 1024 * 1024 * 1024, // 100GB
-            min_data_integrity: 0.995,
-            base_multiplier: 2.0,
-            bonus_multiplier: 1.6,
-        });
+        tier_thresholds.insert(
+            RewardTier::Gold,
+            RewardThreshold {
+                min_reputation: 0.9,
+                min_uptime: 0.995,
+                min_contracts: 100,
+                min_storage: 100 * 1024 * 1024 * 1024, // 100GB
+                min_data_integrity: 0.995,
+                base_multiplier: 2.0,
+                bonus_multiplier: 1.6,
+            },
+        );
 
         // Platinum tier - highest level
-        tier_thresholds.insert(RewardTier::Platinum, RewardThreshold {
-            min_reputation: 0.95,
-            min_uptime: 0.999,
-            min_contracts: 500,
-            min_storage: 1024 * 1024 * 1024 * 1024, // 1TB
-            min_data_integrity: 0.999,
-            base_multiplier: 3.0,
-            bonus_multiplier: 2.0,
-        });
+        tier_thresholds.insert(
+            RewardTier::Platinum,
+            RewardThreshold {
+                min_reputation: 0.95,
+                min_uptime: 0.999,
+                min_contracts: 500,
+                min_storage: 1024 * 1024 * 1024 * 1024, // 1TB
+                min_data_integrity: 0.999,
+                base_multiplier: 3.0,
+                bonus_multiplier: 2.0,
+            },
+        );
 
         Self {
             tier_thresholds,
@@ -134,19 +148,26 @@ impl StorageRewardTracker {
     }
 
     /// Calculate rewards for a provider
-    pub fn calculate_provider_rewards(&self, provider_id: &NodeId, storage_provided: u64) -> Result<u64> {
-        let performance = self.provider_performance.get(provider_id)
+    pub fn calculate_provider_rewards(
+        &self,
+        provider_id: &NodeId,
+        storage_provided: u64,
+    ) -> Result<u64> {
+        let performance = self
+            .provider_performance
+            .get(provider_id)
             .ok_or_else(|| anyhow!("Provider performance not found"))?;
 
         let tier = self.determine_tier(performance);
         let threshold = self.tier_thresholds.get(&tier).unwrap();
 
         // Base reward calculation
-        let base_reward = storage_provided / 1_000_000; // 1 ZHTP per MB
+        let base_reward = storage_provided / 1_000_000; // 1 SOV per MB
         let tier_multiplied = (base_reward as f64 * threshold.base_multiplier) as u64;
 
         // Performance bonus
-        let performance_score = (performance.reputation + performance.uptime + performance.data_integrity) / 3.0;
+        let performance_score =
+            (performance.reputation + performance.uptime + performance.data_integrity) / 3.0;
         let bonus = if performance_score > 0.95 {
             (tier_multiplied as f64 * threshold.bonus_multiplier) as u64
         } else {
@@ -159,7 +180,12 @@ impl StorageRewardTracker {
     /// Determine reward tier for a provider
     pub fn determine_tier(&self, performance: &ProviderPerformance) -> RewardTier {
         // Check from highest to lowest tier
-        for &tier in &[RewardTier::Platinum, RewardTier::Gold, RewardTier::Silver, RewardTier::Bronze] {
+        for &tier in &[
+            RewardTier::Platinum,
+            RewardTier::Gold,
+            RewardTier::Silver,
+            RewardTier::Bronze,
+        ] {
             if let Some(threshold) = self.tier_thresholds.get(&tier) {
                 if performance.reputation >= threshold.min_reputation
                     && performance.uptime >= threshold.min_uptime
@@ -177,9 +203,10 @@ impl StorageRewardTracker {
         let tier = self.determine_tier(&performance);
         let mut updated_performance = performance;
         updated_performance.current_tier = tier;
-        
+
         let node_id = updated_performance.node_id.clone();
-        self.provider_performance.insert(node_id, updated_performance);
+        self.provider_performance
+            .insert(node_id, updated_performance);
     }
 
     /// Distribute rewards to a provider
@@ -189,7 +216,9 @@ impl StorageRewardTracker {
         amount: u64,
         reason: String,
     ) -> Result<RewardEvent> {
-        let performance = self.provider_performance.get(&provider_id)
+        let performance = self
+            .provider_performance
+            .get(&provider_id)
             .ok_or_else(|| anyhow!("Provider not found"))?;
 
         let event = RewardEvent {
@@ -231,23 +260,34 @@ impl StorageRewardTracker {
     pub fn get_tier_statistics(&self) -> HashMap<RewardTier, TierStats> {
         let mut stats = HashMap::new();
 
-        for tier in [RewardTier::Basic, RewardTier::Bronze, RewardTier::Silver, RewardTier::Gold, RewardTier::Platinum] {
-            let providers_in_tier = self.provider_performance
+        for tier in [
+            RewardTier::Basic,
+            RewardTier::Bronze,
+            RewardTier::Silver,
+            RewardTier::Gold,
+            RewardTier::Platinum,
+        ] {
+            let providers_in_tier = self
+                .provider_performance
                 .values()
                 .filter(|p| p.current_tier == tier)
                 .count();
 
-            let total_rewards = self.reward_history
+            let total_rewards = self
+                .reward_history
                 .iter()
                 .filter(|event| event.tier == tier)
                 .map(|event| event.amount)
                 .sum();
 
-            stats.insert(tier, TierStats {
-                provider_count: providers_in_tier as u64,
-                total_rewards,
-                average_performance: self.calculate_tier_average_performance(tier),
-            });
+            stats.insert(
+                tier,
+                TierStats {
+                    provider_count: providers_in_tier as u64,
+                    total_rewards,
+                    average_performance: self.calculate_tier_average_performance(tier),
+                },
+            );
         }
 
         stats
@@ -255,7 +295,8 @@ impl StorageRewardTracker {
 
     /// Calculate average performance for a tier
     fn calculate_tier_average_performance(&self, tier: RewardTier) -> f64 {
-        let providers_in_tier: Vec<_> = self.provider_performance
+        let providers_in_tier: Vec<_> = self
+            .provider_performance
             .values()
             .filter(|p| p.current_tier == tier)
             .collect();
@@ -324,7 +365,7 @@ mod tests {
     #[test]
     fn test_tier_determination() {
         let manager = StorageRewardTracker::new();
-        
+
         let high_performance = ProviderPerformance {
             node_id: NodeId::from_bytes([1u8; 32]),
             reputation: 0.95,
@@ -357,8 +398,10 @@ mod tests {
         };
 
         manager.update_provider_performance(performance);
-        
-        let rewards = manager.calculate_provider_rewards(&node_id, 100_000_000).unwrap();
+
+        let rewards = manager
+            .calculate_provider_rewards(&node_id, 100_000_000)
+            .unwrap();
         assert!(rewards > 100); // Should have tier multiplier applied
     }
 }

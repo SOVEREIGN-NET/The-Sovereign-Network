@@ -1,9 +1,9 @@
 //! Anti-speculation design for post-scarcity economics
-//! 
+//!
 //! Implements economic mechanisms that discourage speculation
 //! and focus on utility-based token economics.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Anti-speculation configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,7 +28,7 @@ impl AntiSpeculationConfig {
             min_utility_usage_rate: 0.0, // No minimum usage requirement
         }
     }
-    
+
     /// Post-scarcity model configuration (unlimited supply, utility focus)
     pub fn post_scarcity() -> Self {
         AntiSpeculationConfig {
@@ -50,7 +50,7 @@ impl AntiSpeculationMechanisms {
     pub fn new(config: AntiSpeculationConfig) -> Self {
         AntiSpeculationMechanisms { config }
     }
-    
+
     /// Check if a token holding pattern indicates speculation
     pub fn is_speculative_behavior(
         &self,
@@ -61,28 +61,28 @@ impl AntiSpeculationMechanisms {
         if !self.config.enabled {
             return false;
         }
-        
+
         // Calculate usage rate
         let usage_rate = if balance > 0 {
             (usage_in_period as f64) / (balance as f64)
         } else {
             1.0 // No tokens = no speculation
         };
-        
+
         // Check against minimum usage requirement
         let min_rate_per_day = self.config.min_utility_usage_rate / (period_days as f64);
         usage_rate < min_rate_per_day
     }
-    
+
     /// Calculate anti-speculation incentives
     pub fn calculate_utility_incentives(&self, utility_usage: u64, total_balance: u64) -> u64 {
         if !self.config.enabled || total_balance == 0 {
             return 0;
         }
-        
+
         // Reward utility usage with small bonuses
         let usage_ratio = (utility_usage as f64) / (total_balance as f64);
-        
+
         // Small bonus for active utility usage (not speculation)
         if usage_ratio > 0.1 {
             // 1% bonus for active network participation
@@ -91,7 +91,7 @@ impl AntiSpeculationMechanisms {
             0
         }
     }
-    
+
     /// Apply post-scarcity economics principles
     pub fn apply_post_scarcity_principles(&self, _balance: u64) -> PostScarcityEffects {
         PostScarcityEffects {
@@ -120,23 +120,23 @@ impl PostScarcityEffects {
     /// Get human-readable description of effects
     pub fn describe(&self) -> Vec<&'static str> {
         let mut effects = Vec::new();
-        
+
         if self.speculation_deterrent {
             effects.push("Unlimited supply prevents speculation bubbles");
         }
-        
+
         if self.utility_focused {
             effects.push("Token value based on network utility, not scarcity");
         }
-        
+
         if self.hoarding_meaningless {
             effects.push("Token hoarding provides no advantage");
         }
-        
+
         if self.value_from_utility {
             effects.push("Economic value derived from actual network services");
         }
-        
+
         effects
     }
 }
@@ -168,11 +168,11 @@ mod tests {
     #[test]
     fn test_speculative_behavior_detection() {
         let mechanisms = AntiSpeculationMechanisms::default();
-        
+
         // High balance, no usage = speculative
         let is_spec = mechanisms.is_speculative_behavior(10000, 0, 30);
         assert_eq!(is_spec, false); // Post-scarcity doesn't penalize holding
-        
+
         // Active usage = not speculative
         let is_spec2 = mechanisms.is_speculative_behavior(10000, 1000, 30);
         assert_eq!(is_spec2, false);
@@ -181,10 +181,10 @@ mod tests {
     #[test]
     fn test_utility_incentives() {
         let mechanisms = AntiSpeculationMechanisms::default();
-        
+
         let incentive = mechanisms.calculate_utility_incentives(1100, 10000); // 11% ratio > 10% threshold
         assert!(incentive > 0); // Should reward utility usage
-        
+
         let no_incentive = mechanisms.calculate_utility_incentives(50, 10000); // 0.5% ratio < 10% threshold
         assert_eq!(no_incentive, 0); // Low usage gets no bonus
     }
@@ -193,7 +193,7 @@ mod tests {
     fn test_post_scarcity_effects() {
         let mechanisms = AntiSpeculationMechanisms::default();
         let effects = mechanisms.apply_post_scarcity_principles(10000);
-        
+
         assert!(effects.speculation_deterrent);
         assert!(effects.utility_focused);
         assert!(effects.hoarding_meaningless);

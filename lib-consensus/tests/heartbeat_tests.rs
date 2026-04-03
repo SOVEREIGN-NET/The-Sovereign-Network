@@ -3,7 +3,7 @@
 //! These tests verify the full heartbeat flow including sending, reception,
 //! validation, and liveness detection across the consensus engine.
 
-use lib_consensus::network::{HeartbeatTracker, HeartbeatProcessingResult};
+use lib_consensus::network::{HeartbeatProcessingResult, HeartbeatTracker};
 use lib_consensus::types::ConsensusStep;
 use lib_consensus::validators::validator_protocol::NetworkSummary;
 use lib_crypto::{hash_blake3, Hash, PostQuantumSignature, PublicKey, SignatureAlgorithm};
@@ -13,11 +13,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // Counter for generating unique test IDs
 static TEST_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Helper to create a test IdentityId
-fn create_test_identity(name: &str) -> IdentityId {
-    Hash::from_bytes(&hash_blake3(name.as_bytes()))
-}
 
 /// Helper to create a unique test IdentityId
 fn create_unique_identity() -> IdentityId {
@@ -162,7 +157,13 @@ fn test_invalid_heartbeat_not_validator() {
     let validator_id = create_unique_identity();
     let other_id = create_unique_identity();
 
-    let heartbeat = create_test_heartbeat(other_id.clone(), 100, 0, ConsensusStep::PreVote, current_timestamp());
+    let heartbeat = create_test_heartbeat(
+        other_id.clone(),
+        100,
+        0,
+        ConsensusStep::PreVote,
+        current_timestamp(),
+    );
 
     // Process with validator check that fails
     let is_validator = |vid: &IdentityId| vid == &validator_id; // other_id won't match
@@ -275,12 +276,7 @@ fn test_configurable_liveness_timeout() {
 fn test_heartbeat_message_creation() {
     let tracker = HeartbeatTracker::new(Duration::from_secs(10));
 
-    let msg = tracker.create_heartbeat_message(
-        100,
-        5,
-        ConsensusStep::PreCommit,
-        10,
-    );
+    let msg = tracker.create_heartbeat_message(100, 5, ConsensusStep::PreCommit, 10);
 
     assert_eq!(msg.height, 100);
     assert_eq!(msg.round, 5);

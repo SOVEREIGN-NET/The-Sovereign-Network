@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-use crate::protocols::NetworkProtocol;
 use crate::identity::unified_peer::UnifiedPeerId;
+use crate::protocols::NetworkProtocol;
+use serde::{Deserialize, Serialize};
 
 /// Individual mesh connection between nodes
 ///

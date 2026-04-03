@@ -1,32 +1,32 @@
+use crate::messages::wire::{
+    FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError,
+};
+use crate::rr_data::inter::rr_data::{RRData, RRDataError};
+use crate::utils::fqdn_utils::{pack_fqdn, unpack_fqdn};
+use crate::zone::inter::zone_rr_data::ZoneRRData;
+use crate::zone::zone_reader::{ErrorKind, ZoneReaderError};
 use std::any::Any;
 #[allow(unused_imports)]
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
-use crate::messages::wire::{FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError};
-use crate::rr_data::inter::rr_data::{RRData, RRDataError};
-use crate::utils::fqdn_utils::{pack_fqdn, unpack_fqdn};
-use crate::zone::inter::zone_rr_data::ZoneRRData;
-use crate::zone::zone_reader::{ErrorKind, ZoneReaderError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MxRRData {
     priority: u16,
-    server: Option<String>
+    server: Option<String>,
 }
 
 impl Default for MxRRData {
-
     fn default() -> Self {
         Self {
             priority: 0,
-            server: None
+            server: None,
         }
     }
 }
 
 impl RRData for MxRRData {
-
     fn from_bytes(buf: &[u8]) -> Result<Self, RRDataError> {
         let priority = u16::from_be_bytes([buf[0], buf[1]]);
 
@@ -34,7 +34,7 @@ impl RRData for MxRRData {
 
         Ok(Self {
             priority,
-            server: Some(server)
+            server: Some(server),
         })
     }
 
@@ -43,8 +43,11 @@ impl RRData for MxRRData {
 
         buf.extend_from_slice(&self.priority.to_be_bytes());
 
-        buf.extend_from_slice(&pack_fqdn(self.server.as_ref()
-            .ok_or_else(|| RRDataError("server param was not set".to_string()))?));
+        buf.extend_from_slice(&pack_fqdn(
+            self.server
+                .as_ref()
+                .ok_or_else(|| RRDataError("server param was not set".to_string()))?,
+        ));
 
         Ok(buf)
     }
@@ -66,16 +69,18 @@ impl RRData for MxRRData {
     }
 
     fn eq_box(&self, other: &dyn RRData) -> bool {
-        other.as_any().downcast_ref::<Self>().map_or(false, |o| self == o)
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .map_or(false, |o| self == o)
     }
 }
 
 impl MxRRData {
-
     pub fn new(priority: u16, server: &str) -> Self {
         Self {
             priority,
-            server: Some(server.to_string())
+            server: Some(server.to_string()),
         }
     }
 
@@ -97,7 +102,6 @@ impl MxRRData {
 }
 
 impl FromWireLen for MxRRData {
-
     fn from_wire_len(context: &mut FromWireContext, _len: u16) -> Result<Self, WireError> {
         let priority = u16::from_wire(context)?;
 
@@ -105,23 +109,25 @@ impl FromWireLen for MxRRData {
 
         Ok(Self {
             priority,
-            server: Some(server)
+            server: Some(server),
         })
     }
 }
 
 impl ToWire for MxRRData {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
         self.priority.to_wire(context)?;
 
-        context.write_name(self.server.as_ref()
-            .ok_or_else(|| WireError::Format("server param was not set".to_string()))?, true)
+        context.write_name(
+            self.server
+                .as_ref()
+                .ok_or_else(|| WireError::Format("server param was not set".to_string()))?,
+            true,
+        )
     }
 }
 
 impl ZoneRRData for MxRRData {
-
     fn set_data(&mut self, index: usize, value: &str) -> Result<(), ZoneReaderError> {
         Ok(match index {
             0 => self.priority = value.parse().map_err(|_| ZoneReaderError::new(ErrorKind::Format, "unable to parse priority param for record type MX"))?,
@@ -137,16 +143,21 @@ impl ZoneRRData for MxRRData {
 }
 
 impl fmt::Display for MxRRData {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", self.priority,
-               format!("{}.", self.server.as_ref().unwrap_or(&String::new())))
+        write!(
+            f,
+            "{} {}",
+            self.priority,
+            format!("{}.", self.server.as_ref().unwrap_or(&String::new()))
+        )
     }
 }
 
 #[test]
 fn test() {
-    let buf = vec![ 0x0, 0x1, 0x5, 0x66, 0x69, 0x6e, 0x64, 0x39, 0x3, 0x6e, 0x65, 0x74, 0x0 ];
+    let buf = vec![
+        0x0, 0x1, 0x5, 0x66, 0x69, 0x6e, 0x64, 0x39, 0x3, 0x6e, 0x65, 0x74, 0x0,
+    ];
     let record = MxRRData::from_bytes(&buf).unwrap();
     assert_eq!(buf, record.to_bytes().unwrap());
 }

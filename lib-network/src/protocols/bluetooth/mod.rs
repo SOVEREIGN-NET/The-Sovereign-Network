@@ -1,5 +1,5 @@
 //! Bluetooth Protocol Suite
-//! 
+//!
 //! Comprehensive Bluetooth implementation including:
 //! - BLE mesh networking (main module)
 //! - Bluetooth Classic RFCOMM (classic module)
@@ -46,30 +46,30 @@ pub mod linux_ops;
 pub mod enhanced;
 
 // GATT adapter with UHP framing (Issue #141)
-pub mod gatt_adapter;
-pub mod gatt_stream;
+pub mod advertising;
 pub mod authentication;
-pub mod events;
+pub mod capabilities;
 pub mod commands;
+pub mod config;
+pub mod connectivity;
+pub mod core;
+pub mod core_bluetooth_init;
+pub mod device_discovery;
 pub mod discovery;
-pub mod messaging;
 pub mod edge_sync;
+pub mod events;
+pub mod gatt_adapter;
+pub mod gatt_backend;
+pub mod gatt_io;
+pub mod gatt_stream;
+pub mod handshake_io;
+pub mod handshake_send;
+pub mod identity;
+pub mod lifecycle;
+pub mod messaging;
 pub mod monitoring;
 pub mod parsing;
-pub mod connectivity;
-pub mod gatt_io;
-pub mod handshake_io;
-pub mod advertising;
-pub mod gatt_backend;
 pub mod platform_init;
-pub mod handshake_send;
-pub mod device_discovery;
-pub mod identity;
-pub mod core_bluetooth_init;
-pub mod config;
-pub mod capabilities;
-pub mod lifecycle;
-pub mod core;
 
 // Mock BLE link for CI testing (Issue #141)
 #[cfg(any(test, feature = "ble-mock"))]
@@ -102,8 +102,20 @@ use self::enhanced::BlueZGattParser;
 use self::enhanced::MacOSBluetoothManager;
 
 // Re-export public types
-pub use self::gatt::GattMessage as GattMessageType;
 pub use self::device::BleConnection as BluetoothConnection;
+pub use self::gatt::GattMessage as GattMessageType;
+
+/// Untrusted BLE discovery envelope (does not confer identity).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshHandshake {
+    pub version: u16,
+    pub node_id: Uuid,
+    pub public_key: PublicKey,
+    pub mesh_port: u16,
+    pub protocols: Vec<String>,
+    pub discovered_via: u8,
+    pub capabilities: crate::handshake::HandshakeCapabilities,
+}
 
 /// Untrusted BLE discovery envelope (does not confer identity).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,7 +174,8 @@ pub struct BluetoothMeshProtocol {
     #[cfg(target_os = "macos")]
     pub core_bluetooth: Arc<RwLock<Option<Arc<CoreBluetoothManager>>>>,
     /// Blockchain provider for serving headers/proofs to edge nodes
-    pub blockchain_provider: Arc<RwLock<Option<Arc<dyn crate::blockchain_sync::BlockchainProvider>>>>,
+    pub blockchain_provider:
+        Arc<RwLock<Option<Arc<dyn crate::blockchain_sync::BlockchainProvider>>>>,
     /// Fragment reassembler for large BLE messages
     pub fragment_reassembler: Arc<RwLock<gatt::FragmentReassembler>>,
 }

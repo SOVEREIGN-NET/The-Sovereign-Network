@@ -19,5 +19,9 @@ fn benchmark_zk_proof_verification(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, benchmark_zk_proof_generation, benchmark_zk_proof_verification);
+criterion_group!(
+    benches,
+    benchmark_zk_proof_generation,
+    benchmark_zk_proof_verification
+);
 criterion_main!(benches);

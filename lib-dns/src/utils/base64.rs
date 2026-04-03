@@ -26,7 +26,6 @@ pub fn encode(input: &[u8]) -> String {
         output.push(TABLE[((b1 & 0x03) << 4) as usize] as char);
         output.push('=');
         output.push('=');
-
     } else if rem == 2 {
         let b1 = input[i];
         let b2 = input[i + 1];
@@ -45,10 +44,22 @@ pub fn decode(input: &str) -> io::Result<Vec<u8>> {
     let mut i = 0;
 
     while i + 3 < buf.len() {
-        let v1 = val(buf[i]).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "invalid base64"))?;
-        let v2 = val(buf[i + 1]).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "invalid base64"))?;
-        let v3 = val(buf[i + 2]).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "invalid base64"))?;
-        let v4 = val(buf[i + 3]).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "invalid base64"))?;
+        let v1 = val(buf[i]).ok_or(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid base64",
+        ))?;
+        let v2 = val(buf[i + 1]).ok_or(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid base64",
+        ))?;
+        let v3 = val(buf[i + 2]).ok_or(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid base64",
+        ))?;
+        let v4 = val(buf[i + 3]).ok_or(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid base64",
+        ))?;
 
         output.push((v1 << 2) | (v2 >> 4));
         if buf[i + 2] != b'=' {

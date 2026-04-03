@@ -1,16 +1,18 @@
 //! ZHTP Content Management System
-//! 
+//!
 //! Advanced content management with encryption, compression, chunking,
 //! replication, versioning, and Web4-specific content handling including
 //! DAO-governed content and economic incentive distribution.
 
-use crate::types::{ZhtpRequest, ServerContent, ContentMetadata, AccessPolicy};
+#![allow(dead_code)]
+
+use crate::types::{AccessPolicy, ContentMetadata, ServerContent, ZhtpRequest};
 use crate::zhtp::ZhtpResult;
 
-use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 /// Content storage backend types
@@ -312,7 +314,7 @@ impl ZhtpContentManager {
             dedup_hashes: HashMap::new(),
         }
     }
-    
+
     /// Store content with metadata
     pub async fn store_content(
         &mut self,
@@ -328,28 +330,32 @@ impl ZhtpContentManager {
                 self.config.max_content_size
             ));
         }
-        
+
         // Calculate content hash for deduplication
         let content_hash = self.calculate_content_hash(content);
-        
+
         // Check for deduplication
         if self.config.enable_deduplication {
             if let Some(existing_id) = self.dedup_hashes.get(&content_hash) {
-                tracing::info!(" Content deduplicated: using existing content {}", existing_id);
+                tracing::info!(
+                    " Content deduplicated: using existing content {}",
+                    existing_id
+                );
                 return Ok(existing_id.clone());
             }
         }
-        
+
         // Generate content ID
         let content_id = Uuid::new_v4().to_string();
-        
+
         // Calculate economic fees
-        let _economic_assessment = self.calculate_storage_fees(content.len(), &metadata, request)?;
-        
+        let _economic_assessment =
+            self.calculate_storage_fees(content.len(), &metadata, request)?;
+
         // Process content (compression/encryption would be handled elsewhere if needed)
         let processed_content = content.to_vec();
         let final_content = processed_content;
-        
+
         // Chunk content if needed
         let chunks = if final_content.len() > self.config.chunk_size {
             self.chunk_content(&content_id, &final_content).await?
@@ -364,32 +370,32 @@ impl ZhtpContentManager {
                 compression_info: None, // Would be set based on server configuration
             }]
         };
-        
+
         // Store content chunks
-        self.store_content_chunks(&content_id, &chunks, &final_content).await?;
-        
+        self.store_content_chunks(&content_id, &chunks, &final_content)
+            .await?;
+
         // Create server content using proper constructor
         let access_policy = AccessPolicy::public(); // Default access policy
-        let server_content = ServerContent::with_metadata(
-            final_content,
-            metadata.clone(),
-            access_policy,
-        )?;
-        
+        let server_content =
+            ServerContent::with_metadata(final_content, metadata.clone(), access_policy)?;
+
         // Set the content ID after creation
         let mut server_content = server_content;
         server_content.id = Some(content_id.clone());
-        
+
         // Store metadata
         let chunks_len = chunks.len();
-        self.metadata_store.insert(content_id.clone(), server_content.clone());
+        self.metadata_store
+            .insert(content_id.clone(), server_content.clone());
         self.chunks_store.insert(content_id.clone(), chunks.clone());
-        
+
         // Update deduplication table
         if self.config.enable_deduplication {
-            self.dedup_hashes.insert(content_hash.clone(), content_id.clone());
+            self.dedup_hashes
+                .insert(content_hash.clone(), content_id.clone());
         }
-        
+
         // Create initial version
         let initial_version = ContentVersion {
             version_id: Uuid::new_v4().to_string(),
@@ -399,30 +405,43 @@ impl ZhtpContentManager {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            creator: request.headers.get("X-User-ID").unwrap_or("anonymous".to_string()),
+            creator: request
+                .headers
+                .get("X-User-ID")
+                .unwrap_or("anonymous".to_string()),
             description: "Initial version".to_string(),
             content_hash: content_hash.clone(),
             metadata: HashMap::new(),
         };
-        
-        self.versions_store.insert(content_id.clone(), vec![initial_version]);
-        
+
+        self.versions_store
+            .insert(content_id.clone(), vec![initial_version]);
+
         // Initialize statistics
-        self.stats_store.insert(content_id.clone(), ContentStats::default());
-        
+        self.stats_store
+            .insert(content_id.clone(), ContentStats::default());
+
         // Create replicas if needed - check storage_requirements
         if let Some(ref storage_req) = server_content.storage_requirements {
             if storage_req.replication > 1 {
-                self.create_replicas(&content_id, &ReplicationStrategy::NReplicas(storage_req.replication)).await?;
+                self.create_replicas(
+                    &content_id,
+                    &ReplicationStrategy::NReplicas(storage_req.replication),
+                )
+                .await?;
             }
         }
-        
-        tracing::info!(" Content stored: {} ({} bytes, {} chunks)",
-                      content_id, content.len(), chunks_len);
-        
+
+        tracing::info!(
+            " Content stored: {} ({} bytes, {} chunks)",
+            content_id,
+            content.len(),
+            chunks_len
+        );
+
         Ok(content_id)
     }
-    
+
     /// Retrieve content by ID
     pub async fn retrieve_content(
         &mut self,
@@ -436,7 +455,7 @@ impl ZhtpContentManager {
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                
+
                 if current_time < *expiry {
                     tracing::debug!("Content cache hit: {}", content_id);
                     let cached_content_clone = cached_content.clone();
@@ -448,64 +467,80 @@ impl ZhtpContentManager {
                 }
             }
         }
-        
+
         // Get content metadata
         let metadata = match self.metadata_store.get(content_id) {
             Some(meta) => meta,
             None => return Ok(None),
         };
-        
+
         // Calculate retrieval fees
         let retrieval_assessment = self.calculate_retrieval_fees(metadata, request)?;
-        
+
         // Get content chunks
         let chunks = match self.chunks_store.get(content_id) {
             Some(chunks) => chunks,
-            None => return Err(anyhow::anyhow!("Content chunks not found for {}", content_id)),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "Content chunks not found for {}",
+                    content_id
+                ))
+            }
         };
-        
+
         // Retrieve and reassemble content
         let mut content_data = Vec::new();
         for chunk in chunks.iter() {
             let chunk_data = self.retrieve_content_chunk(chunk).await?;
             content_data.extend(chunk_data);
         }
-        
+
         // Decrypt content if needed
-        let decrypted_content = if let Some(ref _encryption_info) = metadata.metadata.encryption_info {
-            self.decrypt_content(&content_data, &EncryptionType::PostQuantum).await?
-        } else {
-            content_data
-        };
-        
+        let decrypted_content =
+            if let Some(ref _encryption_info) = metadata.metadata.encryption_info {
+                self.decrypt_content(&content_data, &EncryptionType::PostQuantum)
+                    .await?
+            } else {
+                content_data
+            };
+
         // Decompress content if needed
-        let final_content = if let Some(ref _compression_info) = metadata.metadata.compression_info {
-            self.decompress_content(&decrypted_content, &CompressionType::Gzip).await?
+        let final_content = if let Some(ref _compression_info) = metadata.metadata.compression_info
+        {
+            self.decompress_content(&decrypted_content, &CompressionType::Gzip)
+                .await?
         } else {
             decrypted_content
         };
-        
+
         // Cache the content
         if self.config.enable_caching {
             let expiry = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs() + self.config.cache_ttl;
-            
-            self.content_cache.insert(content_id.to_string(), (final_content.clone(), expiry));
+                .as_secs()
+                + self.config.cache_ttl;
+
+            self.content_cache
+                .insert(content_id.to_string(), (final_content.clone(), expiry));
         }
-        
+
         // Update access statistics
         self.update_access_stats(content_id, request).await?;
-        
+
         // Distribute economic incentives
-        self.distribute_retrieval_incentives(content_id, &retrieval_assessment).await?;
-        
-        tracing::info!(" Content retrieved: {} ({} bytes)", content_id, final_content.len());
-        
+        self.distribute_retrieval_incentives(content_id, &retrieval_assessment)
+            .await?;
+
+        tracing::info!(
+            " Content retrieved: {} ({} bytes)",
+            content_id,
+            final_content.len()
+        );
+
         Ok(Some(final_content))
     }
-    
+
     /// Update content (creates new version)
     pub async fn update_content(
         &mut self,
@@ -514,17 +549,22 @@ impl ZhtpContentManager {
         request: &ZhtpRequest,
     ) -> ZhtpResult<String> {
         // Get existing metadata
-        let existing_metadata = self.metadata_store.get(content_id)
+        let existing_metadata = self
+            .metadata_store
+            .get(content_id)
             .ok_or_else(|| anyhow::anyhow!("Content not found: {}", content_id))?
             .clone();
-        
+
         // Create new version
-        let current_version = existing_metadata.metadata.version.as_ref()
+        let current_version = existing_metadata
+            .metadata
+            .version
+            .as_ref()
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(1);
         let new_version_number = current_version + 1;
         let new_content_hash = self.calculate_content_hash(new_content);
-        
+
         // Store new content (similar to store_content but with versioning)
         let new_version = ContentVersion {
             version_id: Uuid::new_v4().to_string(),
@@ -534,17 +574,21 @@ impl ZhtpContentManager {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            creator: request.headers.get("X-User-ID").unwrap_or("anonymous".to_string()),
+            creator: request
+                .headers
+                .get("X-User-ID")
+                .unwrap_or("anonymous".to_string()),
             description: "Updated version".to_string(),
             content_hash: new_content_hash,
             metadata: HashMap::new(),
         };
-        
+
         // Add to versions
-        self.versions_store.entry(content_id.to_string())
+        self.versions_store
+            .entry(content_id.to_string())
             .or_default()
             .push(new_version.clone());
-        
+
         // Update metadata
         let mut updated_metadata = existing_metadata;
         updated_metadata.metadata.version = Some(new_version_number.to_string());
@@ -554,21 +598,30 @@ impl ZhtpContentManager {
             .as_secs();
         updated_metadata.metadata.hash = lib_crypto::hash_blake3(&new_content).to_vec();
         updated_metadata.metadata.size = new_content.len() as u64;
-        
-        self.metadata_store.insert(content_id.to_string(), updated_metadata);
-        
-        tracing::info!("Content updated: {} (version {})", content_id, new_version_number);
-        
+
+        self.metadata_store
+            .insert(content_id.to_string(), updated_metadata);
+
+        tracing::info!(
+            "Content updated: {} (version {})",
+            content_id,
+            new_version_number
+        );
+
         Ok(new_version.version_id)
     }
-    
+
     /// Delete content
-    pub async fn delete_content(&mut self, content_id: &str, _request: &ZhtpRequest) -> ZhtpResult<bool> {
+    pub async fn delete_content(
+        &mut self,
+        content_id: &str,
+        _request: &ZhtpRequest,
+    ) -> ZhtpResult<bool> {
         // Check if content exists
         if !self.metadata_store.contains_key(content_id) {
             return Ok(false);
         }
-        
+
         // Remove from all stores
         self.metadata_store.remove(content_id);
         self.chunks_store.remove(content_id);
@@ -576,41 +629,41 @@ impl ZhtpContentManager {
         self.replicas_store.remove(content_id);
         self.stats_store.remove(content_id);
         self.content_cache.remove(content_id);
-        
+
         // Remove from deduplication table
         if self.config.enable_deduplication {
             self.dedup_hashes.retain(|_, v| v != content_id);
         }
-        
+
         tracing::info!("🗑️  Content deleted: {}", content_id);
-        
+
         Ok(true)
     }
-    
+
     /// Get content metadata
     pub fn get_content_metadata(&self, content_id: &str) -> Option<&ServerContent> {
         self.metadata_store.get(content_id)
     }
-    
+
     /// List content with filtering
     pub fn list_content(&self, filter: Option<ContentFilter>) -> Vec<&ServerContent> {
         let mut results: Vec<&ServerContent> = self.metadata_store.values().collect();
-        
+
         if let Some(filter) = filter {
             results.retain(|content| self.matches_filter(content, &filter));
         }
-        
+
         results
     }
-    
+
     /// Calculate content hash
     fn calculate_content_hash(&self, content: &[u8]) -> String {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(content);
         format!("{:x}", hasher.finalize())
     }
-    
+
     /// Generate storage location
     fn generate_storage_location(&self, content_id: &str) -> String {
         match &self.config.backend {
@@ -631,7 +684,7 @@ impl ZhtpContentManager {
             }
         }
     }
-    
+
     // Additional helper methods would be implemented here for:
     // - compress_content, decompress_content
     // - encrypt_content, decrypt_content
@@ -642,48 +695,77 @@ impl ZhtpContentManager {
     // - distribute_retrieval_incentives
     // - create_replicas
     // - matches_filter
-    
-    async fn compress_content(&self, content: &[u8], _compression: &CompressionType) -> ZhtpResult<Vec<u8>> {
+
+    async fn compress_content(
+        &self,
+        content: &[u8],
+        _compression: &CompressionType,
+    ) -> ZhtpResult<Vec<u8>> {
         // Simplified compression implementation
         Ok(content.to_vec())
     }
-    
-    async fn decompress_content(&self, content: &[u8], _compression: &CompressionType) -> ZhtpResult<Vec<u8>> {
+
+    async fn decompress_content(
+        &self,
+        content: &[u8],
+        _compression: &CompressionType,
+    ) -> ZhtpResult<Vec<u8>> {
         // Simplified decompression implementation
         Ok(content.to_vec())
     }
-    
-    async fn encrypt_content(&self, content: &[u8], _encryption: &EncryptionType) -> ZhtpResult<Vec<u8>> {
+
+    async fn encrypt_content(
+        &self,
+        content: &[u8],
+        _encryption: &EncryptionType,
+    ) -> ZhtpResult<Vec<u8>> {
         // Simplified encryption implementation
         Ok(content.to_vec())
     }
-    
-    async fn decrypt_content(&self, content: &[u8], _encryption: &EncryptionType) -> ZhtpResult<Vec<u8>> {
+
+    async fn decrypt_content(
+        &self,
+        content: &[u8],
+        _encryption: &EncryptionType,
+    ) -> ZhtpResult<Vec<u8>> {
         // Simplified decryption implementation
         Ok(content.to_vec())
     }
-    
-    async fn chunk_content(&self, content_id: &str, content: &[u8]) -> ZhtpResult<Vec<ContentChunk>> {
+
+    async fn chunk_content(
+        &self,
+        content_id: &str,
+        content: &[u8],
+    ) -> ZhtpResult<Vec<ContentChunk>> {
         let mut chunks = Vec::new();
         let chunk_size = self.config.chunk_size;
-        
+
         for (i, chunk_data) in content.chunks(chunk_size).enumerate() {
             let chunk = ContentChunk {
                 id: format!("{}_chunk_{}", content_id, i),
                 sequence: i as u32,
                 size: chunk_data.len(),
                 hash: self.calculate_content_hash(chunk_data),
-                storage_location: format!("{}_chunk_{}", self.generate_storage_location(content_id), i),
+                storage_location: format!(
+                    "{}_chunk_{}",
+                    self.generate_storage_location(content_id),
+                    i
+                ),
                 encryption_info: None,
                 compression_info: None,
             };
             chunks.push(chunk);
         }
-        
+
         Ok(chunks)
     }
-    
-    async fn store_content_chunks(&mut self, content_id: &str, chunks: &[ContentChunk], content: &[u8]) -> ZhtpResult<()> {
+
+    async fn store_content_chunks(
+        &mut self,
+        content_id: &str,
+        chunks: &[ContentChunk],
+        content: &[u8],
+    ) -> ZhtpResult<()> {
         // Store chunk data in memory
         for (i, chunk) in chunks.iter().enumerate() {
             let start = i * self.config.chunk_size;
@@ -694,7 +776,7 @@ impl ZhtpContentManager {
         tracing::debug!(" Stored {} chunks for content {}", chunks.len(), content_id);
         Ok(())
     }
-    
+
     async fn retrieve_content_chunk(&self, chunk: &ContentChunk) -> ZhtpResult<Vec<u8>> {
         // Retrieve chunk data from memory
         match self.chunk_data_store.get(&chunk.id) {
@@ -705,56 +787,103 @@ impl ZhtpContentManager {
             }
         }
     }
-    
-    fn calculate_storage_fees(&self, content_size: usize, metadata: &ContentMetadata, _request: &ZhtpRequest) -> ZhtpResult<EconomicAssessment> {
-        let base_fee = (content_size as u64).saturating_mul(self.config.economic_incentives.storage_fee_per_byte_per_day);
-        let dao_fees = (base_fee as f64 * self.config.economic_incentives.dao_governance_fee_percentage) as u64;
-        let ubi_contribution = (base_fee as f64 * self.config.economic_incentives.ubi_content_percentage) as u64;
-        
+
+    fn calculate_storage_fees(
+        &self,
+        content_size: usize,
+        _metadata: &ContentMetadata,
+        _request: &ZhtpRequest,
+    ) -> ZhtpResult<EconomicAssessment> {
+        let base_fee = (content_size as u64)
+            .saturating_mul(self.config.economic_incentives.storage_fee_per_byte_per_day);
+        let dao_fees = (base_fee as f64
+            * self
+                .config
+                .economic_incentives
+                .dao_governance_fee_percentage) as u64;
+        let ubi_contribution =
+            (base_fee as f64 * self.config.economic_incentives.ubi_content_percentage) as u64;
+
         Ok(EconomicAssessment {
             total_fees: base_fee,
             dao_fees,
             ubi_contribution,
         })
     }
-    
-    fn calculate_retrieval_fees(&self, metadata: &ServerContent, _request: &ZhtpRequest) -> ZhtpResult<EconomicAssessment> {
-        let base_fee = metadata.metadata.size.saturating_mul(self.config.economic_incentives.retrieval_fee_per_byte);
-        let dao_fees = (base_fee as f64 * self.config.economic_incentives.dao_governance_fee_percentage) as u64;
-        let ubi_contribution = (base_fee as f64 * self.config.economic_incentives.ubi_content_percentage) as u64;
-        
+
+    fn calculate_retrieval_fees(
+        &self,
+        metadata: &ServerContent,
+        _request: &ZhtpRequest,
+    ) -> ZhtpResult<EconomicAssessment> {
+        let base_fee = metadata
+            .metadata
+            .size
+            .saturating_mul(self.config.economic_incentives.retrieval_fee_per_byte);
+        let dao_fees = (base_fee as f64
+            * self
+                .config
+                .economic_incentives
+                .dao_governance_fee_percentage) as u64;
+        let ubi_contribution =
+            (base_fee as f64 * self.config.economic_incentives.ubi_content_percentage) as u64;
+
         Ok(EconomicAssessment {
             total_fees: base_fee,
             dao_fees,
             ubi_contribution,
         })
     }
-    
-    async fn update_access_stats(&mut self, content_id: &str, request: &ZhtpRequest) -> ZhtpResult<()> {
+
+    async fn update_access_stats(
+        &mut self,
+        content_id: &str,
+        request: &ZhtpRequest,
+    ) -> ZhtpResult<()> {
         let stats = self.stats_store.entry(content_id.to_string()).or_default();
         stats.access_count += 1;
-        stats.bytes_transferred += self.metadata_store.get(content_id).map(|m| m.metadata.size).unwrap_or(0);
-        
+        stats.bytes_transferred += self
+            .metadata_store
+            .get(content_id)
+            .map(|m| m.metadata.size)
+            .unwrap_or(0);
+
         // Update geographic stats
         if let Some(country) = request.headers.get("X-Country-Code") {
             *stats.geographic_access.entry(country.clone()).or_insert(0) += 1;
         }
-        
+
         Ok(())
     }
-    
-    async fn distribute_retrieval_incentives(&mut self, content_id: &str, assessment: &EconomicAssessment) -> ZhtpResult<()> {
+
+    async fn distribute_retrieval_incentives(
+        &mut self,
+        content_id: &str,
+        assessment: &EconomicAssessment,
+    ) -> ZhtpResult<()> {
         // Simplified incentive distribution
-        tracing::debug!("Distributing retrieval incentives for {}: {} wei", content_id, assessment.total_fees);
+        tracing::debug!(
+            "Distributing retrieval incentives for {}: {} wei",
+            content_id,
+            assessment.total_fees
+        );
         Ok(())
     }
-    
-    async fn create_replicas(&mut self, content_id: &str, strategy: &ReplicationStrategy) -> ZhtpResult<()> {
+
+    async fn create_replicas(
+        &mut self,
+        content_id: &str,
+        strategy: &ReplicationStrategy,
+    ) -> ZhtpResult<()> {
         // Simplified replication implementation
-        tracing::debug!(" Creating replicas for {} with strategy {:?}", content_id, strategy);
+        tracing::debug!(
+            " Creating replicas for {} with strategy {:?}",
+            content_id,
+            strategy
+        );
         Ok(())
     }
-    
+
     fn matches_filter(&self, _content: &ServerContent, _filter: &ContentFilter) -> bool {
         // Simplified filter matching
         true
@@ -800,18 +929,18 @@ impl Default for ContentConfig {
             default_replication: ReplicationStrategy::NReplicas(3),
             default_versioning: VersioningStrategy::KeepLast(10),
             max_content_size: 100 * 1024 * 1024, // 100MB
-            chunk_size: 1024 * 1024, // 1MB chunks
+            chunk_size: 1024 * 1024,             // 1MB chunks
             enable_deduplication: true,
             enable_caching: true,
             cache_ttl: 3600, // 1 hour
             enable_indexing: true,
             economic_incentives: EconomicIncentives {
                 storage_fee_per_byte_per_day: 10, // 10 wei per byte per day
-                retrieval_fee_per_byte: 1, // 1 wei per byte
+                retrieval_fee_per_byte: 1,        // 1 wei per byte
                 replication_incentive_per_replica_per_day: 1000, // 1000 wei per replica per day
-                bandwidth_incentive_per_byte: 5, // 5 wei per byte transferred
+                bandwidth_incentive_per_byte: 5,  // 5 wei per byte transferred
                 dao_governance_fee_percentage: 0.02, // 2%
-                ubi_content_percentage: 0.8, // 80% to UBI
+                ubi_content_percentage: 0.8,      // 80% to UBI
             },
         }
     }
@@ -826,13 +955,16 @@ mod tests {
     async fn test_content_storage() {
         use lib_economy::{EconomicModel, Priority};
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let config = ContentConfig::default();
         let mut manager = ZhtpContentManager::new(config);
-        
+
         let content = b"Hello, ZHTP Content Management!";
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         let metadata = ContentMetadata {
             content_type: "text/plain".to_string(),
             encoding: None,
@@ -861,10 +993,10 @@ mod tests {
             geographic_origin: None,
             expires_at: None,
         };
-        
+
         // Create a test economic model
         let economic_model = EconomicModel::new();
-        
+
         let headers = ZhtpHeaders::new();
         let request = ZhtpRequest::new(
             ZhtpMethod::Post,
@@ -873,12 +1005,19 @@ mod tests {
             None, // requester
             Priority::Normal,
             &economic_model,
-        ).unwrap();
-        
-        let content_id = manager.store_content(content, metadata, &request).await.unwrap();
+        )
+        .unwrap();
+
+        let content_id = manager
+            .store_content(content, metadata, &request)
+            .await
+            .unwrap();
         assert!(!content_id.is_empty());
-        
-        let retrieved = manager.retrieve_content(&content_id, &request).await.unwrap();
+
+        let retrieved = manager
+            .retrieve_content(&content_id, &request)
+            .await
+            .unwrap();
         assert_eq!(retrieved, Some(content.to_vec()));
     }
 
@@ -886,15 +1025,15 @@ mod tests {
     fn test_content_hash() {
         let config = ContentConfig::default();
         let manager = ZhtpContentManager::new(config);
-        
+
         let content1 = b"test content";
         let content2 = b"test content";
         let content3 = b"different content";
-        
+
         let hash1 = manager.calculate_content_hash(content1);
         let hash2 = manager.calculate_content_hash(content2);
         let hash3 = manager.calculate_content_hash(content3);
-        
+
         assert_eq!(hash1, hash2);
         assert_ne!(hash1, hash3);
     }
@@ -906,7 +1045,7 @@ mod tests {
             ..ContentConfig::default()
         };
         let manager = ZhtpContentManager::new(config);
-        
+
         let location = manager.generate_storage_location("test-content-id");
         assert!(location.starts_with("/data/"));
         assert!(location.contains("test-content-id"));
@@ -916,13 +1055,16 @@ mod tests {
     fn test_economic_incentives() {
         use lib_economy::{EconomicModel, Priority};
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let config = ContentConfig::default();
         let manager = ZhtpContentManager::new(config);
-        
+
         const CONTENT_SIZE: usize = 1024; // 1KB
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         let metadata = ContentMetadata {
             content_type: "text/plain".to_string(),
             encoding: None,
@@ -951,10 +1093,10 @@ mod tests {
             geographic_origin: None,
             expires_at: None,
         };
-        
+
         // Create a test economic model
         let economic_model = EconomicModel::new();
-        
+
         let headers = ZhtpHeaders::new();
         let request = ZhtpRequest::new(
             ZhtpMethod::Post,
@@ -963,9 +1105,12 @@ mod tests {
             None, // requester
             Priority::Normal,
             &economic_model,
-        ).unwrap();
-        
-        let assessment = manager.calculate_storage_fees(CONTENT_SIZE, &metadata, &request).unwrap();
+        )
+        .unwrap();
+
+        let assessment = manager
+            .calculate_storage_fees(CONTENT_SIZE, &metadata, &request)
+            .unwrap();
         assert!(assessment.total_fees > 0);
         assert!(assessment.dao_fees > 0);
         assert!(assessment.ubi_contribution > 0);

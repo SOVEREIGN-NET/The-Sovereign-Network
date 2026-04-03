@@ -1,10 +1,10 @@
 //! Compatibility utility functions - preserving ZHTP convenience functions
-//! 
+//!
 //! implementation from crypto.rs, lines 657-665
 
-use anyhow::Result;
 use crate::keypair::KeyPair;
 use crate::types::Signature;
+use anyhow::Result;
 
 /// Generate a new quantum-resistant keypair
 pub fn generate_keypair() -> Result<KeyPair> {

@@ -1,28 +1,29 @@
-use std::fmt;
-use std::fmt::Formatter;
 use crate::keyring::key::Key;
 use crate::messages::inter::rr_classes::RRClasses;
 use crate::messages::inter::rr_types::RRTypes;
-use crate::messages::wire::{FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError};
+use crate::messages::wire::{
+    FromWire, FromWireContext, FromWireLen, ToWire, ToWireContext, WireError,
+};
 use crate::rr_data::tsig_rr_data::TSigRRData;
 use crate::utils::fqdn_utils::pack_fqdn;
 use crate::utils::hash::hmac::hmac;
 use crate::utils::hash::sha256::Sha256;
+use std::fmt;
+use std::fmt::Formatter;
 
 #[derive(Debug, Clone)]
 pub struct TSig {
     owner: String,
     data: TSigRRData,
-    signed_payload: Vec<u8>
+    signed_payload: Vec<u8>,
 }
 
 impl TSig {
-
     pub fn new(owner: &str, data: TSigRRData) -> Self {
         Self {
             owner: owner.to_string(),
             data,
-            signed_payload: Vec::new()
+            signed_payload: Vec::new(),
         }
     }
 
@@ -60,8 +61,16 @@ impl TSig {
 
     pub fn verify(&self, key: &Key) -> bool {
         let calc = hmac::<Sha256>(key.secret(), &self.signed_payload);
-        self.data.mac().as_ref().unwrap().len() == calc.len() &&
-            self.data.mac().as_ref().unwrap().iter().zip(calc).fold(0u8, |d,(a,b)| d | (a^b)) == 0
+        self.data.mac().as_ref().unwrap().len() == calc.len()
+            && self
+                .data
+                .mac()
+                .as_ref()
+                .unwrap()
+                .iter()
+                .zip(calc)
+                .fold(0u8, |d, (a, b)| d | (a ^ b))
+                == 0
     }
 
     pub fn sign(&mut self, key: &Key) {
@@ -71,18 +80,17 @@ impl TSig {
 }
 
 impl FromWireLen for TSig {
-
     fn from_wire_len(context: &mut FromWireContext, _len: u16) -> Result<Self, WireError> {
         let owner = context.name()?;
         let checkpoint = context.pos();
 
-        let rtype = RRTypes::try_from(u16::from_wire(context)?).map_err(|e| WireError::Format(e.to_string()))?;
+        let rtype = RRTypes::try_from(u16::from_wire(context)?)
+            .map_err(|e| WireError::Format(e.to_string()))?;
 
         let class = u16::from_wire(context)?;
         let cache_flush = (class & 0x8000) != 0;
         let class = RRClasses::try_from(class).map_err(|e| WireError::Format(e.to_string()))?;
         let ttl = u32::from_wire(context)?;
-
 
         let len = u16::from_wire(context)?;
         let data = match len {
@@ -96,16 +104,23 @@ impl FromWireLen for TSig {
                 signed_payload.extend_from_slice(&RRClasses::Any.code().to_be_bytes());
                 signed_payload.extend_from_slice(&0u32.to_be_bytes());
 
-                signed_payload.extend_from_slice(&pack_fqdn(&data.algorithm().as_ref()
-                    .ok_or_else(|| WireError::Format("algorithm param was not set".to_string()))?.to_string())); //PROBABLY NO COMPRESS
+                signed_payload.extend_from_slice(&pack_fqdn(
+                    &data
+                        .algorithm()
+                        .as_ref()
+                        .ok_or_else(|| {
+                            WireError::Format("algorithm param was not set".to_string())
+                        })?
+                        .to_string(),
+                )); //PROBABLY NO COMPRESS
 
                 signed_payload.extend_from_slice(&[
                     ((data.time_signed() >> 40) & 0xFF) as u8,
                     ((data.time_signed() >> 32) & 0xFF) as u8,
                     ((data.time_signed() >> 24) & 0xFF) as u8,
                     ((data.time_signed() >> 16) & 0xFF) as u8,
-                    ((data.time_signed() >>  8) & 0xFF) as u8,
-                    ( data.time_signed()        & 0xFF) as u8
+                    ((data.time_signed() >> 8) & 0xFF) as u8,
+                    (data.time_signed() & 0xFF) as u8,
                 ]);
                 signed_payload.extend_from_slice(&data.fudge().to_be_bytes());
 
@@ -131,7 +146,6 @@ impl FromWireLen for TSig {
 }
 
 impl ToWire for TSig {
-
     fn to_wire(&self, context: &mut ToWireContext) -> Result<(), WireError> {
         context.write_name(&self.owner, false)?;
 
@@ -145,18 +159,23 @@ impl ToWire for TSig {
 
         self.data.to_wire(context)?;
 
-        context.patch(checkpoint..checkpoint+2, &((context.pos()-checkpoint-2) as u16).to_be_bytes())
+        context.patch(
+            checkpoint..checkpoint + 2,
+            &((context.pos() - checkpoint - 2) as u16).to_be_bytes(),
+        )
     }
 }
 
 impl fmt::Display for TSig {
-
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{:<24}{:<8}{:<8}{:<8}{}",
-               format!("{}.", self.owner),
-               0,
-               RRTypes::TSig.to_string(),
-               RRClasses::Any,
-               self.data)
+        write!(
+            f,
+            "{:<24}{:<8}{:<8}{:<8}{}",
+            format!("{}.", self.owner),
+            0,
+            RRTypes::TSig.to_string(),
+            RRClasses::Any,
+            self.data
+        )
     }
 }

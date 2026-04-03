@@ -36,12 +36,15 @@ pub struct ProofOfUsefulWork {
 }
 
 impl WorkProof {
-    /// Create a new work proof with verifiable metrics
+    /// Create a new work proof with verifiable metrics.
+    ///
+    /// `node_start_time` is the Unix timestamp (seconds) when the node started.
+    /// Uptime is derived from elapsed time since that timestamp, capped at 30 days.
     pub fn new(
         routing_work: u64,
         storage_work: u64,
         compute_work: u64,
-        _timestamp: u64,
+        node_start_time: u64,
         _node_id: [u8; 32],
     ) -> Result<Self> {
         // Calculate quality score based on work distribution
@@ -63,8 +66,15 @@ impl WorkProof {
             0.0
         };
 
-        // Calculate uptime based on historical data (simplified)
-        let uptime_hours = 24; // Default to 24 hours, should be calculated from actual uptime
+        // Compute uptime from elapsed time since the node started.
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let uptime_secs = now_secs.saturating_sub(node_start_time);
+        // Cap at 30 days to avoid inflated values from stale start times.
+        const MAX_UPTIME_SECS: u64 = 30 * 24 * 3600;
+        let uptime_hours = uptime_secs.min(MAX_UPTIME_SECS) / 3600;
 
         // Calculate bandwidth provided (from routing work)
         let bandwidth_provided = routing_work * 1024; // Convert to bytes

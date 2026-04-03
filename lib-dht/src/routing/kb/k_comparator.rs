@@ -1,17 +1,14 @@
-use std::cmp::Ordering;
 use crate::utils::node::Node;
 use crate::utils::uid::UID;
+use std::cmp::Ordering;
 
 pub struct KComparator {
-    key: UID
+    key: UID,
 }
 
 impl KComparator {
-
     pub fn new(key: &UID) -> Self {
-        Self {
-            key: *key
-        }
+        Self { key: *key }
     }
 
     pub fn compare(&self, a: &Node, b: &Node) -> Ordering {

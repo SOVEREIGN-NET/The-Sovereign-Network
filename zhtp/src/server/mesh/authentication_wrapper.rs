@@ -15,14 +15,14 @@
 //! 3. Only AFTER authentication completes, peer is added to connections
 //! 4. Failed auth = peer never added (no race window)
 
-use std::net::SocketAddr;
-use anyhow::{Result, Context};
-use tracing::{debug, info, warn, error};
-use tokio::net::TcpStream;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use anyhow::{Context, Result};
 use lib_crypto::PublicKey;
 use lib_network::protocols::bluetooth::MeshHandshake;
 use lib_network::protocols::zhtp_auth::ZhtpAuthResponse;
+use std::net::SocketAddr;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tracing::{debug, error, info, warn};
 
 use super::core::MeshRouter;
 
@@ -61,6 +61,7 @@ impl MeshRouter {
     ///
     /// Kept for API compatibility but marked deprecated.
     #[deprecated(note = "QUIC is the only supported transport. TCP connections are not accepted.")]
+    #[allow(unreachable_code, unused_variables)]
     pub async fn handle_tcp_mesh(&self, stream: TcpStream, addr: SocketAddr) -> Result<()> {
         error!("❌ TCP connections are no longer supported - QUIC is required");
         error!("   Connection from {} rejected", addr);
@@ -68,14 +69,20 @@ impl MeshRouter {
 
         // HIGH-4 FIX: Check rate limit BEFORE processing handshake
         if let Err(block_duration) = self.connection_rate_limiter.check_ip(addr.ip()).await {
-            error!("🚫 Connection rejected: IP {} rate limited for {:?}", addr.ip(), block_duration);
+            error!(
+                "🚫 Connection rejected: IP {} rate limited for {:?}",
+                addr.ip(),
+                block_duration
+            );
             // Optionally send rate limit response to client
             // Don't process further - connection is rate limited
             return Ok(());
         }
 
         let mut buffer = vec![0; 8192];
-        let bytes_read = stream.read(&mut buffer).await
+        let bytes_read = stream
+            .read(&mut buffer)
+            .await
             .context("Failed to read TCP mesh data")?;
 
         if bytes_read > 0 {
@@ -83,9 +90,14 @@ impl MeshRouter {
 
             // Try to parse as binary mesh handshake
             if let Ok(handshake) = bincode::deserialize::<MeshHandshake>(&buffer[..bytes_read]) {
-                info!("🤝 Received binary mesh handshake from peer: {}", handshake.node_id);
-                info!("   Version: {}, Port: {}, Protocols: {:?}",
-                    handshake.version, handshake.mesh_port, handshake.protocols);
+                info!(
+                    "🤝 Received binary mesh handshake from peer: {}",
+                    handshake.node_id
+                );
+                info!(
+                    "   Version: {}, Port: {}, Protocols: {:?}",
+                    handshake.version, handshake.mesh_port, handshake.protocols
+                );
 
                 let discovery_method = match handshake.discovered_via {
                     0 => "local_multicast",
@@ -109,8 +121,10 @@ impl MeshRouter {
 
                 // HIGH-2 FIX: DO NOT add peer to connections yet!
                 // Peer is in PENDING state - not in HashMap
-                info!("🔒 Peer {} in PENDING state - authenticating before adding to connections",
-                      handshake.node_id);
+                info!(
+                    "🔒 Peer {} in PENDING state - authenticating before adding to connections",
+                    handshake.node_id
+                );
 
                 // Send acknowledgment (handshake received, auth starting)
                 let ack = bincode::serialize(&true)?;
@@ -120,8 +134,10 @@ impl MeshRouter {
                 }
 
                 // Attempt authentication FIRST (before adding to connections)
-                info!("🔐 Attempting blockchain authentication with peer {} (optional for new nodes)",
-                      handshake.node_id);
+                info!(
+                    "🔐 Attempting blockchain authentication with peer {} (optional for new nodes)",
+                    handshake.node_id
+                );
                 info!("   New nodes can:");
                 info!("     ✓ Create blockchain identity via /api/v1/identity/create");
                 info!("     ✓ Access bootstrap info via /api/v1/bootstrap");
@@ -131,22 +147,33 @@ impl MeshRouter {
                 info!("     → Mesh routing and relay services");
 
                 // HIGH-2 FIX: Determine final state BEFORE adding to connections
-                let (final_state, authenticated, trust_score, dilithium_pk) =
-                    match self.authenticate_peer_only(&peer_pubkey, &handshake, &mut stream).await {
-                        Ok(Some((score, pk))) => {
-                            info!("✅ Peer {} AUTHENTICATED - Full network access granted", handshake.node_id);
-                            (ConnectionState::Authenticated, true, score, Some(pk))
-                        }
-                        Ok(None) | Err(_) => {
-                            info!("ℹ️  Peer {} in BOOTSTRAP mode - limited access", handshake.node_id);
-                            (ConnectionState::Bootstrap, false, 0.5, None)
-                        }
-                    };
+                let (final_state, authenticated, trust_score, dilithium_pk) = match self
+                    .authenticate_peer_only(&peer_pubkey, &handshake, &mut stream)
+                    .await
+                {
+                    Ok(Some((score, pk))) => {
+                        info!(
+                            "✅ Peer {} AUTHENTICATED - Full network access granted",
+                            handshake.node_id
+                        );
+                        (ConnectionState::Authenticated, true, score, Some(pk))
+                    }
+                    Ok(None) | Err(_) => {
+                        info!(
+                            "ℹ️  Peer {} in BOOTSTRAP mode - limited access",
+                            handshake.node_id
+                        );
+                        (ConnectionState::Bootstrap, false, 0.5, None)
+                    }
+                };
 
                 // HIGH-2 FIX: NOW add peer to connections with final state
                 // No race condition because we determined state BEFORE insert
                 #[allow(deprecated)]
-                let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
+                let unified_peer =
+                    lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(
+                        peer_pubkey.clone(),
+                    );
                 let connection = lib_network::mesh::connection::MeshConnection {
                     peer: unified_peer,
                     protocol,
@@ -222,21 +249,43 @@ impl MeshRouter {
                         lib_network::peer_registry::PeerTier::Tier3,
                         0.8,
                     );
-                    connections.upsert(peer_entry).await.expect("Failed to upsert peer");
+                    connections
+                        .upsert(peer_entry)
+                        .await
+                        .expect("Failed to upsert peer");
                     // No need to drop(connections) as it will be dropped automatically
-                    
-                    info!("✅ Peer {} added to mesh network in {:?} state ({} total peers)",
-                        handshake.node_id, final_state, connections.all_peers().count());
-                    
+
+                    info!(
+                        "✅ Peer {} added to mesh network in {:?} state ({} total peers)",
+                        handshake.node_id,
+                        final_state,
+                        connections.all_peers().count()
+                    );
+
                     // SECURITY: Register authenticated peer for blockchain sync
                     if authenticated {
-                        self.sync_manager.register_authenticated_peer(&peer_pubkey).await;
-                        info!("🔐 Peer {} registered for secure blockchain sync", handshake.node_id);
+                        if let Err(e) = self
+                            .sync_manager
+                            .register_authenticated_peer(&peer_pubkey)
+                            .await
+                        {
+                            warn!(
+                                "Failed to register peer {} for secure blockchain sync: {}",
+                                handshake.node_id, e
+                            );
+                        }
+                        info!(
+                            "🔐 Peer {} registered for secure blockchain sync",
+                            handshake.node_id
+                        );
                     }
                 }
 
                 // Establish QUIC connection if available (after peer is in connections)
-                info!("🔐 Establishing QUIC connection to peer {} at {}", handshake.node_id, addr);
+                info!(
+                    "🔐 Establishing QUIC connection to peer {} at {}",
+                    handshake.node_id, addr
+                );
 
                 if let Some(quic) = self.quic_protocol.read().await.as_ref() {
                     match quic.connect_to_peer(addr).await {
@@ -245,21 +294,27 @@ impl MeshRouter {
                             // Ticket #149: Update peer protocol in peer_registry
                             let mut registry = self.connections.write().await;
                             // Find peer by public key and update protocol to QUIC
-                            let peer_id_to_update = registry.all_peers()
+                            let peer_id_to_update = registry
+                                .all_peers()
                                 .find(|entry| entry.peer_id.public_key() == &peer_pubkey)
                                 .map(|entry| entry.peer_id.clone());
-                            
+
                             if let Some(peer_id) = peer_id_to_update {
                                 // Get the current entry to clone it
                                 if let Some(peer_entry) = registry.get(&peer_id) {
                                     let mut updated_entry = peer_entry.clone();
-                                    updated_entry.active_protocols = vec![lib_network::protocols::NetworkProtocol::QUIC];
+                                    updated_entry.active_protocols =
+                                        vec![lib_network::protocols::NetworkProtocol::QUIC];
                                     updated_entry.quantum_secure = true;
                                     // Update endpoints if needed
                                     if let Some(endpoint) = updated_entry.endpoints.first_mut() {
-                                        endpoint.protocol = lib_network::protocols::NetworkProtocol::QUIC;
+                                        endpoint.protocol =
+                                            lib_network::protocols::NetworkProtocol::QUIC;
                                     }
-                                    registry.upsert(updated_entry).await.expect("Failed to update peer");
+                                    registry
+                                        .upsert(updated_entry)
+                                        .await
+                                        .expect("Failed to update peer");
                                 }
                             }
                         }
@@ -323,32 +378,47 @@ impl MeshRouter {
                     let mut response_buf = vec![0; 16384];
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(10),
-                        stream.read(&mut response_buf)
-                    ).await {
+                        stream.read(&mut response_buf),
+                    )
+                    .await
+                    {
                         Ok(Ok(response_len)) if response_len > 0 => {
-                            match bincode::deserialize::<ZhtpAuthResponse>(&response_buf[..response_len]) {
+                            match bincode::deserialize::<ZhtpAuthResponse>(
+                                &response_buf[..response_len],
+                            ) {
                                 Ok(auth_response) => {
-                                    info!("📥 Received authentication response from peer {}", node_id);
+                                    info!(
+                                        "📥 Received authentication response from peer {}",
+                                        node_id
+                                    );
 
                                     match auth_manager.verify_response(&auth_response).await {
                                         Ok(verification) if verification.authenticated => {
-                                            info!("✅ Peer {} authenticated! Trust score: {:.2}",
-                                                node_id, verification.trust_score);
+                                            info!(
+                                                "✅ Peer {} authenticated! Trust score: {:.2}",
+                                                node_id, verification.trust_score
+                                            );
                                             return Ok(Some((
                                                 verification.trust_score,
-                                                auth_response.responder_pubkey.clone()
+                                                auth_response.responder_pubkey.clone(),
                                             )));
                                         }
                                         Ok(_) => {
                                             warn!("⚠️ Peer {} authentication failed (signature invalid)", node_id);
                                         }
                                         Err(e) => {
-                                            warn!("Error verifying peer {} authentication: {}", node_id, e);
+                                            warn!(
+                                                "Error verifying peer {} authentication: {}",
+                                                node_id, e
+                                            );
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    warn!("Failed to deserialize auth response from {}: {}", node_id, e);
+                                    warn!(
+                                        "Failed to deserialize auth response from {}: {}",
+                                        node_id, e
+                                    );
                                 }
                             }
                         }
@@ -367,7 +437,7 @@ impl MeshRouter {
 
         Ok(None)
     }
-    
+
     /// Authenticate and register a peer using lib-network authentication
     ///
     /// # DEPRECATED - Security Warning (HIGH-2)
@@ -396,7 +466,10 @@ impl MeshRouter {
         let node_id = &handshake.node_id;
         // Ticket #146: Convert PublicKey to UnifiedPeerId for HashMap lookups
         #[allow(deprecated)]
-        let unified_peer = lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(peer_pubkey.clone());
+        let unified_peer =
+            lib_network::identity::unified_peer::UnifiedPeerId::from_public_key_legacy(
+                peer_pubkey.clone(),
+            );
 
         // ============================================================================
         // All authentication logic delegated to lib-network::protocols::zhtp_auth
@@ -407,35 +480,46 @@ impl MeshRouter {
             match auth_manager.create_challenge().await {
                 Ok(challenge) => {
                     info!("📤 Sending authentication challenge to peer {}", node_id);
-                    
+
                     // Send challenge over TCP
                     let challenge_bytes = bincode::serialize(&challenge)?;
                     if let Err(e) = stream.write_all(&challenge_bytes).await {
                         warn!("Failed to send auth challenge to {}: {}", node_id, e);
                         return Ok(false);
                     }
-                    
+
                     // Receive response with timeout
                     let mut response_buf = vec![0; 16384];
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(10),
-                        stream.read(&mut response_buf)
-                    ).await {
+                        stream.read(&mut response_buf),
+                    )
+                    .await
+                    {
                         Ok(Ok(response_len)) if response_len > 0 => {
-                            match bincode::deserialize::<ZhtpAuthResponse>(&response_buf[..response_len]) {
+                            match bincode::deserialize::<ZhtpAuthResponse>(
+                                &response_buf[..response_len],
+                            ) {
                                 Ok(auth_response) => {
-                                    info!("📥 Received authentication response from peer {}", node_id);
-                                    
+                                    info!(
+                                        "📥 Received authentication response from peer {}",
+                                        node_id
+                                    );
+
                                     // Verify signature using lib-network
                                     match auth_manager.verify_response(&auth_response).await {
                                         Ok(verification) if verification.authenticated => {
-                                            info!("✅ Peer {} authenticated! Trust score: {:.2}", 
-                                                node_id, verification.trust_score);
-                                            
+                                            info!(
+                                                "✅ Peer {} authenticated! Trust score: {:.2}",
+                                                node_id, verification.trust_score
+                                            );
+
                                             // Update connection with blockchain identity
                                             // Ticket #149: Update peer authentication in PeerRegistry
                                             let mut registry = self.connections.write().await;
-                                            if let Some(peer_entry) = registry.get_mut(&unified_peer) {
+                                            if let Some(peer_entry) =
+                                                registry.get_mut(&unified_peer)
+                                            {
                                                 peer_entry.authenticated = true;
                                                 peer_entry.trust_score = verification.trust_score;
                                                 // Note: peer_dilithium_pubkey is now part of peer_id in UnifiedPeerId
@@ -448,16 +532,30 @@ impl MeshRouter {
                                         }
                                         Ok(_) => {
                                             warn!("⚠️ Peer {} authentication failed (signature invalid)", node_id);
-                                            self.connections.write().await.remove(&unified_peer);
+                                            self.connections
+                                                .write()
+                                                .await
+                                                .remove(&unified_peer)
+                                                .await;
                                         }
                                         Err(e) => {
-                                            warn!("Error verifying peer {} authentication: {}", node_id, e);
-                                            self.connections.write().await.remove(&unified_peer);
+                                            warn!(
+                                                "Error verifying peer {} authentication: {}",
+                                                node_id, e
+                                            );
+                                            self.connections
+                                                .write()
+                                                .await
+                                                .remove(&unified_peer)
+                                                .await;
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    warn!("Failed to deserialize auth response from {}: {}", node_id, e);
+                                    warn!(
+                                        "Failed to deserialize auth response from {}: {}",
+                                        node_id, e
+                                    );
                                 }
                             }
                         }
@@ -473,7 +571,7 @@ impl MeshRouter {
         } else {
             warn!("⚠️ ZHTP authentication manager not initialized, skipping authentication");
         }
-        
+
         Ok(false)
     }
 }

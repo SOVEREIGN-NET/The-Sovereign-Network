@@ -1,11 +1,11 @@
 //! Economic incentive systems module
-//! 
+//!
 //! Manages  incentives and infrastructure rewards.
 
-pub mod infrastructure_rewards;
-pub mod quality_bonuses;
-pub mod network_participation;
 pub mod cost_savings;
+pub mod infrastructure_rewards;
+pub mod network_participation;
+pub mod quality_bonuses;
 
 #[cfg(test)]
 mod tests {

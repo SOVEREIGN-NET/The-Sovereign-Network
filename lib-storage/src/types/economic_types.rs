@@ -1,10 +1,10 @@
 //! Economic storage type definitions
-//! 
+//!
 //! Contains all types related to the economic layer of the storage system,
 //! including contracts, payments, penalties, rewards, and market mechanisms.
 
-use crate::types::{ContentHash, NodeId};
 use crate::types::dht_types::StorageTier;
+use crate::types::{ContentHash, NodeId};
 use lib_crypto::Hash;
 use lib_identity::ZhtpIdentity;
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,7 @@ pub struct StorageContract {
     pub nodes: Vec<NodeId>,
     /// Contract duration (days)
     pub duration_days: u32,
-    /// Total cost (ZHTP tokens)
+    /// Total cost (SOV tokens)
     pub total_cost: u64,
     /// Payment schedule
     pub payment_schedule: Vec<Payment>,
@@ -58,7 +58,7 @@ pub enum ContractStatus {
 /// Payment in a storage contract
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Payment {
-    /// Payment amount (ZHTP tokens)
+    /// Payment amount (SOV tokens)
     pub amount: u64,
     /// Payment due timestamp
     pub due_at: u64,
@@ -90,7 +90,7 @@ pub enum PaymentType {
 pub struct PenaltyClause {
     /// Penalty type
     pub penalty_type: PenaltyType,
-    /// Penalty amount (ZHTP tokens)
+    /// Penalty amount (SOV tokens)
     pub penalty_amount: u64,
     /// Conditions for penalty
     pub conditions: String,
@@ -148,7 +148,7 @@ pub struct QualityRequirements {
 /// Budget constraints for storage contracts
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetConstraints {
-    /// Maximum total cost (ZHTP tokens)
+    /// Maximum total cost (SOV tokens)
     pub max_total_cost: u64,
     /// Maximum cost per GB per day
     pub max_cost_per_gb_day: u64,
@@ -236,7 +236,7 @@ pub struct EconomicStorageRequest {
 pub struct EconomicQuote {
     /// Quote identifier
     pub quote_id: String,
-    /// Total cost estimate (ZHTP tokens)
+    /// Total cost estimate (SOV tokens)
     pub total_cost: u64,
     /// Cost per GB per day
     pub cost_per_gb_day: u64,
@@ -259,9 +259,9 @@ pub struct EconomicStats {
     pub total_contracts: u64,
     /// Total storage under economic management (bytes)
     pub total_storage: u64,
-    /// Total value locked in contracts (ZHTP tokens)
+    /// Total value locked in contracts (SOV tokens)
     pub total_value_locked: u64,
-    /// Average contract value (ZHTP tokens)
+    /// Average contract value (SOV tokens)
     pub average_contract_value: u64,
     /// Total penalties issued
     pub total_penalties: u64,
@@ -289,7 +289,7 @@ pub struct MarketPricing {
 pub struct RewardDistribution {
     /// Node receiving reward
     pub node_id: NodeId,
-    /// Reward amount (ZHTP tokens)
+    /// Reward amount (SOV tokens)
     pub amount: u64,
     /// Reward type
     pub reward_type: RewardType,
@@ -449,7 +449,7 @@ pub struct EconomicManagerConfig {
     pub escrow_release_threshold: f64,
     /// Maximum contract duration in days
     pub max_contract_duration: u32,
-    /// Minimum contract value (ZHTP tokens)
+    /// Minimum contract value (SOV tokens)
     pub min_contract_value: u64,
     /// Quality monitoring interval (seconds)
     pub quality_monitoring_interval: u64,
@@ -593,7 +593,7 @@ impl Default for EscrowPreferences {
 }
 
 /// Performance snapshot for incentive calculations
-/// 
+///
 /// Captures key performance metrics at a point in time for reward calculations
 /// and quality assessment in the economic incentive system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -601,19 +601,19 @@ pub struct PerformanceSnapshot {
     /// Node uptime as a ratio (0.0 to 1.0)
     /// Example: 0.99 = 99% uptime
     pub uptime: f64,
-    
+
     /// Average response time in milliseconds
     /// Lower values indicate better performance
     pub avg_response_time: u64,
-    
+
     /// Data integrity score as a ratio (0.0 to 1.0)
     /// Example: 0.9999 = 99.99% data integrity
     pub data_integrity: f64,
-    
+
     /// Throughput in bytes per second
     /// Higher values indicate better performance
     pub throughput: u64,
-    
+
     /// Error rate as a ratio (0.0 to 1.0)
     /// Example: 0.001 = 0.1% error rate
     pub error_rate: f64,
@@ -648,7 +648,7 @@ impl PerformanceSnapshot {
             error_rate,
         }
     }
-    
+
     /// Calculate an overall performance score (0.0 to 1.0)
     /// This provides a single metric combining all performance aspects
     pub fn overall_score(&self) -> f64 {
@@ -658,36 +658,36 @@ impl PerformanceSnapshot {
         let integrity_weight = 0.3;
         let throughput_weight = 0.1;
         let error_weight = 0.05;
-        
+
         // Normalize latency (lower is better, cap at 1000ms)
         let latency_score = (1000.0 - self.avg_response_time.min(1000) as f64) / 1000.0;
-        
+
         // Normalize throughput (higher is better, baseline at 1MB/s)
         let throughput_score = (self.throughput as f64 / 1_000_000.0).min(1.0);
-        
+
         // Error rate (lower is better)
         let error_score = (1.0 - self.error_rate).max(0.0);
-        
-        self.uptime * uptime_weight +
-        latency_score * latency_weight +
-        self.data_integrity * integrity_weight +
-        throughput_score * throughput_weight +
-        error_score * error_weight
+
+        self.uptime * uptime_weight
+            + latency_score * latency_weight
+            + self.data_integrity * integrity_weight
+            + throughput_score * throughput_weight
+            + error_score * error_weight
     }
-    
+
     /// Check if this performance snapshot meets basic quality thresholds
     pub fn meets_basic_quality(&self) -> bool {
-        self.uptime >= 0.95 &&
-        self.avg_response_time <= 1000 &&
-        self.data_integrity >= 0.99 &&
-        self.error_rate <= 0.05
+        self.uptime >= 0.95
+            && self.avg_response_time <= 1000
+            && self.data_integrity >= 0.99
+            && self.error_rate <= 0.05
     }
-    
+
     /// Check if this performance snapshot qualifies for premium incentives
     pub fn qualifies_for_premium(&self) -> bool {
-        self.uptime >= 0.99 &&
-        self.avg_response_time <= 100 &&
-        self.data_integrity >= 0.999 &&
-        self.error_rate <= 0.001
+        self.uptime >= 0.99
+            && self.avg_response_time <= 100
+            && self.data_integrity >= 0.999
+            && self.error_rate <= 0.001
     }
 }

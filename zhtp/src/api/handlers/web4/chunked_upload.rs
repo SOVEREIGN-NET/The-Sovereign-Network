@@ -18,15 +18,15 @@
 //! - Use memory-mapped files for large uploads
 //! - Implement resumable uploads with persistent session state
 
-use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use anyhow::anyhow;
 use lib_protocols::zhtp::ZhtpResult;
+use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug};
-use anyhow::anyhow;
+use tracing::{debug, info, warn};
 
 /// Upload limits configuration
 #[derive(Debug, Clone)]
@@ -48,12 +48,12 @@ pub struct UploadLimits {
 impl Default for UploadLimits {
     fn default() -> Self {
         Self {
-            max_file_size: 100 * 1024 * 1024,      // 100MB
-            max_chunk_size: 5 * 1024 * 1024,       // 5MB
-            min_chunk_size: 64 * 1024,             // 64KB
+            max_file_size: 100 * 1024 * 1024, // 100MB
+            max_chunk_size: 5 * 1024 * 1024,  // 5MB
+            min_chunk_size: 64 * 1024,        // 64KB
             max_sessions_per_user: 3,
             max_total_sessions: 100,
-            max_memory_usage: 500 * 1024 * 1024,   // 500MB
+            max_memory_usage: 500 * 1024 * 1024, // 500MB
         }
     }
 }
@@ -137,7 +137,10 @@ impl ChunkedUploadManager {
     /// Count sessions for a specific user
     async fn count_user_sessions(&self, owner_did: &str) -> usize {
         let sessions = self.sessions.read().await;
-        sessions.values().filter(|s| s.owner_did == owner_did).count()
+        sessions
+            .values()
+            .filter(|s| s.owner_did == owner_did)
+            .count()
     }
 
     /// Initialize a chunked upload session
@@ -217,9 +220,7 @@ impl ChunkedUploadManager {
                 max = self.limits.max_total_sessions,
                 "Upload rejected: server at capacity"
             );
-            return Err(anyhow!(
-                "Server is at capacity. Try again later."
-            ));
+            return Err(anyhow!("Server is at capacity. Try again later."));
         }
 
         let upload_id = uuid::Uuid::new_v4().to_string();
@@ -278,14 +279,13 @@ impl ChunkedUploadManager {
         // Check memory limit before storing
         let current = self.current_memory.load(Ordering::Relaxed);
         if current + chunk_size > self.limits.max_memory_usage {
-            return Err(anyhow!(
-                "Server memory limit reached. Try again later."
-            ));
+            return Err(anyhow!("Server memory limit reached. Try again later."));
         }
 
         // Verify session exists and isn't expired
         let mut sessions = self.sessions.write().await;
-        let session = sessions.get_mut(upload_id)
+        let session = sessions
+            .get_mut(upload_id)
             .ok_or_else(|| anyhow!("Upload session not found: {}", upload_id))?;
 
         let now = std::time::SystemTime::now()
@@ -364,7 +364,8 @@ impl ChunkedUploadManager {
         // Get session and extract needed data before modifying
         let (num_chunks, total_size, session_chunk_cids) = {
             let sessions = self.sessions.read().await;
-            let session = sessions.get(upload_id)
+            let session = sessions
+                .get(upload_id)
                 .ok_or_else(|| anyhow!("Upload session not found: {}", upload_id))?;
 
             // Verify all chunks uploaded
@@ -376,17 +377,24 @@ impl ChunkedUploadManager {
                 ));
             }
 
-            (session.num_chunks, session.total_size, session.chunk_cids.clone())
+            (
+                session.num_chunks,
+                session.total_size,
+                session.chunk_cids.clone(),
+            )
         };
 
         // Verify chunk CIDs match
         for (i, cid) in chunk_cids.iter().enumerate() {
-            let expected = session_chunk_cids.get(&i)
+            let expected = session_chunk_cids
+                .get(&i)
                 .ok_or_else(|| anyhow!("Missing chunk {} CID", i))?;
             if cid != expected {
                 return Err(anyhow!(
                     "Chunk {} CID mismatch: expected {}, got {}",
-                    i, expected, cid
+                    i,
+                    expected,
+                    cid
                 ));
             }
         }
@@ -397,7 +405,8 @@ impl ChunkedUploadManager {
             let chunks = self.chunks.read().await;
             for i in 0..num_chunks {
                 let chunk_key = format!("{}:{}", upload_id, i);
-                let chunk_data = chunks.get(&chunk_key)
+                let chunk_data = chunks
+                    .get(&chunk_key)
                     .ok_or_else(|| anyhow!("Missing chunk data for index {}", i))?;
                 assembled.extend_from_slice(chunk_data);
             }
@@ -442,7 +451,8 @@ impl ChunkedUploadManager {
             }
         }
         // Decrement memory counter
-        self.current_memory.fetch_sub(freed_memory, Ordering::Relaxed);
+        self.current_memory
+            .fetch_sub(freed_memory, Ordering::Relaxed);
 
         info!(
             upload_id = %upload_id,
@@ -461,7 +471,8 @@ impl ChunkedUploadManager {
     /// Get upload session status
     pub async fn get_status(&self, upload_id: &str) -> ZhtpResult<UploadSession> {
         let sessions = self.sessions.read().await;
-        sessions.get(upload_id)
+        sessions
+            .get(upload_id)
             .cloned()
             .ok_or_else(|| anyhow!("Upload session not found: {}", upload_id))
     }
@@ -474,7 +485,8 @@ impl ChunkedUploadManager {
             .as_secs();
 
         let mut sessions = self.sessions.write().await;
-        let expired: Vec<String> = sessions.iter()
+        let expired: Vec<String> = sessions
+            .iter()
             .filter(|(_, s)| s.expires_at < now)
             .map(|(id, _)| id.clone())
             .collect();
@@ -495,7 +507,8 @@ impl ChunkedUploadManager {
 
         // Reclaim memory
         if total_freed > 0 {
-            self.current_memory.fetch_sub(total_freed, Ordering::Relaxed);
+            self.current_memory
+                .fetch_sub(total_freed, Ordering::Relaxed);
         }
 
         if !expired.is_empty() {
@@ -602,22 +615,21 @@ pub async fn handle_chunked_upload(
 
         let upload_id = parts[6];
         let chunk_index_str = parts[8].split('?').next().unwrap_or(parts[8]);
-        let chunk_index: usize = chunk_index_str.parse()
+        let chunk_index: usize = chunk_index_str
+            .parse()
             .map_err(|_| anyhow!("Invalid chunk index: {}", chunk_index_str))?;
 
         // Extract hash from query string
-        let chunk_hash = request.uri
+        let chunk_hash = request
+            .uri
             .split("hash=")
             .nth(1)
             .and_then(|s| s.split('&').next())
             .ok_or_else(|| anyhow!("Missing chunk hash parameter"))?;
 
-        let chunk_cid = manager.upload_chunk(
-            upload_id,
-            chunk_index,
-            chunk_hash,
-            request.body,
-        ).await?;
+        let chunk_cid = manager
+            .upload_chunk(upload_id, chunk_index, chunk_hash, request.body)
+            .await?;
 
         let response = serde_json::json!({
             "chunk_cid": chunk_cid,
@@ -646,11 +658,13 @@ pub async fn handle_chunked_upload(
         let finalize_req: FinalizeUploadRequest = serde_json::from_slice(&request.body)
             .map_err(|e| anyhow!("Invalid finalize request: {}", e))?;
 
-        let content_id = manager.finalize_upload(
-            upload_id,
-            &finalize_req.chunk_cids,
-            &finalize_req.total_hash,
-        ).await?;
+        let content_id = manager
+            .finalize_upload(
+                upload_id,
+                &finalize_req.chunk_cids,
+                &finalize_req.total_hash,
+            )
+            .await?;
 
         let response = serde_json::json!({
             "content_id": content_id,

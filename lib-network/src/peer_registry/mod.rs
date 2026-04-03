@@ -18,6 +18,8 @@
 // Synchronization module (Ticket #151)
 pub mod sync;
 
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 /// ## Security Features
 ///
 /// - **DID Validation**: All DIDs validated before indexing (format + optional blockchain verification)
@@ -26,7 +28,6 @@ pub mod sync;
 /// - **Sybil Resistance**: Max peers limit + eviction policy
 /// - **Rate Limiting**: Prevents DoS attacks via rapid peer churn
 /// - **TOCTOU Prevention**: Atomic update methods prevent race conditions
-
 // Acceptance Criteria Verification
 //
 // ✅ **Single peer registry structure defined**
@@ -57,19 +58,16 @@ pub mod sync;
 //    - remove() atomically removes from all indexes
 //    - update_metrics()
 //    - update_trust()
-
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use std::sync::Arc;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use serde::{Serialize, Deserialize};
-use anyhow::{Result, anyhow};
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 use crate::identity::unified_peer::UnifiedPeerId;
-use crate::protocols::NetworkProtocol;
-use crate::types::node_address::{NodeAddress, AddressEndpoint, AddressResolver};
+use crate::types::node_address::{AddressEndpoint, AddressResolver, NodeAddress};
+use crate::types::NetworkProtocol;
 use lib_crypto::PublicKey;
 use lib_identity::NodeId;
 
@@ -162,11 +160,15 @@ impl RateLimiter {
                 limit = self.global_limit,
                 "Global rate limit exceeded"
             );
-            return Err(anyhow!("Global rate limit exceeded: {} ops/sec", self.global_limit));
+            return Err(anyhow!(
+                "Global rate limit exceeded: {} ops/sec",
+                self.global_limit
+            ));
         }
 
         // Check per-peer rate limit (per minute window)
-        let (count, window_start) = self.per_peer_counts
+        let (count, window_start) = self
+            .per_peer_counts
             .entry(peer_did.to_string())
             .or_insert((0, now));
 
@@ -183,7 +185,11 @@ impl RateLimiter {
                 limit = self.per_peer_limit,
                 "Per-peer rate limit exceeded"
             );
-            return Err(anyhow!("Per-peer rate limit exceeded: {} ops/min for {}", self.per_peer_limit, peer_did));
+            return Err(anyhow!(
+                "Per-peer rate limit exceeded: {} ops/min for {}",
+                self.per_peer_limit,
+                peer_did
+            ));
         }
 
         // Allow operation and increment counters
@@ -270,7 +276,7 @@ pub struct PeerRegistryConfig {
 pub struct PeerEntry {
     /// Canonical peer identity
     pub peer_id: UnifiedPeerId,
-    
+
     // === Connection Metadata (from MeshConnection) ===
     /// Network endpoints for this peer
     pub endpoints: Vec<PeerEndpoint>,
@@ -282,7 +288,7 @@ pub struct PeerEntry {
     pub authenticated: bool,
     /// Quantum-secure encryption enabled
     pub quantum_secure: bool,
-    
+
     // === Routing Metadata (from RouteInfo) ===
     /// Next hop for routing to this peer
     pub next_hop: Option<UnifiedPeerId>,
@@ -290,7 +296,7 @@ pub struct PeerEntry {
     pub hop_count: u8,
     /// Route quality score
     pub route_quality: f64,
-    
+
     // === Topology/Capabilities (from NetworkNode) ===
     /// Node capabilities
     pub capabilities: NodeCapabilities,
@@ -298,11 +304,11 @@ pub struct PeerEntry {
     pub location: Option<GeographicLocation>,
     /// Reliability score
     pub reliability_score: f64,
-    
+
     // === DHT Metadata ===
     /// DHT-specific routing information
     pub dht_info: Option<DhtPeerInfo>,
-    
+
     // === Discovery/Bootstrap Metadata ===
     /// How this peer was discovered
     pub discovery_method: DiscoveryMethod,
@@ -310,13 +316,13 @@ pub struct PeerEntry {
     pub first_seen: u64,
     /// Last seen timestamp
     pub last_seen: u64,
-    
+
     // === Tiering and Trust ===
     /// Peer tier classification
     pub tier: PeerTier,
     /// Trust score (0.0 - 1.0)
     pub trust_score: f64,
-    
+
     // === Statistics (use atomic counters for lock-free updates) ===
     /// Total data transferred (atomic for lock-free updates)
     #[serde(skip)]
@@ -477,7 +483,7 @@ impl PeerEndpoint {
             NodeAddress::WiFiDirect { .. } => NetworkProtocol::WiFiDirect,
             NodeAddress::LoRaWAN { .. } => NetworkProtocol::LoRaWAN,
             NodeAddress::Mesh(_) => NetworkProtocol::WiFiDirect, // Mesh uses WiFi/BT
-            NodeAddress::Domain(_) => NetworkProtocol::TCP, // Default for resolved domains
+            NodeAddress::Domain(_) => NetworkProtocol::TCP,      // Default for resolved domains
         }
     }
 
@@ -597,17 +603,19 @@ impl PeerRegistry {
             address_resolver: AddressResolver::new(),
         }
     }
-    
+
     /// Register an observer for peer change notifications (Ticket #151)
     pub async fn register_observer(&self, observer: Arc<dyn sync::PeerRegistryObserver>) {
-        self.observers.register(observer).await;
+        if let Err(e) = self.observers.register(observer).await {
+            warn!("Failed to register observer: {}", e);
+        }
     }
-    
+
     /// Unregister an observer by name (Ticket #151)
     pub async fn unregister_observer(&self, name: &str) -> bool {
         self.observers.unregister(name).await
     }
-    
+
     /// Clean up stale observers based on timeout (Ticket #151)
     ///
     /// # Memory Management
@@ -616,13 +624,21 @@ impl PeerRegistry {
     pub async fn cleanup_stale_observers(&self, timeout_secs: u64) -> usize {
         self.observers.cleanup_stale_observers(timeout_secs).await
     }
-    
+
     /// Get observer registry statistics for monitoring (Ticket #151)
     ///
     /// # Performance Monitoring
     /// - Provides insights into observer health and performance
     pub async fn get_observer_stats(&self) -> sync::ObserverRegistryStats {
         self.observers.get_stats().await
+    }
+
+    /// Get the number of peers in the registry
+    ///
+    /// # Returns
+    /// The total number of registered peers
+    pub fn count(&self) -> usize {
+        self.peers.len()
     }
 
     /// Validate DID format before indexing
@@ -647,7 +663,9 @@ impl PeerRegistry {
 
         // DID must have content after the prefix (at least 16 chars for the hash)
         if did.len() < 25 {
-            return Err(anyhow!("Invalid DID format: too short (expected at least 25 chars)"));
+            return Err(anyhow!(
+                "Invalid DID format: too short (expected at least 25 chars)"
+            ));
         }
 
         // Maximum DID length (prevent memory exhaustion)
@@ -670,7 +688,9 @@ impl PeerRegistry {
 
         // Additional security checks
         if hash_only.len() < 16 {
-            return Err(anyhow!("Invalid DID format: hash too short (min 16 hex chars)"));
+            return Err(anyhow!(
+                "Invalid DID format: hash too short (min 16 hex chars)"
+            ));
         }
 
         Ok(())
@@ -780,8 +800,10 @@ impl PeerRegistry {
         }
 
         // Update secondary indexes
-        self.by_node_id.insert(peer_id.node_id().clone(), peer_id.clone());
-        self.by_public_key.insert(peer_id.public_key().clone(), peer_id.clone());
+        self.by_node_id
+            .insert(peer_id.node_id().clone(), peer_id.clone());
+        self.by_public_key
+            .insert(peer_id.public_key().clone(), peer_id.clone());
         self.by_did.insert(did.clone(), peer_id.clone());
 
         // Insert into primary storage
@@ -805,9 +827,11 @@ impl PeerRegistry {
 
         // TICKET #151: Dispatch event to observers atomically
         let event = if is_update {
+            let old = old_entry
+                .ok_or_else(|| anyhow!("Internal error: is_update=true but old_entry is None"))?;
             sync::PeerRegistryEvent::PeerUpdated {
                 peer_id,
-                old_entry: old_entry.unwrap(),
+                old_entry: old,
                 new_entry: entry.clone(),
             }
         } else {
@@ -816,7 +840,7 @@ impl PeerRegistry {
                 entry: entry.clone(),
             }
         };
-        
+
         self.observers.dispatch(event).await?;
 
         // Sync addresses to the unified address resolver
@@ -836,7 +860,9 @@ impl PeerRegistry {
         let ttl = self.config.peer_ttl_secs;
 
         // Strategy 1: Find expired peer (TTL exceeded)
-        let expired_peer = self.peers.iter()
+        let expired_peer = self
+            .peers
+            .iter()
             .filter(|(_, entry)| now.saturating_sub(entry.last_seen) > ttl)
             .min_by_key(|(_, entry)| entry.last_seen)
             .map(|(id, _)| id.clone());
@@ -855,11 +881,14 @@ impl PeerRegistry {
         }
 
         // Strategy 2: Evict lowest-tier, least-recently-seen peer
-        let victim = self.peers.iter()
+        let victim = self
+            .peers
+            .iter()
             .max_by(|(_, a), (_, b)| {
                 // Higher tier (worse) = evict first
                 // Among same tier, older last_seen = evict first
-                a.tier.cmp(&b.tier)
+                a.tier
+                    .cmp(&b.tier)
                     .then_with(|| b.last_seen.cmp(&a.last_seen))
             })
             .map(|(id, _)| id.clone());
@@ -886,7 +915,7 @@ impl PeerRegistry {
     pub async fn remove(&mut self, peer_id: &UnifiedPeerId) -> Option<PeerEntry> {
         // Get entry before removal for event dispatch
         let entry = self.peers.get(peer_id).cloned();
-        
+
         // Remove from secondary indexes
         self.by_node_id.remove(peer_id.node_id());
         self.by_public_key.remove(peer_id.public_key());
@@ -924,7 +953,9 @@ impl PeerRegistry {
         let now = Self::current_timestamp();
         let ttl = self.config.peer_ttl_secs;
 
-        let expired: Vec<UnifiedPeerId> = self.peers.iter()
+        let expired: Vec<UnifiedPeerId> = self
+            .peers
+            .iter()
             .filter(|(_, entry)| now.saturating_sub(entry.last_seen) > ttl)
             .map(|(id, _)| id.clone())
             .collect();
@@ -963,7 +994,7 @@ impl PeerRegistry {
             );
         }
     }
-    
+
     /// Atomic batch update - commit multiple peer changes in single transaction (Ticket #151)
     ///
     /// All changes are applied atomically and observers notified with single BatchUpdate event.
@@ -985,32 +1016,34 @@ impl PeerRegistry {
         if batch.is_empty() {
             return Ok(());
         }
-        
+
         let ops = batch.operations();
-        
+
         // Phase 1: Apply all additions
         for (peer_id, entry) in ops.added {
             // Direct insert without individual event dispatch
             let did = peer_id.did().to_string();
             Self::validate_did(&did)?;
-            
+
             if !self.peers.contains_key(peer_id) && self.peers.len() >= self.config.max_peers {
                 self.evict_stale_peer().await?;
             }
-            
-            self.by_node_id.insert(peer_id.node_id().clone(), peer_id.clone());
-            self.by_public_key.insert(peer_id.public_key().clone(), peer_id.clone());
+
+            self.by_node_id
+                .insert(peer_id.node_id().clone(), peer_id.clone());
+            self.by_public_key
+                .insert(peer_id.public_key().clone(), peer_id.clone());
             self.by_did.insert(did, peer_id.clone());
             self.peers.insert(peer_id.clone(), entry.clone());
         }
-        
+
         // Phase 2: Apply all updates
         for (peer_id, _old, new_entry) in ops.updated {
             if self.peers.contains_key(peer_id) {
                 self.peers.insert(peer_id.clone(), new_entry.clone());
             }
         }
-        
+
         // Phase 3: Apply all removals
         for (peer_id, _entry) in ops.removed {
             self.by_node_id.remove(peer_id.node_id());
@@ -1018,10 +1051,10 @@ impl PeerRegistry {
             self.by_did.remove(peer_id.did());
             self.peers.remove(peer_id);
         }
-        
+
         // Phase 4: Extract event data and dispatch single batch event
         let (added, updated, removed) = batch.into_event_data();
-        
+
         if self.config.audit_logging {
             info!(
                 added = added.len(),
@@ -1030,15 +1063,15 @@ impl PeerRegistry {
                 "Batch update committed to registry"
             );
         }
-        
+
         let event = sync::PeerRegistryEvent::BatchUpdate {
             added,
             updated,
             removed,
         };
-        
+
         self.observers.dispatch(event).await?;
-        
+
         Ok(())
     }
 
@@ -1046,60 +1079,74 @@ impl PeerRegistry {
     pub fn get(&self, peer_id: &UnifiedPeerId) -> Option<&PeerEntry> {
         self.peers.get(peer_id)
     }
-    
+
     /// Get mutable peer by UnifiedPeerId
     pub fn get_mut(&mut self, peer_id: &UnifiedPeerId) -> Option<&mut PeerEntry> {
         self.peers.get_mut(peer_id)
     }
-    
+
     /// **ACCEPTANCE CRITERIA**: Lookup by NodeId
     pub fn find_by_node_id(&self, node_id: &NodeId) -> Option<&PeerEntry> {
-        self.by_node_id.get(node_id)
+        self.by_node_id
+            .get(node_id)
             .and_then(|peer_id| self.peers.get(peer_id))
     }
-    
+
     /// **ACCEPTANCE CRITERIA**: Lookup by PublicKey
     pub fn find_by_public_key(&self, public_key: &PublicKey) -> Option<&PeerEntry> {
-        self.by_public_key.get(public_key)
+        self.by_public_key
+            .get(public_key)
             .and_then(|peer_id| self.peers.get(peer_id))
     }
-    
+
     /// **ACCEPTANCE CRITERIA**: Lookup by DID
     pub fn find_by_did(&self, did: &str) -> Option<&PeerEntry> {
-        self.by_did.get(did)
+        self.by_did
+            .get(did)
             .and_then(|peer_id| self.peers.get(peer_id))
     }
-    
+
     /// Get all peers
     pub fn all_peers(&self) -> impl Iterator<Item = &PeerEntry> {
         self.peers.values()
     }
-    
+
     /// Get peers by tier
     pub fn peers_by_tier(&self, tier: PeerTier) -> impl Iterator<Item = &PeerEntry> {
         self.peers.values().filter(move |entry| entry.tier == tier)
     }
-    
+
     /// Get authenticated peers
     pub fn authenticated_peers(&self) -> impl Iterator<Item = &PeerEntry> {
         self.peers.values().filter(|entry| entry.authenticated)
     }
-    
+
     /// Get peers with specific protocol
-    pub fn peers_with_protocol(&self, protocol: NetworkProtocol) -> impl Iterator<Item = &PeerEntry> {
-        self.peers.values().filter(move |entry| 
-            entry.active_protocols.contains(&protocol)
-        )
+    pub fn peers_with_protocol(
+        &self,
+        protocol: NetworkProtocol,
+    ) -> impl Iterator<Item = &PeerEntry> {
+        self.peers
+            .values()
+            .filter(move |entry| entry.active_protocols.contains(&protocol))
     }
-    
+
     /// Get peers by discovery method
     pub fn peers_by_discovery(&self, method: DiscoveryMethod) -> impl Iterator<Item = &PeerEntry> {
-        self.peers.values().filter(move |entry| entry.discovery_method == method)
+        self.peers
+            .values()
+            .filter(move |entry| entry.discovery_method == method)
     }
-    
+
     /// Update connection metrics for a peer
-    pub fn update_metrics(&mut self, peer_id: &UnifiedPeerId, metrics: ConnectionMetrics) -> Result<()> {
-        let entry = self.peers.get_mut(peer_id)
+    pub fn update_metrics(
+        &mut self,
+        peer_id: &UnifiedPeerId,
+        metrics: ConnectionMetrics,
+    ) -> Result<()> {
+        let entry = self
+            .peers
+            .get_mut(peer_id)
             .ok_or_else(|| anyhow!("Peer not found"))?;
         entry.connection_metrics = metrics;
         entry.last_seen = std::time::SystemTime::now()
@@ -1107,15 +1154,17 @@ impl PeerRegistry {
             .as_secs();
         Ok(())
     }
-    
+
     /// Update trust score
     pub fn update_trust(&mut self, peer_id: &UnifiedPeerId, trust_score: f64) -> Result<()> {
-        let entry = self.peers.get_mut(peer_id)
+        let entry = self
+            .peers
+            .get_mut(peer_id)
             .ok_or_else(|| anyhow!("Peer not found"))?;
         entry.trust_score = trust_score.clamp(0.0, 1.0);
         Ok(())
     }
-    
+
     /// Get registry statistics
     pub fn stats(&self) -> RegistryStats {
         RegistryStats {
@@ -1141,9 +1190,15 @@ impl PeerRegistry {
     }
 
     /// Get addresses for a peer filtered by protocol
-    pub async fn get_peer_addresses_by_protocol(&self, peer_id: &UnifiedPeerId, protocol: &str) -> Vec<AddressEndpoint> {
+    pub async fn get_peer_addresses_by_protocol(
+        &self,
+        peer_id: &UnifiedPeerId,
+        protocol: &str,
+    ) -> Vec<AddressEndpoint> {
         let pubkey_hex = hex::encode(peer_id.public_key().as_bytes());
-        self.address_resolver.get_addresses_by_protocol(&pubkey_hex, protocol).await
+        self.address_resolver
+            .get_addresses_by_protocol(&pubkey_hex, protocol)
+            .await
     }
 
     /// Get the best address for reaching a peer (highest quality)
@@ -1155,7 +1210,7 @@ impl PeerRegistry {
     /// Register addresses for a peer when upserting
     async fn sync_peer_addresses_to_resolver(&self, entry: &PeerEntry) {
         let pubkey_hex = hex::encode(entry.peer_id.public_key().as_bytes());
-        
+
         // Convert PeerEndpoints to AddressEndpoints
         let endpoints: Vec<AddressEndpoint> = entry
             .endpoints
@@ -1164,7 +1219,9 @@ impl PeerRegistry {
             .collect();
 
         // Register all endpoints with the resolver
-        self.address_resolver.register_addresses(&pubkey_hex, endpoints).await;
+        self.address_resolver
+            .register_addresses(&pubkey_hex, endpoints)
+            .await;
     }
 
     /// Update address metrics (signal strength, latency)
@@ -1176,7 +1233,7 @@ impl PeerRegistry {
         latency_ms: u32,
     ) -> Result<()> {
         let pubkey_hex = hex::encode(peer_id.public_key().as_bytes());
-        
+
         // Update in address resolver
         self.address_resolver
             .update_metrics(&pubkey_hex, address, signal_strength, latency_ms)
@@ -1334,7 +1391,9 @@ impl PeerRegistry {
         bandwidth_capacity: Option<u64>,
         latency_ms: Option<u32>,
     ) -> Result<()> {
-        let entry = self.peers.get_mut(peer_id)
+        let entry = self
+            .peers
+            .get_mut(peer_id)
             .ok_or_else(|| anyhow!("Peer not found"))?;
 
         if let Some(score) = stability_score {
@@ -1358,7 +1417,10 @@ impl PeerRegistry {
 
     /// Get rate limiter statistics
     pub fn rate_limiter_stats(&self) -> (u32, usize) {
-        (self.rate_limiter.global_count, self.rate_limiter.per_peer_counts.len())
+        (
+            self.rate_limiter.global_count,
+            self.rate_limiter.per_peer_counts.len(),
+        )
     }
 
     // ========== DHT-SPECIFIC METHODS (Ticket #148) ==========
@@ -1373,7 +1435,9 @@ impl PeerRegistry {
     /// This enables K-bucket operations while using unified registry for storage
     pub fn dht_peers_in_bucket(&self, bucket_index: usize) -> impl Iterator<Item = &PeerEntry> {
         self.peers.values().filter(move |entry| {
-            entry.dht_info.as_ref()
+            entry
+                .dht_info
+                .as_ref()
                 .map(|info| info.bucket_index == bucket_index)
                 .unwrap_or(false)
         })
@@ -1383,7 +1447,8 @@ impl PeerRegistry {
     ///
     /// This implements Kademlia routing using the unified registry
     pub fn find_closest_dht_peers(&self, target: &NodeId, k: usize) -> Vec<&PeerEntry> {
-        let mut dht_peers: Vec<_> = self.dht_peers()
+        let mut dht_peers: Vec<_> = self
+            .dht_peers()
             .map(|entry| {
                 let distance = target.kademlia_distance(entry.peer_id.node_id());
                 (entry, distance)
@@ -1394,7 +1459,8 @@ impl PeerRegistry {
         dht_peers.sort_by_key(|(_, distance)| *distance);
 
         // Return k closest
-        dht_peers.into_iter()
+        dht_peers
+            .into_iter()
             .take(k)
             .map(|(entry, _)| entry)
             .collect()
@@ -1403,8 +1469,14 @@ impl PeerRegistry {
     /// Update DHT-specific info for a peer
     ///
     /// This is used by KademliaRouter to update K-bucket metadata
-    pub fn update_dht_info(&mut self, peer_id: &UnifiedPeerId, dht_info: DhtPeerInfo) -> Result<()> {
-        let entry = self.peers.get_mut(peer_id)
+    pub fn update_dht_info(
+        &mut self,
+        peer_id: &UnifiedPeerId,
+        dht_info: DhtPeerInfo,
+    ) -> Result<()> {
+        let entry = self
+            .peers
+            .get_mut(peer_id)
             .ok_or_else(|| anyhow!("Peer not found"))?;
         entry.dht_info = Some(dht_info);
         entry.last_seen = Self::current_timestamp();
@@ -1436,12 +1508,14 @@ impl PeerRegistry {
     /// Get DHT routing statistics
     pub fn dht_stats(&self) -> DhtStats {
         let total_dht_peers = self.dht_peers().count();
-        
+
         // Count peers per bucket
         let mut bucket_distribution = std::collections::HashMap::new();
         for entry in self.dht_peers() {
             if let Some(dht_info) = &entry.dht_info {
-                *bucket_distribution.entry(dht_info.bucket_index).or_insert(0) += 1;
+                *bucket_distribution
+                    .entry(dht_info.bucket_index)
+                    .or_insert(0) += 1;
             }
         }
 
@@ -1460,9 +1534,12 @@ impl PeerRegistry {
     ///
     /// This implements K-bucket maintenance
     pub async fn cleanup_failed_dht_peers(&mut self, max_failed_attempts: u32) -> usize {
-        let failed_peers: Vec<UnifiedPeerId> = self.dht_peers()
+        let failed_peers: Vec<UnifiedPeerId> = self
+            .dht_peers()
             .filter(|entry| {
-                entry.dht_info.as_ref()
+                entry
+                    .dht_info
+                    .as_ref()
                     .map(|info| info.failed_attempts > max_failed_attempts)
                     .unwrap_or(false)
             })
@@ -1519,23 +1596,23 @@ pub fn new_shared_registry() -> SharedPeerRegistry {
 mod tests {
     use super::*;
     use tokio_test::block_on;
-    
+
     fn create_test_peer_id() -> UnifiedPeerId {
         // This would use real ZhtpIdentity in production
         use lib_identity::ZhtpIdentity;
-        
+
         let identity = ZhtpIdentity::new_unified(
             lib_identity::IdentityType::Device,
             None,
             None,
             "test-device",
             None,
-        ).expect("Failed to create test identity");
-        
-        UnifiedPeerId::from_zhtp_identity(&identity)
-            .expect("Failed to create UnifiedPeerId")
+        )
+        .expect("Failed to create test identity");
+
+        UnifiedPeerId::from_zhtp_identity(&identity).expect("Failed to create UnifiedPeerId")
     }
-    
+
     fn create_test_entry(peer_id: UnifiedPeerId) -> PeerEntry {
         PeerEntry {
             peer_id: peer_id.clone(),
@@ -1587,103 +1664,103 @@ mod tests {
     fn remove_blocking(registry: &mut PeerRegistry, peer_id: &UnifiedPeerId) -> Option<PeerEntry> {
         block_on(registry.remove(peer_id))
     }
-    
+
     #[test]
     fn test_registry_creation() {
         let registry = PeerRegistry::new();
         assert_eq!(registry.peers.len(), 0);
     }
-    
+
     #[test]
     fn test_upsert_and_get() {
         let mut registry = PeerRegistry::new();
         let peer_id = create_test_peer_id();
         let entry = create_test_entry(peer_id.clone());
-        
+
         upsert_blocking(&mut registry, entry.clone()).expect("Failed to upsert");
-        
+
         let retrieved = registry.get(&peer_id);
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().peer_id, peer_id);
     }
-    
+
     #[test]
     fn test_find_by_node_id() {
         let mut registry = PeerRegistry::new();
         let peer_id = create_test_peer_id();
         let node_id = peer_id.node_id().clone();
         let entry = create_test_entry(peer_id.clone());
-        
+
         upsert_blocking(&mut registry, entry).expect("Failed to upsert");
-        
+
         let found = registry.find_by_node_id(&node_id);
         assert!(found.is_some());
         assert_eq!(found.unwrap().peer_id.node_id(), &node_id);
     }
-    
+
     #[test]
     fn test_find_by_public_key() {
         let mut registry = PeerRegistry::new();
         let peer_id = create_test_peer_id();
         let public_key = peer_id.public_key().clone();
         let entry = create_test_entry(peer_id.clone());
-        
+
         upsert_blocking(&mut registry, entry).expect("Failed to upsert");
-        
+
         let found = registry.find_by_public_key(&public_key);
         assert!(found.is_some());
         assert_eq!(found.unwrap().peer_id.public_key(), &public_key);
     }
-    
+
     #[test]
     fn test_find_by_did() {
         let mut registry = PeerRegistry::new();
         let peer_id = create_test_peer_id();
         let did = peer_id.did().to_string();
         let entry = create_test_entry(peer_id.clone());
-        
+
         upsert_blocking(&mut registry, entry).expect("Failed to upsert");
-        
+
         let found = registry.find_by_did(&did);
         assert!(found.is_some());
         assert_eq!(found.unwrap().peer_id.did(), did);
     }
-    
+
     #[test]
     fn test_remove() {
         let mut registry = PeerRegistry::new();
         let peer_id = create_test_peer_id();
         let node_id = peer_id.node_id().clone();
         let entry = create_test_entry(peer_id.clone());
-        
+
         upsert_blocking(&mut registry, entry).expect("Failed to upsert");
         assert!(registry.get(&peer_id).is_some());
-        
+
         let removed = remove_blocking(&mut registry, &peer_id);
         assert!(removed.is_some());
         assert!(registry.get(&peer_id).is_none());
         assert!(registry.find_by_node_id(&node_id).is_none());
     }
-    
+
     #[test]
     fn test_peers_by_tier() {
         let mut registry = PeerRegistry::new();
-        
+
         let peer1 = create_test_peer_id();
         let mut entry1 = create_test_entry(peer1);
         entry1.tier = PeerTier::Tier1;
-        
+
         let peer2 = create_test_peer_id();
         let mut entry2 = create_test_entry(peer2);
         entry2.tier = PeerTier::Tier2;
-        
+
         upsert_blocking(&mut registry, entry1).expect("Failed to upsert");
         upsert_blocking(&mut registry, entry2).expect("Failed to upsert");
-        
+
         let tier1_peers: Vec<_> = registry.peers_by_tier(PeerTier::Tier1).collect();
         assert_eq!(tier1_peers.len(), 1);
     }
-    
+
     #[tokio::test]
     async fn test_shared_registry() {
         let registry = new_shared_registry();
@@ -1717,7 +1794,10 @@ mod tests {
     fn test_did_validation_accepts_valid_format() {
         // Valid DIDs should pass
         assert!(PeerRegistry::validate_did("did:zhtp:1234567890abcdef1234567890abcdef").is_ok());
-        assert!(PeerRegistry::validate_did("did:zhtp:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab").is_ok());
+        assert!(PeerRegistry::validate_did(
+            "did:zhtp:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
+        )
+        .is_ok());
     }
 
     #[test]
@@ -1726,7 +1806,7 @@ mod tests {
         let config = RegistryConfig {
             max_peers: 3,
             peer_ttl_secs: 86400,
-            audit_logging: false, // Disable logging for test
+            audit_logging: false,     // Disable logging for test
             global_rate_limit: 10000, // High limit for tests
             per_peer_rate_limit: 1000,
             verify_did_on_blockchain: false,
@@ -1810,7 +1890,9 @@ mod tests {
             connected_at: 12345,
         };
 
-        registry.update_metrics(&peer_id, new_metrics.clone()).expect("Failed to update");
+        registry
+            .update_metrics(&peer_id, new_metrics.clone())
+            .expect("Failed to update");
 
         let updated = registry.get(&peer_id).unwrap();
         assert_eq!(updated.connection_metrics.signal_strength, 0.95);
@@ -1826,13 +1908,19 @@ mod tests {
         upsert_blocking(&mut registry, entry).expect("Failed to upsert");
 
         // Test trust score clamping to 0.0-1.0 range
-        registry.update_trust(&peer_id, 1.5).expect("Failed to update");
+        registry
+            .update_trust(&peer_id, 1.5)
+            .expect("Failed to update");
         assert_eq!(registry.get(&peer_id).unwrap().trust_score, 1.0);
 
-        registry.update_trust(&peer_id, -0.5).expect("Failed to update");
+        registry
+            .update_trust(&peer_id, -0.5)
+            .expect("Failed to update");
         assert_eq!(registry.get(&peer_id).unwrap().trust_score, 0.0);
 
-        registry.update_trust(&peer_id, 0.75).expect("Failed to update");
+        registry
+            .update_trust(&peer_id, 0.75)
+            .expect("Failed to update");
         assert_eq!(registry.get(&peer_id).unwrap().trust_score, 0.75);
     }
 
@@ -1883,7 +1971,11 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 let peer_id = create_test_peer_id();
                 let mut entry = create_test_entry(peer_id);
-                entry.tier = if i % 2 == 0 { PeerTier::Tier1 } else { PeerTier::Tier2 };
+                entry.tier = if i % 2 == 0 {
+                    PeerTier::Tier1
+                } else {
+                    PeerTier::Tier2
+                };
 
                 let mut reg = registry_clone.write().await;
                 if reg.upsert(entry).await.is_ok() {
@@ -1944,7 +2036,9 @@ mod tests {
 
         // Find operations on empty registry
         assert!(registry.find_by_did("did:zhtp:nonexistent").is_none());
-        assert!(registry.find_by_node_id(&lib_identity::NodeId::from_bytes([0u8; 32])).is_none());
+        assert!(registry
+            .find_by_node_id(&lib_identity::NodeId::from_bytes([0u8; 32]))
+            .is_none());
 
         // Stats on empty registry
         let stats = registry.stats();
@@ -1963,7 +2057,7 @@ mod tests {
             max_peers: 100,
             peer_ttl_secs: 86400,
             audit_logging: false,
-            global_rate_limit: 5,  // Only 5 ops per second
+            global_rate_limit: 5,   // Only 5 ops per second
             per_peer_rate_limit: 2, // Only 2 ops per peer per minute
             verify_did_on_blockchain: false,
         };
@@ -2057,12 +2151,14 @@ mod tests {
         upsert_blocking(&mut registry, entry).expect("Failed to upsert");
 
         // Update connection state atomically
-        registry.update_connection_state(
-            &peer_id,
-            Some(0.85),  // stability_score
-            Some(5000000), // bandwidth_capacity
-            Some(25),    // latency_ms
-        ).expect("Failed to update");
+        registry
+            .update_connection_state(
+                &peer_id,
+                Some(0.85),    // stability_score
+                Some(5000000), // bandwidth_capacity
+                Some(25),      // latency_ms
+            )
+            .expect("Failed to update");
 
         // Verify updates
         let peer = registry.get(&peer_id).unwrap();

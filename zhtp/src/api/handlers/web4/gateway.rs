@@ -16,13 +16,17 @@
 //! - Domain validation prevents injection attacks
 //! - Host header sanitization prevents header injection
 
-use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
-use lib_protocols::zhtp::ZhtpResult;
+use crate::pouw::types::ProofType;
+use crate::pouw::validation::{ReceiptValidator, ValidatedReceipt};
+use crate::web4_stub::ZdnsResolver;
+use lib_network::web4::{DomainRegistry, Web4ContentService};
 use lib_protocols::zhtp::ZhtpRequestHandler;
-use lib_network::web4::DomainRegistry;
-use crate::web4_stub::{Web4ContentService, ZdnsResolver};
+use lib_protocols::zhtp::ZhtpResult;
+use lib_protocols::{ZhtpRequest, ZhtpResponse, ZhtpStatus};
 use std::sync::Arc;
-use tracing::{info, warn, debug};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
+use tracing::{debug, info, warn};
 
 /// Configuration for the Web4 gateway
 #[derive(Debug, Clone)]
@@ -53,6 +57,10 @@ pub struct Web4GatewayHandler {
     content_service: Arc<Web4ContentService>,
     /// Gateway configuration
     config: GatewayConfig,
+    /// Optional POUW validator for emitting content-served receipts
+    pouw_validator: Option<Arc<RwLock<ReceiptValidator>>>,
+    /// DID of this node (for receipt attribution)
+    node_did: Option<String>,
 }
 
 impl Web4GatewayHandler {
@@ -61,6 +69,8 @@ impl Web4GatewayHandler {
         Self {
             content_service: Arc::new(Web4ContentService::new(registry)),
             config: GatewayConfig::default(),
+            pouw_validator: None,
+            node_did: None,
         }
     }
 
@@ -69,6 +79,8 @@ impl Web4GatewayHandler {
         Self {
             content_service: Arc::new(Web4ContentService::new(registry)),
             config,
+            pouw_validator: None,
+            node_did: None,
         }
     }
 
@@ -80,19 +92,36 @@ impl Web4GatewayHandler {
         Self {
             content_service,
             config,
+            pouw_validator: None,
+            node_did: None,
         }
     }
 
     /// Create with ZDNS resolver for cached domain lookups
     pub fn with_zdns(
         registry: Arc<DomainRegistry>,
-        zdns_resolver: Arc<ZdnsResolver>,
+        _zdns_resolver: Arc<ZdnsResolver>,
         config: GatewayConfig,
     ) -> Self {
         Self {
-            content_service: Arc::new(Web4ContentService::with_zdns(registry, zdns_resolver)),
+            // ZDNS runtime was relocated out of lib-network; keep this constructor
+            // stable by accepting the resolver but serving from the canonical registry path.
+            content_service: Arc::new(Web4ContentService::new(registry)),
             config,
+            pouw_validator: None,
+            node_did: None,
         }
+    }
+
+    /// Attach a POUW validator for emitting Web4ContentServed receipts on successful serves
+    pub fn with_pouw_validator(
+        mut self,
+        pouw_validator: Arc<RwLock<ReceiptValidator>>,
+        node_did: String,
+    ) -> Self {
+        self.pouw_validator = Some(pouw_validator);
+        self.node_did = Some(node_did);
+        self
     }
 
     /// Extract domain from Host header
@@ -189,6 +218,43 @@ impl Web4GatewayHandler {
         true
     }
 
+    /// Emit a Web4ContentServed receipt to the POUW validator (fire-and-forget)
+    async fn emit_content_served_receipt(
+        &self,
+        domain: &str,
+        manifest_cid: Option<String>,
+        bytes_verified: u64,
+    ) {
+        let Some(validator_lock) = &self.pouw_validator else {
+            return;
+        };
+        let node_did = self.node_did.as_deref().unwrap_or("did:zhtp:node");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut nonce = vec![0u8; 16];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
+
+        let receipt = ValidatedReceipt {
+            receipt_nonce: nonce,
+            client_did: node_did.to_string(),
+            task_id: vec![0u8; 16],
+            proof_type: ProofType::Web4ContentServed,
+            bytes_verified,
+            validated_at: now,
+            challenge_nonce: vec![0u8; 16],
+            manifest_cid,
+            domain: Some(domain.to_string()),
+            route_hops: None,
+            served_from_cache: Some(true),
+        };
+
+        validator_lock.read().await.emit_direct(receipt).await;
+
+        debug!(domain = %domain, bytes = bytes_verified, "Emitted Web4ContentServed receipt");
+    }
+
     /// Handle a Web4 gateway request
     async fn handle_gateway_request(
         &self,
@@ -220,13 +286,16 @@ impl Web4GatewayHandler {
                     "Gateway: Content served successfully"
                 );
 
+                // Emit Web4ContentServed POUW receipt for served content (fire-and-forget)
+                let bytes = result.content.len() as u64;
+                let domain_owned = domain.to_string();
+                self.emit_content_served_receipt(&domain_owned, None, bytes)
+                    .await;
+
                 // Build response with headers
-                let mut response = ZhtpResponse::success_with_content_type(
-                    result.content,
-                    result.mime_type,
-                    None,
-                )
-                .with_cache_control(result.cache_control);
+                let mut response =
+                    ZhtpResponse::success_with_content_type(result.content, result.mime_type, None)
+                        .with_cache_control(result.cache_control);
 
                 // Add ETag if present
                 if let Some(etag) = result.etag {
@@ -239,16 +308,12 @@ impl Web4GatewayHandler {
                 }
 
                 // Add gateway-specific headers
-                response = response.with_custom_header(
-                    "X-Web4-Domain".to_string(),
-                    domain.to_string(),
-                );
+                response =
+                    response.with_custom_header("X-Web4-Domain".to_string(), domain.to_string());
 
                 if result.is_fallback {
-                    response = response.with_custom_header(
-                        "X-Web4-Fallback".to_string(),
-                        "true".to_string(),
-                    );
+                    response = response
+                        .with_custom_header("X-Web4-Fallback".to_string(), "true".to_string());
                 }
 
                 Ok(response)
@@ -338,6 +403,15 @@ impl ZhtpRequestHandler for Web4GatewayHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use lib_network::storage_stub::UnifiedStorage;
+    use lib_network::web4::{
+        DomainEconomicSettings, DomainMetadata, DomainRegistrationRequest, DomainRegistry,
+    };
+    use lib_proofs::ZeroKnowledgeProof;
+    use std::collections::HashMap;
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::{Arc, RwLock as StdRwLock};
 
     fn create_test_config() -> GatewayConfig {
         GatewayConfig {
@@ -345,6 +419,115 @@ mod tests {
             allow_bare_zhtp: true,
             max_domain_length: 253,
         }
+    }
+
+    #[derive(Clone, Default)]
+    struct TestStorage {
+        domains: Arc<StdRwLock<StdHashMap<String, Vec<u8>>>>,
+        manifests: Arc<StdRwLock<StdHashMap<String, Vec<u8>>>>,
+    }
+
+    #[async_trait]
+    impl UnifiedStorage for TestStorage {
+        async fn store_domain_record(&self, domain: &str, data: Vec<u8>) -> anyhow::Result<()> {
+            self.domains
+                .write()
+                .unwrap()
+                .insert(domain.to_string(), data);
+            Ok(())
+        }
+
+        async fn load_domain_record(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(self.domains.read().unwrap().get(domain).cloned())
+        }
+
+        async fn delete_domain_record(&self, domain: &str) -> anyhow::Result<()> {
+            self.domains.write().unwrap().remove(domain);
+            Ok(())
+        }
+
+        async fn list_domain_records(&self) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+            Ok(self
+                .domains
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect())
+        }
+
+        async fn store_manifest(
+            &self,
+            domain: &str,
+            manifest_data: Vec<u8>,
+        ) -> anyhow::Result<()> {
+            self.manifests
+                .write()
+                .unwrap()
+                .insert(domain.to_string(), manifest_data);
+            Ok(())
+        }
+
+        async fn load_manifest(&self, domain: &str) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(self.manifests.read().unwrap().get(domain).cloned())
+        }
+
+        fn is_stub(&self) -> bool {
+            false
+        }
+    }
+
+    async fn setup_gateway_with_domain_content(
+        domain: &str,
+        path: &str,
+        content: Vec<u8>,
+    ) -> anyhow::Result<Web4GatewayHandler> {
+        let storage: Arc<dyn UnifiedStorage> = Arc::new(TestStorage::default());
+        let registry = Arc::new(DomainRegistry::new(storage).await?);
+
+        let owner = lib_identity::ZhtpIdentity::new_unified(
+            lib_identity::types::IdentityType::Human,
+            Some(30),
+            Some("US".to_string()),
+            "observer-web4-gateway-owner",
+            None,
+        )?;
+        let registration_proof = ZeroKnowledgeProof::new(
+            "Plonky2".to_string(),
+            lib_crypto::hash_blake3(b"observer-web4-gateway-proof").to_vec(),
+            owner.id.0.to_vec(),
+            owner.id.0.to_vec(),
+            None,
+        );
+
+        let mut initial_content = HashMap::new();
+        initial_content.insert(path.to_string(), content);
+
+        registry
+            .register_domain(DomainRegistrationRequest {
+                domain: domain.to_string(),
+                owner,
+                duration_days: 365,
+                metadata: DomainMetadata {
+                    title: "Observer Gateway".to_string(),
+                    description: "Observer gateway test".to_string(),
+                    category: "test".to_string(),
+                    tags: vec!["observer".to_string(), "gateway".to_string()],
+                    public: true,
+                    economic_settings: DomainEconomicSettings {
+                        registration_fee: 0.0,
+                        renewal_fee: 0.0,
+                        transfer_fee: 0.0,
+                        hosting_budget: 0.0,
+                    },
+                },
+                initial_content,
+                registration_proof,
+                deploy_manifest_cid: None,
+            })
+            .await?;
+
+        Ok(Web4GatewayHandler::new(registry))
     }
 
     /// Helper struct to test extract_domain without needing a real DomainRegistry
@@ -572,7 +755,8 @@ mod tests {
         let extractor = TestExtractor::new(config);
 
         assert!(extractor.validate_domain("short.zhtp")); // 10 chars
-        assert!(!extractor.validate_domain("this-is-a-very-long-domain-name.zhtp")); // > 20 chars
+        assert!(!extractor.validate_domain("this-is-a-very-long-domain-name.zhtp"));
+        // > 20 chars
     }
 
     // ========================================
@@ -616,13 +800,13 @@ mod tests {
         fn _compile_check() {
             // This function is never called, just checks compilation
             async fn _inner() {
-                let storage = std::sync::Arc::new(
-                    tokio::sync::RwLock::new(
-                        lib_storage::UnifiedStorageSystem::new(
-                            lib_storage::UnifiedStorageConfig::default()
-                        ).await.unwrap()
+                let _storage = std::sync::Arc::new(tokio::sync::RwLock::new(
+                    lib_storage::UnifiedStorageSystem::new(
+                        lib_storage::UnifiedStorageConfig::default(),
                     )
-                );
+                    .await
+                    .unwrap(),
+                ));
                 // Note: StubDomainRegistry cannot be used here - needs real DomainRegistry type
                 // let registry = std::sync::Arc::new(
                 //     crate::web4_stub::StubDomainRegistry::new_with_storage(storage).await.unwrap()
@@ -643,5 +827,40 @@ mod tests {
     fn test_zdns_cache_metrics() {
         // Stubbed resolver metrics - ensure test harness runs
         assert!(true);
+    }
+
+    #[tokio::test]
+    async fn gateway_serves_registered_observer_content_from_host_header() {
+        let gateway = setup_gateway_with_domain_content(
+            "observer-gateway.zhtp",
+            "/index.html",
+            b"<html><body>gateway-ready</body></html>".to_vec(),
+        )
+        .await
+        .expect("gateway should initialize");
+
+        let mut request = ZhtpRequest::get("/index.html".to_string(), None).expect("request");
+        request
+            .headers
+            .custom
+            .insert("host".to_string(), "observer-gateway.zhtp.localhost".to_string());
+
+        assert!(gateway.can_handle(&request));
+
+        let response = gateway
+            .handle_request(request)
+            .await
+            .expect("gateway should return a response");
+
+        assert!(response.is_success());
+        assert_eq!(response.body, b"<html><body>gateway-ready</body></html>");
+        assert_eq!(
+            response.headers.content_type.as_deref(),
+            Some("text/html; charset=utf-8")
+        );
+        assert_eq!(
+            response.headers.custom.get("X-Web4-Domain").map(String::as_str),
+            Some("observer-gateway.zhtp")
+        );
     }
 }

@@ -50,11 +50,11 @@
 //! }
 //! ```
 
+use crate::protocols::types::SessionId;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use crate::protocols::types::SessionId;
 
 /// Current fragmentation protocol version
 pub const FRAGMENT_HEADER_VERSION: u8 = 1;
@@ -542,7 +542,10 @@ impl FragmentReassemblerV2 {
                 .insert(message_seq, InFlightMessage::new(total_fragments));
         }
 
-        let msg = self.pending.get_mut(&message_seq).unwrap();
+        let msg = self
+            .pending
+            .get_mut(&message_seq)
+            .ok_or_else(|| anyhow!("Internal error: message entry not found after insertion"))?;
 
         // Validate total_fragments consistency
         if msg.received.len() != total_fragments {
@@ -570,7 +573,10 @@ impl FragmentReassemblerV2 {
         // Check if complete
         if msg.is_complete() {
             // Move complete message out of pending
-            let complete = self.pending.remove(&message_seq).unwrap();
+            let complete = self
+                .pending
+                .remove(&message_seq)
+                .ok_or_else(|| anyhow!("Internal error: complete message not found in pending"))?;
 
             // Reassemble (shouldn't fail given our invariants, but handle anyway)
             let reassembled = self.reassemble_inner(&complete)?;
@@ -596,7 +602,7 @@ impl FragmentReassemblerV2 {
     pub fn cleanup_expired_messages(&mut self, now: Instant) {
         let initial_count = self.pending.len();
 
-        self.pending.retain(|msg_seq, msg| {
+        self.pending.retain(|_msg_seq, msg| {
             if msg.is_expired(now, &self.config) {
                 self.stats.messages_expired += 1;
                 false
@@ -617,7 +623,17 @@ impl FragmentReassemblerV2 {
 
     /// Reassemble a complete message from its fragments
     fn reassemble_inner(&self, msg: &InFlightMessage) -> Result<Vec<u8>> {
-        let total_size: usize = msg.received.iter().map(|f| f.as_ref().unwrap().len()).sum();
+        // Calculate total size, ensuring all fragments are present
+        let fragments: Vec<&Vec<u8>> = msg
+            .received
+            .iter()
+            .map(|f| {
+                f.as_ref().ok_or_else(|| {
+                    anyhow!("Internal error: incomplete fragment in complete message")
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let total_size: usize = fragments.iter().map(|data| data.len()).sum();
 
         let mut reassembled = Vec::with_capacity(total_size);
 
@@ -642,7 +658,9 @@ impl FragmentReassemblerV2 {
 
     /// Get fragment count for a pending message
     pub fn fragment_count(&self, message_seq: u32) -> Option<(usize, usize)> {
-        self.pending.get(&message_seq).map(|msg| (msg.received_count, msg.received.len()))
+        self.pending
+            .get(&message_seq)
+            .map(|msg| (msg.received_count, msg.received.len()))
     }
 
     /// Get reassembler statistics
@@ -826,8 +844,11 @@ mod tests {
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("fragments") && err_msg.contains("1024"),
-                "Expected fragment limit error, got: {}", err_msg);
+        assert!(
+            err_msg.contains("fragments") && err_msg.contains("1024"),
+            "Expected fragment limit error, got: {}",
+            err_msg
+        );
     }
 
     // ========================================================================
@@ -1128,7 +1149,10 @@ mod tests {
 
         let result = reassembler.add_fragment(bad_fragment);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid fragment index"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid fragment index"));
     }
 
     #[test]

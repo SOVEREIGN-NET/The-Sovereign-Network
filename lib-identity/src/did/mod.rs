@@ -2,6 +2,27 @@
 // Decentralized Identity Document (DID) module exports
 
 pub mod document_generation;
+pub mod storage;
 
 // Re-export all DID types and functions
 pub use document_generation::*;
+pub use storage::{set_did_store_dir, set_did_store_memory};
+
+/// Parse DID string to identity ID hash
+///
+/// DID format: "did:zhtp:{identity_id_hex}"
+///
+/// # Example
+/// ```
+/// use lib_identity::did::parse_did_to_identity_id;
+///
+/// // 32-byte hex identity id (64 hex chars)
+/// let id = parse_did_to_identity_id("did:zhtp:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+/// assert_eq!(id.as_bytes().len(), 32);
+/// ```
+pub fn parse_did_to_identity_id(did: &str) -> anyhow::Result<lib_crypto::Hash> {
+    let id_hex = did
+        .strip_prefix("did:zhtp:")
+        .ok_or_else(|| anyhow::anyhow!("Invalid DID format: must start with 'did:zhtp:'"))?;
+    lib_crypto::Hash::from_hex(id_hex).map_err(|e| anyhow::anyhow!("Invalid DID hex: {}", e))
+}

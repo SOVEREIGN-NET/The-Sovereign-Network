@@ -35,7 +35,7 @@
 //! - **Multi-tenant**: Session ID ensures per-tenant isolation
 //! - **Application domains**: Message types prevent cross-domain attacks
 
-use crate::encryption::{ProtocolEncryption, ChaCha20Poly1305Encryption, EncryptionStats};
+use crate::encryption::{ChaCha20Poly1305Encryption, EncryptionStats, ProtocolEncryption};
 use anyhow::Result;
 use tracing::debug;
 
@@ -49,13 +49,13 @@ mod core {
     /// Format: `quic\0v1\0<message_type>\0<session_id>`
     pub fn build_aad(message_type: &str, session_id: &[u8]) -> Vec<u8> {
         let mut aad = Vec::new();
-        aad.extend_from_slice(b"quic");              // protocol_id
-        aad.push(0x00);                              // separator
-        aad.extend_from_slice(b"v1");                // version
-        aad.push(0x00);                              // separator
+        aad.extend_from_slice(b"quic"); // protocol_id
+        aad.push(0x00); // separator
+        aad.extend_from_slice(b"v1"); // version
+        aad.push(0x00); // separator
         aad.extend_from_slice(message_type.as_bytes()); // message_type
-        aad.push(0x00);                              // separator
-        aad.extend_from_slice(session_id);           // session_id
+        aad.push(0x00); // separator
+        aad.extend_from_slice(session_id); // session_id
         aad
     }
 }
@@ -71,25 +71,25 @@ mod shell {
     pub struct QuicApplicationEncryption {
         /// Core encryption (ChaCha20Poly1305)
         enc: ChaCha20Poly1305Encryption,
-        /// Session identifier for domain separation
-        session_id: [u8; 16],
+        /// Session identifier for domain separation (UHP v2, 32 bytes)
+        session_id: [u8; 32],
     }
 
     impl QuicApplicationEncryption {
         /// Create new QUIC application encryption instance
         ///
         /// # Arguments
-        /// - `master_key`: 32-byte ChaCha20 master key
-        /// - `session_id`: 16-byte session identifier for domain separation
-        pub fn new(master_key: &[u8; 32], session_id: [u8; 16]) -> Result<Self> {
+        /// - `session_key`: 32-byte ChaCha20 session key
+        /// - `session_id`: 32-byte session identifier for domain separation
+        pub fn new(session_key: &[u8; 32], session_id: [u8; 32]) -> Result<Self> {
             Ok(Self {
-                enc: ChaCha20Poly1305Encryption::new("quic", master_key)?,
+                enc: ChaCha20Poly1305Encryption::new("quic", session_key)?,
                 session_id,
             })
         }
 
         /// Get the session ID for context tracking
-        pub fn session_id(&self) -> [u8; 16] {
+        pub fn session_id(&self) -> [u8; 32] {
             self.session_id
         }
 
@@ -192,22 +192,25 @@ mod tests {
         [0x55u8; 32]
     }
 
-    fn create_test_session_id() -> [u8; 16] {
-        [0x77u8; 16]
+    fn create_test_session_id() -> [u8; 32] {
+        [0x77u8; 32]
     }
 
     // ========== CORE TESTS ==========
 
     #[test]
     fn test_aad_construction() {
-        let session_id = [0xAAu8; 16];
+        let session_id = [0xAAu8; 32];
         let aad = core::build_aad("handshake", &session_id);
 
         assert!(aad.starts_with(b"quic"));
         assert!(aad.contains(&b'\0'));
 
         let aad2 = core::build_aad("data", &session_id);
-        assert_ne!(aad, aad2, "Different message types must produce different AAD");
+        assert_ne!(
+            aad, aad2,
+            "Different message types must produce different AAD"
+        );
     }
 
     #[test]
@@ -259,14 +262,17 @@ mod tests {
 
         // Try to decrypt with different message type
         let result = enc.decrypt_message(&ciphertext, "data");
-        assert!(result.is_err(), "Different message type should fail decryption");
+        assert!(
+            result.is_err(),
+            "Different message type should fail decryption"
+        );
     }
 
     #[test]
     fn test_quic_session_separation() {
         let key = create_test_key();
-        let session_id1 = [0x11u8; 16];
-        let session_id2 = [0x22u8; 16];
+        let session_id1 = [0x11u8; 32];
+        let session_id2 = [0x22u8; 32];
 
         let enc1 = QuicApplicationEncryption::new(&key, session_id1).unwrap();
         let enc2 = QuicApplicationEncryption::new(&key, session_id2).unwrap();
@@ -308,7 +314,10 @@ mod tests {
 
         // Encrypt empty message
         let ciphertext = enc.encrypt_message(b"", "data").unwrap();
-        assert!(!ciphertext.is_empty(), "Even empty message produces ciphertext (tag)");
+        assert!(
+            !ciphertext.is_empty(),
+            "Even empty message produces ciphertext (tag)"
+        );
 
         let decrypted = enc.decrypt_message(&ciphertext, "data").unwrap();
         assert_eq!(decrypted.len(), 0, "Empty message should decrypt to empty");
@@ -389,7 +398,7 @@ mod tests {
         // Create 5 sessions
         let sessions: Vec<_> = (0..5)
             .map(|i| {
-                let mut sid = [0u8; 16];
+                let mut sid = [0u8; 32];
                 sid[0] = i as u8;
                 QuicApplicationEncryption::new(&key, sid).unwrap()
             })
@@ -420,7 +429,12 @@ mod tests {
             for (j, other_ciphertext) in ciphertexts.iter().enumerate() {
                 if i != j {
                     let result = session.decrypt_message(other_ciphertext, "data");
-                    assert!(result.is_err(), "Session {} should not decrypt session {} ciphertext", i, j);
+                    assert!(
+                        result.is_err(),
+                        "Session {} should not decrypt session {} ciphertext",
+                        i,
+                        j
+                    );
                 }
             }
         }
@@ -443,10 +457,10 @@ mod tests {
             "ack",
             "control",
             "crypto",
-            "dataa",     // typo
-            "dat",       // prefix
-            "",          // empty
-            "DATA",      // case-sensitive
+            "dataa", // typo
+            "dat",   // prefix
+            "",      // empty
+            "DATA",  // case-sensitive
         ];
 
         for wrong_type in wrong_types {
@@ -473,11 +487,15 @@ mod tests {
     #[test]
     fn test_quic_session_context_preserved() {
         let key = create_test_key();
-        let session_id = [0xFFu8; 16];
+        let session_id = [0xFFu8; 32];
 
         let enc = QuicApplicationEncryption::new(&key, session_id).unwrap();
 
-        assert_eq!(enc.session_id(), session_id, "Session ID should be preserved");
+        assert_eq!(
+            enc.session_id(),
+            session_id,
+            "Session ID should be preserved"
+        );
 
         // Encrypt and decrypt
         let message = b"Test";
@@ -485,6 +503,10 @@ mod tests {
         let decrypted = enc.decrypt_message(&ciphertext, "data").unwrap();
 
         assert_eq!(message, &decrypted[..]);
-        assert_eq!(enc.session_id(), session_id, "Session ID should remain unchanged after operations");
+        assert_eq!(
+            enc.session_id(),
+            session_id,
+            "Session ID should remain unchanged after operations"
+        );
     }
 }

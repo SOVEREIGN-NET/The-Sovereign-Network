@@ -1,7 +1,7 @@
 //! WiFi Direct Protocol Router
 //!
 //! Extracted from unified_server.rs (lines 4985-5157)
-//! 
+//!
 //! Handles WiFi Direct P2P mesh connections with:
 //! - mDNS/Bonjour service discovery
 //! - Group Owner negotiation
@@ -10,22 +10,22 @@
 //! - WPA2/WPA3 security
 
 use anyhow::{Context, Result};
+use lib_identity::IdentityManager;
+use lib_network::handshake::{HandshakeContext, NonceCache};
+use lib_network::protocols::wifi_direct::WiFiDirectMeshProtocol;
+use lib_network::protocols::wifi_direct_handshake::handshake_as_responder;
 use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
-use std::net::SocketAddr;
-use uuid::Uuid;
-#[cfg(debug_assertions)]
-use tracing::{debug, info, warn};
 #[cfg(not(debug_assertions))]
 use tracing::{debug, error, info, warn};
-use lib_network::protocols::wifi_direct::WiFiDirectMeshProtocol;
-use lib_network::protocols::wifi_direct_handshake::handshake_as_responder;
-use lib_network::handshake::{HandshakeContext, NonceCache};
-use lib_identity::IdentityManager;
-use std::path::PathBuf;
+#[cfg(debug_assertions)]
+use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 /// WiFi Direct device connections
 /// WiFi Direct handling with UHP authentication
@@ -43,9 +43,9 @@ impl WiFiRouter {
     pub fn new() -> Self {
         Self::new_with_peer_notification(None)
     }
-    
+
     pub fn new_with_peer_notification(
-        peer_discovery_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>
+        peer_discovery_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
     ) -> Self {
         let node_id = {
             let mut id = [0u8; 32];
@@ -55,11 +55,15 @@ impl WiFiRouter {
             id[16..].copy_from_slice(uuid_bytes); // Fill remaining with same UUID
             id
         };
-        
+
         // Create shared nonce cache for WiFi Direct handshakes
-        // SECURITY (HIGH-2): Persistent RocksDB cache for cross-restart replay protection
+        // SECURITY (HIGH-2): Persistent sled cache for cross-restart replay protection
         // Uses open_default() with 5-minute TTL
-        let db_path = PathBuf::from("./nonce_cache_wifi");
+        // Note: sled requires a DIRECTORY path (not a file)
+        let db_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("/var/lib"))
+            .join("zhtp")
+            .join("wifi_nonce_cache");
         let network_epoch = match lib_identity::types::node_id::get_network_genesis() {
             Ok(genesis) => lib_network::handshake::NetworkEpoch::from_genesis(genesis.as_slice()),
             Err(e) => {
@@ -83,15 +87,42 @@ impl WiFiRouter {
                 }
             }
         };
-        let nonce_cache = NonceCache::open_default(&db_path, 300, network_epoch)
-            .unwrap_or_else(|e| {
-                warn!("Failed to initialize persistent nonce cache: {}, using fallback", e);
-                // Fallback: try again with different path
-                NonceCache::open_default(&PathBuf::from("/tmp/nonce_cache_wifi"), 300, network_epoch)
+        // Ensure the cache directory exists
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let nonce_cache = {
+            let open_result = NonceCache::open_default(&db_path, 300, network_epoch);
+            let open_result = match open_result {
+                Err(ref e) if e.to_string().contains("Network epoch mismatch") => {
+                    warn!(
+                        "WiFi nonce cache epoch mismatch at {:?} — clearing stale cache: {}",
+                        db_path, e
+                    );
+                    if db_path.exists() {
+                        let _ = std::fs::remove_dir_all(&db_path);
+                    }
+                    NonceCache::open_default(&db_path, 300, network_epoch)
+                }
+                other => other,
+            };
+            open_result.unwrap_or_else(|e| {
+                warn!(
+                    "Failed to initialize persistent nonce cache at {:?}: {}, using fallback",
+                    db_path, e
+                );
+                let fallback_path = PathBuf::from("/tmp/zhtp/wifi_nonce_cache");
+                let _ = std::fs::create_dir_all(&fallback_path.parent().unwrap_or(&fallback_path));
+                if fallback_path.exists() {
+                    let _ = std::fs::remove_dir_all(&fallback_path);
+                }
+                NonceCache::open_default(&fallback_path, 300, network_epoch)
                     .expect("Failed to create WiFi nonce cache even with fallback path")
-            });
+            })
+        };
         let handshake_context = HandshakeContext::new(nonce_cache);
-        
+
         Self {
             connected_devices: Arc::new(RwLock::new(HashMap::new())),
             node_id,
@@ -102,13 +133,13 @@ impl WiFiRouter {
             handshake_context: Arc::new(RwLock::new(Some(handshake_context))),
         }
     }
-    
+
     /// Set identity manager for UHP handshake authentication
     pub async fn set_identity_manager(&self, identity_manager: Arc<RwLock<IdentityManager>>) {
         *self.identity_manager.write().await = Some(identity_manager);
         info!("✅ WiFi Direct: Identity manager configured for UHP handshake");
     }
-    
+
     /// Initialize WiFi Direct with mDNS service discovery
     pub async fn initialize(&self) -> Result<()> {
         // Check if already initialized - prevent re-creating protocol and losing discovered peers
@@ -119,33 +150,36 @@ impl WiFiRouter {
                 return Ok(());
             }
         }
-        
+
         info!("🌐 Initializing WiFi Direct P2P + mDNS service discovery...");
         info!("   Node ID: {:?}", hex::encode(&self.node_id[..8]));
-        
+
         // Create WiFi Direct mesh protocol instance with peer discovery notification
-        match WiFiDirectMeshProtocol::new_with_peer_notification(self.node_id, self.peer_discovery_tx.clone()) {
+        match WiFiDirectMeshProtocol::new_with_peer_notification(
+            self.node_id,
+            self.peer_discovery_tx.clone(),
+        ) {
             Ok(mut wifi_protocol) => {
                 info!("✅ WiFi Direct protocol created successfully");
-                
+
                 // Start enhanced service discovery (mDNS + P2P)
                 // Note: WiFi Direct starts disabled by default for security
                 match wifi_protocol.start_discovery().await {
                     Ok(_) => {
                         info!("✅ WiFi Direct P2P discovery started");
                         info!("📡 mDNS service advertising on _zhtp._tcp.local");
-                        
+
                         // Store the initialized protocol
                         *self.protocol.write().await = Some(wifi_protocol);
-                        
+
                         // Mark as initialized to prevent re-initialization
                         *self.initialized.write().await = true;
-                        
+
                         info!("✅ WiFi Direct mesh fully initialized:");
                         info!("   ✓ P2P device discovery active");
                         info!("   ✓ mDNS/Bonjour service advertising");
                         info!("   ✓ Direct device-to-device connections enabled");
-                        
+
                         Ok(())
                     }
                     Err(e) => {
@@ -153,11 +187,11 @@ impl WiFiRouter {
                         if e.to_string().contains("disabled") {
                             info!("🔒 WiFi Direct protocol ready but DISABLED (security default)");
                             info!("   Use /api/v1/protocols/wifi-direct/enable to activate");
-                            
+
                             // Store the protocol anyway so it can be enabled later via API
                             *self.protocol.write().await = Some(wifi_protocol);
                             *self.initialized.write().await = true;
-                            
+
                             Ok(())
                         } else {
                             warn!("⚠️  WiFi Direct discovery failed: {}", e);
@@ -179,19 +213,22 @@ impl WiFiRouter {
             }
         }
     }
-    
+
     /// Check if this device is currently a group owner
     pub async fn is_group_owner(&self) -> bool {
         // Simulate group owner detection based on network configuration
         // In a real implementation, this would check WiFi Direct interface status
         debug!("Checking WiFi Direct group owner status");
-        
+
         // For demonstration, alternate based on node_id to simulate detection
         let is_owner = (self.node_id[0] % 2) == 0;
-        debug!("WiFi Direct group owner status: {} (simulated based on node_id)", is_owner);
+        debug!(
+            "WiFi Direct group owner status: {} (simulated based on node_id)",
+            is_owner
+        );
         is_owner
     }
-    
+
     /// Handle incoming WiFi Direct TCP connection with UHP handshake
     ///
     /// Performs cryptographic verification of peer identity before accepting connection.
@@ -205,18 +242,29 @@ impl WiFiRouter {
     /// - Derives session key for encrypted communication
     /// - Rejects connections if identity_manager not configured
     pub async fn handle_wifi_direct(&self, mut stream: TcpStream, addr: SocketAddr) -> Result<()> {
-        info!("🔐 WiFi Direct connection from {}, performing UHP handshake...", addr);
+        info!(
+            "🔐 WiFi Direct connection from {}, performing UHP handshake...",
+            addr
+        );
 
         // SECURITY (HIGH-3): Validate WiFi Direct subnet (192.168.49.0/24)
         // Ensures connection comes from WiFi Direct P2P interface, not arbitrary source
         if let std::net::IpAddr::V4(ip) = addr.ip() {
             let octets = ip.octets();
             if octets[0] != 192 || octets[1] != 168 || octets[2] != 49 {
-                warn!("❌ WiFi Direct: Connection rejected - not from WiFi Direct subnet: {}", addr);
-                return Err(anyhow::anyhow!("Connection not from WiFi Direct subnet (192.168.49.0/24)"));
+                warn!(
+                    "❌ WiFi Direct: Connection rejected - not from WiFi Direct subnet: {}",
+                    addr
+                );
+                return Err(anyhow::anyhow!(
+                    "Connection not from WiFi Direct subnet (192.168.49.0/24)"
+                ));
             }
         } else {
-            warn!("❌ WiFi Direct: Connection rejected - IPv6 not supported: {}", addr);
+            warn!(
+                "❌ WiFi Direct: Connection rejected - IPv6 not supported: {}",
+                addr
+            );
             return Err(anyhow::anyhow!("WiFi Direct only supports IPv4"));
         }
 
@@ -227,48 +275,59 @@ impl WiFiRouter {
                 Some(mgr) => mgr.clone(),
                 None => {
                     warn!("❌ WiFi Direct: Identity manager not configured - rejecting connection from {}", addr);
-                    return Err(anyhow::anyhow!("Identity manager not configured for WiFi Direct"));
+                    return Err(anyhow::anyhow!(
+                        "Identity manager not configured for WiFi Direct"
+                    ));
                 }
             }
         };
-        
+
         // Get our ZhtpIdentity for handshake
         let our_identity = {
             let mgr_guard = identity_manager.read().await;
-            mgr_guard.list_identities()
+            mgr_guard
+                .list_identities()
                 .first()
                 .ok_or_else(|| anyhow::anyhow!("No identities available for WiFi Direct handshake"))
                 .map(|identity| (*identity).clone())?
         };
-        
+
         // Get handshake context (shared nonce cache)
         let ctx = {
             let guard = self.handshake_context.read().await;
-            guard.as_ref()
+            guard
+                .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Handshake context not initialized"))?
                 .clone()
         };
-        
+
         // Determine if we're group owner (for logging)
         let is_owner = self.is_group_owner().await;
         let device_role = if is_owner { "Group Owner" } else { "Client" };
-        
-        info!("📱 WiFi Direct role: {} for connection from {}", device_role, addr);
+
+        info!(
+            "📱 WiFi Direct role: {} for connection from {}",
+            device_role, addr
+        );
 
         // SECURITY (HIGH-1): Wrap handshake with timeout for defense in depth
         // Prevents hanging connections and DoS attacks via slow handshakes
         // Perform UHP handshake as responder (we're accepting the connection)
         let handshake_result = tokio::time::timeout(
             Duration::from_secs(30),
-            handshake_as_responder(&mut stream, &our_identity, &ctx)
-        ).await;
+            handshake_as_responder(&mut stream, &our_identity, &ctx),
+        )
+        .await;
 
         match handshake_result {
             Ok(Ok(result)) => {
                 info!("✅ WiFi Direct handshake successful with {}", addr);
-                info!("   Peer: {} ({})", result.peer_identity.device_id, result.peer_identity.did);
+                info!(
+                    "   Peer: {} ({})",
+                    result.peer_identity.device_id, result.peer_identity.did
+                );
                 info!("   Session ID: {:02x?}", &result.session_id[..8]);
-                
+
                 // Store authenticated peer connection
                 // SECURITY (HIGH-4): Session key derivation and encryption
                 // The handshake result includes session_key derived via HKDF from ephemeral secrets
@@ -280,10 +339,13 @@ impl WiFiRouter {
                 let mut devices = self.connected_devices.write().await;
                 devices.insert(
                     addr.to_string(),
-                    format!("{} (authenticated)", result.peer_identity.device_id)
+                    format!("{} (authenticated)", result.peer_identity.device_id),
                 );
 
-                info!("✅ WiFi Direct: Verified peer {} added to connected devices", result.peer_identity.device_id);
+                info!(
+                    "✅ WiFi Direct: Verified peer {} added to connected devices",
+                    result.peer_identity.device_id
+                );
 
                 Ok(())
             }
@@ -293,15 +355,21 @@ impl WiFiRouter {
                 Err(e).context("WiFi Direct UHP handshake failed")
             }
             Err(_elapsed) => {
-                warn!("❌ WiFi Direct handshake timeout with {} (exceeded 30s)", addr);
+                warn!(
+                    "❌ WiFi Direct handshake timeout with {} (exceeded 30s)",
+                    addr
+                );
                 warn!("   Rejecting connection due to handshake timeout");
-                Err(anyhow::anyhow!("Handshake timeout")).context("WiFi Direct handshake took too long")
+                Err(anyhow::anyhow!("Handshake timeout"))
+                    .context("WiFi Direct handshake took too long")
             }
         }
     }
-    
+
     /// Get a read guard for the WiFi protocol
-    pub async fn get_protocol(&self) -> tokio::sync::RwLockReadGuard<'_, Option<WiFiDirectMeshProtocol>> {
+    pub async fn get_protocol(
+        &self,
+    ) -> tokio::sync::RwLockReadGuard<'_, Option<WiFiDirectMeshProtocol>> {
         self.protocol.read().await
     }
 }

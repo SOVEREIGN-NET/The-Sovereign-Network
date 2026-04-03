@@ -36,9 +36,8 @@
 //! - New owner must explicitly revoke to change delegation
 
 use super::types::{
-    hash_name, normalize_name, DelegateTarget, GovernanceDelegation, GovernancePointer,
-    GovernanceResolution, GovernanceStatus, NameHash, NameRecord, NameStatus, ResolutionResult,
-    Timestamp,
+    hash_name, normalize_name, GovernanceDelegation, GovernancePointer, GovernanceResolution,
+    GovernanceStatus, NameHash, NameRecord, NameStatus, ResolutionResult, Timestamp,
 };
 
 /// DaoPrefixRouter - Enforces dao. prefix semantics
@@ -60,11 +59,7 @@ pub struct DaoPrefixRegistrationError {
 
 impl std::fmt::Display for DaoPrefixRegistrationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Cannot register '{}': {}",
-            self.attempted, self.reason
-        )
+        write!(f, "Cannot register '{}': {}", self.attempted, self.reason)
     }
 }
 
@@ -82,6 +77,7 @@ impl DaoPrefixRouter {
     ///
     /// # Examples
     /// ```
+    /// use lib_blockchain::contracts::root_registry::DaoPrefixRouter;
     /// assert!(DaoPrefixRouter::is_dao_prefixed("dao.shoes.sov"));
     /// assert!(!DaoPrefixRouter::is_dao_prefixed("shoes.sov"));
     /// assert!(!DaoPrefixRouter::is_dao_prefixed("mydao.sov"));
@@ -96,7 +92,8 @@ impl DaoPrefixRouter {
     ///
     /// # Examples
     /// ```
-    /// assert_eq!(DaoPrefixRouter::extract_parent("dao.shoes.sov"), Some("shoes.sov"));
+    /// use lib_blockchain::contracts::root_registry::DaoPrefixRouter;
+    /// assert_eq!(DaoPrefixRouter::extract_parent("dao.shoes.sov"), Some("shoes.sov".to_string()));
     /// assert_eq!(DaoPrefixRouter::extract_parent("shoes.sov"), None);
     /// ```
     pub fn extract_parent(name: &str) -> Option<String> {
@@ -195,10 +192,8 @@ impl DaoPrefixRouter {
         current_time: Timestamp,
     ) -> GovernanceResolution {
         // Determine active delegate (if any and not expired)
-        let delegate = governance_delegate.and_then(|d| {
-            d.active_delegate(current_time)
-                .map(|target| target.clone())
-        });
+        let delegate = governance_delegate
+            .and_then(|d| d.active_delegate(current_time).map(|target| target.clone()));
 
         GovernanceResolution {
             parent_domain: parent.name.clone(),
@@ -295,10 +290,12 @@ impl DaoPrefixRouter {
 mod tests {
     use super::*;
     use crate::contracts::root_registry::types::{
-        NameClassification, NameStatus, SuspensionReason, VerificationLevel,
+        timing, DelegateTarget, NameClassification, NameStatus, SuspensionReason, VerificationLevel,
     };
 
     fn make_test_record(name: &str, status: NameStatus) -> NameRecord {
+        let expires_at_height = 1000000u64;
+        #[allow(deprecated)]
         NameRecord {
             name: name.to_string(),
             name_hash: hash_name(name),
@@ -316,10 +313,18 @@ mod tests {
             governance_delegate: None,
             status,
             registered_at: 100,
+            // Phase 6: Block height fields
+            expires_at_height,
+            renewal_window_start_height: expires_at_height
+                .saturating_sub(timing::RENEWAL_WINDOW_BLOCKS),
+            renew_grace_until_height: expires_at_height + timing::EXPIRATION_GRACE_BLOCKS,
+            revoke_grace_until_height: None,
+            // Legacy fields (deprecated)
             expires_at: 1000000,
             grace_ends_at: None,
             suspended_at: None,
             suspended_by: None,
+            custodian: None,
             transfer_lock_until: None,
             transfer_history: vec![],
             renewal_history: vec![],
@@ -404,22 +409,30 @@ mod tests {
 
     #[test]
     fn test_dao_dao_sov_is_invalid() {
-        assert!(!DaoPrefixRouter::is_valid_dao_prefix_resolution("dao.dao.sov"));
+        assert!(!DaoPrefixRouter::is_valid_dao_prefix_resolution(
+            "dao.dao.sov"
+        ));
     }
 
     #[test]
     fn test_dao_food_dao_sov_is_valid() {
-        assert!(DaoPrefixRouter::is_valid_dao_prefix_resolution("dao.food.dao.sov"));
+        assert!(DaoPrefixRouter::is_valid_dao_prefix_resolution(
+            "dao.food.dao.sov"
+        ));
     }
 
     #[test]
     fn test_dao_shoes_sov_is_valid() {
-        assert!(DaoPrefixRouter::is_valid_dao_prefix_resolution("dao.shoes.sov"));
+        assert!(DaoPrefixRouter::is_valid_dao_prefix_resolution(
+            "dao.shoes.sov"
+        ));
     }
 
     #[test]
     fn test_dao_sub_shoes_sov_is_valid() {
-        assert!(DaoPrefixRouter::is_valid_dao_prefix_resolution("dao.sub.shoes.sov"));
+        assert!(DaoPrefixRouter::is_valid_dao_prefix_resolution(
+            "dao.sub.shoes.sov"
+        ));
     }
 
     // ========================================================================
@@ -486,8 +499,7 @@ mod tests {
             did: Some("did:example:governance".to_string()),
         };
 
-        let resolution =
-            DaoPrefixRouter::resolve_governance(&record, &pointer, None, 1000);
+        let resolution = DaoPrefixRouter::resolve_governance(&record, &pointer, None, 1000);
 
         assert_eq!(resolution.parent_domain, "shoes.sov");
         assert_eq!(resolution.parent_hash, hash_name("shoes.sov"));

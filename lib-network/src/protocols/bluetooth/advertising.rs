@@ -49,7 +49,10 @@ impl BluetoothMeshProtocol {
     async fn linux_broadcast_bypass_adv(&self, adv_data: &[u8]) -> Result<()> {
         use std::process::Command;
 
-        let hex_data = adv_data.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let hex_data = adv_data
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
 
         let _ = Command::new("sudo")
             .args(&["hcitool", "-i", "hci0", "cmd", "0x08", "0x0008", &hex_data])
@@ -65,19 +68,21 @@ impl BluetoothMeshProtocol {
 
     #[cfg(target_os = "windows")]
     async fn windows_broadcast_bypass_adv(&self, adv_data: &[u8]) -> Result<()> {
-        info!("Windows: Starting BLE advertising ({} bytes)", adv_data.len());
+        info!(
+            "Windows: Starting BLE advertising ({} bytes)",
+            adv_data.len()
+        );
 
         #[cfg(feature = "windows-gatt")]
         {
             let adv_data = adv_data.to_vec();
             let result = tokio::task::spawn_blocking(move || -> Result<()> {
-                use windows::{
-                    core::HSTRING,
-                    Devices::Bluetooth::Advertisement::*,
-                };
+                use windows::{core::HSTRING, Devices::Bluetooth::Advertisement::*};
 
                 if adv_data.is_empty() {
-                    return Err(anyhow!("Advertisement data cannot be empty for Windows BLE"));
+                    return Err(anyhow!(
+                        "Advertisement data cannot be empty for Windows BLE"
+                    ));
                 }
 
                 let advertisement = BluetoothLEAdvertisement::new()
@@ -88,8 +93,10 @@ impl BluetoothMeshProtocol {
                     .SetLocalName(&local_name)
                     .map_err(|e| anyhow!("Failed to set local name: {:?}", e))?;
 
-                let publisher = BluetoothLEAdvertisementPublisher::Create(&advertisement)
-                    .map_err(|e| anyhow!("Failed to create BLE publisher with advertisement: {:?}", e))?;
+                let publisher =
+                    BluetoothLEAdvertisementPublisher::Create(&advertisement).map_err(|e| {
+                        anyhow!("Failed to create BLE publisher with advertisement: {:?}", e)
+                    })?;
 
                 publisher
                     .SetUseExtendedAdvertisement(false)
@@ -101,7 +108,10 @@ impl BluetoothMeshProtocol {
 
                 info!(" Windows: BLE advertising started successfully");
                 info!("   Broadcasting as: ZHTP-MESH");
-                info!("   Service UUID: {}", crate::constants::BLE_MESH_SERVICE_UUID);
+                info!(
+                    "   Service UUID: {}",
+                    crate::constants::BLE_MESH_SERVICE_UUID
+                );
                 info!("   Advertisement Data: {} bytes", adv_data.len());
 
                 Ok(())
@@ -119,11 +129,17 @@ impl BluetoothMeshProtocol {
             warn!("Windows GATT feature not enabled, using PowerShell fallback");
 
             let _ = Command::new("powershell")
-                .args(&["-Command", "Enable-NetAdapter -Name '*Bluetooth*' -Confirm:$false"])
+                .args(&[
+                    "-Command",
+                    "Enable-NetAdapter -Name '*Bluetooth*' -Confirm:$false",
+                ])
                 .output();
 
             let _ = Command::new("powershell")
-                .args(&["-Command", "Set-NetConnectionProfile -NetworkCategory Private"])
+                .args(&[
+                    "-Command",
+                    "Set-NetConnectionProfile -NetworkCategory Private",
+                ])
                 .output();
 
             info!(" Windows: Bluetooth enabled (limited advertising via PowerShell)");

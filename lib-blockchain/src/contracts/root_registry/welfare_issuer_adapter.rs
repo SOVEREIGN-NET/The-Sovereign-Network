@@ -19,7 +19,7 @@ use crate::contracts::approval_verifier::{
     ApprovalProof, IssuanceApprovalVerifier, IssuanceRequest, VerificationError,
 };
 use crate::types::{
-    WelfareSectorId, SectorVerificationLevel, get_sector_floor, effective_verification_level,
+    effective_verification_level, get_sector_floor, SectorVerificationLevel, WelfareSectorId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -166,26 +166,22 @@ pub enum WelfareIssuerError {
         required: SectorVerificationLevel,
     },
     /// Approval verification failed
-    ApprovalVerificationFailed {
-        error: VerificationError,
-    },
+    ApprovalVerificationFailed { error: VerificationError },
     /// Invalid label
-    InvalidLabel {
-        label: String,
-        reason: String,
-    },
+    InvalidLabel { label: String, reason: String },
     /// Not root authority
     NotRootAuthority,
     /// Operation not allowed
-    OperationNotAllowed {
-        reason: String,
-    },
+    OperationNotAllowed { reason: String },
 }
 
 impl std::fmt::Display for WelfareIssuerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WelfareIssuerError::SectorAlreadyBound { sector, existing_dao } => {
+            WelfareIssuerError::SectorAlreadyBound {
+                sector,
+                existing_dao,
+            } => {
                 write!(
                     f,
                     "Sector {:?} already bound to DAO {:?}",
@@ -301,7 +297,10 @@ impl WelfareIssuerAdapter {
     ) -> Result<(), WelfareIssuerError> {
         // Check if sector already has an active binding
         if let Some(binding) = self.sector_bindings.get(&sector) {
-            if matches!(binding.status, BindingStatus::Active | BindingStatus::Pending) {
+            if matches!(
+                binding.status,
+                BindingStatus::Active | BindingStatus::Pending
+            ) {
                 return Err(WelfareIssuerError::SectorAlreadyBound {
                     sector,
                     existing_dao: binding.dao_id,
@@ -403,19 +402,21 @@ impl WelfareIssuerAdapter {
             return Err(WelfareIssuerError::NotRootAuthority);
         }
 
-        let sector = self.dao_to_sector.get(&dao_id).ok_or(
-            WelfareIssuerError::DaoNotAuthorized {
-                dao_id,
-                sector: WelfareSectorId::Food, // placeholder
-            },
-        )?;
+        let sector =
+            self.dao_to_sector
+                .get(&dao_id)
+                .ok_or(WelfareIssuerError::DaoNotAuthorized {
+                    dao_id,
+                    sector: WelfareSectorId::Food, // placeholder
+                })?;
 
-        let binding = self.sector_bindings.get_mut(sector).ok_or(
-            WelfareIssuerError::DaoNotAuthorized {
-                dao_id,
-                sector: *sector,
-            },
-        )?;
+        let binding =
+            self.sector_bindings
+                .get_mut(sector)
+                .ok_or(WelfareIssuerError::DaoNotAuthorized {
+                    dao_id,
+                    sector: *sector,
+                })?;
 
         binding.status = BindingStatus::SuspendedByRoot {
             suspended_at: self.current_block,
@@ -435,19 +436,21 @@ impl WelfareIssuerAdapter {
             return Err(WelfareIssuerError::NotRootAuthority);
         }
 
-        let sector = self.dao_to_sector.get(&dao_id).ok_or(
-            WelfareIssuerError::DaoNotAuthorized {
-                dao_id,
-                sector: WelfareSectorId::Food,
-            },
-        )?;
+        let sector =
+            self.dao_to_sector
+                .get(&dao_id)
+                .ok_or(WelfareIssuerError::DaoNotAuthorized {
+                    dao_id,
+                    sector: WelfareSectorId::Food,
+                })?;
 
-        let binding = self.sector_bindings.get_mut(sector).ok_or(
-            WelfareIssuerError::DaoNotAuthorized {
-                dao_id,
-                sector: *sector,
-            },
-        )?;
+        let binding =
+            self.sector_bindings
+                .get_mut(sector)
+                .ok_or(WelfareIssuerError::DaoNotAuthorized {
+                    dao_id,
+                    sector: *sector,
+                })?;
 
         if !matches!(binding.status, BindingStatus::SuspendedByRoot { .. }) {
             return Err(WelfareIssuerError::OperationNotAllowed {
@@ -489,22 +492,21 @@ impl WelfareIssuerAdapter {
         self.validate_label(&label)?;
 
         // Get the sector (copy to avoid borrow issues)
-        let sector = *self
-            .dao_to_sector
-            .get(&dao_id)
-            .ok_or(WelfareIssuerError::DaoNotAuthorized {
-                dao_id,
-                sector: WelfareSectorId::Food,
-            })?;
+        let sector =
+            *self
+                .dao_to_sector
+                .get(&dao_id)
+                .ok_or(WelfareIssuerError::DaoNotAuthorized {
+                    dao_id,
+                    sector: WelfareSectorId::Food,
+                })?;
 
         // First pass: validate binding state and verification level (immutable borrow)
         let verification_policy = {
-            let binding = self.sector_bindings.get(&sector).ok_or(
-                WelfareIssuerError::DaoNotAuthorized {
-                    dao_id,
-                    sector,
-                },
-            )?;
+            let binding = self
+                .sector_bindings
+                .get(&sector)
+                .ok_or(WelfareIssuerError::DaoNotAuthorized { dao_id, sector })?;
 
             // Check binding status
             match binding.status {
@@ -513,10 +515,7 @@ impl WelfareIssuerAdapter {
                     return Err(WelfareIssuerError::DaoSuspended { dao_id, reason });
                 }
                 _ => {
-                    return Err(WelfareIssuerError::DaoNotAuthorized {
-                        dao_id,
-                        sector,
-                    });
+                    return Err(WelfareIssuerError::DaoNotAuthorized { dao_id, sector });
                 }
             }
 
@@ -597,10 +596,7 @@ impl WelfareIssuerAdapter {
         }
 
         // Check for valid characters (alphanumeric and hyphens)
-        if !label
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-')
-        {
+        if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
             return Err(WelfareIssuerError::InvalidLabel {
                 label: label.to_string(),
                 reason: "Invalid characters (only alphanumeric and hyphens allowed)".to_string(),

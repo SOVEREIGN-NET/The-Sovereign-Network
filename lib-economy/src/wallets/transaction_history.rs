@@ -1,16 +1,16 @@
 //! Comprehensive transaction history and analytics system
-//! 
+//!
 //! Provides detailed transaction tracking, analytics, and audit capabilities
 //! using blockchain data from lib-blockchain and lib-network integrations.
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use std::collections::{HashMap, BTreeMap};
-use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::{Datelike, Timelike};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::transactions::Transaction;
-use crate::types::{TransactionType, Priority};
+use crate::types::{Priority, TransactionType};
 use crate::wasm::logging::info;
 
 // integrations (avoiding blockchain circular dependency)
@@ -299,9 +299,9 @@ impl TransactionHistoryManager {
             to_address: Some(transaction.to),
             amount: transaction.amount,
             fees: transaction.total_fee,
-            gas_used: None, // Could be added if smart contracts involved
+            gas_used: None,        // Could be added if smart contracts involved
             block_height: Some(0), // Block height not available in this context
-            block_hash: None, // Will be updated when confirmed
+            block_hash: None,      // Will be updated when confirmed
             transaction_index: None,
             status: TransactionStatus::Pending,
             priority: Priority::Normal, // Default priority
@@ -317,11 +317,13 @@ impl TransactionHistoryManager {
         let index = self.transactions.len();
         self.transactions.push(record);
         self.hash_index.insert(transaction.tx_id, index);
-        self.internal_id_index.insert(hex::encode(transaction.tx_id), index);
+        self.internal_id_index
+            .insert(hex::encode(transaction.tx_id), index);
 
         // Validate with blockchain if enabled
         if self.settings.enable_blockchain_validation {
-            self.validate_transaction_on_blockchain(&transaction.tx_id).await?;
+            self.validate_transaction_on_blockchain(&transaction.tx_id)
+                .await?;
         }
 
         // Maintain size limits
@@ -332,7 +334,8 @@ impl TransactionHistoryManager {
 
         info!(
             "Added transaction {} to history (total: {})",
-            hex::encode(transaction.tx_id), self.transactions.len()
+            hex::encode(transaction.tx_id),
+            self.transactions.len()
         );
 
         Ok(())
@@ -345,41 +348,55 @@ impl TransactionHistoryManager {
             match self.get_blockchain_transaction_by_hash(&tx_hash).await {
                 Ok(Some(blockchain_tx)) => {
                     let record = &mut self.transactions[index];
-                    
+
                     // Update from blockchain data
                     record.block_height = Some(blockchain_tx.block_height);
                     record.block_hash = Some([0u8; 32]); // Default since blockchain transaction doesn't have this field
                     record.transaction_index = Some(0); // Default since blockchain transaction doesn't have this field
                     record.confirmed_at = Some(blockchain_tx.timestamp);
-                    
+
                     // Default to finalized status since we don't have blockchain height context
                     record.status = TransactionStatus::Finalized;
-                    record.finalized_at = Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
-                    
+                    record.finalized_at = Some(
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                    );
+
                     info!(
                         "Updated transaction {} status: {:?}",
-                        hex::encode(tx_hash), record.status
+                        hex::encode(tx_hash),
+                        record.status
                     );
-                },
+                }
                 Ok(None) => {
                     // Transaction not found on blockchain, might be failed or dropped
                     let record = &mut self.transactions[index];
                     if matches!(record.status, TransactionStatus::Pending) {
                         // Check if transaction is too old
-                        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                        if current_time - record.timestamp > 3600 { // 1 hour
+                        let current_time = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+                        if current_time - record.timestamp > 3600 {
+                            // 1 hour
                             record.status = TransactionStatus::Dropped;
                             info!("Transaction {} marked as dropped", hex::encode(tx_hash));
                         }
                     }
-                },
+                }
                 Err(_) => {
                     // Transaction not found on blockchain, might be failed or dropped
                     let record = &mut self.transactions[index];
                     if matches!(record.status, TransactionStatus::Pending) {
                         // Check if transaction is too old
-                        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                        if current_time - record.timestamp > 3600 { // 1 hour
+                        let current_time = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+                        if current_time - record.timestamp > 3600 {
+                            // 1 hour
                             record.status = TransactionStatus::Dropped;
                             info!("Transaction {} marked as dropped", hex::encode(tx_hash));
                         }
@@ -387,7 +404,7 @@ impl TransactionHistoryManager {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -421,9 +438,7 @@ impl TransactionHistoryManager {
         }
 
         if let Some(address) = filter.address_filter {
-            results.retain(|tx| {
-                tx.from_address == Some(address) || tx.to_address == Some(address)
-            });
+            results.retain(|tx| tx.from_address == Some(address) || tx.to_address == Some(address));
         }
 
         if let Some(priorities) = &filter.priorities {
@@ -451,8 +466,11 @@ impl TransactionHistoryManager {
 
     /// Generate comprehensive transaction analytics
     pub async fn generate_analytics(&mut self) -> Result<&TransactionAnalytics> {
-        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         // Check if analytics cache is valid
         let should_refresh = if let Some(_) = &self.analytics_cache {
             current_time - self.analytics_last_updated >= self.settings.analytics_refresh_interval
@@ -472,17 +490,27 @@ impl TransactionHistoryManager {
 
     /// Get transaction by hash
     pub fn get_transaction_by_hash(&self, tx_hash: [u8; 32]) -> Option<&TransactionRecord> {
-        self.hash_index.get(&tx_hash).and_then(|&index| self.transactions.get(index))
+        self.hash_index
+            .get(&tx_hash)
+            .and_then(|&index| self.transactions.get(index))
     }
 
     /// Get transaction by internal ID
     pub fn get_transaction_by_internal_id(&self, internal_id: &str) -> Option<&TransactionRecord> {
-        self.internal_id_index.get(internal_id).and_then(|&index| self.transactions.get(index))
+        self.internal_id_index
+            .get(internal_id)
+            .and_then(|&index| self.transactions.get(index))
     }
 
     /// Get transaction statistics for a time period
-    pub fn get_period_statistics(&self, start_time: u64, end_time: u64) -> Result<serde_json::Value> {
-        let period_transactions: Vec<&TransactionRecord> = self.transactions.iter()
+    pub fn get_period_statistics(
+        &self,
+        start_time: u64,
+        end_time: u64,
+    ) -> Result<serde_json::Value> {
+        let period_transactions: Vec<&TransactionRecord> = self
+            .transactions
+            .iter()
             .filter(|tx| tx.timestamp >= start_time && tx.timestamp <= end_time)
             .collect();
 
@@ -493,15 +521,21 @@ impl TransactionHistoryManager {
         // Category breakdown
         let mut category_counts = HashMap::new();
         let mut category_volumes = HashMap::new();
-        
+
         for tx in &period_transactions {
             *category_counts.entry(tx.category.clone()).or_insert(0) += 1;
             *category_volumes.entry(tx.category.clone()).or_insert(0u64) += tx.amount;
         }
 
         // Success rates
-        let successful_count = period_transactions.iter()
-            .filter(|tx| matches!(tx.status, TransactionStatus::Confirmed { .. } | TransactionStatus::Finalized))
+        let successful_count = period_transactions
+            .iter()
+            .filter(|tx| {
+                matches!(
+                    tx.status,
+                    TransactionStatus::Confirmed { .. } | TransactionStatus::Finalized
+                )
+            })
             .count();
         let success_rate = if total_count > 0 {
             (successful_count as f64 / total_count as f64) * 100.0
@@ -510,13 +544,15 @@ impl TransactionHistoryManager {
         };
 
         // Average confirmation time
-        let confirmed_transactions: Vec<&TransactionRecord> = period_transactions.iter()
+        let confirmed_transactions: Vec<&TransactionRecord> = period_transactions
+            .iter()
             .filter(|tx| tx.confirmed_at.is_some())
             .cloned()
             .collect();
-        
+
         let average_confirmation_time = if !confirmed_transactions.is_empty() {
-            let total_confirmation_time: u64 = confirmed_transactions.iter()
+            let total_confirmation_time: u64 = confirmed_transactions
+                .iter()
                 .map(|tx| tx.confirmed_at.unwrap() - tx.timestamp)
                 .sum();
             total_confirmation_time as f64 / confirmed_transactions.len() as f64
@@ -539,8 +575,8 @@ impl TransactionHistoryManager {
             "performance": {
                 "success_rate": success_rate,
                 "average_confirmation_time_seconds": average_confirmation_time,
-                "transactions_per_hour": if end_time > start_time { 
-                    total_count as f64 / ((end_time - start_time) as f64 / 3600.0) 
+                "transactions_per_hour": if end_time > start_time {
+                    total_count as f64 / ((end_time - start_time) as f64 / 3600.0)
                 } else { 0.0 }
             },
             "category_breakdown": {
@@ -556,31 +592,38 @@ impl TransactionHistoryManager {
             return Ok(0);
         }
 
-        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let archive_threshold = current_time - self.settings.archive_age_threshold;
 
         let initial_count = self.transactions.len();
-        
+
         // Keep only transactions newer than threshold
-        self.transactions.retain(|tx| tx.timestamp > archive_threshold);
-        
+        self.transactions
+            .retain(|tx| tx.timestamp > archive_threshold);
+
         // Rebuild indices
         self.rebuild_indices();
-        
+
         // Invalidate analytics cache
         self.analytics_cache = None;
-        
+
         let archived_count = initial_count - self.transactions.len();
-        
+
         if archived_count > 0 {
             info!("🗂️ Archived {} old transactions", archived_count);
         }
-        
+
         Ok(archived_count)
     }
 
     /// Get transaction by hash (local lookup)
-    pub async fn get_blockchain_transaction_by_hash(&self, tx_hash: &[u8; 32]) -> Result<Option<Transaction>> {
+    pub async fn get_blockchain_transaction_by_hash(
+        &self,
+        tx_hash: &[u8; 32],
+    ) -> Result<Option<Transaction>> {
         // First check local cache
         if let Some(index) = self.hash_index.get(tx_hash) {
             if let Some(tx) = self.transactions.get(*index) {
@@ -601,7 +644,7 @@ impl TransactionHistoryManager {
                 return Ok(Some(transaction));
             }
         }
-        
+
         // Return None if not found locally
         // In a implementation, this would query the blockchain
         Ok(None)
@@ -625,14 +668,19 @@ impl TransactionHistoryManager {
             "transactions": transactions
         });
 
-        serde_json::to_string_pretty(&export_data).map_err(|e| anyhow::anyhow!("Export error: {}", e))
+        serde_json::to_string_pretty(&export_data)
+            .map_err(|e| anyhow::anyhow!("Export error: {}", e))
     }
 
     // Private helper methods
 
     async fn capture_network_conditions(&self) -> Result<NetworkConditions> {
-        let network_stats = get_network_statistics().await.map_err(|e| anyhow::anyhow!("Network stats error: {}", e))?;
-        let mesh_status = get_mesh_status().await.map_err(|e| anyhow::anyhow!("Mesh status error: {}", e))?;
+        let network_stats = get_network_statistics()
+            .await
+            .map_err(|e| anyhow::anyhow!("Network stats error: {}", e))?;
+        let mesh_status = get_mesh_status()
+            .await
+            .map_err(|e| anyhow::anyhow!("Mesh status error: {}", e))?;
 
         Ok(NetworkConditions {
             network_latency_ms: network_stats.average_latency_ms,
@@ -647,33 +695,37 @@ impl TransactionHistoryManager {
     async fn validate_transaction_on_blockchain(&self, tx_hash: &[u8; 32]) -> Result<()> {
         // In production, this would validate the transaction exists on blockchain
         // For now, just log the validation
-        info!("Validating transaction {} on blockchain", hex::encode(tx_hash));
+        info!(
+            "Validating transaction {} on blockchain",
+            hex::encode(tx_hash)
+        );
         Ok(())
     }
 
     async fn enforce_size_limits(&mut self) -> Result<()> {
         if self.transactions.len() > self.settings.max_transactions {
             let excess = self.transactions.len() - self.settings.max_transactions;
-            
+
             // Remove oldest transactions
             self.transactions.drain(0..excess);
-            
+
             // Rebuild indices
             self.rebuild_indices();
-            
+
             info!("Removed {} old transactions to maintain size limit", excess);
         }
-        
+
         Ok(())
     }
 
     fn rebuild_indices(&mut self) {
         self.hash_index.clear();
         self.internal_id_index.clear();
-        
+
         for (index, tx) in self.transactions.iter().enumerate() {
             self.hash_index.insert(tx.blockchain_tx_hash, index);
-            self.internal_id_index.insert(tx.internal_tx_id.clone(), index);
+            self.internal_id_index
+                .insert(tx.internal_tx_id.clone(), index);
         }
     }
 
@@ -689,38 +741,53 @@ impl TransactionHistoryManager {
         for tx in &self.transactions {
             // Category counts and volumes
             *transaction_counts.entry(tx.category.clone()).or_insert(0) += 1;
-            *volume_by_category.entry(tx.category.clone()).or_insert(0u64) += tx.amount;
+            *volume_by_category
+                .entry(tx.category.clone())
+                .or_insert(0u64) += tx.amount;
             *fees_by_category.entry(tx.category.clone()).or_insert(0u64) += tx.fees;
 
             // Monthly trends
-            let month_key = format!("{}-{:02}", 
-                chrono::DateTime::from_timestamp(tx.timestamp as i64, 0).unwrap().year(),
-                chrono::DateTime::from_timestamp(tx.timestamp as i64, 0).unwrap().month()
+            let month_key = format!(
+                "{}-{:02}",
+                chrono::DateTime::from_timestamp(tx.timestamp as i64, 0)
+                    .unwrap()
+                    .year(),
+                chrono::DateTime::from_timestamp(tx.timestamp as i64, 0)
+                    .unwrap()
+                    .month()
             );
-            
-            let monthly_data = monthly_trends.entry(month_key.clone()).or_insert(MonthlyTransactionData {
-                month: month_key,
-                total_transactions: 0,
-                total_volume: 0,
-                total_fees: 0,
-                average_confirmation_time: 0.0,
-                category_breakdown: HashMap::new(),
-            });
-            
+
+            let monthly_data =
+                monthly_trends
+                    .entry(month_key.clone())
+                    .or_insert(MonthlyTransactionData {
+                        month: month_key,
+                        total_transactions: 0,
+                        total_volume: 0,
+                        total_fees: 0,
+                        average_confirmation_time: 0.0,
+                        category_breakdown: HashMap::new(),
+                    });
+
             monthly_data.total_transactions += 1;
             monthly_data.total_volume += tx.amount;
             monthly_data.total_fees += tx.fees;
-            *monthly_data.category_breakdown.entry(tx.category.clone()).or_insert(0) += 1;
+            *monthly_data
+                .category_breakdown
+                .entry(tx.category.clone())
+                .or_insert(0) += 1;
 
             // Daily patterns
-            let hour = chrono::DateTime::from_timestamp(tx.timestamp as i64, 0).unwrap().hour() as u8;
+            let hour = chrono::DateTime::from_timestamp(tx.timestamp as i64, 0)
+                .unwrap()
+                .hour() as u8;
             let daily_data = daily_patterns.entry(hour).or_insert(DailyActivityData {
                 hour,
                 transaction_count: 0,
                 total_volume: 0,
                 average_confirmation_time: 0.0,
             });
-            
+
             daily_data.transaction_count += 1;
             daily_data.total_volume += tx.amount;
 
@@ -735,7 +802,8 @@ impl TransactionHistoryManager {
         for (category, total_volume) in &volume_by_category {
             let count = transaction_counts.get(category).unwrap_or(&0);
             if *count > 0 {
-                average_amount_by_category.insert(category.clone(), *total_volume as f64 / *count as f64);
+                average_amount_by_category
+                    .insert(category.clone(), *total_volume as f64 / *count as f64);
             }
         }
 
@@ -743,23 +811,36 @@ impl TransactionHistoryManager {
         let mut success_rates = HashMap::new();
         for category in transaction_counts.keys() {
             let total = transaction_counts.get(category).unwrap_or(&0);
-            let successful = self.transactions.iter()
+            let successful = self
+                .transactions
+                .iter()
                 .filter(|tx| tx.category == *category)
-                .filter(|tx| matches!(tx.status, TransactionStatus::Confirmed { .. } | TransactionStatus::Finalized))
+                .filter(|tx| {
+                    matches!(
+                        tx.status,
+                        TransactionStatus::Confirmed { .. } | TransactionStatus::Finalized
+                    )
+                })
                 .count();
-            
+
             if *total > 0 {
-                success_rates.insert(category.clone(), (successful as f64 / *total as f64) * 100.0);
+                success_rates.insert(
+                    category.clone(),
+                    (successful as f64 / *total as f64) * 100.0,
+                );
             }
         }
 
         // Calculate performance metrics
-        let confirmed_transactions: Vec<&TransactionRecord> = self.transactions.iter()
+        let confirmed_transactions: Vec<&TransactionRecord> = self
+            .transactions
+            .iter()
             .filter(|tx| tx.confirmed_at.is_some())
             .collect();
-        
+
         let average_confirmation_time = if !confirmed_transactions.is_empty() {
-            let total_confirmation_time: u64 = confirmed_transactions.iter()
+            let total_confirmation_time: u64 = confirmed_transactions
+                .iter()
                 .map(|tx| tx.confirmed_at.unwrap() - tx.timestamp)
                 .sum();
             total_confirmation_time as f64 / confirmed_transactions.len() as f64
@@ -767,12 +848,15 @@ impl TransactionHistoryManager {
             0.0
         };
 
-        let finalized_transactions: Vec<&TransactionRecord> = self.transactions.iter()
+        let finalized_transactions: Vec<&TransactionRecord> = self
+            .transactions
+            .iter()
             .filter(|tx| tx.finalized_at.is_some())
             .collect();
-        
+
         let average_finalization_time = if !finalized_transactions.is_empty() {
-            let total_finalization_time: u64 = finalized_transactions.iter()
+            let total_finalization_time: u64 = finalized_transactions
+                .iter()
                 .map(|tx| tx.finalized_at.unwrap() - tx.timestamp)
                 .sum();
             total_finalization_time as f64 / finalized_transactions.len() as f64
@@ -780,10 +864,17 @@ impl TransactionHistoryManager {
             0.0
         };
 
-        let successful_count = self.transactions.iter()
-            .filter(|tx| matches!(tx.status, TransactionStatus::Confirmed { .. } | TransactionStatus::Finalized))
+        let successful_count = self
+            .transactions
+            .iter()
+            .filter(|tx| {
+                matches!(
+                    tx.status,
+                    TransactionStatus::Confirmed { .. } | TransactionStatus::Finalized
+                )
+            })
             .count();
-        
+
         let success_rate = if !self.transactions.is_empty() {
             (successful_count as f64 / self.transactions.len() as f64) * 100.0
         } else {
@@ -862,7 +953,7 @@ mod tests {
     async fn test_transaction_history_creation() {
         let node_id = [1u8; 32];
         let manager = TransactionHistoryManager::new(node_id);
-        
+
         assert_eq!(manager.node_id, node_id);
         assert_eq!(manager.transactions.len(), 0);
         assert!(manager.analytics_cache.is_none());
@@ -872,16 +963,11 @@ mod tests {
     async fn test_add_transaction() {
         let node_id = [1u8; 32];
         let mut manager = TransactionHistoryManager::new(node_id);
-        
-        let tx = create_payment_transaction(
-            [1u8; 32],
-            [2u8; 32],
-            1000,
-            Priority::Normal,
-        ).unwrap();
-        
+
+        let tx = create_payment_transaction([1u8; 32], [2u8; 32], 1000, Priority::Normal).unwrap();
+
         manager.add_transaction(tx).await.unwrap();
-        
+
         assert_eq!(manager.transactions.len(), 1);
         assert_eq!(manager.hash_index.len(), 1);
         assert_eq!(manager.internal_id_index.len(), 1);
@@ -891,7 +977,7 @@ mod tests {
     async fn test_transaction_filtering() {
         let node_id = [1u8; 32];
         let mut manager = TransactionHistoryManager::new(node_id);
-        
+
         // Add multiple transactions with different categories
         for i in 0..5 {
             let tx = create_payment_transaction(
@@ -899,18 +985,19 @@ mod tests {
                 [i + 1; 32],
                 1000 * (i as u64 + 1),
                 Priority::Normal,
-            ).unwrap();
-            
+            )
+            .unwrap();
+
             manager.add_transaction(tx).await.unwrap();
         }
-        
+
         // Test amount filtering
         let filter = TransactionFilter {
             min_amount: Some(3000),
             max_amount: Some(5000),
             ..Default::default()
         };
-        
+
         let filtered = manager.get_filtered_transactions(&filter);
         assert_eq!(filtered.len(), 3); // 3000, 4000, and 5000
     }
@@ -919,23 +1006,29 @@ mod tests {
     async fn test_analytics_generation() {
         let node_id = [1u8; 32];
         let mut manager = TransactionHistoryManager::new(node_id);
-        
+
         // Add some test transactions
         for i in 0..3 {
-            let tx = create_payment_transaction(
-                [i; 32],
-                [i + 1; 32],
-                1000,
-                Priority::Normal,
-            ).unwrap();
-            
+            let tx =
+                create_payment_transaction([i; 32], [i + 1; 32], 1000, Priority::Normal).unwrap();
+
             manager.add_transaction(tx).await.unwrap();
         }
-        
+
         let analytics = manager.generate_analytics().await.unwrap();
-        
-        assert_eq!(analytics.transaction_counts.get(&TransactionCategory::Payment), Some(&3));
-        assert_eq!(analytics.volume_by_category.get(&TransactionCategory::Payment), Some(&3000));
+
+        assert_eq!(
+            analytics
+                .transaction_counts
+                .get(&TransactionCategory::Payment),
+            Some(&3)
+        );
+        assert_eq!(
+            analytics
+                .volume_by_category
+                .get(&TransactionCategory::Payment),
+            Some(&3000)
+        );
     }
 }
 

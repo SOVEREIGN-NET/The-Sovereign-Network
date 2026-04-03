@@ -20,7 +20,7 @@ ZHTP is a network node that orchestrates a complete internet replacement system.
 
 - **Complete ISP Replacement** - Pure mesh networking with Bluetooth LE, WiFi Direct, and LoRaWAN
 -  **Zero-Knowledge Privacy** - All communications protected with ZK proofs and post-quantum cryptography  
-- **Universal Basic Income** - 33 ZHTP daily, 1000 ZHTP monthly for all verified citizens
+- **Universal Basic Income** - 33 SOV daily, 1000 SOV monthly for all verified citizens
 -  **Decentralized Governance** - DAO-based decision making with liquid democracy
 -  **Web4 Protocol Stack** - Next-generation internet protocols
 -  **Real-time Monitoring** - Comprehensive system health and performance metrics
@@ -154,7 +154,7 @@ cargo run
 
 # Available commands in the shell(not all of them work):
 zhtp> help                    # Show all available commands
-zhtp> node start --port 9333  # Start the orchestrator node
+zhtp> node start --port 9334  # Start the orchestrator node
 zhtp> node status             # Check node health
 zhtp> monitor system          # View system metrics
 zhtp> wallet create --name "MyWallet" --type citizen
@@ -163,16 +163,7 @@ zhtp> identity create TestUser # Create new DID identity
 zhtp> network status          # Check mesh network status
 ```
 
-#### Method 2: Server Mode
-```bash
-# Start ZHTP server (API mode)
-cargo run -- --server
-
-# Server will be available at http://127.0.0.1:9333
-# API documentation: http://127.0.0.1:9333/docs
-```
-
-#### Method 3: Direct Commands
+#### Method 2: Direct Commands
 ```bash
 # Execute single commands directly
 cargo run -- node start --config config.toml
@@ -190,7 +181,7 @@ cargo run -- network peers
 cargo run -- node start
 
 # Start with custom configuration
-cargo run -- node start --config custom.toml --port 9333 --dev
+cargo run -- node start --config custom.toml --port 9334 --dev
 
 # Start in pure mesh mode (no TCP/IP fallback)
 cargo run -- node start --pure-mesh
@@ -300,13 +291,15 @@ cargo run -- component restart lib-consensus
 ```toml
 [node]
 name = "zhtp-node"
-mesh_port = 33444
-api_port = 9333
+mesh_port = 9334
 environment = "development"
 data_dir = "./data"
 
+[protocols_config]
+api_port = 9333
+
 [mesh]
-mode = "hybrid"              # hybrid, pure-mesh, offline
+mode = "pure-mesh"              # pure-mesh, offline
 enable_bluetooth = true
 enable_wifi_direct = true
 enable_lorawan = false
@@ -319,8 +312,8 @@ zero_knowledge = true
 [economy]
 ubi_enabled = true
 dao_participation = true
-daily_ubi_amount = 33000000000000000000    # 33 ZHTP tokens
-monthly_ubi_amount = 1000000000000000000000 # 1000 ZHTP tokens
+daily_ubi_amount = 33000000000000000000    # 33 SOV tokens
+monthly_ubi_amount = 1000000000000000000000 # 1000 SOV tokens
 
 [monitoring]
 enable_dashboard = true
@@ -340,42 +333,9 @@ file_path = "./logs/zhtp.log"
 export ZHTP_CONFIG_PATH="./config.toml"
 export ZHTP_DATA_DIR="./data"
 export ZHTP_LOG_LEVEL="info"
-export ZHTP_MESH_PORT="33444"
-export ZHTP_API_PORT="9333"
+export ZHTP_MESH_PORT="9334"
 export ZHTP_ENVIRONMENT="development"
 ```
-
-## API Reference
-
-### REST API Endpoints
-
-The ZHTP node provides a comprehensive REST API on port 9333:
-
-**Base URL**: `http://127.0.0.1:9333/api/v1`
-
-#### Identity Management
-- `POST /identity/create` - Create new DID identity
-- `POST /identity/verify` - Verify identity
-- `GET /identity/list` - List all identities
-
-#### Wallet Operations
-- `POST /wallet/create` - Create new wallet
-- `GET /wallet/balance/{address}` - Get wallet balance
-- `POST /wallet/transfer` - Transfer funds
-- `GET /wallet/history/{address}` - Get transaction history
-
-#### DAO Operations
-- `GET /dao/info` - Get DAO information
-- `POST /dao/proposal/create` - Create proposal
-- `POST /dao/proposal/vote` - Vote on proposal
-- `POST /dao/ubi/claim` - Claim UBI
-
-#### Network Operations
-- `GET /network/status` - Network status
-- `GET /network/peers` - Connected peers
-- `GET /network/test` - Network connectivity test
-
-For complete API documentation, visit: `http://127.0.0.1:9333/docs` when the server is running.
 
 ## Monitoring & Debugging
 
@@ -384,7 +344,7 @@ For complete API documentation, visit: `http://127.0.0.1:9333/docs` when the ser
 Access the live monitoring dashboard at `http://127.0.0.1:9334` when the node is running:
 
 - **System Metrics** - CPU, memory, network usage
-- **Component Health** - Status of all 9 ZHTP libraries
+- **Component Health** - Status of all 9 SOV libraries
 - **Network Statistics** - Mesh network connectivity and performance
 - **Economic Metrics** - UBI distribution, transaction volumes
 - **Security Status** - Cryptographic operations, threat detection
@@ -406,12 +366,9 @@ grep "ERROR" ./logs/zhtp.log
 
 ### Health Checks
 
+Health checks are performed via the CLI:
 ```bash
-# Check overall system health
-curl http://127.0.0.1:9333/api/v1/health
-
-# Check specific component health
-curl http://127.0.0.1:9333/api/v1/health/lib-blockchain
+zhtp-cli network status
 ```
 
 ## Development

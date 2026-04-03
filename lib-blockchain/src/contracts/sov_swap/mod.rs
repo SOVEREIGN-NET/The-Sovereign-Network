@@ -30,15 +30,13 @@
 //! Partial initialization states are impossible.
 
 pub mod core;
+pub mod lp_positions;
 
 // Re-export core types
-pub use core::{
-    SovSwapPool,
-    SwapDirection,
-    SwapResult,
-    PoolState,
-    SwapError,
-};
+pub use core::{PoolState, SimulationResult, SovSwapPool, SwapDirection, SwapError, SwapResult};
+
+// Re-export LP types
+pub use lp_positions::{LiquidityPosition, LpPositionsManager, LpRewardBreakdown};
 
 /// Gas cost for swap operations
 pub const GAS_SWAP: u64 = 5000;

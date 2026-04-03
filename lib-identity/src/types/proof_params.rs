@@ -1,7 +1,7 @@
 //! Identity proof parameters from the original identity.rs
 
-use serde::{Deserialize, Serialize};
 use super::CredentialType;
+use serde::{Deserialize, Serialize};
 
 /// Zero-knowledge identity proof parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,25 +43,25 @@ impl IdentityProofParams {
             required_location: None,
         }
     }
-    
+
     /// Set minimum reputation requirement
     pub fn with_min_reputation(mut self, min_reputation: u64) -> Self {
         self.min_reputation = Some(min_reputation);
         self
     }
-    
+
     /// Set proof type
     pub fn with_proof_type(mut self, proof_type: String) -> Self {
         self.proof_type = proof_type;
         self
     }
-    
+
     /// Require citizenship
     pub fn with_citizenship_requirement(mut self) -> Self {
         self.require_citizenship = true;
         self
     }
-    
+
     /// Set location requirement
     pub fn with_location_requirement(mut self, location: String) -> Self {
         self.required_location = Some(location);

@@ -213,7 +213,10 @@ impl<T: Clone + Eq + std::hash::Hash> ORSet<T> {
     /// Merge with another OR-Set
     pub fn merge(&mut self, other: &ORSet<T>) {
         for (element, tags) in &other.elements {
-            let our_tags = self.elements.entry(element.clone()).or_insert_with(Vec::new);
+            let our_tags = self
+                .elements
+                .entry(element.clone())
+                .or_insert_with(Vec::new);
             for tag in tags {
                 if !our_tags.contains(tag) {
                     our_tags.push(tag.clone());
@@ -257,7 +260,7 @@ mod tests {
         let n1 = node(1);
         let n2 = node(2);
         let mut reg_a = LWWRegister::new("a", n1);
-        let mut reg_b = LWWRegister::new("b", n2);
+        let reg_b = LWWRegister::new("b", n2);
 
         reg_a.merge(&reg_b);
         assert_eq!(reg_a.get(), &"b");

@@ -1,5 +1,5 @@
 //! Storage Contracts and Service Level Agreements
-//! 
+//!
 //! Implements a comprehensive contract system for storage services including:
 //! - Smart contracts for storage agreements
 //! - Service Level Agreements (SLAs)
@@ -7,12 +7,12 @@
 //! - Dispute resolution mechanisms
 //! - Automated contract execution
 
+use crate::types::economic_types::{DisputeResolution, PaymentSchedule};
 use crate::types::*;
-use crate::types::economic_types::{PaymentSchedule, DisputeResolution};
-use anyhow::{Result, anyhow};
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
+use anyhow::{anyhow, Result};
 use lib_crypto::{Hash, PostQuantumSignature};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Erasure coding parameters for data redundancy
@@ -384,12 +384,13 @@ impl ContractManager {
         payment: PaymentTerms,
     ) -> Result<String> {
         let contract_id = format!("contract_{}", Uuid::new_v4());
-        
+
         let expires_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() + terms.duration;
-        
+            .as_secs()
+            + terms.duration;
+
         let contract = StorageContract {
             contract_id: contract_id.clone(),
             client_id,
@@ -418,7 +419,7 @@ impl ContractManager {
                 witness_signatures: Vec::new(),
             },
             nodes: Vec::new(), // Will be populated during provider selection
-            total_cost: 0, // Will be calculated during pricing
+            total_cost: 0,     // Will be calculated during pricing
         };
 
         self.contracts.insert(contract_id.clone(), contract);
@@ -432,7 +433,9 @@ impl ContractManager {
         signer_type: SignerType,
         signature: PostQuantumSignature,
     ) -> Result<()> {
-        let contract = self.contracts.get_mut(contract_id)
+        let contract = self
+            .contracts
+            .get_mut(contract_id)
             .ok_or_else(|| anyhow!("Contract not found"))?;
 
         match signer_type {
@@ -448,10 +451,11 @@ impl ContractManager {
         }
 
         // Activate contract if both parties have signed
-        if contract.signatures.client_signature.is_some() && 
-           contract.signatures.provider_signature.is_some() {
+        if contract.signatures.client_signature.is_some()
+            && contract.signatures.provider_signature.is_some()
+        {
             contract.status = ContractStatus::Active;
-            
+
             // Start performance monitoring
             let monitor = PerformanceMonitor {
                 contract_id: contract_id.to_string(),
@@ -482,10 +486,14 @@ impl ContractManager {
         contract_id: &str,
         metrics_update: PerformanceUpdate,
     ) -> Result<()> {
-        let monitor = self.monitors.get_mut(contract_id)
+        let monitor = self
+            .monitors
+            .get_mut(contract_id)
             .ok_or_else(|| anyhow!("Performance monitor not found"))?;
-        
-        let contract = self.contracts.get_mut(contract_id)
+
+        let contract = self
+            .contracts
+            .get_mut(contract_id)
             .ok_or_else(|| anyhow!("Contract not found"))?;
 
         // Update metrics based on the update type
@@ -493,7 +501,7 @@ impl ContractManager {
             PerformanceUpdate::Uptime(uptime) => {
                 monitor.metrics.uptime = uptime;
                 contract.performance.uptime = uptime;
-                
+
                 // Check for uptime SLA violation
                 if uptime < contract.sla.min_uptime {
                     let violation = SlaViolation {
@@ -507,8 +515,10 @@ impl ContractManager {
                         } else {
                             ViolationSeverity::Minor
                         },
-                        description: format!("Uptime {} below SLA requirement {}", 
-                                           uptime, contract.sla.min_uptime),
+                        description: format!(
+                            "Uptime {} below SLA requirement {}",
+                            uptime, contract.sla.min_uptime
+                        ),
                         impact: "Service availability below agreed levels".to_string(),
                         resolved: false,
                     };
@@ -520,7 +530,7 @@ impl ContractManager {
                 monitor.metrics.avg_write_latency = write;
                 contract.performance.avg_read_latency = read;
                 contract.performance.avg_write_latency = write;
-                
+
                 // Check for latency SLA violations
                 if read > contract.sla.max_read_latency {
                     let violation = SlaViolation {
@@ -530,8 +540,10 @@ impl ContractManager {
                             .as_secs(),
                         violation_type: SlaViolationType::LatencyViolation,
                         severity: ViolationSeverity::Moderate,
-                        description: format!("Read latency {} ms exceeds SLA limit {} ms", 
-                                           read, contract.sla.max_read_latency),
+                        description: format!(
+                            "Read latency {} ms exceeds SLA limit {} ms",
+                            read, contract.sla.max_read_latency
+                        ),
                         impact: "User experience degraded".to_string(),
                         resolved: false,
                     };
@@ -541,7 +553,7 @@ impl ContractManager {
             PerformanceUpdate::Throughput(throughput) => {
                 monitor.metrics.avg_throughput = throughput;
                 contract.performance.avg_throughput = throughput;
-                
+
                 if throughput < contract.sla.min_throughput {
                     let violation = SlaViolation {
                         timestamp: std::time::SystemTime::now()
@@ -550,8 +562,10 @@ impl ContractManager {
                             .as_secs(),
                         violation_type: SlaViolationType::ThroughputViolation,
                         severity: ViolationSeverity::Moderate,
-                        description: format!("Throughput {} below SLA requirement {}", 
-                                           throughput, contract.sla.min_throughput),
+                        description: format!(
+                            "Throughput {} below SLA requirement {}",
+                            throughput, contract.sla.min_throughput
+                        ),
                         impact: "Data transfer performance below expectations".to_string(),
                         resolved: false,
                     };
@@ -563,31 +577,35 @@ impl ContractManager {
         // Calculate performance score separately to avoid borrowing conflict
         let performance_metrics = contract.performance.clone();
         let sla_metrics = contract.sla.clone();
-        let performance_score = Self::calculate_performance_score_static(&performance_metrics, &sla_metrics);
+        let performance_score =
+            Self::calculate_performance_score_static(&performance_metrics, &sla_metrics);
         contract.performance.performance_score = performance_score;
-        
+
         Ok(())
     }
 
     /// Calculate overall performance score (static version to avoid borrowing conflicts)
-    fn calculate_performance_score_static(performance: &PerformanceMetrics, sla: &ServiceLevelAgreement) -> f64 {
+    fn calculate_performance_score_static(
+        performance: &PerformanceMetrics,
+        sla: &ServiceLevelAgreement,
+    ) -> f64 {
         let uptime_score = performance.uptime;
-        
+
         let latency_score = if performance.avg_read_latency <= sla.max_read_latency {
             1.0
         } else {
             (sla.max_read_latency as f64) / (performance.avg_read_latency as f64)
         };
-        
+
         let throughput_score = if performance.avg_throughput >= sla.min_throughput {
             1.0
         } else {
             (performance.avg_throughput as f64) / (sla.min_throughput as f64)
         };
-        
+
         // Penalty for violations
         let violation_penalty = performance.sla_violations.len() as f64 * 0.1;
-        
+
         // Combined score
         let base_score = (uptime_score + latency_score + throughput_score) / 3.0;
         (base_score - violation_penalty).max(0.0).min(1.0)
@@ -605,7 +623,8 @@ impl ContractManager {
 
     /// List active contracts
     pub fn list_active_contracts(&self) -> Vec<&StorageContract> {
-        self.contracts.values()
+        self.contracts
+            .values()
             .filter(|c| c.status == ContractStatus::Active)
             .collect()
     }
@@ -622,7 +641,7 @@ impl ContractManager {
         supported_tiers: Vec<StorageTier>,
     ) -> Result<String> {
         let template_id = format!("template_{}", Uuid::new_v4());
-        
+
         let template = ContractTemplate {
             name,
             default_terms,
@@ -655,7 +674,9 @@ impl ContractManager {
         default_sla: Option<ServiceLevelAgreement>,
         supported_tiers: Option<Vec<StorageTier>>,
     ) -> Result<()> {
-        let template = self.templates.get_mut(template_id)
+        let template = self
+            .templates
+            .get_mut(template_id)
             .ok_or_else(|| anyhow!("Template not found"))?;
 
         if let Some(name) = name {
@@ -679,7 +700,8 @@ impl ContractManager {
 
     /// Delete a template
     pub fn delete_template(&mut self, template_id: &str) -> Result<()> {
-        self.templates.remove(template_id)
+        self.templates
+            .remove(template_id)
             .ok_or_else(|| anyhow!("Template not found"))?;
         Ok(())
     }
@@ -693,7 +715,9 @@ impl ContractManager {
         payment_terms: PaymentTerms,
         customizations: Option<ContractCustomizations>,
     ) -> Result<String> {
-        let template = self.templates.get(template_id)
+        let template = self
+            .templates
+            .get(template_id)
             .ok_or_else(|| anyhow!("Template not found"))?;
 
         let mut terms = template.default_terms.clone();
@@ -736,7 +760,8 @@ impl ContractManager {
 
     /// Find templates by storage tier
     pub fn find_templates_by_tier(&self, tier: &StorageTier) -> Vec<&ContractTemplate> {
-        self.templates.values()
+        self.templates
+            .values()
             .filter(|template| template.supported_tiers.contains(tier))
             .collect()
     }
@@ -749,7 +774,9 @@ impl ContractManager {
         min_uptime: f64,
         max_latency: u64,
     ) -> Result<bool> {
-        let template = self.templates.get(template_id)
+        let template = self
+            .templates
+            .get(template_id)
             .ok_or_else(|| anyhow!("Template not found"))?;
 
         let tier_supported = template.supported_tiers.contains(required_tier);
@@ -801,65 +828,87 @@ impl ContractManager {
     /// Get contract statistics
     pub async fn get_statistics(&self) -> anyhow::Result<ContractStats> {
         let total_contracts = self.contracts.len() as u64;
-        let active_contracts = self.contracts.values()
-            .filter(|c| c.expires_at > std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs())
+        let active_contracts = self
+            .contracts
+            .values()
+            .filter(|c| {
+                c.expires_at
+                    > std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+            })
             .count() as u64;
-        
-        let total_storage_under_contract = self.contracts.values()
-            .map(|c| c.terms.storage_size)
-            .sum();
-            
-        let total_contract_value = self.contracts.values()
+
+        let total_storage_under_contract =
+            self.contracts.values().map(|c| c.terms.storage_size).sum();
+
+        let total_contract_value = self
+            .contracts
+            .values()
             .map(|c| c.payment.total_amount)
             .sum();
-        
+
         Ok(ContractStats {
             total_contracts,
             total_storage_under_contract,
             total_contract_value,
             active_contracts,
             expired_contracts: total_contracts - active_contracts,
-            breached_contracts: self.contracts.values()
+            breached_contracts: self
+                .contracts
+                .values()
                 .filter(|contract| matches!(contract.status, ContractStatus::Breached))
                 .count() as u64,
         })
     }
 
     /// Evaluate contract performance and get detailed performance report
-    pub fn evaluate_contract_performance(&self, contract_id: &str) -> anyhow::Result<ContractPerformanceReport> {
-        let contract = self.get_contract(contract_id)
+    pub fn evaluate_contract_performance(
+        &self,
+        contract_id: &str,
+    ) -> anyhow::Result<ContractPerformanceReport> {
+        let contract = self
+            .get_contract(contract_id)
             .ok_or_else(|| anyhow::anyhow!("Contract not found"))?;
 
         let performance_score = self.calculate_performance_score(contract);
-        
+
         let performance_category = if performance_score >= 0.9 {
             "Excellent"
         } else if performance_score >= 0.8 {
             "Good"
         } else if performance_score >= 0.7 {
-            "Satisfactory" 
+            "Satisfactory"
         } else if performance_score >= 0.6 {
             "Needs Improvement"
         } else {
             "Poor"
         };
 
-        let recommendations = self.generate_performance_recommendations(contract, performance_score);
+        let recommendations =
+            self.generate_performance_recommendations(contract, performance_score);
 
         Ok(ContractPerformanceReport {
             contract_id: contract_id.to_string(),
             performance_score,
             performance_category: performance_category.to_string(),
-            sla_compliance: 1.0 - (contract.performance.sla_violations.len() as f64 / 10.0).min(1.0), // Calculate from violations
+            sla_compliance: 1.0
+                - (contract.performance.sla_violations.len() as f64 / 10.0).min(1.0), // Calculate from violations
             uptime_percentage: contract.performance.uptime,
-            avg_response_time: (contract.performance.avg_read_latency + contract.performance.avg_write_latency) / 2,
-            data_integrity_score: if contract.performance.integrity_checks.is_empty() { 1.0 } else {
-                contract.performance.integrity_checks.iter()
+            avg_response_time: (contract.performance.avg_read_latency
+                + contract.performance.avg_write_latency)
+                / 2,
+            data_integrity_score: if contract.performance.integrity_checks.is_empty() {
+                1.0
+            } else {
+                contract
+                    .performance
+                    .integrity_checks
+                    .iter()
                     .map(|check| if check.success { 1.0 } else { 0.0 })
-                    .sum::<f64>() / contract.performance.integrity_checks.len() as f64
+                    .sum::<f64>()
+                    / contract.performance.integrity_checks.len() as f64
             },
             recommendations,
             evaluation_timestamp: std::time::SystemTime::now()
@@ -870,59 +919,84 @@ impl ContractManager {
     }
 
     /// Generate performance improvement recommendations
-    fn generate_performance_recommendations(&self, contract: &StorageContract, performance_score: f64) -> Vec<String> {
+    fn generate_performance_recommendations(
+        &self,
+        contract: &StorageContract,
+        performance_score: f64,
+    ) -> Vec<String> {
         let mut recommendations = Vec::new();
 
         if contract.performance.uptime < 0.99 {
-            recommendations.push("Improve uptime reliability - consider redundant systems".to_string());
+            recommendations
+                .push("Improve uptime reliability - consider redundant systems".to_string());
         }
 
-        if (contract.performance.avg_read_latency + contract.performance.avg_write_latency) / 2 > 1000 {
-            recommendations.push("Optimize response times - consider network optimization".to_string());
+        if (contract.performance.avg_read_latency + contract.performance.avg_write_latency) / 2
+            > 1000
+        {
+            recommendations
+                .push("Optimize response times - consider network optimization".to_string());
         }
 
         // Check data integrity based on integrity check results
-        let integrity_score = if contract.performance.integrity_checks.is_empty() { 1.0 } else {
-            contract.performance.integrity_checks.iter()
+        let integrity_score = if contract.performance.integrity_checks.is_empty() {
+            1.0
+        } else {
+            contract
+                .performance
+                .integrity_checks
+                .iter()
                 .map(|check| if check.success { 1.0 } else { 0.0 })
-                .sum::<f64>() / contract.performance.integrity_checks.len() as f64
+                .sum::<f64>()
+                / contract.performance.integrity_checks.len() as f64
         };
-        
+
         if integrity_score < 0.999 {
-            recommendations.push("Enhance data integrity measures - implement additional checksums".to_string());
+            recommendations.push(
+                "Enhance data integrity measures - implement additional checksums".to_string(),
+            );
         }
 
         if performance_score < 0.8 {
-            recommendations.push("Overall performance below target - comprehensive review needed".to_string());
+            recommendations
+                .push("Overall performance below target - comprehensive review needed".to_string());
         }
 
-        let sla_compliance = 1.0 - (contract.performance.sla_violations.len() as f64 / 10.0).min(1.0);
+        let sla_compliance =
+            1.0 - (contract.performance.sla_violations.len() as f64 / 10.0).min(1.0);
         if sla_compliance < 0.95 {
-            recommendations.push("SLA compliance issues detected - review service delivery processes".to_string());
+            recommendations.push(
+                "SLA compliance issues detected - review service delivery processes".to_string(),
+            );
         }
 
         if recommendations.is_empty() {
-            recommendations.push("Performance is excellent - maintain current standards".to_string());
+            recommendations
+                .push("Performance is excellent - maintain current standards".to_string());
         }
 
         recommendations
     }
 
     /// Update payment status for a contract
-    pub async fn update_payment_status(&mut self, contract_id: Hash, payment_amount: u64) -> anyhow::Result<()> {
+    pub async fn update_payment_status(
+        &mut self,
+        contract_id: Hash,
+        payment_amount: u64,
+    ) -> anyhow::Result<()> {
         let contract_id_str = hex::encode(contract_id.as_bytes());
-        
+
         if let Some(contract) = self.contracts.get_mut(&contract_id_str) {
             // Update payment status
             contract.payment.paid_amount += payment_amount;
-            
+
             // Check if contract is fully paid
             if contract.payment.paid_amount >= contract.payment.total_amount {
                 contract.payment.status = PaymentStatus::Completed;
             } else {
                 contract.payment.status = PaymentStatus::Partial;
             }
-            
+
             Ok(())
         } else {
             Err(anyhow::anyhow!("Contract not found: {}", contract_id_str))
@@ -932,14 +1006,19 @@ impl ContractManager {
     /// Get contract count for a specific node
     pub async fn get_node_contract_count(&self, node_id: &Hash) -> anyhow::Result<u64> {
         let node_id_str = hex::encode(node_id.as_bytes());
-        
-        let count = self.contracts.values()
+
+        let count = self
+            .contracts
+            .values()
             .filter(|contract| {
-                contract.terms.provider_nodes.iter()
+                contract
+                    .terms
+                    .provider_nodes
+                    .iter()
                     .any(|provider_node| provider_node == &node_id_str)
             })
             .count() as u64;
-            
+
         Ok(count)
     }
 }
@@ -957,10 +1036,10 @@ mod tests {
     #[test]
     fn test_contract_creation() {
         let mut manager = ContractManager::new();
-        
+
         let terms = ContractTerms {
             storage_size: 1024 * 1024 * 1024, // 1 GB
-            duration: 86400 * 30, // 30 days
+            duration: 86400 * 30,             // 30 days
             tier: StorageTier::Cold,
             replication_factor: 3,
             geographic_requirements: vec!["US".to_string()],
@@ -999,26 +1078,31 @@ mod tests {
             penalty_terms: HashMap::new(),
         };
 
-        let contract_id = manager.create_contract(
-            "client1".to_string(),
-            "provider1".to_string(),
-            terms,
-            sla,
-            payment,
-        ).unwrap();
+        let contract_id = manager
+            .create_contract(
+                "client1".to_string(),
+                "provider1".to_string(),
+                terms,
+                sla,
+                payment,
+            )
+            .unwrap();
 
         assert!(manager.get_contract(&contract_id).is_some());
-        assert_eq!(manager.get_contract(&contract_id).unwrap().status, ContractStatus::Draft);
+        assert_eq!(
+            manager.get_contract(&contract_id).unwrap().status,
+            ContractStatus::Draft
+        );
     }
 
     #[test]
     fn test_template_management() {
         let mut manager = ContractManager::new();
-        
+
         // Create a template
         let terms = ContractTerms {
             storage_size: 1024 * 1024 * 1024, // 1 GB
-            duration: 86400 * 30, // 30 days
+            duration: 86400 * 30,             // 30 days
             tier: StorageTier::Cold,
             replication_factor: 3,
             geographic_requirements: vec!["US".to_string()],
@@ -1043,13 +1127,15 @@ mod tests {
             violation_penalties: HashMap::new(),
         };
 
-        let template_id = manager.create_template(
-            "Cold Storage Template".to_string(),
-            "Standard template for cold storage contracts".to_string(),
-            terms,
-            sla,
-            vec![StorageTier::Cold, StorageTier::Archive],
-        ).unwrap();
+        let template_id = manager
+            .create_template(
+                "Cold Storage Template".to_string(),
+                "Standard template for cold storage contracts".to_string(),
+                terms,
+                sla,
+                vec![StorageTier::Cold, StorageTier::Archive],
+            )
+            .unwrap();
 
         // Test template retrieval
         assert!(manager.get_template(&template_id).is_some());
@@ -1072,7 +1158,7 @@ mod tests {
 
         let customizations = ContractCustomizations {
             storage_size: Some(2 * 1024 * 1024 * 1024), // 2 GB
-            duration: Some(86400 * 60), // 60 days
+            duration: Some(86400 * 60),                 // 60 days
             tier: Some(StorageTier::Archive),
             replication_factor: None,
             geographic_requirements: None,
@@ -1081,13 +1167,15 @@ mod tests {
             max_write_latency: None,
         };
 
-        let contract_id = manager.create_contract_from_template(
-            &template_id,
-            "client1".to_string(),
-            "provider1".to_string(),
-            payment,
-            Some(customizations),
-        ).unwrap();
+        let contract_id = manager
+            .create_contract_from_template(
+                &template_id,
+                "client1".to_string(),
+                "provider1".to_string(),
+                payment,
+                Some(customizations),
+            )
+            .unwrap();
 
         // Verify the contract was created with customizations
         let contract = manager.get_contract(&contract_id).unwrap();
@@ -1099,7 +1187,7 @@ mod tests {
     #[test]
     fn test_template_tier_filtering() {
         let mut manager = ContractManager::new();
-        
+
         // Create templates with different tier support
         let terms = ContractTerms {
             storage_size: 1024 * 1024 * 1024,
@@ -1128,13 +1216,15 @@ mod tests {
             violation_penalties: HashMap::new(),
         };
 
-        manager.create_template(
-            "Hot Storage Template".to_string(),
-            "Template for hot storage".to_string(),
-            terms,
-            sla,
-            vec![StorageTier::Hot],
-        ).unwrap();
+        manager
+            .create_template(
+                "Hot Storage Template".to_string(),
+                "Template for hot storage".to_string(),
+                terms,
+                sla,
+                vec![StorageTier::Hot],
+            )
+            .unwrap();
 
         let cold_terms = ContractTerms {
             storage_size: 1024 * 1024 * 1024,
@@ -1163,13 +1253,15 @@ mod tests {
             violation_penalties: HashMap::new(),
         };
 
-        manager.create_template(
-            "Cold Storage Template".to_string(),
-            "Template for cold storage".to_string(),
-            cold_terms,
-            cold_sla,
-            vec![StorageTier::Cold, StorageTier::Archive],
-        ).unwrap();
+        manager
+            .create_template(
+                "Cold Storage Template".to_string(),
+                "Template for cold storage".to_string(),
+                cold_terms,
+                cold_sla,
+                vec![StorageTier::Cold, StorageTier::Archive],
+            )
+            .unwrap();
 
         // Test tier filtering
         let hot_templates = manager.find_templates_by_tier(&StorageTier::Hot);

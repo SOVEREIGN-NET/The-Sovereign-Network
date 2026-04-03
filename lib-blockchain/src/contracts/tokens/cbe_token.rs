@@ -28,31 +28,40 @@
 //! - **C3**: Vesting-aware transfers (restricted until vested)
 //! - **C4**: Distribution locked at 40/30/20/10 split
 
+use crate::contracts::executor::{CallOrigin, ExecutionContext};
+use crate::integration::crypto_integration::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::integration::crypto_integration::PublicKey;
-use crate::contracts::executor::{ExecutionContext, CallOrigin};
 
 // ============================================================================
 // CRITICAL CONSTANTS - NEVER CHANGE
 // ============================================================================
 
-/// Total supply of CBE tokens: 100 billion (100,000,000,000)
-pub const CBE_TOTAL_SUPPLY: u64 = 100_000_000_000;
+/// Whole-token CBE supply target shared with the canonical tokenomics constants.
+pub const CBE_TOTAL_SUPPLY_TOKENS: u64 = lib_types::CBE_TOTAL_SUPPLY_TOKENS as u64;
 
-/// Compensation pool allocation: 40% = 40 billion
-pub const CBE_COMPENSATION_POOL: u64 = 40_000_000_000;
+/// Smallest unit of legacy runtime CBE accounting: 1 CBE = 10^8 atoms.
+/// All balances and supply values are stored in atoms in this `u64` contract.
+pub const CBE_ATOMS_PER_TOKEN: u64 = 100_000_000;
 
-/// Operational treasury allocation: 30% = 30 billion
-pub const CBE_OPERATIONAL_TREASURY: u64 = 30_000_000_000;
+/// Total supply in legacy runtime atoms.
+pub const CBE_TOTAL_SUPPLY: u64 = CBE_TOTAL_SUPPLY_TOKENS * CBE_ATOMS_PER_TOKEN;
 
-/// Performance incentives allocation: 20% = 20 billion
-pub const CBE_PERFORMANCE_INCENTIVES: u64 = 20_000_000_000;
+/// Compensation pool: 40 billion CBE × 10^8 atoms (40%)
+pub const CBE_COMPENSATION_POOL: u64 = (CBE_TOTAL_SUPPLY_TOKENS * 40 / 100) * CBE_ATOMS_PER_TOKEN;
 
-/// Strategic reserves allocation: 10% = 10 billion
-pub const CBE_STRATEGIC_RESERVES: u64 = 10_000_000_000;
+/// Operational treasury: 30 billion CBE × 10^8 atoms (30%)
+pub const CBE_OPERATIONAL_TREASURY: u64 =
+    (CBE_TOTAL_SUPPLY_TOKENS * 30 / 100) * CBE_ATOMS_PER_TOKEN;
 
-/// Number of decimal places for CBE token
+/// Performance incentives: 20 billion CBE × 10^8 atoms (20%)
+pub const CBE_PERFORMANCE_INCENTIVES: u64 =
+    (CBE_TOTAL_SUPPLY_TOKENS * 20 / 100) * CBE_ATOMS_PER_TOKEN;
+
+/// Strategic reserves: 10 billion CBE × 10^8 atoms (10%)
+pub const CBE_STRATEGIC_RESERVES: u64 = (CBE_TOTAL_SUPPLY_TOKENS * 10 / 100) * CBE_ATOMS_PER_TOKEN;
+
+/// Number of decimal places for CBE token (1 CBE = 10^8 atoms)
 pub const CBE_DECIMALS: u8 = 8;
 
 /// Token symbol
@@ -67,19 +76,20 @@ pub const CBE_NAME: &str = "CBE Equity";
 
 /// Distribution allocation structure
 ///
-/// Represents the 40/30/20/10 split of CBE tokens.
+/// Represents the 40/30/20/10 split of CBE tokens. All values are in atoms
+/// (1 CBE = 10^8 atoms, matching SOV convention).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DistributionAllocation {
-    /// Compensation pool: 40 billion (40%)
+    /// Compensation pool: 40 billion CBE in atoms (40%)
     pub compensation: u64,
 
-    /// Operational treasury: 30 billion (30%)
+    /// Operational treasury: 30 billion CBE in atoms (30%)
     pub operational: u64,
 
-    /// Performance incentives: 20 billion (20%)
+    /// Performance incentives: 20 billion CBE in atoms (20%)
     pub performance: u64,
 
-    /// Strategic reserves: 10 billion (10%)
+    /// Strategic reserves: 10 billion CBE in atoms (10%)
     pub strategic: u64,
 }
 
@@ -178,7 +188,8 @@ impl VestingSchedule {
 
     /// Get transferable (vested - already released) amount
     pub fn transferable(&self, current_block: u64) -> u64 {
-        self.calculate_vested(current_block).saturating_sub(self.vested_amount)
+        self.calculate_vested(current_block)
+            .saturating_sub(self.vested_amount)
     }
 }
 
@@ -232,32 +243,21 @@ pub enum CbeTokenError {
 impl std::fmt::Display for CbeTokenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CbeTokenError::AlreadyInitialized =>
-                write!(f, "CBE token already initialized"),
-            CbeTokenError::NotInitialized =>
-                write!(f, "CBE token not initialized"),
-            CbeTokenError::Unauthorized =>
-                write!(f, "Unauthorized operation"),
-            CbeTokenError::InsufficientBalance =>
-                write!(f, "Insufficient balance"),
-            CbeTokenError::InsufficientVestedBalance =>
-                write!(f, "Insufficient vested balance"),
-            CbeTokenError::InsufficientAllowance =>
-                write!(f, "Insufficient allowance"),
-            CbeTokenError::MintingDisabled =>
-                write!(f, "Minting is disabled after initialization"),
-            CbeTokenError::ZeroAmount =>
-                write!(f, "Transfer amount cannot be zero"),
-            CbeTokenError::Overflow =>
-                write!(f, "Arithmetic overflow"),
-            CbeTokenError::ZeroRecipient =>
-                write!(f, "Recipient cannot be zero address"),
-            CbeTokenError::InvalidAllocation =>
-                write!(f, "Distribution allocation must sum to 100 billion"),
-            CbeTokenError::VestingNotFound =>
-                write!(f, "Vesting schedule not found"),
-            CbeTokenError::TokensNotVested =>
-                write!(f, "Cannot transfer unvested tokens"),
+            CbeTokenError::AlreadyInitialized => write!(f, "CBE token already initialized"),
+            CbeTokenError::NotInitialized => write!(f, "CBE token not initialized"),
+            CbeTokenError::Unauthorized => write!(f, "Unauthorized operation"),
+            CbeTokenError::InsufficientBalance => write!(f, "Insufficient balance"),
+            CbeTokenError::InsufficientVestedBalance => write!(f, "Insufficient vested balance"),
+            CbeTokenError::InsufficientAllowance => write!(f, "Insufficient allowance"),
+            CbeTokenError::MintingDisabled => write!(f, "Minting is disabled after initialization"),
+            CbeTokenError::ZeroAmount => write!(f, "Transfer amount cannot be zero"),
+            CbeTokenError::Overflow => write!(f, "Arithmetic overflow"),
+            CbeTokenError::ZeroRecipient => write!(f, "Recipient cannot be zero address"),
+            CbeTokenError::InvalidAllocation => {
+                write!(f, "Distribution allocation must sum to 100 billion")
+            }
+            CbeTokenError::VestingNotFound => write!(f, "Vesting schedule not found"),
+            CbeTokenError::TokensNotVested => write!(f, "Cannot transfer unvested tokens"),
         }
     }
 }
@@ -388,10 +388,14 @@ impl CbeToken {
         };
 
         // Distribute tokens to pools
-        self.balances.insert(compensation_address.key_id, CBE_COMPENSATION_POOL);
-        self.balances.insert(operational_address.key_id, CBE_OPERATIONAL_TREASURY);
-        self.balances.insert(performance_address.key_id, CBE_PERFORMANCE_INCENTIVES);
-        self.balances.insert(strategic_address.key_id, CBE_STRATEGIC_RESERVES);
+        self.balances
+            .insert(compensation_address.key_id, CBE_COMPENSATION_POOL);
+        self.balances
+            .insert(operational_address.key_id, CBE_OPERATIONAL_TREASURY);
+        self.balances
+            .insert(performance_address.key_id, CBE_PERFORMANCE_INCENTIVES);
+        self.balances
+            .insert(strategic_address.key_id, CBE_STRATEGIC_RESERVES);
 
         self.total_supply = CBE_TOTAL_SUPPLY;
         self.initialized = true;
@@ -438,6 +442,11 @@ impl CbeToken {
         &self.distribution
     }
 
+    /// Get the compensation pool key_id (set after `init()`).
+    pub fn compensation_pool_key_id(&self) -> Option<[u8; 32]> {
+        self.pool_addresses.compensation
+    }
+
     /// Get total balance of an account (including unvested)
     pub fn balance_of(&self, account: &PublicKey) -> u64 {
         self.balances.get(&account.key_id).copied().unwrap_or(0)
@@ -454,7 +463,9 @@ impl CbeToken {
             return total_balance;
         }
 
-        let unvested: u64 = schedules.unwrap().iter()
+        let unvested: u64 = schedules
+            .unwrap()
+            .iter()
             .map(|s| {
                 let vested = s.calculate_vested(current_block);
                 s.total_amount.saturating_sub(vested)
@@ -599,7 +610,9 @@ impl CbeToken {
         let to_balance = self.balances.get(&to.key_id).copied().unwrap_or(0);
         self.balances.insert(
             to.key_id,
-            to_balance.checked_add(amount).ok_or(CbeTokenError::Overflow)?,
+            to_balance
+                .checked_add(amount)
+                .ok_or(CbeTokenError::Overflow)?,
         );
 
         Ok(())
@@ -648,14 +661,7 @@ mod tests {
     }
 
     fn create_test_execution_context(caller: &PublicKey) -> ExecutionContext {
-        ExecutionContext::with_contract(
-            caller.clone(),
-            caller.clone(),
-            1,
-            1000,
-            100000,
-            [1u8; 32],
-        )
+        ExecutionContext::with_contract(caller.clone(), caller.clone(), 1, 1000, 100000, [1u8; 32])
     }
 
     // ========================================================================
@@ -664,7 +670,8 @@ mod tests {
 
     #[test]
     fn test_cbe_total_supply_is_100_billion() {
-        assert_eq!(CBE_TOTAL_SUPPLY, 100_000_000_000);
+        // 100 billion CBE × 10^8 atoms/CBE
+        assert_eq!(CBE_TOTAL_SUPPLY, 100_000_000_000 * CBE_ATOMS_PER_TOKEN);
     }
 
     #[test]
@@ -678,26 +685,33 @@ mod tests {
 
     #[test]
     fn test_cbe_compensation_is_40_percent() {
-        assert_eq!(CBE_COMPENSATION_POOL, 40_000_000_000);
-        assert_eq!(CBE_COMPENSATION_POOL * 100 / CBE_TOTAL_SUPPLY, 40);
+        assert_eq!(CBE_COMPENSATION_POOL, 40_000_000_000 * CBE_ATOMS_PER_TOKEN);
+        // Avoid overflow: divide total by 100 first, then check ratio
+        assert_eq!(CBE_COMPENSATION_POOL / (CBE_TOTAL_SUPPLY / 100), 40);
     }
 
     #[test]
     fn test_cbe_operational_is_30_percent() {
-        assert_eq!(CBE_OPERATIONAL_TREASURY, 30_000_000_000);
-        assert_eq!(CBE_OPERATIONAL_TREASURY * 100 / CBE_TOTAL_SUPPLY, 30);
+        assert_eq!(
+            CBE_OPERATIONAL_TREASURY,
+            30_000_000_000 * CBE_ATOMS_PER_TOKEN
+        );
+        assert_eq!(CBE_OPERATIONAL_TREASURY / (CBE_TOTAL_SUPPLY / 100), 30);
     }
 
     #[test]
     fn test_cbe_performance_is_20_percent() {
-        assert_eq!(CBE_PERFORMANCE_INCENTIVES, 20_000_000_000);
-        assert_eq!(CBE_PERFORMANCE_INCENTIVES * 100 / CBE_TOTAL_SUPPLY, 20);
+        assert_eq!(
+            CBE_PERFORMANCE_INCENTIVES,
+            20_000_000_000 * CBE_ATOMS_PER_TOKEN
+        );
+        assert_eq!(CBE_PERFORMANCE_INCENTIVES / (CBE_TOTAL_SUPPLY / 100), 20);
     }
 
     #[test]
     fn test_cbe_strategic_is_10_percent() {
-        assert_eq!(CBE_STRATEGIC_RESERVES, 10_000_000_000);
-        assert_eq!(CBE_STRATEGIC_RESERVES * 100 / CBE_TOTAL_SUPPLY, 10);
+        assert_eq!(CBE_STRATEGIC_RESERVES, 10_000_000_000 * CBE_ATOMS_PER_TOKEN);
+        assert_eq!(CBE_STRATEGIC_RESERVES / (CBE_TOTAL_SUPPLY / 100), 10);
     }
 
     // ========================================================================
@@ -740,7 +754,9 @@ mod tests {
         let performance = create_test_public_key(3);
         let strategic = create_test_public_key(4);
 
-        token.init(&compensation, &operational, &performance, &strategic).unwrap();
+        token
+            .init(&compensation, &operational, &performance, &strategic)
+            .unwrap();
         let result = token.init(&compensation, &operational, &performance, &strategic);
 
         assert_eq!(result, Err(CbeTokenError::AlreadyInitialized));
@@ -759,10 +775,10 @@ mod tests {
     #[test]
     fn test_distribution_allocation_invalid() {
         let allocation = DistributionAllocation {
-            compensation: 50_000_000_000, // Wrong!
-            operational: 30_000_000_000,
-            performance: 20_000_000_000,
-            strategic: 10_000_000_000,
+            compensation: 50_000_000_000 * CBE_ATOMS_PER_TOKEN, // Wrong!
+            operational: CBE_OPERATIONAL_TREASURY,
+            performance: CBE_PERFORMANCE_INCENTIVES,
+            strategic: CBE_STRATEGIC_RESERVES,
         };
         assert!(!allocation.verify());
     }
@@ -831,9 +847,9 @@ mod tests {
         };
 
         // Linear vesting
-        assert_eq!(schedule.calculate_vested(100), 100);  // 10%
-        assert_eq!(schedule.calculate_vested(500), 500);  // 50%
-        assert_eq!(schedule.calculate_vested(750), 750);  // 75%
+        assert_eq!(schedule.calculate_vested(100), 100); // 10%
+        assert_eq!(schedule.calculate_vested(500), 500); // 50%
+        assert_eq!(schedule.calculate_vested(750), 750); // 75%
     }
 
     // ========================================================================
@@ -849,13 +865,18 @@ mod tests {
         let strategic = create_test_public_key(4);
         let recipient = create_test_public_key(5);
 
-        token.init(&compensation, &operational, &performance, &strategic).unwrap();
+        token
+            .init(&compensation, &operational, &performance, &strategic)
+            .unwrap();
 
         let ctx = create_test_execution_context(&compensation);
         let result = token.transfer(&ctx, &recipient, 1_000_000_000, 0);
 
         assert!(result.is_ok());
-        assert_eq!(token.balance_of(&compensation), CBE_COMPENSATION_POOL - 1_000_000_000);
+        assert_eq!(
+            token.balance_of(&compensation),
+            CBE_COMPENSATION_POOL - 1_000_000_000
+        );
         assert_eq!(token.balance_of(&recipient), 1_000_000_000);
     }
 
@@ -871,7 +892,9 @@ mod tests {
         let performance = create_test_public_key(3);
         let strategic = create_test_public_key(4);
 
-        token.init(&compensation, &operational, &performance, &strategic).unwrap();
+        token
+            .init(&compensation, &operational, &performance, &strategic)
+            .unwrap();
 
         let result = token.mint(&compensation, 1000);
         assert_eq!(result, Err(CbeTokenError::MintingDisabled));

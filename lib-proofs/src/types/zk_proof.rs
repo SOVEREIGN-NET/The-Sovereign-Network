@@ -1,10 +1,10 @@
 //! Zero-knowledge proof structures and types
-//! 
+//!
 //! Unified ZK proof system matching ZHTPDEV-main65 architecture.
 //! All proof types use the same underlying ZkProof structure with Plonky2 backend.
 
-use serde::{Serialize, Deserialize};
 use crate::plonky2::Plonky2Proof;
+use serde::{Deserialize, Serialize};
 
 /// Zero-knowledge proof (unified approach matching ZHTPDEV-main65)
 #[derive(Debug, Clone)]
@@ -100,12 +100,29 @@ impl ZkProof {
         }
     }
 
+    /// Create a placeholder proof for cases where actual proof is not needed
+    ///
+    /// Used for externally registered identities where the registration proof
+    /// was already verified during the API call, so no ongoing proof is stored.
+    pub fn placeholder() -> Self {
+        Self {
+            proof_system: "placeholder".to_string(),
+            proof_data: vec![],
+            public_inputs: vec![],
+            verification_key: vec![],
+            plonky2_proof: None,
+            proof: vec![],
+        }
+    }
+
     /// Create from Plonky2 proof directly (preferred method)
     pub fn from_plonky2(plonky2_proof: Plonky2Proof) -> Self {
         Self {
             proof_system: "Plonky2".to_string(),
             proof_data: plonky2_proof.proof.clone(),
-            public_inputs: plonky2_proof.public_inputs.iter()
+            public_inputs: plonky2_proof
+                .public_inputs
+                .iter()
                 .flat_map(|&x| x.to_le_bytes().to_vec())
                 .collect(),
             verification_key: plonky2_proof.verification_key_hash.to_vec(),
@@ -130,13 +147,19 @@ impl ZkProof {
                     Ok(plonky2_proof) => Ok(Self::from_plonky2(plonky2_proof)),
                     Err(e) => {
                         // NO FALLBACK - fail hard if Plonky2 proof creation fails
-                        Err(anyhow::anyhow!("Plonky2 proof creation failed - no fallbacks allowed: {:?}", e))
+                        Err(anyhow::anyhow!(
+                            "Plonky2 proof creation failed - no fallbacks allowed: {:?}",
+                            e
+                        ))
                     }
                 }
-            },
+            }
             Err(e) => {
                 // NO FALLBACK - fail hard if ZK system initialization fails
-                Err(anyhow::anyhow!("ZK system initialization failed - no fallbacks allowed: {:?}", e))
+                Err(anyhow::anyhow!(
+                    "ZK system initialization failed - no fallbacks allowed: {:?}",
+                    e
+                ))
             }
         }
     }
@@ -169,10 +192,10 @@ impl ZkProof {
 
     /// Check if the proof is empty/uninitialized
     pub fn is_empty(&self) -> bool {
-        self.plonky2_proof.is_none() && 
-        self.proof_data.is_empty() && 
-        self.public_inputs.is_empty() && 
-        self.verification_key.is_empty()
+        self.plonky2_proof.is_none()
+            && self.proof_data.is_empty()
+            && self.public_inputs.is_empty()
+            && self.verification_key.is_empty()
     }
 
     /// Verify this proof using unified ZK system
@@ -180,7 +203,7 @@ impl ZkProof {
         if let Some(ref plonky2_proof) = self.plonky2_proof {
             // Use ZkProofSystem for verification (unified approach)
             let zk_system = crate::plonky2::ZkProofSystem::new()?;
-            
+
             // Determine proof type and verify accordingly
             match plonky2_proof.proof_system.as_str() {
                 "ZHTP-Optimized-Transaction" => zk_system.verify_transaction(plonky2_proof),
@@ -193,7 +216,9 @@ impl ZkProof {
             }
         } else {
             // NO FALLBACK - all proofs must use Plonky2
-            Err(anyhow::anyhow!("Proof must use Plonky2 - no fallbacks allowed"))
+            Err(anyhow::anyhow!(
+                "Proof must use Plonky2 - no fallbacks allowed"
+            ))
         }
     }
 }
@@ -233,7 +258,7 @@ impl ZkProofType {
     pub fn as_str(&self) -> &str {
         match self {
             ZkProofType::Transaction => "transaction",
-            ZkProofType::Identity => "identity", 
+            ZkProofType::Identity => "identity",
             ZkProofType::Range => "range",
             ZkProofType::Merkle => "merkle",
             ZkProofType::Storage => "storage",
@@ -266,7 +291,7 @@ mod tests {
     #[test]
     fn test_zk_proof_creation() {
         use crate::plonky2::Plonky2Proof;
-        
+
         // Create a valid Plonky2Proof
         let plonky2 = Plonky2Proof {
             proof: vec![1, 2, 3],
@@ -277,7 +302,7 @@ mod tests {
             circuit_id: "test_circuit".to_string(),
             private_input_commitment: [8; 32],
         };
-        
+
         let proof = ZkProof::new(
             "Plonky2".to_string(),
             vec![1, 2, 3],

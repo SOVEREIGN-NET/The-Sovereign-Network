@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 /// Contract types supported by the ZHTP smart contract platform
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContractType {
-    /// Token contract - supports ZHTP native and custom tokens
+    /// Token contract - supports SOV native and custom tokens
     Token,
     /// Whisper messaging contract - encrypted messaging with token gates
     WhisperMessaging,
@@ -46,10 +46,7 @@ impl ContractType {
 
     /// Check if this contract type supports burning operations
     pub fn supports_burning(&self) -> bool {
-        matches!(
-            self,
-            ContractType::Token | ContractType::WhisperMessaging
-        )
+        matches!(self, ContractType::Token | ContractType::WhisperMessaging)
     }
 
     /// Get human-readable name for the contract type

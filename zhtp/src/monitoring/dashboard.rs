@@ -1,18 +1,21 @@
 //! Web Dashboard for ZHTP Node Monitoring
-//! 
+//!
 //! Provides a web-based dashboard for monitoring node status, metrics, and health
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use serde::{Deserialize, Serialize};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use tracing::{error, info};
 use warp::{Filter, Reply};
-use tracing::{info, error};
 // Removed unused: Context, HashMap, RwLock, warn, Uuid
 
-use super::metrics::{MetricsSummary, MetricsCollector};
+use super::metrics::{MetricsCollector, MetricsSummary};
 // Removed unused SystemMetrics
-use super::health_check::{HealthStatus, HealthMonitor};
-use super::alerting::{Alert, AlertStats, AlertManager};
+use super::alerting::{Alert, AlertManager, AlertStats};
+use super::health_check::{HealthMonitor, HealthStatus};
 use crate::runtime::RuntimeOrchestrator;
 
 /// Web dashboard server for ZHTP monitoring
@@ -127,7 +130,9 @@ impl DashboardServer {
                 metrics_collector,
                 health_monitor,
                 alert_manager,
-            ).await {
+            )
+            .await
+            {
                 error!("Dashboard server error: {}", e);
             }
         });
@@ -250,57 +255,46 @@ impl DashboardServer {
             });
 
         // Prometheus metrics endpoint
-        let prometheus_endpoint = warp::path("metrics")
-            .and(warp::path::end())
-            .and_then({
-                let metrics = metrics_collector.clone();
-                move || {
-                    let metrics = metrics.clone();
-                    async move {
-                        if let Some(collector) = metrics {
-                            match collector.export_prometheus().await {
-                                Ok(data) => {
-                                    Ok(warp::reply::with_header(
-                                        data,
-                                        "content-type",
-                                        "text/plain; version=0.0.4; charset=utf-8"
-                                    ))
-                                }
-                                Err(e) => {
-                                    error!("Failed to export Prometheus metrics: {}", e);
-                                    Err(warp::reject::reject())
-                                }
+        let prometheus_endpoint = warp::path("metrics").and(warp::path::end()).and_then({
+            let metrics = metrics_collector.clone();
+            move || {
+                let metrics = metrics.clone();
+                async move {
+                    if let Some(collector) = metrics {
+                        match collector.export_prometheus().await {
+                            Ok(data) => Ok(warp::reply::with_header(
+                                data,
+                                "content-type",
+                                "text/plain; version=0.0.4; charset=utf-8",
+                            )),
+                            Err(e) => {
+                                error!("Failed to export Prometheus metrics: {}", e);
+                                Err(warp::reject::reject())
                             }
-                        } else {
-                            Err(warp::reject::reject())
                         }
+                    } else {
+                        Err(warp::reject::reject())
                     }
                 }
-            });
+            }
+        });
 
         // Static files (HTML dashboard)
-        let static_files = warp::path::end()
-            .map(|| warp::reply::html(Self::get_dashboard_html()));
+        let static_files = warp::path::end().map(|| warp::reply::html(Self::get_dashboard_html()));
 
         // CSS endpoint
-        let css_endpoint = warp::path("dashboard.css")
-            .map(|| {
-                warp::reply::with_header(
-                    Self::get_dashboard_css(),
-                    "content-type",
-                    "text/css"
-                )
-            });
+        let css_endpoint = warp::path("dashboard.css").map(|| {
+            warp::reply::with_header(Self::get_dashboard_css(), "content-type", "text/css")
+        });
 
         // JavaScript endpoint
-        let js_endpoint = warp::path("dashboard.js")
-            .map(|| {
-                warp::reply::with_header(
-                    Self::get_dashboard_js(),
-                    "content-type",
-                    "application/javascript"
-                )
-            });
+        let js_endpoint = warp::path("dashboard.js").map(|| {
+            warp::reply::with_header(
+                Self::get_dashboard_js(),
+                "content-type",
+                "application/javascript",
+            )
+        });
 
         // CORS headers
         let cors = warp::cors()
@@ -320,9 +314,7 @@ impl DashboardServer {
             .with(cors);
 
         // Start server
-        warp::serve(routes)
-            .run(([127, 0, 0, 1], port))
-            .await;
+        warp::serve(routes).run(([127, 0, 0, 1], port)).await;
 
         Ok(())
     }
@@ -341,9 +333,13 @@ impl DashboardServer {
             let start = chrono::Utc::now().timestamp() as u64 - uptime;
             (metrics, uptime, start)
         } else {
-            (std::collections::HashMap::new(), 3600, chrono::Utc::now().timestamp() as u64 - 3600)
+            (
+                std::collections::HashMap::new(),
+                3600,
+                chrono::Utc::now().timestamp() as u64 - 3600,
+            )
         };
-        
+
         let node_info = NodeInfo {
             version: env!("CARGO_PKG_VERSION").to_string(),
             node_id: format!("zhtp-node-{}", &uuid::Uuid::new_v4().to_string()[..8]),
@@ -374,25 +370,36 @@ impl DashboardServer {
         };
 
         // Get component and system data
-        let components_running = runtime_metrics.get("running_components").copied().unwrap_or(0.0) as usize;
-        let components_total = runtime_metrics.get("total_components").copied().unwrap_or(9.0) as usize;
+        let components_running = runtime_metrics
+            .get("running_components")
+            .copied()
+            .unwrap_or(0.0) as usize;
+        let components_total = runtime_metrics
+            .get("total_components")
+            .copied()
+            .unwrap_or(9.0) as usize;
         let peer_count = if let Some(rt) = runtime {
             rt.get_connected_peers().await.unwrap_or_default().len()
         } else {
             0
         };
-        
+
         // Get blockchain data from lib-blockchain
-        let (block_height, transaction_count) = match crate::runtime::blockchain_provider::get_global_blockchain().await {
-            Ok(blockchain_guard) => {
-                let blockchain = blockchain_guard.read().await;
-                (blockchain.height, blockchain.pending_transactions.len() as u64 + blockchain.height * 10) // Estimate total txs
-            }
-            Err(_) => (0, 0)
-        };
-        
+        let (block_height, transaction_count) =
+            match crate::runtime::blockchain_provider::get_global_blockchain().await {
+                Ok(blockchain_guard) => {
+                    let blockchain = blockchain_guard.read().await;
+                    (
+                        blockchain.height,
+                        blockchain.pending_transactions.len() as u64 + blockchain.height * 10,
+                    ) // Estimate total txs
+                }
+                Err(_) => (0, 0),
+            };
+
         let system_status = SystemStatus {
-            overall_health: health_status.as_ref()
+            overall_health: health_status
+                .as_ref()
                 .map(|h| format!("{:?}", h.overall_status))
                 .unwrap_or_else(|| "Unknown".to_string()),
             components_running,
@@ -400,10 +407,12 @@ impl DashboardServer {
             peer_count,
             block_height,
             transaction_count,
-            storage_used: health_status.as_ref()
+            storage_used: health_status
+                .as_ref()
                 .map(|h| h.storage_health.used_capacity)
                 .unwrap_or(0),
-            ubi_distributed: health_status.as_ref()
+            ubi_distributed: health_status
+                .as_ref()
                 .map(|h| h.economic_health.ubi_system.distribution_rate as u64)
                 .unwrap_or(0),
         };

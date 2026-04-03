@@ -1,11 +1,11 @@
 //! Memory pool (mempool) for pending transactions
-//! 
+//!
 //! Manages transactions waiting to be included in blocks.
 
-use std::collections::{HashMap, VecDeque};
-use serde::{Serialize, Deserialize};
-use crate::types::Hash;
 use crate::transaction::{Transaction, ValidationError};
+use crate::types::Hash;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 
 /// Transaction memory pool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,7 +82,11 @@ impl Mempool {
     }
 
     /// Get transactions for block creation (highest fee first)
-    pub fn get_transactions_for_block(&self, max_count: usize, max_size: usize) -> Vec<Transaction> {
+    pub fn get_transactions_for_block(
+        &self,
+        max_count: usize,
+        max_size: usize,
+    ) -> Vec<Transaction> {
         let mut selected = Vec::new();
         let mut total_size = 0;
 
@@ -91,14 +95,16 @@ impl Mempool {
         tx_refs.sort_by(|a, b| {
             let fee_rate_a = a.fee as f64 / a.size() as f64;
             let fee_rate_b = b.fee as f64 / b.size() as f64;
-            fee_rate_b.partial_cmp(&fee_rate_a).unwrap_or(std::cmp::Ordering::Equal)
+            fee_rate_b
+                .partial_cmp(&fee_rate_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         for tx in tx_refs {
             if selected.len() >= max_count {
                 break;
             }
-            
+
             let tx_size = tx.size();
             if total_size + tx_size > max_size {
                 continue;
@@ -151,30 +157,38 @@ impl Mempool {
 
     /// Validate transaction for mempool inclusion
     fn validate_transaction(&self, transaction: &Transaction) -> Result<(), MempoolError> {
+        tracing::warn!(
+            "[FLOW] mempool::validate_transaction: tx_hash={}, size={}, fee={}, inputs={}, outputs={}",
+            hex::encode(transaction.hash().as_bytes()),
+            transaction.size(),
+            transaction.fee,
+            transaction.inputs.len(),
+            transaction.outputs.len()
+        );
         // Use transaction validator
         let validator = crate::transaction::validation::TransactionValidator::new();
-        
+
         match validator.validate_transaction(transaction) {
             Ok(()) => {
                 log::info!("Transaction validation successful");
                 Ok(())
-            },
+            }
             Err(ValidationError::DoubleSpend) => {
                 log::error!("Validation failed: DoubleSpend");
                 Err(MempoolError::DoubleSpend)
-            },
+            }
             Err(ValidationError::InvalidSignature) => {
                 log::error!("Validation failed: InvalidSignature");
                 Err(MempoolError::InvalidSignature)
-            },
+            }
             Err(ValidationError::InvalidZkProof) => {
                 log::error!("Validation failed: InvalidZkProof - ZK proof verification failed");
                 Err(MempoolError::InvalidProof)
-            },
+            }
             Err(e) => {
                 log::error!("Validation failed: {:?}", e);
                 Err(MempoolError::InvalidTransaction)
-            },
+            }
         }
     }
 

@@ -1,5 +1,5 @@
 //! Storage Market and Discovery System
-//! 
+//!
 //! Implements a decentralized marketplace for storage services including:
 //! - Provider discovery and matching
 //! - Service advertising and bidding
@@ -7,12 +7,12 @@
 //! - Geographic and performance-based routing
 //! - Load balancing and capacity management
 
-use crate::types::{StorageTier, EncryptionLevel};
 use crate::economic::pricing::{StorageRequest, UrgencyLevel};
+use crate::types::{EncryptionLevel, StorageTier};
+use anyhow::{anyhow, Result};
 use log;
-use anyhow::{Result, anyhow};
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid;
 
 /// Storage marketplace for provider discovery and matching
@@ -231,11 +231,11 @@ pub struct MaintenanceWindow {
 /// Maintenance impact levels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MaintenanceImpact {
-    None,        // No service impact
-    Low,         // Minimal service impact
-    Medium,      // Some service degradation
-    High,        // Significant service impact
-    Complete,    // Complete service outage
+    None,     // No service impact
+    Low,      // Minimal service impact
+    Medium,   // Some service degradation
+    High,     // Significant service impact
+    Complete, // Complete service outage
 }
 
 /// Service advertisement by providers
@@ -450,14 +450,17 @@ impl StorageMarket {
 
     /// Register a new storage provider
     pub fn register_provider(&mut self, provider: StorageProvider) -> Result<()> {
-        self.providers.insert(provider.provider_id.clone(), provider);
+        self.providers
+            .insert(provider.provider_id.clone(), provider);
         self.update_market_stats();
         Ok(())
     }
 
     /// Update provider information
     pub fn update_provider(&mut self, provider_id: &str, updates: ProviderUpdate) -> Result<()> {
-        let provider = self.providers.get_mut(provider_id)
+        let provider = self
+            .providers
+            .get_mut(provider_id)
             .ok_or_else(|| anyhow!("Provider not found"))?;
 
         match updates {
@@ -509,7 +512,11 @@ impl StorageMarket {
     }
 
     /// Evaluate how well a provider matches criteria
-    fn evaluate_provider_match(&self, provider: &StorageProvider, criteria: &MatchingCriteria) -> Option<ProviderMatch> {
+    fn evaluate_provider_match(
+        &self,
+        provider: &StorageProvider,
+        criteria: &MatchingCriteria,
+    ) -> Option<ProviderMatch> {
         let mut score: f64 = 0.0;
         let mut reasons = Vec::new();
         let mut concerns = Vec::new();
@@ -530,9 +537,16 @@ impl StorageMarket {
         }
 
         // Check tier support
-        if provider.capabilities.supported_tiers.contains(&criteria.preferred_tier) {
+        if provider
+            .capabilities
+            .supported_tiers
+            .contains(&criteria.preferred_tier)
+        {
             score += 0.2;
-            reasons.push(format!("Supports {} tier", format!("{:?}", criteria.preferred_tier)));
+            reasons.push(format!(
+                "Supports {} tier",
+                format!("{:?}", criteria.preferred_tier)
+            ));
         }
 
         // Check pricing
@@ -584,11 +598,15 @@ impl StorageMarket {
 
     /// Estimate cost for a storage request with a provider
     fn estimate_cost(&self, provider: &StorageProvider, criteria: &MatchingCriteria) -> u64 {
-        let tier_price = provider.pricing.tier_pricing.get(&criteria.preferred_tier)
+        let tier_price = provider
+            .pricing
+            .tier_pricing
+            .get(&criteria.preferred_tier)
             .copied()
             .unwrap_or(100);
 
-        let size_gb = (criteria.required_capacity as f64 / (1024.0 * 1024.0 * 1024.0)).ceil() as u64;
+        let size_gb =
+            (criteria.required_capacity as f64 / (1024.0 * 1024.0 * 1024.0)).ceil() as u64;
         tier_price * size_gb
     }
 
@@ -599,7 +617,8 @@ impl StorageMarket {
 
     /// Get providers in a specific region
     pub fn get_providers_by_region(&self, region: &str) -> Vec<&StorageProvider> {
-        self.providers.values()
+        self.providers
+            .values()
             .filter(|p| p.location.region == region || p.location.country == region)
             .collect()
     }
@@ -634,7 +653,11 @@ impl StorageMarket {
     }
 
     /// Get pending requests by criteria
-    pub fn get_pending_requests_by_criteria(&self, tier: Option<StorageTier>, max_size: Option<u64>) -> Vec<(String, &StorageRequest)> {
+    pub fn get_pending_requests_by_criteria(
+        &self,
+        tier: Option<StorageTier>,
+        max_size: Option<u64>,
+    ) -> Vec<(String, &StorageRequest)> {
         self.pending_requests
             .iter()
             .filter(|(_, request)| {
@@ -658,7 +681,7 @@ impl StorageMarket {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         if ad.valid_until <= current_time {
             return Err(anyhow!("Advertisement has expired"));
         }
@@ -689,7 +712,10 @@ impl StorageMarket {
     }
 
     /// Get advertisements for customer segment
-    pub fn get_advertisements_for_segment(&self, segment: CustomerSegment) -> Vec<&ServiceAdvertisement> {
+    pub fn get_advertisements_for_segment(
+        &self,
+        segment: CustomerSegment,
+    ) -> Vec<&ServiceAdvertisement> {
         self.service_ads
             .values()
             .filter(|ad| ad.target_segments.contains(&segment))
@@ -704,7 +730,8 @@ impl StorageMarket {
             .as_secs();
 
         let initial_count = self.service_ads.len();
-        self.service_ads.retain(|_, ad| ad.valid_until > current_time);
+        self.service_ads
+            .retain(|_, ad| ad.valid_until > current_time);
         initial_count - self.service_ads.len()
     }
 
@@ -746,22 +773,26 @@ impl StorageMarket {
     /// Get regional market statistics
     pub fn get_regional_stats(&self, region_id: &str) -> Option<RegionalMarketStats> {
         let providers = self.get_providers_in_region(region_id);
-        
+
         if providers.is_empty() {
             return None;
         }
 
         let total_capacity: u64 = providers.iter().map(|p| p.capacity.total_capacity).sum();
-        let available_capacity: u64 = providers.iter().map(|p| p.capacity.available_capacity).sum();
-        let avg_reputation: f64 = providers.iter().map(|p| p.reputation_score).sum::<f64>() / providers.len() as f64;
-        
+        let available_capacity: u64 = providers
+            .iter()
+            .map(|p| p.capacity.available_capacity)
+            .sum();
+        let avg_reputation: f64 =
+            providers.iter().map(|p| p.reputation_score).sum::<f64>() / providers.len() as f64;
+
         // Calculate average price for Cold tier
         let cold_prices: Vec<u64> = providers
             .iter()
             .filter_map(|p| p.pricing.tier_pricing.get(&StorageTier::Cold))
             .cloned()
             .collect();
-        
+
         let avg_price = if !cold_prices.is_empty() {
             cold_prices.iter().sum::<u64>() / cold_prices.len() as u64
         } else {
@@ -780,7 +811,9 @@ impl StorageMarket {
             },
             average_price_per_gb: avg_price,
             average_reputation: avg_reputation,
-            active_advertisements: self.service_ads.values()
+            active_advertisements: self
+                .service_ads
+                .values()
                 .filter(|ad| providers.iter().any(|p| p.provider_id == ad.provider_id))
                 .count() as u32,
         })
@@ -789,7 +822,7 @@ impl StorageMarket {
     /// Match pending requests with advertisements
     pub fn match_requests_with_ads(&self) -> Vec<RequestAdvertisementMatch> {
         let mut matches = Vec::new();
-        
+
         for (request_id, request) in &self.pending_requests {
             for ad in self.get_active_advertisements() {
                 if let Some(match_score) = self.calculate_request_ad_match(request, ad) {
@@ -810,14 +843,18 @@ impl StorageMarket {
     }
 
     /// Calculate match score between request and advertisement
-    fn calculate_request_ad_match(&self, request: &StorageRequest, ad: &ServiceAdvertisement) -> Option<f64> {
+    fn calculate_request_ad_match(
+        &self,
+        request: &StorageRequest,
+        ad: &ServiceAdvertisement,
+    ) -> Option<f64> {
         let mut score: f64 = 0.0;
 
         // Find matching service offering
         let matching_offering = ad.services.iter().find(|service| {
-            service.tier == request.tier 
-            && request.size >= service.min_capacity 
-            && request.size <= service.max_capacity
+            service.tier == request.tier
+                && request.size >= service.min_capacity
+                && request.size <= service.max_capacity
         })?;
 
         score += 0.4; // Base score for tier and capacity match
@@ -851,12 +888,14 @@ impl StorageMarket {
         if let Some(service) = ad.services.iter().find(|s| s.tier == request.tier) {
             let size_gb = (request.size as f64 / (1024.0 * 1024.0 * 1024.0)).ceil() as u64;
             let base_cost = service.price_per_gb_month * size_gb;
-            
+
             // Apply special offers
-            let discount = ad.special_offers.iter()
+            let discount = ad
+                .special_offers
+                .iter()
                 .map(|offer| offer.discount_percentage)
                 .fold(0.0, f64::max);
-            
+
             (base_cost as f64 * (1.0 - discount / 100.0)) as u64
         } else {
             u64::MAX // No matching service
@@ -864,13 +903,17 @@ impl StorageMarket {
     }
 
     /// Get detailed match information
-    fn get_match_details(&self, request: &StorageRequest, ad: &ServiceAdvertisement) -> MatchDetails {
+    fn get_match_details(
+        &self,
+        request: &StorageRequest,
+        ad: &ServiceAdvertisement,
+    ) -> MatchDetails {
         let mut reasons = Vec::new();
         let mut concerns = Vec::new();
 
         if let Some(service) = ad.services.iter().find(|s| s.tier == request.tier) {
             reasons.push(format!("Supports {} tier", format!("{:?}", service.tier)));
-            
+
             if request.size >= service.min_capacity && request.size <= service.max_capacity {
                 reasons.push("Capacity requirements met".to_string());
             }
@@ -883,10 +926,7 @@ impl StorageMarket {
             }
         }
 
-        MatchDetails {
-            reasons,
-            concerns,
-        }
+        MatchDetails { reasons, concerns }
     }
 
     /// Find storage providers matching requirements
@@ -901,7 +941,7 @@ impl StorageMarket {
             .filter(|(_, provider)| {
                 provider.capacity.available_capacity >= required_size
                     && provider.is_online
-                    && (region_preference.is_none() 
+                    && (region_preference.is_none()
                         || region_preference.as_ref() == Some(&provider.location.region))
             })
             .take(min_replicas as usize)
@@ -917,13 +957,13 @@ impl StorageMarket {
         quality_requirements: &crate::types::QualityRequirements,
     ) -> Vec<String> {
         use QualityRequirementsExt;
-        
+
         // Validate quality requirements first
         if let Err(e) = quality_requirements.validate_against_limits() {
             log::warn!("Invalid quality requirements: {}", e);
             return Vec::new();
         }
-        
+
         self.providers
             .iter()
             .filter(|(_, provider)| {
@@ -944,42 +984,43 @@ impl StorageMarket {
         quality_requirements: &crate::types::QualityRequirements,
     ) -> Vec<(String, f64)> {
         use QualityRequirementsExt;
-        
+
         let mut provider_scores = Vec::new();
-        
+
         for (provider_id, provider) in &self.providers {
             let mut score = 0.0;
-            
+
             // Uptime score (0-25 points)
             if provider.reputation_score >= quality_requirements.get_min_uptime() {
                 score += 25.0;
             } else {
                 score += provider.reputation_score * 25.0;
             }
-            
+
             // Geographic distribution bonus (0-20 points)
             if quality_requirements.has_geographic_constraints() {
                 score += 20.0; // Assumes provider meets geo requirements
             } else {
                 score += 15.0; // Default regional bonus
             }
-            
+
             // Certification bonus (0-15 points)
             if quality_requirements.requires_certifications() {
                 score += provider.reputation_score * 15.0; // High reputation = likely certified
             } else {
                 score += 10.0; // Default certification score
             }
-            
+
             // Replication capability (0-20 points)
-            let replication_score = if provider.capacity.total_capacity > 
-                (quality_requirements.get_min_replication() as u64 * 1_000_000) {
+            let replication_score = if provider.capacity.total_capacity
+                > (quality_requirements.get_min_replication() as u64 * 1_000_000)
+            {
                 20.0
             } else {
                 10.0
             };
             score += replication_score;
-            
+
             // Response time factor (0-20 points)
             let response_bonus = if quality_requirements.get_max_response_time() > 100 {
                 20.0 // Generous time allowance
@@ -987,17 +1028,21 @@ impl StorageMarket {
                 15.0 // Strict requirements
             };
             score += response_bonus;
-            
+
             provider_scores.push((provider_id.clone(), score));
         }
-        
+
         // Sort by score (highest first)
         provider_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         provider_scores
     }
 
     /// Record contract creation for market statistics
-    pub async fn record_contract_creation(&mut self, _contract_id: String, _total_cost: u64) -> Result<()> {
+    pub async fn record_contract_creation(
+        &mut self,
+        _contract_id: String,
+        _total_cost: u64,
+    ) -> Result<()> {
         // Update market statistics
         self.update_market_stats();
         Ok(())
@@ -1006,20 +1051,27 @@ impl StorageMarket {
     /// Update market statistics
     fn update_market_stats(&mut self) {
         self.market_stats.total_providers = self.providers.len() as u32;
-        self.market_stats.total_capacity = self.providers.values()
+        self.market_stats.total_capacity = self
+            .providers
+            .values()
             .map(|p| p.capacity.total_capacity)
             .sum();
-        self.market_stats.utilized_capacity = self.providers.values()
+        self.market_stats.utilized_capacity = self
+            .providers
+            .values()
             .map(|p| p.capacity.used_capacity)
             .sum();
 
         // Calculate average price (simplified)
-        let total_prices: u64 = self.providers.values()
+        let total_prices: u64 = self
+            .providers
+            .values()
             .filter_map(|p| p.pricing.tier_pricing.get(&StorageTier::Cold))
             .sum();
-        
+
         if self.market_stats.total_providers > 0 {
-            self.market_stats.avg_price_per_gb = total_prices / (self.market_stats.total_providers as u64);
+            self.market_stats.avg_price_per_gb =
+                total_prices / (self.market_stats.total_providers as u64);
         }
 
         self.market_stats.last_updated = std::time::SystemTime::now()
@@ -1097,10 +1149,10 @@ trait UrgencyLevelExt {
 impl UrgencyLevelExt for UrgencyLevel {
     fn get_max_price_per_gb(&self) -> Option<u64> {
         match self {
-            UrgencyLevel::Low => Some(50),    // Low urgency = budget conscious
+            UrgencyLevel::Low => Some(50),     // Low urgency = budget conscious
             UrgencyLevel::Normal => Some(100), // Normal urgency = standard pricing
-            UrgencyLevel::High => Some(200),  // High urgency = premium acceptable
-            UrgencyLevel::Critical => None,   // Critical = price no object
+            UrgencyLevel::High => Some(200),   // High urgency = premium acceptable
+            UrgencyLevel::Critical => None,    // Critical = price no object
         }
     }
 }
@@ -1120,45 +1172,46 @@ impl QualityRequirementsExt for crate::types::QualityRequirements {
     fn get_min_uptime(&self) -> f64 {
         self.min_uptime
     }
-    
+
     fn get_max_response_time(&self) -> u64 {
         self.max_response_time
     }
-    
+
     fn get_min_replication(&self) -> u8 {
         self.min_replication
     }
-    
+
     fn has_geographic_constraints(&self) -> bool {
-        self.geographic_distribution.is_some() && 
-        !self.geographic_distribution.as_ref().unwrap().is_empty()
+        self.geographic_distribution.is_some()
+            && !self.geographic_distribution.as_ref().unwrap().is_empty()
     }
-    
+
     fn requires_certifications(&self) -> bool {
         !self.required_certifications.is_empty()
     }
-    
+
     fn meets_provider_capability(&self, provider: &StorageProvider) -> bool {
         // For this implementation, we'll use basic checks with available fields
         // In a full implementation, performance metrics would be tracked separately
-        
+
         // Check reputation as a proxy for uptime/performance
         if provider.reputation_score < self.min_uptime {
             return false;
         }
-        
+
         // Check replication capability (using capacity total_capacity as a simple proxy)
-        if provider.capacity.total_capacity < (self.min_replication as u64 * 1_000_000) { // Minimum storage for replication
+        if provider.capacity.total_capacity < (self.min_replication as u64 * 1_000_000) {
+            // Minimum storage for replication
             return false;
         }
-        
+
         // Check geographic requirements
         if let Some(required_regions) = &self.geographic_distribution {
             if !required_regions.contains(&provider.location.region) {
                 return false;
             }
         }
-        
+
         // Check certifications (simplified - could be added to metadata in full implementation)
         if !self.required_certifications.is_empty() {
             // For now, assume high reputation providers have certifications
@@ -1166,23 +1219,23 @@ impl QualityRequirementsExt for crate::types::QualityRequirements {
                 return false;
             }
         }
-        
+
         true
     }
-    
+
     fn validate_against_limits(&self) -> Result<(), String> {
         if self.min_uptime < 0.0 || self.min_uptime > 1.0 {
             return Err("Minimum uptime must be between 0.0 and 1.0".to_string());
         }
-        
+
         if self.max_response_time == 0 {
             return Err("Maximum response time must be greater than 0".to_string());
         }
-        
+
         if self.min_replication == 0 {
             return Err("Minimum replication must be at least 1".to_string());
         }
-        
+
         Ok(())
     }
 }
@@ -1201,10 +1254,10 @@ mod tests {
     #[test]
     fn test_provider_registration() {
         let mut market = StorageMarket::new();
-        
+
         let provider = create_test_provider();
         market.register_provider(provider).unwrap();
-        
+
         assert_eq!(market.providers.len(), 1);
         assert_eq!(market.market_stats.total_providers, 1);
     }
@@ -1212,13 +1265,13 @@ mod tests {
     #[test]
     fn test_pending_requests() {
         let mut market = StorageMarket::new();
-        
+
         let request = create_test_storage_request();
         let request_id = market.add_pending_request(request.clone()).unwrap();
-        
+
         assert_eq!(market.pending_requests.len(), 1);
         assert!(market.get_pending_request(&request_id).is_some());
-        
+
         // Test fulfillment
         let fulfilled = market.fulfill_request(&request_id);
         assert!(fulfilled.is_some());
@@ -1228,20 +1281,20 @@ mod tests {
     #[test]
     fn test_service_advertisements() {
         let mut market = StorageMarket::new();
-        
+
         // Add a provider first
         let provider = create_test_provider();
         market.register_provider(provider).unwrap();
-        
+
         // Add advertisement
         let ad = create_test_advertisement();
         market.add_service_advertisement(ad).unwrap();
-        
+
         assert_eq!(market.service_ads.len(), 1);
-        
+
         let active_ads = market.get_active_advertisements();
         assert_eq!(active_ads.len(), 1);
-        
+
         let provider_ads = market.get_advertisements_by_provider("provider1");
         assert_eq!(provider_ads.len(), 1);
     }
@@ -1249,23 +1302,23 @@ mod tests {
     #[test]
     fn test_regions() {
         let mut market = StorageMarket::new();
-        
+
         let region = create_test_region();
         market.add_region(region).unwrap();
-        
+
         assert_eq!(market.regions.len(), 1);
         assert!(market.get_region("us-west").is_some());
-        
+
         // Add provider in region
         let provider = create_test_provider();
         market.register_provider(provider).unwrap();
-        
+
         let providers_in_region = market.get_providers_in_region("us-west");
         assert_eq!(providers_in_region.len(), 1);
-        
+
         let regional_stats = market.get_regional_stats("us-west");
         assert!(regional_stats.is_some());
-        
+
         let stats = regional_stats.unwrap();
         assert_eq!(stats.provider_count, 1);
         assert!(stats.total_capacity > 0);
@@ -1274,22 +1327,22 @@ mod tests {
     #[test]
     fn test_request_ad_matching() {
         let mut market = StorageMarket::new();
-        
+
         // Setup provider and advertisement
         let provider = create_test_provider();
         market.register_provider(provider).unwrap();
-        
+
         let ad = create_test_advertisement();
         market.add_service_advertisement(ad).unwrap();
-        
+
         // Add pending request
         let request = create_test_storage_request();
         market.add_pending_request(request).unwrap();
-        
+
         // Find matches
         let matches = market.match_requests_with_ads();
         assert!(!matches.is_empty());
-        
+
         let best_match = &matches[0];
         assert!(best_match.match_score > 0.0);
         assert!(best_match.estimated_cost > 0);
@@ -1315,7 +1368,7 @@ mod tests {
                 name: "Cold Storage Service".to_string(),
                 description: "Reliable cold storage".to_string(),
                 tier: StorageTier::Cold,
-                min_capacity: 1024 * 1024 * 1024, // 1 GB
+                min_capacity: 1024 * 1024 * 1024,        // 1 GB
                 max_capacity: 1024 * 1024 * 1024 * 1024, // 1 TB
                 price_per_gb_month: 80,
                 sla_guarantees: ServiceSLA {
@@ -1333,13 +1386,15 @@ mod tests {
                 expires_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs() + 86400 * 30,
+                    .as_secs()
+                    + 86400 * 30,
                 max_usage_count: Some(100),
             }],
             valid_until: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() + 86400 * 7, // Valid for 7 days
+                .as_secs()
+                + 86400 * 7, // Valid for 7 days
             target_segments: vec![CustomerSegment::SmallBusiness, CustomerSegment::Developer],
         }
     }
@@ -1377,8 +1432,8 @@ mod tests {
                 tags: vec!["reliable".to_string()],
             },
             capacity: StorageCapacity {
-                total_capacity: 1024 * 1024 * 1024 * 1000, // 1 TB
-                used_capacity: 1024 * 1024 * 1024 * 200,   // 200 GB
+                total_capacity: 1024 * 1024 * 1024 * 1000,    // 1 TB
+                used_capacity: 1024 * 1024 * 1024 * 200,      // 200 GB
                 available_capacity: 1024 * 1024 * 1024 * 800, // 800 GB
                 reserved_capacity: 0,
                 tier_capacity,
@@ -1409,7 +1464,8 @@ mod tests {
                 pricing_valid_until: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs() + 86400,
+                    .as_secs()
+                    + 86400,
             },
             location: GeographicLocation {
                 country: "US".to_string(),

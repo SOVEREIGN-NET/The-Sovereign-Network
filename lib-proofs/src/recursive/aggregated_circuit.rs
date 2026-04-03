@@ -1,13 +1,14 @@
 //! Aggregated Circuit Implementation
-//! 
+//!
 //! Advanced circuit aggregation system for combining multiple ZK proofs
 //! into single efficient recursive proofs with optimized verification.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use crate::plonky2::{CircuitConfig, Plonky2Proof, RecursiveProof,
-    RecursiveConfig, RecursiveProofBuilder};
+use crate::plonky2::{
+    CircuitConfig, Plonky2Proof, RecursiveConfig, RecursiveProof, RecursiveProofBuilder,
+};
 use crate::state::AggregatedStateProof;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Strategy for aggregating circuits
@@ -158,8 +159,13 @@ impl AggregatedCircuitBuilder {
     }
 
     /// Add proof to aggregation batch
-    pub(crate) fn add_proof(&mut self, proof: Plonky2Proof, metadata: Option<ProofMetadata>) -> Result<()> {
-        if self.pending_proofs.len() >= 1000 { // Reasonable limit
+    pub(crate) fn add_proof(
+        &mut self,
+        proof: Plonky2Proof,
+        metadata: Option<ProofMetadata>,
+    ) -> Result<()> {
+        if self.pending_proofs.len() >= 1000 {
+            // Reasonable limit
             return Err(anyhow::anyhow!("Too many proofs in batch"));
         }
 
@@ -190,7 +196,7 @@ impl AggregatedCircuitBuilder {
 
         // Apply aggregation strategy
         let aggregation_plan = self.create_aggregation_plan()?;
-        
+
         // Build aggregated circuit
         let aggregated_proof = self.execute_aggregation_plan(aggregation_plan)?;
 
@@ -220,27 +226,20 @@ impl AggregatedCircuitBuilder {
     /// Create aggregation plan based on strategy
     fn create_aggregation_plan(&self) -> Result<AggregationPlan> {
         match &self.rules.strategy {
-            AggregationStrategy::TypeBased => {
-                self.create_type_based_plan()
-            },
-            AggregationStrategy::GeographicClustering => {
-                self.create_geographic_plan()
-            },
-            AggregationStrategy::EconomicWeighted => {
-                self.create_economic_weighted_plan()
-            },
-            AggregationStrategy::Custom(rules) => {
-                self.create_custom_plan(rules)
-            },
+            AggregationStrategy::TypeBased => self.create_type_based_plan(),
+            AggregationStrategy::GeographicClustering => self.create_geographic_plan(),
+            AggregationStrategy::EconomicWeighted => self.create_economic_weighted_plan(),
+            AggregationStrategy::Custom(rules) => self.create_custom_plan(rules),
         }
     }
 
     /// Create type-based aggregation plan
     fn create_type_based_plan(&self) -> Result<AggregationPlan> {
         let mut type_groups: HashMap<String, Vec<usize>> = HashMap::new();
-        
+
         for (i, metadata) in self.proof_metadata.iter().enumerate() {
-            type_groups.entry(metadata.proof_type.clone())
+            type_groups
+                .entry(metadata.proof_type.clone())
                 .or_default()
                 .push(i);
         }
@@ -248,7 +247,8 @@ impl AggregatedCircuitBuilder {
         let mut batches = Vec::new();
         for (_proof_type, indices) in type_groups {
             // Split large groups into manageable batches
-            for batch_indices in indices.chunks(32) { // Max 32 proofs per batch
+            for batch_indices in indices.chunks(32) {
+                // Max 32 proofs per batch
                 batches.push(AggregationBatch {
                     proof_indices: batch_indices.to_vec(),
                     batch_type: BatchType::TypeBased,
@@ -269,21 +269,21 @@ impl AggregatedCircuitBuilder {
     fn create_geographic_plan(&self) -> Result<AggregationPlan> {
         // Group proofs by geographic proximity
         let mut geographic_groups: HashMap<String, Vec<usize>> = HashMap::new();
-        
+
         for (i, metadata) in self.proof_metadata.iter().enumerate() {
-            let region = metadata.geographic_hint
+            let region = metadata
+                .geographic_hint
                 .as_ref()
                 .map(|g| g.region_id.clone())
                 .unwrap_or_else(|| "default".to_string());
-            
-            geographic_groups.entry(region)
-                .or_default()
-                .push(i);
+
+            geographic_groups.entry(region).or_default().push(i);
         }
 
         let mut batches = Vec::new();
         for (_region, indices) in geographic_groups {
-            for batch_indices in indices.chunks(24) { // Smaller batches for geographic clustering
+            for batch_indices in indices.chunks(24) {
+                // Smaller batches for geographic clustering
                 batches.push(AggregationBatch {
                     proof_indices: batch_indices.to_vec(),
                     batch_type: BatchType::Geographic,
@@ -303,21 +303,26 @@ impl AggregatedCircuitBuilder {
     /// Create economic weighted plan
     fn create_economic_weighted_plan(&self) -> Result<AggregationPlan> {
         // Sort proofs by economic weight and group accordingly
-        let mut weighted_indices: Vec<(usize, f64)> = self.proof_metadata.iter()
+        let mut weighted_indices: Vec<(usize, f64)> = self
+            .proof_metadata
+            .iter()
             .enumerate()
             .map(|(i, meta)| (i, meta.economic_weight))
             .collect();
-        
+
         weighted_indices.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let mut batches = Vec::new();
         let sorted_indices: Vec<usize> = weighted_indices.into_iter().map(|(i, _)| i).collect();
-        
-        for batch_indices in sorted_indices.chunks(16) { // Smaller batches for high-value proofs
-            let avg_weight: f64 = batch_indices.iter()
+
+        for batch_indices in sorted_indices.chunks(16) {
+            // Smaller batches for high-value proofs
+            let avg_weight: f64 = batch_indices
+                .iter()
                 .map(|&i| self.proof_metadata[i].economic_weight)
-                .sum::<f64>() / batch_indices.len() as f64;
-            
+                .sum::<f64>()
+                / batch_indices.len() as f64;
+
             batches.push(AggregationBatch {
                 proof_indices: batch_indices.to_vec(),
                 batch_type: BatchType::EconomicWeighted,
@@ -341,13 +346,12 @@ impl AggregatedCircuitBuilder {
         // Process proofs in priority order
         for proof_type in &rules.priority_order {
             let type_weight = rules.type_weights.get(proof_type).unwrap_or(&1.0);
-            
-            let matching_indices: Vec<usize> = self.proof_metadata.iter()
+
+            let matching_indices: Vec<usize> = self
+                .proof_metadata
+                .iter()
                 .enumerate()
-                .filter(|(i, meta)| {
-                    !used_indices.contains(i) && 
-                    meta.proof_type == *proof_type
-                })
+                .filter(|(i, meta)| !used_indices.contains(i) && meta.proof_type == *proof_type)
                 .map(|(i, _)| i)
                 .collect();
 
@@ -396,12 +400,15 @@ impl AggregatedCircuitBuilder {
         sorted_batches.sort_by(|a, b| b.priority.cmp(&a.priority));
 
         // Execute batches (simplified - in practice would be more sophisticated)
-        let batch_proofs: Vec<Plonky2Proof> = sorted_batches.iter()
+        let batch_proofs: Vec<Plonky2Proof> = sorted_batches
+            .iter()
             .map(|batch| {
-                let batch_proofs: Vec<Plonky2Proof> = batch.proof_indices.iter()
+                let batch_proofs: Vec<Plonky2Proof> = batch
+                    .proof_indices
+                    .iter()
                     .map(|&i| self.pending_proofs[i].clone())
                     .collect();
-                
+
                 // Create mini-aggregation for this batch
                 self.create_batch_aggregation(batch_proofs)
             })
@@ -433,9 +440,9 @@ impl AggregatedCircuitBuilder {
         for proof in proofs {
             builder.add_proof(proof)?;
         }
-        
+
         let recursive_proof = builder.build()?;
-        
+
         // Extract the final aggregated proof
         Ok(if !recursive_proof.recursive_layers.is_empty() {
             recursive_proof.recursive_layers.last().unwrap().clone()
@@ -483,32 +490,37 @@ impl AggregatedCircuitBuilder {
     }
 
     fn estimate_batch_cost(&self, indices: &[usize]) -> u64 {
-        indices.iter()
+        indices
+            .iter()
             .map(|&i| self.proof_metadata[i].verification_cost)
             .sum()
     }
 
     fn calculate_compression_ratio(&self, _proof: &RecursiveProof) -> f32 {
         // Calculate how much space was saved through aggregation
-        let original_size: u64 = self.pending_proofs.iter()
+        let original_size: u64 = self
+            .pending_proofs
+            .iter()
             .map(|p| p.proof.len() as u64)
             .sum();
-        
+
         let aggregated_size = 1000u64; // Placeholder - would be actual proof size
-        
+
         original_size as f32 / aggregated_size.max(1) as f32
     }
 
     fn estimate_verification_time(&self) -> u64 {
         // Estimate verification time in milliseconds
-        self.proof_metadata.iter()
+        self.proof_metadata
+            .iter()
             .map(|meta| meta.verification_cost / 1000) // Convert to ms
             .sum::<u64>()
             .max(1)
     }
 
     fn estimate_memory_usage(&self) -> u64 {
-        self.proof_metadata.iter()
+        self.proof_metadata
+            .iter()
             .map(|meta| meta.memory_usage)
             .sum()
     }
@@ -554,7 +566,7 @@ impl AggregatedCircuit {
     pub fn new() -> Result<Self> {
         let rules = CircuitAggregationRules::default();
         let builder = AggregatedCircuitBuilder::new(rules)?;
-        
+
         Ok(Self { builder })
     }
 

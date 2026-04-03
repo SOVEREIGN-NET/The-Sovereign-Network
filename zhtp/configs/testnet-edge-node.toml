@@ -5,7 +5,7 @@
 # Core Node Settings
 mesh_mode = "Mesh"  # Primarily mesh-based
 security_level = "Medium"
-environment = "Testnet"
+runtime_role = "EDGE"
 data_directory = "./data/testnet-edge"
 
 [crypto_config]

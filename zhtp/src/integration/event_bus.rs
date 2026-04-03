@@ -1,19 +1,22 @@
 //! Event Bus for Inter-Component Communication
-//! 
+//!
 //! Provides publish-subscribe messaging between ZHTP components
 
-use anyhow::{Result, Context};
-use serde::{Serialize, Deserialize};
+use crate::integration::dependency_injection::Injectable;
+use anyhow::{Context, Result};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, atomic::{AtomicU64, AtomicBool, Ordering}};
-use tokio::sync::{RwLock, mpsc, broadcast};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::time::{Duration, Instant};
-use tracing::{info, error, debug};
-use crate::integration::dependency_injection::Injectable;
-use async_trait::async_trait;
+use tracing::{debug, error, info};
 
 /// Event bus for component communication
 pub struct EventBus {
@@ -38,7 +41,8 @@ pub struct Event {
 }
 
 /// Event handler function type
-pub type EventHandler = Box<dyn Fn(Event) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>;
+pub type EventHandler =
+    Box<dyn Fn(Event) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>;
 
 /// Event bus configuration
 #[derive(Debug, Clone)]
@@ -129,11 +133,11 @@ impl EventBus {
     /// Stop the event bus
     pub async fn stop(&self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
-        
+
         // Clear all publishers and subscribers
         self.publishers.write().await.clear();
         self.subscribers.write().await.clear();
-        
+
         info!("Event bus stopped");
         Ok(())
     }
@@ -176,10 +180,10 @@ impl EventBus {
         match publisher.send(event.clone()) {
             Ok(_) => {
                 debug!("Published event: {} to topic: {}", event.id, topic);
-                
+
                 // Notify direct subscribers
                 self.notify_subscribers(topic, event).await?;
-                
+
                 Ok(())
             }
             Err(e) => {
@@ -223,7 +227,8 @@ impl EventBus {
             }
         };
 
-        publisher.send(event.clone())
+        publisher
+            .send(event.clone())
             .context("Failed to publish event")?;
 
         self.notify_subscribers(topic, event).await?;
@@ -236,18 +241,21 @@ impl EventBus {
         F: Fn(Event) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync + 'static,
     {
         let subscription_id = format!("sub_{}_{}", topic, uuid::Uuid::new_v4());
-        
+
         // Add handler to subscribers
         {
             let mut subscribers = self.subscribers.write().await;
-            let handlers = subscribers.entry(topic.to_string()).or_insert_with(Vec::new);
-            
+            let handlers = subscribers
+                .entry(topic.to_string())
+                .or_insert_with(Vec::new);
+
             if handlers.len() >= self.config.max_subscribers_per_topic {
                 return Err(anyhow::anyhow!(
-                    "Maximum subscribers reached for topic: {}", topic
+                    "Maximum subscribers reached for topic: {}",
+                    topic
                 ));
             }
-            
+
             handlers.push(Box::new(handler));
         }
 
@@ -258,13 +266,13 @@ impl EventBus {
         }
 
         let (unsubscribe_tx, mut unsubscribe_rx) = mpsc::unbounded_channel::<String>();
-        
+
         // Spawn unsubscribe handler
         let topic_clone = topic.to_string();
         let subscribers_clone = self.subscribers.clone();
         let metrics_clone = self.metrics.clone();
         let enable_metrics = self.config.enable_metrics;
-        
+
         tokio::spawn(async move {
             if let Some(handler_id) = unsubscribe_rx.recv().await {
                 // Remove specific subscription by handler ID
@@ -276,20 +284,20 @@ impl EventBus {
                     } else {
                         return; // Invalid handler ID format
                     };
-                    
+
                     handlers.retain(|handler| {
                         // In implementation, each handler would have an ID
                         // For now, we'll use a hash-based approach to identify handlers
                         let handler_hash = calculate_handler_hash(handler);
                         handler_hash != handler_id_u64
                     });
-                    
+
                     // Clean up empty handler lists
                     if handlers.is_empty() {
                         subscribers.remove(&topic_clone);
                     }
                 }
-                
+
                 // Update metrics
                 if enable_metrics {
                     let mut metrics = metrics_clone.write().await;
@@ -297,13 +305,16 @@ impl EventBus {
                         metrics.active_subscriptions -= 1;
                     }
                 }
-                
+
                 debug!("Unsubscribed from topic: {}", topic_clone);
             }
         });
 
-        debug!("Subscribed to topic: {} with ID: {}", topic, subscription_id);
-        
+        debug!(
+            "Subscribed to topic: {} with ID: {}",
+            topic, subscription_id
+        );
+
         Ok(SubscriptionHandle {
             topic: topic.to_string(),
             subscription_id,
@@ -312,12 +323,20 @@ impl EventBus {
     }
 
     /// Subscribe to multiple topics with pattern matching
-    pub async fn subscribe_pattern<F>(&self, pattern: &str, handler: F) -> Result<Vec<SubscriptionHandle>>
+    pub async fn subscribe_pattern<F>(
+        &self,
+        pattern: &str,
+        handler: F,
+    ) -> Result<Vec<SubscriptionHandle>>
     where
-        F: Fn(Event) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync + 'static + Clone,
+        F: Fn(Event) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+            + Send
+            + Sync
+            + 'static
+            + Clone,
     {
         let mut handles = Vec::new();
-        
+
         // Get all current topics that match pattern
         let publishers = self.publishers.read().await;
         for topic in publishers.keys() {
@@ -326,8 +345,12 @@ impl EventBus {
                 handles.push(handle);
             }
         }
-        
-        debug!("Subscribed to {} topics matching pattern: {}", handles.len(), pattern);
+
+        debug!(
+            "Subscribed to {} topics matching pattern: {}",
+            handles.len(),
+            pattern
+        );
         Ok(handles)
     }
 
@@ -341,7 +364,7 @@ impl EventBus {
             publishers.insert(topic.to_string(), sender.clone());
             sender
         };
-        
+
         Ok(sender.subscribe())
     }
 
@@ -350,7 +373,7 @@ impl EventBus {
         let subscribers = self.subscribers.read().await;
         if let Some(handlers) = subscribers.get(topic) {
             let start_time = Instant::now();
-            
+
             for handler in handlers {
                 let event_clone = event.clone();
                 match handler(event_clone).await {
@@ -359,7 +382,7 @@ impl EventBus {
                     }
                     Err(e) => {
                         error!("Event {} processing failed: {}", event.id, e);
-                        
+
                         // Update failure metrics
                         if self.config.enable_metrics {
                             let mut metrics = self.metrics.write().await;
@@ -368,16 +391,18 @@ impl EventBus {
                     }
                 }
             }
-            
+
             // Update processing time metrics
             if self.config.enable_metrics {
                 let processing_time = start_time.elapsed();
                 let mut metrics = self.metrics.write().await;
-                metrics.processing_times.insert(topic.to_string(), processing_time);
+                metrics
+                    .processing_times
+                    .insert(topic.to_string(), processing_time);
                 metrics.total_events_processed += 1;
             }
         }
-        
+
         Ok(())
     }
 
@@ -385,32 +410,35 @@ impl EventBus {
     async fn update_publish_metrics(&self, topic: &str) {
         let mut metrics = self.metrics.write().await;
         metrics.total_events_published += 1;
-        *metrics.events_per_topic.entry(topic.to_string()).or_insert(0) += 1;
+        *metrics
+            .events_per_topic
+            .entry(topic.to_string())
+            .or_insert(0) += 1;
     }
 
     /// Start metrics collection
     async fn start_metrics_collection(&self) -> Result<()> {
         let metrics = self.metrics.clone();
         let running = self.running.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
-            
+
             while running.load(Ordering::SeqCst) {
                 interval.tick().await;
-                
+
                 // Calculate average processing time
                 let mut metrics_guard = metrics.write().await;
                 if !metrics_guard.processing_times.is_empty() {
                     let total_time: Duration = metrics_guard.processing_times.values().sum();
-                    metrics_guard.average_processing_time = 
+                    metrics_guard.average_processing_time =
                         total_time / metrics_guard.processing_times.len() as u32;
                 }
-                
+
                 debug!("Event bus metrics updated");
             }
         });
-        
+
         Ok(())
     }
 
@@ -419,17 +447,17 @@ impl EventBus {
         if pattern == "*" {
             return true;
         }
-        
+
         if pattern.ends_with('*') {
             let prefix = &pattern[..pattern.len() - 1];
             return topic.starts_with(prefix);
         }
-        
+
         if pattern.starts_with('*') {
             let suffix = &pattern[1..];
             return topic.ends_with(suffix);
         }
-        
+
         topic == pattern
     }
 
@@ -443,10 +471,14 @@ impl EventBus {
         let running = self.running.load(Ordering::SeqCst);
         let publishers = self.publishers.read().await;
         let subscribers = self.subscribers.read().await;
-        
-        debug!("Event bus health: running={}, topics={}, subscribers={}", 
-               running, publishers.len(), subscribers.len());
-        
+
+        debug!(
+            "Event bus health: running={}, topics={}, subscribers={}",
+            running,
+            publishers.len(),
+            subscribers.len()
+        );
+
         Ok(running)
     }
 
@@ -459,17 +491,20 @@ impl EventBus {
     /// Get subscription count for a topic
     pub async fn get_subscription_count(&self, topic: &str) -> usize {
         let subscribers = self.subscribers.read().await;
-        subscribers.get(topic).map(|handlers| handlers.len()).unwrap_or(0)
+        subscribers
+            .get(topic)
+            .map(|handlers| handlers.len())
+            .unwrap_or(0)
     }
 
     /// Clear all events and subscriptions for a topic
     pub async fn clear_topic(&self, topic: &str) -> Result<()> {
         let mut publishers = self.publishers.write().await;
         let mut subscribers = self.subscribers.write().await;
-        
+
         publishers.remove(topic);
         subscribers.remove(topic);
-        
+
         debug!("Cleared topic: {}", topic);
         Ok(())
     }
@@ -482,7 +517,7 @@ impl SubscriptionHandle {
         // due to the mpsc channel closure
         debug!("Unsubscribing from topic: {}", self.topic);
     }
-    
+
     /// Get subscription info
     pub fn info(&self) -> SubscriptionInfo {
         SubscriptionInfo {
@@ -530,17 +565,17 @@ impl Event {
         if pattern == "*" {
             return true;
         }
-        
+
         if pattern.ends_with('*') {
             let prefix = &pattern[..pattern.len() - 1];
             return self.event_type.starts_with(prefix);
         }
-        
+
         if pattern.starts_with('*') {
             let suffix = &pattern[1..];
             return self.event_type.ends_with(suffix);
         }
-        
+
         self.event_type == pattern
     }
 
@@ -550,7 +585,6 @@ impl Event {
         now.saturating_sub(self.timestamp)
     }
 }
-
 
 #[async_trait]
 impl Injectable for EventBus {
@@ -572,15 +606,15 @@ impl Injectable for EventBus {
 
 /// Calculate hash for event handler identification
 fn calculate_handler_hash(handler: &EventHandler) -> u64 {
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
-    
+    use std::hash::{Hash, Hasher};
+
     let mut hasher = DefaultHasher::new();
-    
+
     // Hash the handler function pointer representation
     // This is a simplified approach - in production, handlers would have unique IDs
     let handler_ptr = handler as *const _ as usize;
     handler_ptr.hash(&mut hasher);
-    
+
     hasher.finish()
 }

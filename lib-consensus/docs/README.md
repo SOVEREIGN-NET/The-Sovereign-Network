@@ -14,6 +14,12 @@ Welcome to the ZHTP Consensus documentation. This directory contains comprehensi
   - Reward system
   - Configuration and monitoring
 
+- **[DIFFICULTY_GOVERNANCE.md](DIFFICULTY_GOVERNANCE.md)** - Comprehensive difficulty parameter governance documentation
+  - Adaptive difficulty adjustment for PoUW consensus
+  - Governance flow and DAO integration
+  - Parameter validation and configuration
+  - API reference and examples
+
 ### API Reference
 
 - **[API_REFERENCE.md](api-reference.md)** - API documentation for consensus components
@@ -95,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize consensus with hybrid PoS + PoStorage
     let config = ConsensusConfig {
         consensus_type: ConsensusType::Hybrid,
-        min_stake: 1000 * 1_000_000,           // 1000 ZHTP
+        min_stake: 1000 * 1_000_000,           // 1000 SOV
         min_storage: 100 * 1024 * 1024 * 1024, // 100 GB
         max_validators: 100,
         block_time: 10,

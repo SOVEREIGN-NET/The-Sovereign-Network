@@ -1,17 +1,17 @@
 //! Core transaction structure and implementation
-//! 
+//!
 //! Defines the main transaction structure used throughout the economic system
 //! with comprehensive fee tracking and DAO integration.
 
+use crate::types::{Priority, TransactionType, TransactionTypeExt};
+use crate::wasm::{compatibility::current_timestamp, hash_blake3};
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use crate::types::{TransactionType, Priority};
-use crate::wasm::{hash_blake3, compatibility::current_timestamp};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TRANSACTION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Economic transaction in the ZHTP network
+/// Economic transaction in the SOV network
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     /// Unique transaction identifier
@@ -50,9 +50,18 @@ impl Transaction {
     ) -> Result<Self> {
         let timestamp = current_timestamp()?;
         let counter = TRANSACTION_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let tx_id = hash_blake3(&format!("tx_{}_{}_{}_{}_{}", 
-            hex::encode(from), hex::encode(to), amount, timestamp, counter).as_bytes());
-        
+        let tx_id = hash_blake3(
+            &format!(
+                "tx_{}_{}_{}_{}_{}",
+                hex::encode(from),
+                hex::encode(to),
+                amount,
+                timestamp,
+                counter
+            )
+            .as_bytes(),
+        );
+
         // Calculate fees based on transaction type
         let (base_fee, dao_fee, total_fee) = if tx_type.is_fee_exempt() {
             // UBI and welfare distributions are fee-free
@@ -61,14 +70,16 @@ impl Transaction {
             // All other transactions pay full fees including mandatory DAO fee
             crate::models::calculate_total_fee(tx_size, amount, priority)
         };
-        
+
         // Generate DAO fee proof (ensures DAO fee was properly calculated)
         let dao_fee_proof = if dao_fee > 0 {
-            Some(hash_blake3(&format!("dao_fee_proof_{}_{}", dao_fee, timestamp).as_bytes()))
+            Some(hash_blake3(
+                &format!("dao_fee_proof_{}_{}", dao_fee, timestamp).as_bytes(),
+            ))
         } else {
             None
         };
-        
+
         Ok(Transaction {
             tx_id,
             from,
@@ -83,30 +94,56 @@ impl Transaction {
             dao_fee_proof,
         })
     }
-    
+
     /// Create a specific type of transaction with appropriate defaults
-    pub fn new_payment(from: [u8; 32], to: [u8; 32], amount: u64, priority: Priority) -> Result<Self> {
+    pub fn new_payment(
+        from: [u8; 32],
+        to: [u8; 32],
+        amount: u64,
+        priority: Priority,
+    ) -> Result<Self> {
         Self::new(from, to, amount, TransactionType::Payment, 250, priority) // 250 bytes typical
     }
-    
+
     /// Create a reward transaction
     pub fn new_reward(to: [u8; 32], amount: u64) -> Result<Self> {
         let from = [0u8; 32]; // Network address
-        Self::new(from, to, amount, TransactionType::Reward, 200, Priority::Normal)
+        Self::new(
+            from,
+            to,
+            amount,
+            TransactionType::Reward,
+            200,
+            Priority::Normal,
+        )
     }
-    
+
     /// Create a UBI distribution transaction (fee-free)
     pub fn new_ubi_distribution(to: [u8; 32], amount: u64) -> Result<Self> {
         let from = [0u8; 32]; // DAO treasury address
-        Self::new(from, to, amount, TransactionType::UbiDistribution, 200, Priority::Normal)
+        Self::new(
+            from,
+            to,
+            amount,
+            TransactionType::UbiDistribution,
+            200,
+            Priority::Normal,
+        )
     }
-    
+
     /// Create a welfare distribution transaction (fee-free)
     pub fn new_welfare_distribution(to: [u8; 32], amount: u64) -> Result<Self> {
         let from = [0u8; 32]; // DAO treasury address
-        Self::new(from, to, amount, TransactionType::WelfareDistribution, 200, Priority::Normal)
+        Self::new(
+            from,
+            to,
+            amount,
+            TransactionType::WelfareDistribution,
+            200,
+            Priority::Normal,
+        )
     }
-    
+
     /// Get transaction hash for signing
     pub fn signing_hash(&self) -> [u8; 32] {
         let signing_data = format!(
@@ -120,7 +157,7 @@ impl Transaction {
         );
         hash_blake3(signing_data.as_bytes())
     }
-    
+
     /// Get transaction summary for display
     pub fn summary(&self) -> serde_json::Value {
         serde_json::json!({
@@ -137,22 +174,22 @@ impl Transaction {
             "has_dao_proof": self.dao_fee_proof.is_some()
         })
     }
-    
+
     /// Check if this transaction contributes to UBI funding
     pub fn contributes_to_ubi(&self) -> bool {
         self.dao_fee > 0
     }
-    
+
     /// Get the effective cost to sender (amount + fees)
     pub fn total_cost(&self) -> u64 {
         self.amount + self.total_fee
     }
-    
+
     /// Check if transaction is a distribution from DAO treasury
     pub fn is_dao_distribution(&self) -> bool {
-        matches!(self.tx_type, 
-            TransactionType::UbiDistribution | 
-            TransactionType::WelfareDistribution
+        matches!(
+            self.tx_type,
+            TransactionType::UbiDistribution | TransactionType::WelfareDistribution
         )
     }
 }

@@ -1,29 +1,29 @@
-//! Blockchain integration interfaces for ZHTP Economics
-//! 
+//! Blockchain integration interfaces for SOV Economics
+//!
 //! Provides standardized interfaces for integrating the economics engine
-//! with the ZHTP blockchain layer, handling transactions, fees, and rewards.
+//! with the SOV blockchain layer, handling transactions, fees, and rewards.
 
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
 use crate::models::EconomicModel;
 use crate::transactions::{calculate_dao_fee_distribution, Transaction};
 use crate::treasury_economics::DaoTreasury;
 use crate::wasm::logging::info;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Interface for blockchain economic events
 pub trait BlockchainEconomics {
     /// Process transaction fees from blockchain
     fn process_transaction_fees(&mut self, transaction_id: &str, fees: u64) -> Result<()>;
-    
+
     /// Handle block rewards for validators
     fn handle_block_rewards(&mut self, validator_id: &str, reward: u64) -> Result<()>;
-    
+
     /// Process DAO fee distribution
     fn process_dao_fees(&mut self, dao_fees: u64) -> Result<()>;
-    
+
     /// Handle infrastructure rewards
     fn handle_infrastructure_rewards(&mut self, provider_id: &str, reward: u64) -> Result<()>;
-    
+
     /// Process  incentives
     fn process_isp_bypass_rewards(&mut self, participant_id: &str, reward: u64) -> Result<()>;
 }
@@ -63,13 +63,16 @@ impl EconomicBlockchainData {
             timestamp: crate::wasm::compatibility::current_timestamp().unwrap_or(0),
         }
     }
-    
+
     /// Calculate total economic value
     pub fn total_value(&self) -> u64 {
-        self.transaction_fees + self.dao_fees + self.infrastructure_rewards + 
-        self.validator_rewards + self.isp_bypass_rewards
+        self.transaction_fees
+            + self.dao_fees
+            + self.infrastructure_rewards
+            + self.validator_rewards
+            + self.isp_bypass_rewards
     }
-    
+
     /// Get economic data as JSON
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
@@ -99,6 +102,7 @@ pub struct BlockchainIntegration {
     total_processed: u64,
 }
 
+#[allow(deprecated)] // SupplyManager methods are deprecated; callers will migrate to TreasuryKernel
 impl BlockchainIntegration {
     /// Create new blockchain integration
     pub fn new() -> Self {
@@ -109,27 +113,31 @@ impl BlockchainIntegration {
             total_processed: 0,
         }
     }
-    
+
     /// Submit economic data to blockchain layer
     pub fn submit_economic_data(&mut self, data: &EconomicBlockchainData) -> Result<String> {
         // Add to pending transactions
         self.pending_transactions.push(data.clone());
-        
+
         // Generate transaction hash
         let data_json = data.to_json().to_string();
         let tx_hash = hex::encode(crate::wasm::hash_blake3(data_json.as_bytes()));
-        
+
         info!(
-            " Submitted economic data to blockchain: {} ZHTP total value, hash: {}",
+            " Submitted economic data to blockchain: {} SOV total value, hash: {}",
             data.total_value(),
             &tx_hash[..8]
         );
-        
+
         Ok(tx_hash)
     }
-    
+
     /// Process confirmed economic transaction from blockchain
-    pub fn process_confirmed_transaction(&mut self, tx_hash: &str, block_height: u64) -> Result<()> {
+    pub fn process_confirmed_transaction(
+        &mut self,
+        tx_hash: &str,
+        block_height: u64,
+    ) -> Result<()> {
         // Find and remove from pending
         if let Some(pos) = self.pending_transactions.iter().position(|tx| {
             let data_json = tx.to_json().to_string();
@@ -137,59 +145,66 @@ impl BlockchainIntegration {
             hash.starts_with(&tx_hash[..8])
         }) {
             let confirmed_data = self.pending_transactions.remove(pos);
-            
+
             // Process the economic effects
-            self.economic_model.process_network_fees(confirmed_data.transaction_fees)?;
+            self.economic_model
+                .process_network_fees(confirmed_data.transaction_fees)?;
             let distribution = calculate_dao_fee_distribution(confirmed_data.dao_fees);
             self.dao_treasury.apply_fee_distribution(distribution)?;
-            self.economic_model.mint_operational_tokens(confirmed_data.tokens_minted, "blockchain confirmation")?;
-            
+            self.economic_model
+                .mint_operational_tokens(confirmed_data.tokens_minted, "blockchain confirmation")?;
+
             self.total_processed += 1;
-            
+
             info!(
-                "Confirmed economic transaction at block {}: {} ZHTP value",
+                "Confirmed economic transaction at block {}: {} SOV value",
                 block_height,
                 confirmed_data.total_value()
             );
         }
-        
+
         Ok(())
     }
-    
+
     /// Create economic data from transaction
-    pub fn create_economic_data_from_transaction(&self, transaction: &Transaction) -> EconomicBlockchainData {
+    pub fn create_economic_data_from_transaction(
+        &self,
+        transaction: &Transaction,
+    ) -> EconomicBlockchainData {
         let mut data = EconomicBlockchainData::new();
-        
+
         // Split fees between network and DAO
         data.transaction_fees = transaction.base_fee;
         data.dao_fees = transaction.dao_fee;
         data.block_height = transaction.block_height;
         data.timestamp = transaction.timestamp;
-        
+
         data
     }
-    
+
     /// Batch process multiple transactions
     pub fn batch_process_transactions(&mut self, transactions: &[Transaction]) -> Result<String> {
         let mut batch_data = EconomicBlockchainData::new();
-        
+
         for transaction in transactions {
             let tx_data = self.create_economic_data_from_transaction(transaction);
             batch_data.transaction_fees += tx_data.transaction_fees;
             batch_data.dao_fees += tx_data.dao_fees;
         }
-        
+
         batch_data.block_height = transactions.last().map(|tx| tx.block_height).unwrap_or(0);
-        
+
         self.submit_economic_data(&batch_data)
     }
-    
+
     /// Get integration statistics
     pub fn get_integration_stats(&self) -> serde_json::Value {
-        let pending_value: u64 = self.pending_transactions.iter()
+        let pending_value: u64 = self
+            .pending_transactions
+            .iter()
             .map(|tx| tx.total_value())
             .sum();
-            
+
         serde_json::json!({
             "pending_transactions": self.pending_transactions.len(),
             "total_processed": self.total_processed,
@@ -198,82 +213,86 @@ impl BlockchainIntegration {
             "dao_treasury_balance": self.dao_treasury.treasury_balance
         })
     }
-    
+
     /// Get economic model reference
     pub fn get_economic_model(&self) -> &EconomicModel {
         &self.economic_model
     }
-    
+
     /// Get mutable economic model reference
     pub fn get_economic_model_mut(&mut self) -> &mut EconomicModel {
         &mut self.economic_model
     }
-    
+
     /// Get DAO treasury reference
     pub fn get_dao_treasury(&self) -> &DaoTreasury {
         &self.dao_treasury
     }
-    
+
     /// Get mutable DAO treasury reference
     pub fn get_dao_treasury_mut(&mut self) -> &mut DaoTreasury {
         &mut self.dao_treasury
     }
 }
 
+#[allow(deprecated)] // SupplyManager methods are deprecated; callers will migrate to TreasuryKernel
 impl BlockchainEconomics for BlockchainIntegration {
     fn process_transaction_fees(&mut self, transaction_id: &str, fees: u64) -> Result<()> {
         self.economic_model.process_network_fees(fees)?;
-        
+
         info!(
-            "💳 Processed {} ZHTP transaction fees for tx: {}",
+            "💳 Processed {} SOV transaction fees for tx: {}",
             fees, transaction_id
         );
-        
+
         Ok(())
     }
-    
+
     fn handle_block_rewards(&mut self, validator_id: &str, reward: u64) -> Result<()> {
-        self.economic_model.mint_operational_tokens(reward, "validator reward")?;
-        
+        self.economic_model
+            .mint_operational_tokens(reward, "validator reward")?;
+
         info!(
-            " Handled {} ZHTP block reward for validator: {}",
+            " Handled {} SOV block reward for validator: {}",
             reward, validator_id
         );
-        
+
         Ok(())
     }
-    
+
     fn process_dao_fees(&mut self, dao_fees: u64) -> Result<()> {
         let distribution = calculate_dao_fee_distribution(dao_fees);
         self.dao_treasury.apply_fee_distribution(distribution)?;
-        
+
         info!(
-            " Processed {} ZHTP DAO fees for UBI/DAO allocations",
+            " Processed {} SOV DAO fees for UBI/DAO allocations",
             dao_fees
         );
-        
+
         Ok(())
     }
-    
+
     fn handle_infrastructure_rewards(&mut self, provider_id: &str, reward: u64) -> Result<()> {
-        self.economic_model.mint_operational_tokens(reward, "infrastructure reward")?;
-        
+        self.economic_model
+            .mint_operational_tokens(reward, "infrastructure reward")?;
+
         info!(
-            "🏭 Handled {} ZHTP infrastructure reward for provider: {}",
+            "🏭 Handled {} SOV infrastructure reward for provider: {}",
             reward, provider_id
         );
-        
+
         Ok(())
     }
-    
+
     fn process_isp_bypass_rewards(&mut self, participant_id: &str, reward: u64) -> Result<()> {
-        self.economic_model.mint_operational_tokens(reward, " reward")?;
-        
+        self.economic_model
+            .mint_operational_tokens(reward, " reward")?;
+
         info!(
-            "Processed {} ZHTP  reward for participant: {}",
+            "Processed {} SOV  reward for participant: {}",
             reward, participant_id
         );
-        
+
         Ok(())
     }
 }
@@ -310,13 +329,15 @@ pub fn process_blockchain_economic_events(
             "transaction_fee" => integration.process_transaction_fees(entity_id, *amount)?,
             "block_reward" => integration.handle_block_rewards(entity_id, *amount)?,
             "dao_fee" => integration.process_dao_fees(*amount)?,
-            "infrastructure_reward" => integration.handle_infrastructure_rewards(entity_id, *amount)?,
+            "infrastructure_reward" => {
+                integration.handle_infrastructure_rewards(entity_id, *amount)?
+            }
             "isp_bypass_reward" => integration.process_isp_bypass_rewards(entity_id, *amount)?,
             _ => {
                 info!("Unknown economic event type: {}", event_type);
             }
         }
     }
-    
+
     Ok(())
 }

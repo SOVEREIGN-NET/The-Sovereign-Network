@@ -3,8 +3,8 @@
 //! Provides environment-aware mining settings to ensure alpha/testnet
 //! boots fast while mainnet uses real difficulty.
 
-use serde::{Serialize, Deserialize};
 use super::Difficulty;
+use serde::{Deserialize, Serialize};
 
 /// Mining profile determines difficulty and iteration limits
 ///
@@ -36,7 +36,7 @@ impl MiningProfile {
         match self {
             MiningProfile::Bootstrap => MiningConfig {
                 difficulty: Difficulty::from_bits(0x207fffff), // Very easy - most hashes pass
-                max_iterations: 1_000,                         // Will find in <100 iterations typically
+                max_iterations: 1_000, // Will find in <100 iterations typically
                 target_block_time_ms: 100,
                 allow_instant_mining: true,
             },
@@ -168,7 +168,7 @@ impl Default for MiningConfig {
 ///
 /// This is a convenience function for code that doesn't have direct access
 /// to the Environment enum. It checks:
-/// 1. ZHTP_CHAIN_ID set but malformed → Mainnet (fail-safe)
+/// 1. ZHTP_CHAIN_ID set but malformed (non-numeric) → Mainnet (fail-safe)
 /// 2. ZHTP_CHAIN_ID=1 (mainnet) → ALWAYS uses Mainnet profile (guardrail)
 /// 3. ZHTP_ALLOW_BOOTSTRAP=1 → Bootstrap profile (only for dev/testnet)
 /// 4. ZHTP_CHAIN_ID → Uses chain ID to determine profile
@@ -182,22 +182,28 @@ impl Default for MiningConfig {
 pub fn get_mining_config_from_env() -> MiningConfig {
     // GUARDRAIL: Check for ZHTP_CHAIN_ID first
     if let Ok(chain_id_str) = std::env::var("ZHTP_CHAIN_ID") {
-        match chain_id_str.parse::<u8>() {
+        match chain_id_str.parse::<u32>() {
             Ok(chain_id) => {
                 if chain_id == 0x01 {
                     // Mainnet - ALWAYS use full difficulty regardless of other settings
-                    if std::env::var("ZHTP_ALLOW_BOOTSTRAP").ok().map(|v| v == "1").unwrap_or(false) {
+                    if std::env::var("ZHTP_ALLOW_BOOTSTRAP")
+                        .ok()
+                        .map(|v| v == "1")
+                        .unwrap_or(false)
+                    {
                         tracing::warn!("⚠️ ZHTP_ALLOW_BOOTSTRAP ignored on mainnet - security guardrail active");
                     }
-                    tracing::info!("🔒 Mainnet detected: Using Mainnet mining profile (full difficulty)");
+                    tracing::info!(
+                        "🔒 Mainnet detected: Using Mainnet mining profile (full difficulty)"
+                    );
                     return MiningProfile::Mainnet.config();
                 }
-                // Valid non-mainnet chain ID - continue to check ZHTP_ALLOW_BOOTSTRAP
+                // Non-mainnet chain ID (including custom dev/test IDs like 9999) - continue to check ZHTP_ALLOW_BOOTSTRAP
             }
             Err(_) => {
                 // SECURITY: Malformed chain ID - fail safe to Mainnet
                 tracing::error!(
-                    "⚠️ ZHTP_CHAIN_ID='{}' is invalid (expected 1/2/3). Defaulting to MAINNET for safety!",
+                    "⚠️ ZHTP_CHAIN_ID='{}' is invalid (expected numeric). Defaulting to MAINNET for safety!",
                     chain_id_str
                 );
                 return MiningProfile::Mainnet.config();
@@ -217,10 +223,45 @@ pub fn get_mining_config_from_env() -> MiningConfig {
 
     // Check for explicit chain ID (we already validated it parses above)
     if let Ok(chain_id_str) = std::env::var("ZHTP_CHAIN_ID") {
-        if let Ok(chain_id) = chain_id_str.parse::<u8>() {
-            let profile = MiningProfile::from_chain_id(chain_id);
-            tracing::info!("Using {} mining profile from ZHTP_CHAIN_ID={}", profile, chain_id);
-            return profile.config();
+        if let Ok(chain_id) = chain_id_str.parse::<u32>() {
+            // Preserve the "mainnet is special" invariant.
+            if chain_id == 0x01 {
+                let profile = MiningProfile::Mainnet;
+                tracing::info!(
+                    "Using {} mining profile from ZHTP_CHAIN_ID={}",
+                    profile,
+                    chain_id
+                );
+                return profile.config();
+            }
+
+            // Known chain IDs (historical): 2=testnet, 3=devnet. Everything else is treated
+            // as non-mainnet and gets the Bootstrap profile for safety and operability.
+            if chain_id <= u8::MAX as u32 {
+                let cid8 = chain_id as u8;
+                let profile = match cid8 {
+                    0x02 | 0x03 => MiningProfile::from_chain_id(cid8),
+                    _ => {
+                        tracing::warn!(
+                            "ZHTP_CHAIN_ID='{}' is non-standard; using Bootstrap mining profile",
+                            chain_id
+                        );
+                        MiningProfile::Bootstrap
+                    }
+                };
+                tracing::info!(
+                    "Using {} mining profile from ZHTP_CHAIN_ID={}",
+                    profile,
+                    chain_id
+                );
+                return profile.config();
+            }
+
+            tracing::warn!(
+                "ZHTP_CHAIN_ID='{}' is >255; treating as non-mainnet and using Bootstrap mining profile",
+                chain_id
+            );
+            return MiningProfile::Bootstrap.config();
         }
     }
 
@@ -279,7 +320,8 @@ mod tests {
         assert_eq!(MiningProfile::from_chain_id(0x01), MiningProfile::Mainnet);
         assert_eq!(MiningProfile::from_chain_id(0x02), MiningProfile::Testnet);
         assert_eq!(MiningProfile::from_chain_id(0x03), MiningProfile::Bootstrap);
-        assert_eq!(MiningProfile::from_chain_id(0xFF), MiningProfile::Bootstrap); // Unknown defaults to bootstrap
+        assert_eq!(MiningProfile::from_chain_id(0xFF), MiningProfile::Bootstrap);
+        // Unknown defaults to bootstrap
     }
 
     #[test]

@@ -2,15 +2,15 @@
 //!
 //! implementations from crypto.rs, lines 78-150
 
-use serde::{Serialize, Deserialize};
+use crate::hashing::hash_blake3;
+use crate::traits::ZeroizingKey;
+use crate::types::Signature;
+use crate::verification::verify_signature;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::{compiler_fence, Ordering};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
-use anyhow::Result;
-use std::sync::atomic::{compiler_fence, Ordering};
-use crate::types::Signature;
-use crate::hashing::hash_blake3;
-use crate::verification::verify_signature;
-use crate::traits::ZeroizingKey;
 
 /// Pure post-quantum public key with CRYSTALS implementations only
 ///
@@ -87,7 +87,7 @@ impl Drop for PublicKey {
 /// # Rationale for Public Key Zeroization
 ///
 /// While public keys are not secret, they are wiped on drop for defense-in-depth:
-/// - **Post-Quantum Keys are Large**: Dilithium (1312B) + Kyber (1184B) = 2.5KB per key
+/// - **Post-Quantum Keys are Large**: Dilithium (1312B) + Kyber (1568B) = 2.8KB per key
 /// - **Metadata Protection**: Public keys may reveal network topology or identity patterns
 /// - **Memory Analysis Resistance**: Prevents key fingerprinting in memory dumps
 /// - **Compliance**: Meets audit-grade cryptographic hygiene standards
@@ -103,6 +103,16 @@ impl PublicKey {
             dilithium_pk,
             kyber_pk: Vec::new(),
             // ed25519_pk removed - pure PQC only
+            key_id,
+        }
+    }
+
+    /// Create a public key from Kyber public key bytes only
+    pub fn from_kyber_public_key(kyber_pk: Vec<u8>) -> Self {
+        let key_id = hash_blake3(&kyber_pk);
+        PublicKey {
+            dilithium_pk: Vec::new(),
+            kyber_pk,
             key_id,
         }
     }
@@ -127,7 +137,9 @@ impl PublicKey {
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<bool> {
         // Always use CRYSTALS-Dilithium verification - no fallbacks
         if self.dilithium_pk.is_empty() {
-            return Err(anyhow::anyhow!("No Dilithium public key available for pure PQC verification"));
+            return Err(anyhow::anyhow!(
+                "No Dilithium public key available for pure PQC verification"
+            ));
         }
 
         // Pure post-quantum signature verification
@@ -140,6 +152,9 @@ impl PublicKey {
 pub struct PrivateKey {
     /// CRYSTALS-Dilithium secret key
     pub dilithium_sk: Vec<u8>,
+    /// CRYSTALS-Dilithium public key (stored with private key for signing convenience)
+    /// This allows the public key to be retrieved when only PrivateKey is available
+    pub dilithium_pk: Vec<u8>,
     /// CRYSTALS-Kyber secret key
     pub kyber_sk: Vec<u8>,
     /// Master seed for key derivation
@@ -176,14 +191,14 @@ mod tests {
     #[test]
     fn test_constant_time_equality_same_keys() {
         let key1 = PublicKey {
-            dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            dilithium_pk: vec![0xAAu8; 2592],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
         let key2 = PublicKey {
-            dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            dilithium_pk: vec![0xAAu8; 2592],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
@@ -193,14 +208,14 @@ mod tests {
     #[test]
     fn test_constant_time_equality_different_keys() {
         let key1 = PublicKey {
-            dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            dilithium_pk: vec![0xAAu8; 2592],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
         let key2 = PublicKey {
-            dilithium_pk: vec![0xDDu8; 1952],  // Different
-            kyber_pk: vec![0xBBu8; 800],
+            dilithium_pk: vec![0xDDu8; 2592], // Different
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
@@ -209,21 +224,21 @@ mod tests {
 
     #[test]
     fn test_constant_time_equality_single_byte_difference() {
-        let dilithium1 = vec![0xAAu8; 1952];
-        let mut dilithium2 = vec![0xAAu8; 1952];
+        let dilithium1 = vec![0xAAu8; 2592];
+        let mut dilithium2_vec = vec![0xAAu8; 2592];
 
         // Change single byte in the middle
-        dilithium2[976] = 0xAB;
+        dilithium2_vec[1296] = 0xAB;
 
         let key1 = PublicKey {
             dilithium_pk: dilithium1,
-            kyber_pk: vec![0xBBu8; 800],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
         let key2 = PublicKey {
-            dilithium_pk: dilithium2,
-            kyber_pk: vec![0xBBu8; 800],
+            dilithium_pk: dilithium2_vec,
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
@@ -239,14 +254,14 @@ mod tests {
         key_id2[31] = 0xAB;
 
         let key1 = PublicKey {
-            dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            dilithium_pk: vec![0xAAu8; 2592],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: key_id1,
         };
 
         let key2 = PublicKey {
-            dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            dilithium_pk: vec![0xAAu8; 2592],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: key_id2,
         };
 
@@ -279,8 +294,8 @@ mod tests {
         // by code review and the #[inline(never)] attribute.
 
         let key1 = PublicKey {
-            dilithium_pk: vec![0xAAu8; 1952],
-            kyber_pk: vec![0xBBu8; 800],
+            dilithium_pk: vec![0xAAu8; 2592],
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
@@ -295,14 +310,14 @@ mod tests {
         // This test verifies that comparison doesn't exit early
         // Create keys that differ in the first field
         let key1 = PublicKey {
-            dilithium_pk: vec![0x00u8; 1952],  // First byte is 0x00
-            kyber_pk: vec![0xBBu8; 800],
+            dilithium_pk: vec![0x00u8; 2592], // First byte is 0x00
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
         let key2 = PublicKey {
-            dilithium_pk: vec![0xFFu8; 1952],  // First byte is 0xFF
-            kyber_pk: vec![0xBBu8; 800],
+            dilithium_pk: vec![0xFFu8; 2592], // First byte is 0xFF
+            kyber_pk: vec![0xBBu8; 1568],
             key_id: [0xCCu8; 32],
         };
 
@@ -315,12 +330,14 @@ mod tests {
     fn test_private_key_zeroization() {
         let private_key = PrivateKey {
             dilithium_sk: vec![0xAAu8; 100],
+            dilithium_pk: vec![0xDDu8; 100],
             kyber_sk: vec![0xBBu8; 100],
             master_seed: vec![0xCCu8; 64],
         };
 
         // Verify initial state
         assert_eq!(private_key.dilithium_sk[0], 0xAA);
+        assert_eq!(private_key.dilithium_pk[0], 0xDD);
         assert_eq!(private_key.kyber_sk[0], 0xBB);
         assert_eq!(private_key.master_seed[0], 0xCC);
 

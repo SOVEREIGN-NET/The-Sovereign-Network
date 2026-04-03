@@ -8,7 +8,7 @@
 //! - Integration workflows (3 tests)
 
 use lib_consensus::byzantine::{
-    ByzantineFaultDetector, ByzantineEvidence, EquivocationEvidence, ForensicMessageType,
+    ByzantineEvidence, ByzantineFaultDetector, EquivocationEvidence, ForensicMessageType,
 };
 use lib_consensus::network::LivenessMonitor;
 use lib_consensus::types::{ConsensusVote, VoteType};
@@ -58,7 +58,9 @@ fn create_test_vote(
     timestamp: u64,
 ) -> ConsensusVote {
     ConsensusVote {
-        id: Hash::from_bytes(&hash_blake3(format!("vote-{}-{}-{}", height, round, timestamp).as_bytes())),
+        id: Hash::from_bytes(&hash_blake3(
+            format!("vote-{}-{}-{}", height, round, timestamp).as_bytes(),
+        )),
         voter: validator.clone(),
         height,
         round,
@@ -111,7 +113,15 @@ fn test_equivocation_detection_prevote() {
 
     // Second vote with different proposal = equivocation
     let evidence2 = detector.detect_equivocation(&vote_b, &proposal_b, now + 1, None);
-    verify_equivocation_evidence(evidence2, &validator, 10, 0, VoteType::PreVote, &proposal_a, &proposal_b);
+    verify_equivocation_evidence(
+        evidence2,
+        &validator,
+        10,
+        0,
+        VoteType::PreVote,
+        &proposal_a,
+        &proposal_b,
+    );
 }
 
 #[test]
@@ -126,7 +136,10 @@ fn test_equivocation_idempotence() {
 
     detector.detect_equivocation(&vote1, &proposal, now, None);
     let evidence2 = detector.detect_equivocation(&vote2, &proposal, now + 1, None);
-    assert!(evidence2.is_none(), "Same proposal should not generate evidence");
+    assert!(
+        evidence2.is_none(),
+        "Same proposal should not generate evidence"
+    );
 }
 
 #[test]
@@ -141,14 +154,18 @@ fn test_equivocation_different_attributes() {
     let vote_r0 = create_test_vote(&validator, 10, 0, VoteType::PreVote, &proposal_a, now);
     let vote_r1 = create_test_vote(&validator, 10, 1, VoteType::PreVote, &proposal_b, now + 1);
     detector.detect_equivocation(&vote_r0, &proposal_a, now, None);
-    assert!(detector.detect_equivocation(&vote_r1, &proposal_b, now + 1, None).is_none());
+    assert!(detector
+        .detect_equivocation(&vote_r1, &proposal_b, now + 1, None)
+        .is_none());
 
     // Test different vote type
     let mut detector2 = ByzantineFaultDetector::new();
     let vote_pv = create_test_vote(&validator, 10, 0, VoteType::PreVote, &proposal_a, now);
     let vote_pc = create_test_vote(&validator, 10, 0, VoteType::PreCommit, &proposal_b, now + 1);
     detector2.detect_equivocation(&vote_pv, &proposal_a, now, None);
-    assert!(detector2.detect_equivocation(&vote_pc, &proposal_b, now + 1, None).is_none());
+    assert!(detector2
+        .detect_equivocation(&vote_pc, &proposal_b, now + 1, None)
+        .is_none());
 }
 
 #[test]
@@ -165,7 +182,11 @@ fn test_equivocation_all_vote_types() {
 
         detector.detect_equivocation(&vote_a, &proposal_a, now, None);
         let evidence = detector.detect_equivocation(&vote_b, &proposal_b, now + 1, None);
-        assert!(evidence.is_some(), "Equivocation should be detected for {:?}", vote_type);
+        assert!(
+            evidence.is_some(),
+            "Equivocation should be detected for {:?}",
+            vote_type
+        );
         assert_eq!(evidence.unwrap().vote_type, *vote_type);
     }
 }
@@ -245,13 +266,14 @@ fn test_replay_detection_exact_duplicate() {
 
 #[test]
 fn test_replay_detection_ttl_expiry() {
-    let mut detector = ByzantineFaultDetector::with_config(lib_consensus::byzantine::FaultDetectorConfig {
-        replay_cache_max_size: 10_000,
-        replay_detection_window_secs: 5, // 5 second TTL
-        forensic_max_records: 50_000,
-        forensic_ttl_secs: 86_400,
-        partition_check_interval_secs: 10,
-    });
+    let mut detector =
+        ByzantineFaultDetector::with_config(lib_consensus::byzantine::FaultDetectorConfig {
+            replay_cache_max_size: 10_000,
+            replay_detection_window_secs: 5, // 5 second TTL
+            forensic_max_records: 50_000,
+            forensic_ttl_secs: 86_400,
+            partition_check_interval_secs: 10,
+        });
 
     let validator = create_unique_identity();
     let payload_hash = Hash::from_bytes(&[1u8; 32]);
@@ -261,11 +283,13 @@ fn test_replay_detection_ttl_expiry() {
     detector.detect_replay_attack(&validator, payload_hash.clone(), now);
 
     // Within TTL at now+2: replay detected
-    let evidence_within_ttl = detector.detect_replay_attack(&validator, payload_hash.clone(), now + 2);
+    let evidence_within_ttl =
+        detector.detect_replay_attack(&validator, payload_hash.clone(), now + 2);
     assert!(evidence_within_ttl.is_some());
 
     // Way past TTL (now+20): entry is expired, treated as new occurrence
-    let evidence_after_ttl = detector.detect_replay_attack(&validator, payload_hash.clone(), now + 20);
+    let evidence_after_ttl =
+        detector.detect_replay_attack(&validator, payload_hash.clone(), now + 20);
     // After expiry, the get() returns None, so we treat as first occurrence, no evidence
     // But the issue might be that cleanup_expired is being called periodically...
     // Let's just verify that it either returns None or a new replay starting at now+20
@@ -280,13 +304,14 @@ fn test_replay_detection_ttl_expiry() {
 
 #[test]
 fn test_replay_detection_lru_eviction() {
-    let mut detector = ByzantineFaultDetector::with_config(lib_consensus::byzantine::FaultDetectorConfig {
-        replay_cache_max_size: 2, // Very small cache
-        replay_detection_window_secs: 300,
-        forensic_max_records: 50_000,
-        forensic_ttl_secs: 86_400,
-        partition_check_interval_secs: 10,
-    });
+    let mut detector =
+        ByzantineFaultDetector::with_config(lib_consensus::byzantine::FaultDetectorConfig {
+            replay_cache_max_size: 2, // Very small cache
+            replay_detection_window_secs: 300,
+            forensic_max_records: 50_000,
+            forensic_ttl_secs: 86_400,
+            partition_check_interval_secs: 10,
+        });
 
     let now = current_timestamp();
     let v1 = create_unique_identity();
@@ -319,7 +344,10 @@ fn test_replay_detection_payload_isolation() {
 
     detector.detect_replay_attack(&validator, payload_a, now);
     let evidence = detector.detect_replay_attack(&validator, payload_b, now + 1);
-    assert!(evidence.is_none(), "Different payload should not trigger replay");
+    assert!(
+        evidence.is_none(),
+        "Different payload should not trigger replay"
+    );
 }
 
 #[test]
@@ -447,6 +475,24 @@ fn test_partition_recovery() {
     assert!(evidence2.is_none()); // No partition because monitor is not stalled
 }
 
+#[test]
+fn test_partition_detection_skipped_for_single_validator_bootstrap() {
+    let mut detector = ByzantineFaultDetector::new();
+    let mut monitor = LivenessMonitor::new();
+
+    let validators: Vec<IdentityId> = vec![create_unique_identity()];
+    monitor.update_validator_set(&validators);
+
+    // Single validator will appear "stalled" by liveness logic when timed out.
+    // Partition evidence should be suppressed in bootstrap 1/1 mode.
+    monitor.report_timeout(&validators[0]);
+
+    let now = current_timestamp();
+    let evidence = detector.detect_network_partition(&monitor, 10, 0, now);
+
+    assert!(evidence.is_none());
+}
+
 // ============================================================================
 // FORENSIC TESTS (4 tests)
 // ============================================================================
@@ -478,13 +524,14 @@ fn test_forensic_record_storage() {
 #[test]
 fn test_forensic_bounded_size_and_ttl() {
     // Test 1: Size-based eviction
-    let mut detector = ByzantineFaultDetector::with_config(lib_consensus::byzantine::FaultDetectorConfig {
-        replay_cache_max_size: 10_000,
-        replay_detection_window_secs: 300,
-        forensic_max_records: 10,
-        forensic_ttl_secs: 86_400,
-        partition_check_interval_secs: 10,
-    });
+    let mut detector =
+        ByzantineFaultDetector::with_config(lib_consensus::byzantine::FaultDetectorConfig {
+            replay_cache_max_size: 10_000,
+            replay_detection_window_secs: 300,
+            forensic_max_records: 10,
+            forensic_ttl_secs: 86_400,
+            partition_check_interval_secs: 10,
+        });
 
     let now = current_timestamp();
     for i in 0..20 {
@@ -506,13 +553,14 @@ fn test_forensic_bounded_size_and_ttl() {
     // Size bound enforced
 
     // Test 2: TTL-based cleanup
-    let mut detector2 = ByzantineFaultDetector::with_config(lib_consensus::byzantine::FaultDetectorConfig {
-        replay_cache_max_size: 10_000,
-        replay_detection_window_secs: 300,
-        forensic_max_records: 100,
-        forensic_ttl_secs: 60,
-        partition_check_interval_secs: 10,
-    });
+    let mut detector2 =
+        ByzantineFaultDetector::with_config(lib_consensus::byzantine::FaultDetectorConfig {
+            replay_cache_max_size: 10_000,
+            replay_detection_window_secs: 300,
+            forensic_max_records: 100,
+            forensic_ttl_secs: 60,
+            partition_check_interval_secs: 10,
+        });
 
     let now2 = 1000u64;
     for i in 0..5 {
@@ -561,7 +609,11 @@ fn test_forensic_nonblocking() {
     let elapsed = start.elapsed();
 
     // Should complete quickly (< 100ms for 100 records)
-    assert!(elapsed.as_millis() < 100, "Forensic recording took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_millis() < 100,
+        "Forensic recording took too long: {:?}",
+        elapsed
+    );
 }
 
 // ============================================================================
@@ -614,7 +666,9 @@ fn test_evidence_logging() {
     assert!(!log.is_empty());
 
     // Verify evidence is in log
-    let has_equivocation = log.iter().any(|e| matches!(e, ByzantineEvidence::Equivocation(_)));
+    let has_equivocation = log
+        .iter()
+        .any(|e| matches!(e, ByzantineEvidence::Equivocation(_)));
     assert!(has_equivocation);
 }
 
@@ -641,6 +695,9 @@ fn test_multiple_validators_concurrent() {
 
     // Check evidence log has multiple entries
     let log = detector.get_evidence_log();
-    let equivocation_count = log.iter().filter(|e| matches!(e, ByzantineEvidence::Equivocation(_))).count();
+    let equivocation_count = log
+        .iter()
+        .filter(|e| matches!(e, ByzantineEvidence::Equivocation(_)))
+        .count();
     assert_eq!(equivocation_count, 5);
 }

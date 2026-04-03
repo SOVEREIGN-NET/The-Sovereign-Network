@@ -1,6 +1,6 @@
 //! Network Isolation Configuration
 //!
-//! #  IMPORTANT: USE CASE CLARIFICATION 
+//! #  IMPORTANT: USE CASE CLARIFICATION
 //!
 //! This module provides network isolation for **PURE MESH DEPLOYMENTS ONLY**.
 //!
@@ -76,52 +76,52 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Network isolation configuration for pure mesh operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkIsolationConfig {
     /// Enable network isolation (blocks internet access)
     pub enable_isolation: bool,
-    
+
     /// Protocol-level filtering mode for bootstrap nodes:
     /// - Accept connections from anyone (through ISPs)
     /// - Only allow blockchain-specific protocols
     /// - Block general internet protocols (HTTP, HTTPS, SOCKS, etc.)
     #[serde(default)]
     pub protocol_filtering_mode: bool,
-    
+
     /// Allowed blockchain protocols (whitelist)
     #[serde(default)]
     pub allowed_protocols: Vec<String>,
-    
+
     /// Blocked general internet protocols (blacklist)
     #[serde(default)]
     pub blocked_protocols: Vec<String>,
-    
+
     /// Block general internet routing/proxying
     #[serde(default)]
     pub block_general_internet_routing: bool,
-    
+
     /// Ingress-only mode for bootstrap nodes:
     /// - Accept connections FROM anywhere (internet)
     /// - Block connections TO arbitrary internet
     /// - Only allow outbound to whitelisted mesh peers
     #[serde(default)]
     pub ingress_only_mode: bool,
-    
+
     /// For ingress-only mode: sources allowed to connect inbound
     #[serde(default)]
     pub allowed_inbound_sources: Vec<String>,
-    
+
     /// For ingress-only mode: destinations allowed for outbound connections
     #[serde(default)]
     pub allowed_outbound_destinations: Vec<String>,
-    
+
     /// Block outbound connections to public internet (except whitelisted)
     #[serde(default)]
     pub block_outbound_to_internet: bool,
-    
+
     /// Local mesh subnets that are allowed
     pub allowed_subnets: Vec<String>,
     /// Block all traffic to these external ranges
@@ -217,14 +217,14 @@ impl Default for NetworkIsolationConfig {
             ],
             block_outbound_to_internet: false,
             allowed_subnets: vec![
-                "192.168.0.0/16".to_string(),     // Local networks
-                "10.0.0.0/8".to_string(),         // Private networks
-                "172.16.0.0/12".to_string(),      // Private networks
-                "127.0.0.0/8".to_string(),        // Loopback
-                "169.254.0.0/16".to_string(),     // Link-local
+                "192.168.0.0/16".to_string(), // Local networks
+                "10.0.0.0/8".to_string(),     // Private networks
+                "172.16.0.0/12".to_string(),  // Private networks
+                "127.0.0.0/8".to_string(),    // Loopback
+                "169.254.0.0/16".to_string(), // Link-local
             ],
             blocked_ranges: vec![
-                "0.0.0.0/0".to_string(),          // Block all external by default
+                "0.0.0.0/0".to_string(), // Block all external by default
             ],
             dhcp_config: MeshDhcpConfig::default(),
             firewall_rules: Self::default_firewall_rules(),
@@ -239,9 +239,9 @@ impl Default for MeshDhcpConfig {
             ip_range_start: "192.168.100.10".to_string(),
             ip_range_end: "192.168.100.100".to_string(),
             subnet_mask: "255.255.255.0".to_string(),
-            default_gateway: None,  //  NO DEFAULT GATEWAY = NO INTERNET
+            default_gateway: None, //  NO DEFAULT GATEWAY = NO INTERNET
             dns_servers: vec![
-                "192.168.100.1".to_string(),     // Local mesh DNS only
+                "192.168.100.1".to_string(), // Local mesh DNS only
             ],
             lease_time: 86400, // 24 hours
         }
@@ -319,10 +319,10 @@ impl NetworkIsolationConfig {
             info!("    Allow protocols: {:?}", self.allowed_protocols);
             info!("    Block protocols: {:?}", self.blocked_protocols);
             info!("     Only blockchain data accessible - no general internet routing");
-            
+
             // Protocol filtering is enforced at application layer
             // See: unified_server.rs message handler
-            
+
             info!(" Protocol filtering configured - bootstrap accepts blockchain traffic only");
             return Ok(());
         }
@@ -332,11 +332,13 @@ impl NetworkIsolationConfig {
             info!("    Accept connections FROM: anywhere (internet-facing)");
             info!("    Allow connections TO: whitelisted blockchain peers only");
             info!("    Block connections TO: arbitrary internet");
-            
+
             // Apply ingress-only firewall rules
             self.apply_ingress_only_rules().await?;
-            
-            info!(" Bootstrap isolation applied - accepting internet connections, blocking outbound");
+
+            info!(
+                " Bootstrap isolation applied - accepting internet connections, blocking outbound"
+            );
             return Ok(());
         }
 
@@ -357,85 +359,100 @@ impl NetworkIsolationConfig {
         info!(" Network isolation applied - mesh is now ISP-free");
         Ok(())
     }
-    
+
     /// Check if a protocol is allowed (for bootstrap nodes)
     pub fn is_protocol_allowed(&self, protocol: &str) -> bool {
         if !self.protocol_filtering_mode {
             return true; // No filtering
         }
-        
+
         // Check if explicitly allowed
-        if self.allowed_protocols.iter().any(|p| p.eq_ignore_ascii_case(protocol)) {
+        if self
+            .allowed_protocols
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case(protocol))
+        {
             return true;
         }
-        
+
         // Check if explicitly blocked
-        if self.blocked_protocols.iter().any(|p| p.eq_ignore_ascii_case(protocol)) {
+        if self
+            .blocked_protocols
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case(protocol))
+        {
             return false;
         }
-        
+
         // Default: block unknown protocols in filtering mode
         false
     }
-    
+
     /// Check if general internet routing is blocked
     pub fn is_internet_routing_blocked(&self) -> bool {
         self.block_general_internet_routing
     }
-    
+
     /// Apply firewall rules for ingress-only bootstrap mode
     async fn apply_ingress_only_rules(&self) -> Result<()> {
         info!(" Configuring ingress-only firewall rules...");
-        
+
         #[cfg(target_os = "windows")]
         {
             self.apply_windows_ingress_only_rules().await?;
         }
-        
+
         #[cfg(target_os = "linux")]
         {
             self.apply_linux_ingress_only_rules().await?;
         }
-        
+
         info!(" Ingress-only firewall rules applied");
         Ok(())
     }
-    
+
     #[cfg(target_os = "windows")]
     async fn apply_windows_ingress_only_rules(&self) -> Result<()> {
         info!("Applying Windows ingress-only firewall rules...");
-        
+
         // 1. Allow ALL inbound connections (bootstrap accepts from internet)
         for rule in &self.firewall_rules {
             if rule.direction == "inbound" && rule.action == "ACCEPT" {
                 let rule_name = format!("ZHTP_Bootstrap_Inbound_{}", rule.name.replace(" ", "_"));
                 let rule_name_arg = format!("name={}", rule_name);
-                
+
                 // Delete existing rule
                 let _ = Command::new("netsh")
                     .args(&["advfirewall", "firewall", "delete", "rule", &rule_name_arg])
                     .output();
-                
+
                 // Create inbound allow rule with ports if specified
                 if !rule.ports.is_empty() {
-                    let ports_str = rule.ports.iter()
+                    let ports_str = rule
+                        .ports
+                        .iter()
                         .map(|p| p.to_string())
                         .collect::<Vec<_>>()
                         .join(",");
-                    
+
                     let protocol_str = rule.protocol.as_deref().unwrap_or("tcp");
-                    
+
                     let output = Command::new("netsh")
                         .args(&[
-                            "advfirewall", "firewall", "add", "rule",
+                            "advfirewall",
+                            "firewall",
+                            "add",
+                            "rule",
                             &rule_name_arg,
                             "dir=in",
                             "action=allow",
-                            "protocol", protocol_str,
-                            "localport", &ports_str,
+                            "protocol",
+                            protocol_str,
+                            "localport",
+                            &ports_str,
                         ])
                         .output();
-                    
+
                     if let Ok(result) = output {
                         if result.status.success() {
                             info!("   Inbound rule added: {}", rule.name);
@@ -444,17 +461,21 @@ impl NetworkIsolationConfig {
                 } else {
                     // No specific ports - allow all
                     let protocol_str = rule.protocol.as_deref().unwrap_or("any");
-                    
+
                     let output = Command::new("netsh")
                         .args(&[
-                            "advfirewall", "firewall", "add", "rule",
+                            "advfirewall",
+                            "firewall",
+                            "add",
+                            "rule",
                             &rule_name_arg,
                             "dir=in",
                             "action=allow",
-                            "protocol", protocol_str,
+                            "protocol",
+                            protocol_str,
                         ])
                         .output();
-                    
+
                     if let Ok(result) = output {
                         if result.status.success() {
                             info!("   Inbound rule added: {}", rule.name);
@@ -463,69 +484,91 @@ impl NetworkIsolationConfig {
                 }
             }
         }
-        
+
         // 2. Block outbound to internet, allow only to mesh peers
         for dest_subnet in &self.allowed_outbound_destinations {
-            let rule_name = format!("ZHTP_Bootstrap_Allow_Mesh_{}", dest_subnet.replace("/", "_").replace(".", "_"));
-            
+            let rule_name = format!(
+                "ZHTP_Bootstrap_Allow_Mesh_{}",
+                dest_subnet.replace("/", "_").replace(".", "_")
+            );
+
             // Delete existing
             let _ = Command::new("netsh")
-                .args(&["advfirewall", "firewall", "delete", "rule", &format!("name={}", rule_name)])
+                .args(&[
+                    "advfirewall",
+                    "firewall",
+                    "delete",
+                    "rule",
+                    &format!("name={}", rule_name),
+                ])
                 .output();
-            
+
             // Allow outbound to this mesh subnet
             let output = Command::new("netsh")
                 .args(&[
-                    "advfirewall", "firewall", "add", "rule",
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
                     &format!("name={}", rule_name),
                     "dir=out",
                     "action=allow",
-                    "remoteip", dest_subnet,
+                    "remoteip",
+                    dest_subnet,
                 ])
                 .output();
-            
+
             if let Ok(result) = output {
                 if result.status.success() {
                     info!("   Outbound allowed to mesh: {}", dest_subnet);
                 }
             }
         }
-        
+
         // 3. Block all other outbound traffic
         if self.block_outbound_to_internet {
             let rule_name = "ZHTP_Bootstrap_Block_Internet";
-            
+
             // Delete existing
             let _ = Command::new("netsh")
-                .args(&["advfirewall", "firewall", "delete", "rule", &format!("name={}", rule_name)])
+                .args(&[
+                    "advfirewall",
+                    "firewall",
+                    "delete",
+                    "rule",
+                    &format!("name={}", rule_name),
+                ])
                 .output();
-            
+
             // Block outbound to internet
             let output = Command::new("netsh")
                 .args(&[
-                    "advfirewall", "firewall", "add", "rule",
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
                     &format!("name={}", rule_name),
                     "dir=out",
                     "action=block",
                     "remoteip=any",
-                    "priority=100",  // Lower priority so mesh rules are checked first
+                    "priority=100", // Lower priority so mesh rules are checked first
                 ])
                 .output();
-            
+
             if let Ok(result) = output {
                 if result.status.success() {
                     info!("   Blocked outbound to internet (except whitelisted mesh)");
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     #[cfg(target_os = "linux")]
     async fn apply_linux_ingress_only_rules(&self) -> Result<()> {
         info!("Applying Linux ingress-only iptables rules...");
-        
+
         // Flush existing ZHTP rules
         let _ = Command::new("iptables")
             .args(&["-F", "ZHTP_INGRESS"])
@@ -533,65 +576,62 @@ impl NetworkIsolationConfig {
         let _ = Command::new("iptables")
             .args(&["-X", "ZHTP_INGRESS"])
             .output();
-        
+
         // Create new chain
         let _ = Command::new("iptables")
             .args(&["-N", "ZHTP_INGRESS"])
             .output();
-        
+
         // 1. Allow ALL inbound connections (accept from internet)
         let _ = Command::new("iptables")
             .args(&["-A", "INPUT", "-j", "ACCEPT"])
             .output();
-        
+
         // 2. Allow outbound to whitelisted mesh peers
         for dest_subnet in &self.allowed_outbound_destinations {
             let output = Command::new("iptables")
-                .args(&[
-                    "-A", "ZHTP_INGRESS",
-                    "-d", dest_subnet,
-                    "-j", "ACCEPT"
-                ])
+                .args(&["-A", "ZHTP_INGRESS", "-d", dest_subnet, "-j", "ACCEPT"])
                 .output();
-            
+
             if let Ok(result) = output {
                 if result.status.success() {
                     info!("   Outbound allowed to mesh: {}", dest_subnet);
                 }
             }
         }
-        
+
         // 3. Allow established connections
         let _ = Command::new("iptables")
             .args(&[
-                "-A", "ZHTP_INGRESS",
-                "-m", "state",
-                "--state", "ESTABLISHED,RELATED",
-                "-j", "ACCEPT"
+                "-A",
+                "ZHTP_INGRESS",
+                "-m",
+                "state",
+                "--state",
+                "ESTABLISHED,RELATED",
+                "-j",
+                "ACCEPT",
             ])
             .output();
-        
+
         // 4. Block all other outbound traffic
         if self.block_outbound_to_internet {
             let output = Command::new("iptables")
-                .args(&[
-                    "-A", "ZHTP_INGRESS",
-                    "-j", "DROP"
-                ])
+                .args(&["-A", "ZHTP_INGRESS", "-j", "DROP"])
                 .output();
-            
+
             if let Ok(result) = output {
                 if result.status.success() {
                     info!("   Blocked outbound to internet (except whitelisted)");
                 }
             }
         }
-        
+
         // Link chain to OUTPUT
         let _ = Command::new("iptables")
             .args(&["-A", "OUTPUT", "-j", "ZHTP_INGRESS"])
             .output();
-        
+
         Ok(())
     }
 
@@ -602,9 +642,7 @@ impl NetworkIsolationConfig {
         #[cfg(target_os = "windows")]
         {
             // Windows: Remove default route
-            let output = Command::new("route")
-                .args(&["delete", "0.0.0.0"])
-                .output();
+            let output = Command::new("route").args(&["delete", "0.0.0.0"]).output();
 
             match output {
                 Ok(result) => {
@@ -620,7 +658,10 @@ impl NetworkIsolationConfig {
 
             // Also try PowerShell method
             let ps_output = Command::new("powershell")
-                .args(&["-Command", "Remove-NetRoute -DestinationPrefix '0.0.0.0/0' -Confirm:$false"])
+                .args(&[
+                    "-Command",
+                    "Remove-NetRoute -DestinationPrefix '0.0.0.0/0' -Confirm:$false",
+                ])
                 .output();
 
             if let Ok(result) = ps_output {
@@ -643,9 +684,7 @@ impl NetworkIsolationConfig {
                         info!(" Linux: Default route removed");
                     } else {
                         // Try alternative method
-                        let alt_output = Command::new("route")
-                            .args(&["del", "default"])
-                            .output();
+                        let alt_output = Command::new("route").args(&["del", "default"]).output();
 
                         if let Ok(alt_result) = alt_output {
                             if alt_result.status.success() {
@@ -661,9 +700,7 @@ impl NetworkIsolationConfig {
         #[cfg(target_os = "macos")]
         {
             // macOS: Remove default route
-            let output = Command::new("route")
-                .args(&["delete", "default"])
-                .output();
+            let output = Command::new("route").args(&["delete", "default"]).output();
 
             match output {
                 Ok(result) => {
@@ -707,9 +744,7 @@ impl NetworkIsolationConfig {
 
             args.extend(&["-j", &rule.action]);
 
-            let output = Command::new("iptables")
-                .args(&args)
-                .output();
+            let output = Command::new("iptables").args(&args).output();
 
             match output {
                 Ok(result) => {
@@ -767,16 +802,16 @@ subnet 192.168.100.0 netmask 255.255.255.0 {{
 
         // Test connectivity to common internet hosts
         let test_hosts = vec![
-            "8.8.8.8",      // Google DNS
-            "1.1.1.1",      // Cloudflare DNS
-            "google.com",   // Popular website
+            "8.8.8.8",    // Google DNS
+            "1.1.1.1",    // Cloudflare DNS
+            "google.com", // Popular website
         ];
 
         let mut isolation_working = true;
 
         for host in test_hosts {
             let ping_result = self.test_connectivity(host).await;
-            
+
             match ping_result {
                 Ok(true) => {
                     error!(" ISOLATION FAILED: Can still reach {}", host);
@@ -818,7 +853,7 @@ subnet 192.168.100.0 netmask 255.255.255.0 {{
             let output = Command::new("ping")
                 .args(&["-n", "1", "-w", "1000", host])
                 .output()?;
-            
+
             Ok(output.status.success())
         }
 
@@ -827,7 +862,7 @@ subnet 192.168.100.0 netmask 255.255.255.0 {{
             let output = Command::new("ping")
                 .args(&["-c", "1", "-W", "1", host])
                 .output()?;
-            
+
             Ok(output.status.success())
         }
     }

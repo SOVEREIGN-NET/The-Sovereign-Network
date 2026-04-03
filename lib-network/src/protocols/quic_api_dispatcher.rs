@@ -9,7 +9,7 @@
 //! # Protocol Flow
 //!
 //! 1. Accept QUIC connection
-//! 2. Perform UHP+Kyber handshake (verify client identity)
+//! 2. Perform UHP v2 handshake (verify client identity)
 //! 3. For each bidirectional stream:
 //!    - Read ZhtpRequestWire (length-prefixed CBOR)
 //!    - Dispatch to appropriate handler
@@ -21,20 +21,17 @@
 //! - Client identity is verified before processing any requests
 //! - Request authorization checked per-request based on client identity
 
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, debug, warn};
+use tracing::{debug, info, warn};
 
-use quinn::{Endpoint, Connection};
+use quinn::{Connection, Endpoint};
 
 use lib_identity::ZhtpIdentity;
-use lib_protocols::wire::{
-    ZhtpRequestWire, ZhtpResponseWire,
-    read_request, write_response,
-};
-use lib_protocols::types::{ZhtpRequest, ZhtpResponse, ZhtpStatus, ZhtpMethod};
+use lib_protocols::types::{ZhtpMethod, ZhtpRequest, ZhtpResponse, ZhtpStatus};
+use lib_protocols::wire::{read_request, write_response, ZhtpRequestWire, ZhtpResponseWire};
 
 /// Verified principal from UHP handshake + AuthContext validation
 #[derive(Debug, Clone)]
@@ -43,8 +40,8 @@ pub struct VerifiedPrincipal {
     pub client_did: String,
     /// Node's DID (our identity)
     pub node_did: String,
-    /// Session ID
-    pub session_id: [u8; 16],
+    /// Session ID (UHP v2, 32 bytes)
+    pub session_id: [u8; 32],
     /// Request sequence number (for audit)
     pub sequence: Option<u64>,
 }
@@ -60,7 +57,7 @@ use crate::protocols::quic_handshake;
 pub type RequestHandler = Arc<
     dyn Fn(ZhtpRequest, VerifiedPrincipal) -> futures::future::BoxFuture<'static, ZhtpResponse>
         + Send
-        + Sync
+        + Sync,
 >;
 
 /// QUIC API Dispatcher - accepts connections and routes requests to handlers
@@ -93,6 +90,7 @@ struct ActiveConnection {
     peer_addr: SocketAddr,
 
     /// Peer's verified DID
+    #[allow(dead_code)]
     peer_did: String,
 
     /// QUIC connection
@@ -199,10 +197,7 @@ impl QuicApiDispatcher {
         // Wait for accept task to complete
         if let Some(task) = self.accept_task.take() {
             // Give it a reasonable timeout
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                task
-            ).await {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), task).await {
                 Ok(_) => info!("QUIC API dispatcher stopped cleanly"),
                 Err(_) => {
                     warn!("QUIC API dispatcher shutdown timed out");
@@ -224,7 +219,10 @@ impl QuicApiDispatcher {
 
     /// Check if dispatcher is running
     pub fn is_running(&self) -> bool {
-        self.accept_task.as_ref().map(|t| !t.is_finished()).unwrap_or(false)
+        self.accept_task
+            .as_ref()
+            .map(|t| !t.is_finished())
+            .unwrap_or(false)
     }
 }
 
@@ -236,18 +234,16 @@ async fn handle_connection(
     handler: RequestHandler,
     connections: Arc<RwLock<Vec<ActiveConnection>>>,
 ) -> Result<()> {
-    let connection = incoming.await
-        .context("Failed to accept connection")?;
+    let connection = incoming.await.context("Failed to accept connection")?;
 
     let peer_addr = connection.remote_address();
     info!("New API connection from {}", peer_addr);
 
-    // Perform UHP+Kyber handshake
-    let handshake_result = quic_handshake::handshake_as_responder(
-        &connection,
-        &identity,
-        &handshake_ctx,
-    ).await.context("Handshake failed")?;
+    // Perform UHP v2 handshake
+    let handshake_result =
+        quic_handshake::handshake_as_responder(&connection, &identity, &handshake_ctx)
+            .await
+            .context("Handshake failed")?;
 
     let peer_did = handshake_result.verified_peer.identity.did.clone();
 
@@ -269,11 +265,11 @@ async fn handle_connection(
 
     // Extract session info for auth verification
     let session_id = handshake_result.session_id;
-    let master_key = handshake_result.master_key;
+    let session_key = handshake_result.session_key;
     let node_did = identity.did.clone();
 
     // Derive application-layer MAC key (same derivation as client)
-    let app_key = derive_app_key(&master_key, &session_id, &peer_did, &node_did);
+    let app_key = derive_app_key(&session_key, &session_id, &peer_did, &node_did);
 
     // Handle streams
     loop {
@@ -286,7 +282,9 @@ async fn handle_connection(
                 let key = app_key;
 
                 tokio::spawn(async move {
-                    if let Err(e) = handle_stream(send, recv, h, client_did, server_did, sid, key).await {
+                    if let Err(e) =
+                        handle_stream(send, recv, h, client_did, server_did, sid, key).await
+                    {
                         debug!("Stream handling error: {}", e);
                     }
                 });
@@ -318,11 +316,12 @@ async fn handle_stream(
     handler: RequestHandler,
     client_did: String,
     node_did: String,
-    session_id: [u8; 16],
+    session_id: [u8; 32],
     app_key: [u8; 32],
 ) -> Result<()> {
     // Read request
-    let wire_request = read_request(&mut recv).await
+    let wire_request = read_request(&mut recv)
+        .await
         .context("Failed to read request")?;
 
     let request_id = wire_request.request_id;
@@ -453,23 +452,28 @@ async fn handle_stream(
     );
 
     // Send response
-    write_response(&mut send, &wire_response).await
+    write_response(&mut send, &wire_response)
+        .await
         .context("Failed to write response")?;
 
     // Finish stream
-    send.finish()
-        .context("Failed to finish stream")?;
+    send.finish().context("Failed to finish stream")?;
 
     Ok(())
 }
 
-/// Derive application-layer MAC key from master key
+/// Derive application-layer MAC key from session key
 ///
 /// This must match the derivation in Web4Client.
-fn derive_app_key(master_key: &[u8; 32], session_id: &[u8; 16], peer_did: &str, node_did: &str) -> [u8; 32] {
+fn derive_app_key(
+    session_key: &[u8; 32],
+    session_id: &[u8; 32],
+    peer_did: &str,
+    node_did: &str,
+) -> [u8; 32] {
     let mut input = Vec::new();
     input.extend_from_slice(b"zhtp-web4-app-mac");
-    input.extend_from_slice(master_key);
+    input.extend_from_slice(session_key);
     input.extend_from_slice(session_id);
     // Note: peer_did is client_did from server's perspective, node_did is server's DID
     // The order must match the client: peer_did (server from client's view) then client_did
@@ -480,32 +484,27 @@ fn derive_app_key(master_key: &[u8; 32], session_id: &[u8; 16], peer_did: &str, 
 }
 
 /// Create a handler that routes requests to the ZHTP router
-pub fn create_router_handler<F>(
-    router: Arc<F>,
-) -> RequestHandler
+pub fn create_router_handler<F>(router: Arc<F>) -> RequestHandler
 where
     F: Fn(ZhtpRequest) -> futures::future::BoxFuture<'static, ZhtpResponse> + Send + Sync + 'static,
 {
     Arc::new(move |request, _principal| {
         let r = Arc::clone(&router);
-        Box::pin(async move {
-            r(request).await
-        })
+        Box::pin(async move { r(request).await })
     })
 }
 
 /// Create a handler that includes principal info for authorization
-pub fn create_authorized_handler<F>(
-    handler: Arc<F>,
-) -> RequestHandler
+pub fn create_authorized_handler<F>(handler: Arc<F>) -> RequestHandler
 where
-    F: Fn(ZhtpRequest, VerifiedPrincipal) -> futures::future::BoxFuture<'static, ZhtpResponse> + Send + Sync + 'static,
+    F: Fn(ZhtpRequest, VerifiedPrincipal) -> futures::future::BoxFuture<'static, ZhtpResponse>
+        + Send
+        + Sync
+        + 'static,
 {
     Arc::new(move |request, principal| {
         let h = Arc::clone(&handler);
-        Box::pin(async move {
-            h(request, principal).await
-        })
+        Box::pin(async move { h(request, principal).await })
     })
 }
 
