@@ -489,6 +489,10 @@ pub struct ConsensusEngine {
     /// The consensus loop checks this between iterations and applies updates
     /// without requiring direct engine access from external tasks.
     validator_update_rx: Option<tokio::sync::mpsc::Receiver<ValidatorSetUpdate>>,
+    /// Shared atomic tracking the height BFT consensus is actively working on.
+    /// Catch-up sync reads this to avoid writing blocks that BFT will finalize.
+    /// Updated at the start of each consensus round.
+    bft_active_height: Option<Arc<std::sync::atomic::AtomicU64>>,
 }
 
 /// Validator set update message sent from the runtime to the consensus loop.
@@ -577,6 +581,7 @@ impl ConsensusEngine {
             catch_up_sync_trigger: None,
             engine_start_time,
             validator_update_rx: None,
+            bft_active_height: None,
         })
     }
 
@@ -592,6 +597,12 @@ impl ConsensusEngine {
         rx: tokio::sync::mpsc::Receiver<ValidatorSetUpdate>,
     ) {
         self.validator_update_rx = Some(rx);
+    }
+
+    /// Set the shared BFT active height atomic.
+    /// Catch-up sync reads this to avoid racing with BFT block commits.
+    pub fn set_bft_active_height(&mut self, height: Arc<std::sync::atomic::AtomicU64>) {
+        self.bft_active_height = Some(height);
     }
 
     /// Set liveness event sender for monitoring/alert bridges.
