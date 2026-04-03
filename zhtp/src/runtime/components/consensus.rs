@@ -699,10 +699,13 @@ async fn catchup_sync_from_peer(
         .context("catch-up sync: identity manager not available")?;
     let mgr = identity_manager.read().await;
     let identities = mgr.list_identities();
+    // Must use an identity that has a private key — the identity manager stores
+    // public data for most identities, but the node identity (used for signing)
+    // is stored with its private key. user_identity (first) has no private key.
     let node_identity = identities
         .into_iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("catch-up sync: no identity available"))?
+        .find(|id| id.private_key.is_some())
+        .ok_or_else(|| anyhow::anyhow!("catch-up sync: no identity with private key available"))?
         .clone();
     drop(mgr);
 
