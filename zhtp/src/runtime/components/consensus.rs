@@ -827,17 +827,17 @@ async fn catchup_sync_from_peer(
             // bft_active_height = current_round.height = blockchain_height + 1
             // (the height BFT is proposing/voting on).
             //
-            // Catch-up may apply blocks AT bft_active_height because they come from
-            // peers that already committed them via BFT — the blocks should be
-            // identical. The idempotency check in commit_finalized_block handles
-            // the case where BFT also commits the same block (same hash = skip).
-            //
-            // Catch-up must NOT apply blocks ABOVE bft_active_height — those
-            // haven't been finalized by any peer yet.
+            // Catch-up MUST NOT apply blocks AT OR ABOVE bft_active_height.
+            // BFT is the sole authority for the current height. A peer's block at
+            // bft_active_height may have a different hash (different timestamp or
+            // proposer) even with identical transactions — applying it races with
+            // BFT commit and causes a divergence halt. See Apr 3 2026 postmortem.
+            // Previous code used `>` (not `>=`), allowing catch-up at the exact BFT
+            // height; that was the root cause of the recurring height-1299 divergence.
             //
             // In bootstrap mode the guard is 0, allowing catch-up to proceed freely.
             let bft_height = bft_active_height.load(std::sync::atomic::Ordering::Acquire);
-            if bft_height > 0 && height > bft_height {
+            if bft_height > 0 && height >= bft_height {
                 debug!(
                     "Catch-up: skipping block {} (BFT active at height {})",
                     height, bft_height
@@ -966,10 +966,18 @@ impl lib_consensus::types::BlockCommitCallback for ConsensusBlockCommitter {
                         // Instead: reject this commit and return an error so the
                         // consensus engine knows something is wrong. The operator
                         // must investigate the divergence manually.
+                        //
+                        // This divergence can only occur via the TOCTOU window during the
+                        // bootstrap→BFT mode transition: catch-up downloaded block H from a
+                        // peer before bft_active_height was published, then BFT committed H
+                        // with a different hash (different proposer timestamp). The primary
+                        // fix (>= guard in catchup_sync_from_peer) prevents this during
+                        // steady-state BFT; this path should now be extremely rare.
                         error!(
                             "CHAIN DIVERGENCE at height {}: sled has {}, BFT finalized {}. \
-                             Rejecting commit. Operator must investigate — \
-                             sled preserved for forensics.",
+                             Likely cause: catch-up/BFT TOCTOU race at bootstrap→BFT transition. \
+                             Rejecting commit — sled preserved for forensics. \
+                             Recovery: stop node, wipe sled, copy from a peer running the same height, restart.",
                             proposal.height,
                             hex::encode(&stored_hash.0[..8]),
                             hex::encode(&bft_hash[..8]),
@@ -2405,22 +2413,24 @@ mod tests {
         let bft_height = std::sync::atomic::AtomicU64::new(1346);
         let block_height = 1345u64;
         let bft_val = bft_height.load(std::sync::atomic::Ordering::Acquire);
-        // Block below BFT height should be allowed
+        // Block below BFT height should be allowed (catch-up fills the gap)
         assert!(
-            !(bft_val > 0 && block_height > bft_val),
+            !(bft_val > 0 && block_height >= bft_val),
             "Block below BFT height should pass the guard"
         );
     }
 
     #[test]
-    fn test_bft_active_height_guard_allows_blocks_at_bft_height() {
+    fn test_bft_active_height_guard_blocks_blocks_at_bft_height() {
         let bft_height = std::sync::atomic::AtomicU64::new(1346);
         let block_height = 1346u64;
         let bft_val = bft_height.load(std::sync::atomic::Ordering::Acquire);
-        // Block AT BFT height should be allowed (same block from peer's committed chain)
+        // Block AT BFT height must be BLOCKED — BFT is the sole authority at that height.
+        // Using >= prevents the race where catch-up applies a peer's block at bft_active_height
+        // with a different hash than what BFT will commit (Apr 3 2026 postmortem fix).
         assert!(
-            !(bft_val > 0 && block_height > bft_val),
-            "Block at BFT height should pass the guard"
+            bft_val > 0 && block_height >= bft_val,
+            "Block at BFT height must be blocked by the guard"
         );
     }
 
@@ -2429,9 +2439,9 @@ mod tests {
         let bft_height = std::sync::atomic::AtomicU64::new(1346);
         let block_height = 1347u64;
         let bft_val = bft_height.load(std::sync::atomic::Ordering::Acquire);
-        // Block above BFT height should be blocked
+        // Block above BFT height should be blocked (not finalized by any peer yet)
         assert!(
-            bft_val > 0 && block_height > bft_val,
+            bft_val > 0 && block_height >= bft_val,
             "Block above BFT height should be blocked by the guard"
         );
     }
@@ -2441,9 +2451,9 @@ mod tests {
         let bft_height = std::sync::atomic::AtomicU64::new(0); // bootstrap mode
         let block_height = 9999u64;
         let bft_val = bft_height.load(std::sync::atomic::Ordering::Acquire);
-        // Guard disabled when bft_height is 0 (bootstrap mode)
+        // Guard disabled when bft_height is 0 (bootstrap mode — catch-up proceeds freely)
         assert!(
-            !(bft_val > 0 && block_height > bft_val),
+            !(bft_val > 0 && block_height >= bft_val),
             "Guard should be disabled when bft_active_height is 0"
         );
     }
