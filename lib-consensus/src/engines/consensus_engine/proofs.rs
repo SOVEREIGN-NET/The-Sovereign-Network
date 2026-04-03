@@ -17,13 +17,18 @@ impl ConsensusEngine {
         // Collect pending transactions for this block
         let block_data = self.collect_block_transactions().await?;
 
-        // Generate proposal ID from deterministic data
+        // Generate proposal ID from deterministic data.
+        // Bound to (height, round, proposer, previous_hash, block_data) so
+        // that the same proposer at the same height but a different round
+        // produces a distinct proposal ID.
         let proposal_id = Hash::from_bytes(&hash_blake3(
             &[
+                b"ZHTP/PROPOSAL/ID/v1\0" as &[u8],
+                validator_id.as_bytes(),
                 &self.current_round.height.to_le_bytes(),
+                &self.current_round.round.to_le_bytes(),
                 previous_hash.as_bytes(),
                 &block_data,
-                validator_id.as_bytes(),
             ]
             .concat(),
         ));
@@ -36,6 +41,7 @@ impl ConsensusEngine {
             &proposal_id,
             validator_id,
             self.current_round.height,
+            self.current_round.round,
             &previous_hash,
             &block_data,
         )?;
@@ -146,19 +152,26 @@ impl ConsensusEngine {
         Ok(block_data.into_bytes())
     }
 
-    /// Serialize proposal data for signing
+    /// Serialize proposal data for signing.
+    ///
+    /// The signed envelope is domain-tagged and binds all consensus-critical
+    /// fields so that a signature for one (height, round) cannot be replayed
+    /// at a different position in the chain.
     pub(super) fn serialize_proposal_data(
         &self,
         proposal_id: &Hash,
         proposer: &IdentityId,
         height: u64,
+        round: u32,
         previous_hash: &Hash,
         block_data: &[u8],
     ) -> ConsensusResult<Vec<u8>> {
         let mut data = Vec::new();
+        data.extend_from_slice(b"ZHTP/PROPOSAL/SIG/v1\0");
         data.extend_from_slice(proposal_id.as_bytes());
         data.extend_from_slice(proposer.as_bytes());
         data.extend_from_slice(&height.to_le_bytes());
+        data.extend_from_slice(&round.to_le_bytes());
         data.extend_from_slice(previous_hash.as_bytes());
         data.extend_from_slice(&(block_data.len() as u32).to_le_bytes());
         data.extend_from_slice(block_data);

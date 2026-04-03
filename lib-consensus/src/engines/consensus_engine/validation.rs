@@ -376,6 +376,85 @@ impl ConsensusEngine {
         Ok(())
     }
 
+    /// Verify the cryptographic signature of a proposal.
+    ///
+    /// Checks (in order):
+    /// 1. Public key is non-empty
+    /// 2. Dilithium variant is a known scheme
+    /// 3. Proposer exists in the validator registry
+    /// 4. Registered consensus key is verifiable (len > 32)
+    /// 5. Proposal's public key matches the registered consensus key
+    /// 6. Signature verifies against the serialized proposal envelope
+    ///
+    /// Used by both `validate_incoming_proposal` (admission) and
+    /// `validate_committed_block` (commit-time) to avoid drift.
+    pub(super) async fn verify_proposal_signature(
+        &self,
+        proposal: &ConsensusProposal,
+    ) -> ConsensusResult<()> {
+        if proposal.signature.public_key.dilithium_pk.is_empty() {
+            return Err(ConsensusError::ProofVerificationFailed(format!(
+                "Proposal signature rejected: empty consensus key from proposer {} at H={} R={}",
+                proposal.proposer, proposal.height, proposal.round,
+            )));
+        }
+
+        if let Err(e) = lib_crypto::validate_consensus_vote_signature_scheme(
+            &proposal.signature.public_key.dilithium_pk,
+        ) {
+            return Err(ConsensusError::ProofVerificationFailed(format!(
+                "Proposal signature rejected: invalid scheme from proposer {} at H={} R={}: {}",
+                proposal.proposer, proposal.height, proposal.round, e,
+            )));
+        }
+
+        let validator = self
+            .validator_manager
+            .get_validator(&proposal.proposer)
+            .ok_or_else(|| {
+                ConsensusError::ProofVerificationFailed(format!(
+                    "Proposal signature rejected: proposer {} not found in validator registry",
+                    proposal.proposer,
+                ))
+            })?;
+
+        if validator.consensus_key.is_empty() || validator.consensus_key.len() <= 32 {
+            return Err(ConsensusError::ProofVerificationFailed(format!(
+                "Proposal signature rejected: proposer {} has non-verifiable consensus key (len={})",
+                proposal.proposer,
+                validator.consensus_key.len(),
+            )));
+        }
+
+        if validator.consensus_key != proposal.signature.public_key.dilithium_pk {
+            return Err(ConsensusError::ProofVerificationFailed(format!(
+                "Proposal signature rejected: consensus key mismatch for proposer {} at H={} R={}",
+                proposal.proposer, proposal.height, proposal.round,
+            )));
+        }
+
+        let proposal_data = self.serialize_proposal_data(
+            &proposal.id,
+            &proposal.proposer,
+            proposal.height,
+            proposal.round,
+            &proposal.previous_hash,
+            &proposal.block_data,
+        )?;
+
+        if !self
+            .verify_signature(&proposal_data, &proposal.signature)
+            .await?
+        {
+            return Err(ConsensusError::ProofVerificationFailed(format!(
+                "Proposal signature rejected: invalid signature from proposer {} at H={} R={}",
+                proposal.proposer, proposal.height, proposal.round,
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Validate an incoming proposal against all admission criteria.
     ///
     /// Hard gate invoked from `on_proposal()` **before** the proposal is stored
@@ -412,81 +491,34 @@ impl ConsensusEngine {
         }
 
         // ── 2. Proposal signature ───────────────────────────────────────
-        // 2a. Reject empty public key (mirrors verify_vote_signature logic).
-        if proposal.signature.public_key.dilithium_pk.is_empty() {
-            return Err(ConsensusError::ByzantineFault(format!(
-                "Proposal rejected: empty consensus key from proposer {} at H={} R={}",
-                proposal.proposer, proposal.height, proposal.round,
-            )));
-        }
-
-        // 2b. Validate Dilithium variant.
-        if let Err(e) = lib_crypto::validate_consensus_vote_signature_scheme(
-            &proposal.signature.public_key.dilithium_pk,
-        ) {
-            return Err(ConsensusError::ByzantineFault(format!(
-                "Proposal rejected: invalid signature scheme from proposer {} \
-                 at H={} R={}: {}",
-                proposal.proposer, proposal.height, proposal.round, e,
-            )));
-        }
-
-        // 2c. Look up the registered consensus key and compare.
-        let validator = self
-            .validator_manager
-            .get_validator(&proposal.proposer)
-            .ok_or_else(|| {
-                ConsensusError::ByzantineFault(format!(
-                    "Proposal rejected: proposer {} not found in validator registry",
-                    proposal.proposer,
-                ))
-            })?;
-
-        if validator.consensus_key.is_empty() || validator.consensus_key.len() <= 32 {
-            return Err(ConsensusError::ByzantineFault(format!(
-                "Proposal rejected: proposer {} has non-verifiable consensus key (len={})",
-                proposal.proposer,
-                validator.consensus_key.len(),
-            )));
-        }
-
-        if validator.consensus_key != proposal.signature.public_key.dilithium_pk {
-            return Err(ConsensusError::ByzantineFault(format!(
-                "Proposal rejected: consensus key mismatch for proposer {} at H={} R={}",
-                proposal.proposer, proposal.height, proposal.round,
-            )));
-        }
-
-        // 2d. Reconstruct the signed envelope and verify cryptographically.
-        let proposal_data = self.serialize_proposal_data(
-            &proposal.id,
-            &proposal.proposer,
-            proposal.height,
-            &proposal.previous_hash,
-            &proposal.block_data,
-        )?;
-
-        if !self
-            .verify_signature(&proposal_data, &proposal.signature)
-            .await?
-        {
-            return Err(ConsensusError::ByzantineFault(format!(
-                "Proposal rejected: invalid signature from proposer {} at H={} R={}",
-                proposal.proposer, proposal.height, proposal.round,
-            )));
-        }
+        self.verify_proposal_signature(proposal).await?;
 
         // ── 3. Previous-hash continuity ─────────────────────────────────
         self.validate_previous_hash(proposal.height, &proposal.previous_hash)
             .await?;
 
         // ── 4. Block payload decode ─────────────────────────────────────
+        // Timeout guards against a stuck provider stalling the consensus hot path.
         if let Some(ref provider) = self.blockchain_provider {
-            if let Err(e) = provider.decode_block_data(&proposal.block_data).await {
-                return Err(ConsensusError::ByzantineFault(format!(
-                    "Proposal rejected: block_data decode failed for H={} R={} from {}: {}",
-                    proposal.height, proposal.round, proposal.proposer, e,
-                )));
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                provider.decode_block_data(&proposal.block_data),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    return Err(ConsensusError::ByzantineFault(format!(
+                        "Proposal rejected: block_data decode failed for H={} R={} from {}: {}",
+                        proposal.height, proposal.round, proposal.proposer, e,
+                    )));
+                }
+                Err(_elapsed) => {
+                    return Err(ConsensusError::ByzantineFault(format!(
+                        "Proposal rejected: block_data decode timed out for H={} R={} from {}",
+                        proposal.height, proposal.round, proposal.proposer,
+                    )));
+                }
             }
         }
 

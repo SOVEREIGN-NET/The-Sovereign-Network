@@ -1052,53 +1052,7 @@ impl ConsensusEngine {
 
     /// Validate committed block before applying
     async fn validate_committed_block(&self, proposal: &ConsensusProposal) -> ConsensusResult<()> {
-        // Verify proposal signature
-        let proposal_data = self.serialize_proposal_data(
-            &proposal.id,
-            &proposal.proposer,
-            proposal.height,
-            &proposal.previous_hash,
-            &proposal.block_data,
-        )?;
-
-        let proposer = self
-            .validator_manager
-            .get_validator(&proposal.proposer)
-            .ok_or_else(|| {
-                ConsensusError::ValidatorError(
-                    "Proposer not found for proposal validation".to_string(),
-                )
-            })?;
-
-        if proposer.consensus_key.is_empty() || proposer.consensus_key.len() <= 32 {
-            return Err(ConsensusError::ProofVerificationFailed(
-                "Proposer has non-verifiable registered consensus key".to_string(),
-            ));
-        }
-
-        if proposer.consensus_key != proposal.signature.public_key.dilithium_pk {
-            return Err(ConsensusError::ProofVerificationFailed(
-                "Proposal signature key does not match proposer consensus key".to_string(),
-            ));
-        }
-
-        if let Err(e) = lib_crypto::validate_consensus_vote_signature_scheme(
-            &proposal.signature.public_key.dilithium_pk,
-        ) {
-            return Err(ConsensusError::ProofVerificationFailed(format!(
-                "Proposal signature key uses unsupported scheme: {}",
-                e
-            )));
-        }
-
-        if !self
-            .verify_signature(&proposal_data, &proposal.signature)
-            .await?
-        {
-            return Err(ConsensusError::ProofVerificationFailed(
-                "Invalid proposal signature".to_string(),
-            ));
-        }
+        self.verify_proposal_signature(proposal).await?;
 
         // BFT consensus security is provided by vote quorum (2/3+1 commit votes),
         // not by per-block proofs.  verify_consensus_proof() always returns false
