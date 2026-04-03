@@ -4034,6 +4034,46 @@ impl Blockchain {
         self.nullifier_set.contains(nullifier)
     }
 
+    /// Check whether a transaction's nonce is still valid against committed chain state.
+    ///
+    /// Returns `true` for transaction types that don't carry nonces (they are
+    /// validated by other means).  For `TokenTransfer`, the nonce must equal
+    /// the sender's current on-chain nonce for the target token — anything
+    /// lower has already been applied and is a replay.
+    pub fn is_nonce_current(&self, tx: &Transaction) -> bool {
+        if tx.transaction_type == TransactionType::TokenTransfer {
+            if let Some(transfer) = tx.token_transfer_data() {
+                let token_id = if transfer.token_id == [0u8; 32] {
+                    crate::contracts::utils::generate_lib_token_id()
+                } else {
+                    transfer.token_id
+                };
+                let expected = self.get_token_nonce(&token_id, &transfer.from);
+                if transfer.nonce < expected {
+                    tracing::debug!(
+                        "Stale nonce: tx {} has nonce {} but chain expects {} for sender {}",
+                        tx.hash(),
+                        transfer.nonce,
+                        expected,
+                        hex::encode(&transfer.from[..8]),
+                    );
+                    return false;
+                }
+                if transfer.nonce > expected {
+                    tracing::debug!(
+                        "Future nonce: tx {} has nonce {} but chain expects {} for sender {}",
+                        tx.hash(),
+                        transfer.nonce,
+                        expected,
+                        hex::encode(&transfer.from[..8]),
+                    );
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     /// Get pending transactions
     pub fn get_pending_transactions(&self) -> Vec<Transaction> {
         self.pending_transactions.clone()
@@ -4101,6 +4141,17 @@ impl Blockchain {
             return Err(anyhow::anyhow!("Transaction verification failed"));
         }
 
+        // Nonce gate: reject transactions whose nonce doesn't match the
+        // current chain state.  This prevents stale/replayed transactions
+        // from entering the mempool (root cause of the block-1323 incident).
+        if !self.is_nonce_current(&transaction) {
+            let tx_hash = hex::encode(transaction.hash().as_bytes());
+            return Err(anyhow::anyhow!(
+                "Transaction {} rejected: stale or future nonce",
+                &tx_hash[..16]
+            ));
+        }
+
         self.pending_transactions.push(transaction);
         tracing::debug!("[FLOW] verify_and_enqueue_transaction: enqueued");
         Ok(())
@@ -4132,12 +4183,38 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Remove transactions from pending pool
+    /// Remove committed transactions from the pending pool, then evict any
+    /// remaining pending transactions whose nonces are now stale.
+    ///
+    /// After a block commits, the on-chain nonce for each sender advances.
+    /// Other pending transactions from the same sender that carried the
+    /// now-consumed nonce (e.g. re-submitted via gossip) must be evicted to
+    /// prevent the proposer from including a replay in the next block.
     pub fn remove_pending_transactions(&mut self, transactions: &[Transaction]) {
         let tx_hashes: HashSet<Hash> = transactions.iter().map(|tx| tx.hash()).collect();
 
+        // Phase 1: remove the exact committed transactions by hash.
         self.pending_transactions
             .retain(|tx| !tx_hashes.contains(&tx.hash()));
+
+        // Phase 2: evict remaining transactions with stale nonces.
+        // Collect stale tx hashes first to avoid borrow conflict.
+        let stale_hashes: Vec<Hash> = self
+            .pending_transactions
+            .iter()
+            .filter(|tx| !self.is_nonce_current(tx))
+            .map(|tx| tx.hash())
+            .collect();
+
+        if !stale_hashes.is_empty() {
+            let stale_set: HashSet<Hash> = stale_hashes.iter().cloned().collect();
+            self.pending_transactions
+                .retain(|tx| !stale_set.contains(&tx.hash()));
+            tracing::info!(
+                "Evicted {} pending transaction(s) with stale nonces after block commit",
+                stale_hashes.len(),
+            );
+        }
     }
 
     // ===== IDENTITY MANAGEMENT METHODS =====
