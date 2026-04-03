@@ -1,16 +1,16 @@
-//! Consensus Validation and Nondeterminism Detection
+//! Consensus Validation
 //!
-//! This module implements strict validation rules for BFT consensus and provides
-//! fail-fast detection of nondeterministic operations that could lead to chain splits.
+//! Strict, deterministic validation rules for BFT consensus: proposal admission,
+//! vote verification, fork rejection, and previous-hash continuity.
 //!
 //! # Determinism Guarantees
 //!
-//! All validation functions in this module are designed to be **deterministic**:
-//! given the same inputs, they always produce the same output on every node.
-//! This is a hard requirement for BFT consensus — if two honest validators
-//! disagree about whether a block is valid, liveness is broken.
+//! All validation functions in this module are **deterministic**: given the same
+//! inputs, they always produce the same output on every node. This is a hard
+//! requirement for BFT consensus — if two honest validators disagree about
+//! whether a block is valid, liveness is broken.
 //!
-//! ## Determinism Rules Enforced Here
+//! ## Rules Enforced Here
 //!
 //! 1. **Validator set is snapshot-based**: [`ConsensusEngine::is_validator_member`]
 //!    looks up a *snapshot* of the validator set at the target height, not the
@@ -27,133 +27,9 @@
 //! 4. **State transitions are pure**: [`ConsensusEngine::validate_remote_vote`]
 //!    returns the same `bool` for the same `(vote, engine_state)` pair regardless
 //!    of wall-clock time or process identity.
-//!
-//! # Nondeterminism Detection
-//!
-//! Blockchain consensus requires deterministic execution across all validators.
-//! Nondeterministic inputs such as:
-//! - Wall-clock time (SystemTime::now(), chrono::Utc::now())
-//! - Random number generation (rand::random(), OsRng)
-//! - Network timing
-//! - Thread scheduling
-//!
-//! Can cause different validators to reach different conclusions about the same block,
-//! leading to chain splits and consensus failures.
-//!
-//! ## Fail-Fast Guards
-//!
-//! This module provides runtime guards that detect nondeterministic operations during
-//! consensus-critical sections:
-//!
-//! 1. **Consensus scope guards**: Mark critical sections where nondeterminism is forbidden
-//! 2. **Assertion helpers**: Panic immediately if nondeterministic ops are detected
-//! 3. **Integration points**: Hook into time/random utilities to enforce determinism
-//! ## Usage
-//!
-//! Consensus-critical code sections are wrapped with scope guards:
-//!
-//! ```rust,ignore
-//! determinism_guard::enter_consensus_scope();
-//! let _guard = scopeguard::guard((), |_| {
-//!     determinism_guard::exit_consensus_scope();
-//! });
-//! // ... consensus logic here ...
-//! ```
-//!
-//! Any attempt to access nondeterministic sources during this section will panic
-//! with a clear error message indicating the violation.
 
 use super::*;
 use lib_crypto::PostQuantumSignature;
-
-/// Assert that a state transition is deterministic by executing it twice and
-/// comparing the results.
-///
-/// # Parameters
-///
-/// - `label`: Human-readable name of the transition (for error messages).
-/// - `prev_state_hash`: A hash of the initial state before the transition.
-/// - `block_hash`: The hash of the block being applied.
-/// - `result_state_hash_1`: State root produced by the first execution.
-/// - `result_state_hash_2`: State root produced by the second execution.
-///
-/// # Panics (debug) / Logs error (release)
-///
-/// Panics if the two result hashes differ, indicating that the transition is
-/// non-deterministic.
-#[allow(dead_code)]
-pub fn assert_deterministic_state_transition(
-    label: &str,
-    prev_state_hash: &[u8; 32],
-    block_hash: &[u8; 32],
-    result_state_hash_1: &[u8; 32],
-    result_state_hash_2: &[u8; 32],
-) {
-    if result_state_hash_1 != result_state_hash_2 {
-        let msg = format!(
-            "NON-DETERMINISTIC state transition detected in '{}': \
-             prev_state={}, block={}, result1={}, result2={}. \
-             State transitions must be pure functions of (prev_state, block).",
-            label,
-            hex::encode(prev_state_hash),
-            hex::encode(block_hash),
-            hex::encode(result_state_hash_1),
-            hex::encode(result_state_hash_2),
-        );
-        #[cfg(debug_assertions)]
-        panic!("{}", msg);
-        #[cfg(not(debug_assertions))]
-        tracing::error!("{}", msg);
-    }
-}
-
-/// Nondeterminism detection guard
-///
-/// This module provides runtime checks to detect nondeterministic behavior
-/// during consensus execution. Nondeterministic operations like system time
-/// access or random number generation during consensus can lead to chain splits.
-#[allow(dead_code)]
-pub(super) mod determinism_guard {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static CONSENSUS_ACTIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-    /// Mark consensus as active (during critical consensus operations)
-    pub fn enter_consensus_scope() {
-        CONSENSUS_ACTIVE_COUNT.fetch_add(1, Ordering::SeqCst);
-    }
-
-    /// Mark consensus as inactive
-    pub fn exit_consensus_scope() {
-        let prev = CONSENSUS_ACTIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
-        debug_assert!(
-            prev > 0,
-            "exit_consensus_scope called more times than enter_consensus_scope"
-        );
-    }
-
-    /// Check if we're currently in a consensus-critical section
-    pub fn is_consensus_active() -> bool {
-        CONSENSUS_ACTIVE_COUNT.load(Ordering::SeqCst) > 0
-    }
-
-    /// Assert that no nondeterministic operation is occurring during consensus
-    ///
-    /// # Panics
-    ///
-    /// Panics if called during active consensus with details about the violation
-    #[track_caller]
-    pub fn assert_no_nondeterminism(operation: &str) {
-        if is_consensus_active() {
-            panic!(
-                "CONSENSUS NONDETERMINISM DETECTED: {} called during active consensus. \
-                This operation can lead to chain splits. Location: {}",
-                operation,
-                std::panic::Location::caller()
-            );
-        }
-    }
-}
 
 impl ConsensusEngine {
     /// Verify a signature
@@ -500,6 +376,123 @@ impl ConsensusEngine {
         Ok(())
     }
 
+    /// Validate an incoming proposal against all admission criteria.
+    ///
+    /// Hard gate invoked from `on_proposal()` **before** the proposal is stored
+    /// in `current_round.proposals` / `pending_proposals` and before any
+    /// transition into PreVote.
+    ///
+    /// # Checks (cheapest first)
+    ///
+    /// 1. **Expected proposer** — `proposer` must match the deterministic
+    ///    round-robin leader for `(height, round)`.
+    /// 2. **Proposal signature** — valid Dilithium signature from the
+    ///    proposer's registered consensus key.
+    /// 3. **Previous-hash continuity** — `previous_hash` links to our local
+    ///    chain tip (delegates to [`Self::validate_previous_hash`]).
+    /// 4. **Block payload decode** — `block_data` bytes are decodable by the
+    ///    blockchain provider (if one is attached).
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConsensusError` with a descriptive message on any failure.
+    /// The caller should log the error and silently discard the proposal.
+    pub(super) async fn validate_incoming_proposal(
+        &self,
+        proposal: &ConsensusProposal,
+    ) -> ConsensusResult<()> {
+        // ── 1. Expected proposer for (height, round) ────────────────────
+        let expected_proposer = self.compute_proposer_for_round(proposal.height, proposal.round);
+        if expected_proposer.as_ref() != Some(&proposal.proposer) {
+            return Err(ConsensusError::ByzantineFault(format!(
+                "Proposal rejected: proposer {} is not the expected leader for \
+                 H={} R={} (expected {:?})",
+                proposal.proposer, proposal.height, proposal.round, expected_proposer,
+            )));
+        }
+
+        // ── 2. Proposal signature ───────────────────────────────────────
+        // 2a. Reject empty public key (mirrors verify_vote_signature logic).
+        if proposal.signature.public_key.dilithium_pk.is_empty() {
+            return Err(ConsensusError::ByzantineFault(format!(
+                "Proposal rejected: empty consensus key from proposer {} at H={} R={}",
+                proposal.proposer, proposal.height, proposal.round,
+            )));
+        }
+
+        // 2b. Validate Dilithium variant.
+        if let Err(e) = lib_crypto::validate_consensus_vote_signature_scheme(
+            &proposal.signature.public_key.dilithium_pk,
+        ) {
+            return Err(ConsensusError::ByzantineFault(format!(
+                "Proposal rejected: invalid signature scheme from proposer {} \
+                 at H={} R={}: {}",
+                proposal.proposer, proposal.height, proposal.round, e,
+            )));
+        }
+
+        // 2c. Look up the registered consensus key and compare.
+        let validator = self
+            .validator_manager
+            .get_validator(&proposal.proposer)
+            .ok_or_else(|| {
+                ConsensusError::ByzantineFault(format!(
+                    "Proposal rejected: proposer {} not found in validator registry",
+                    proposal.proposer,
+                ))
+            })?;
+
+        if validator.consensus_key.is_empty() || validator.consensus_key.len() <= 32 {
+            return Err(ConsensusError::ByzantineFault(format!(
+                "Proposal rejected: proposer {} has non-verifiable consensus key (len={})",
+                proposal.proposer,
+                validator.consensus_key.len(),
+            )));
+        }
+
+        if validator.consensus_key != proposal.signature.public_key.dilithium_pk {
+            return Err(ConsensusError::ByzantineFault(format!(
+                "Proposal rejected: consensus key mismatch for proposer {} at H={} R={}",
+                proposal.proposer, proposal.height, proposal.round,
+            )));
+        }
+
+        // 2d. Reconstruct the signed envelope and verify cryptographically.
+        let proposal_data = self.serialize_proposal_data(
+            &proposal.id,
+            &proposal.proposer,
+            proposal.height,
+            &proposal.previous_hash,
+            &proposal.block_data,
+        )?;
+
+        if !self
+            .verify_signature(&proposal_data, &proposal.signature)
+            .await?
+        {
+            return Err(ConsensusError::ByzantineFault(format!(
+                "Proposal rejected: invalid signature from proposer {} at H={} R={}",
+                proposal.proposer, proposal.height, proposal.round,
+            )));
+        }
+
+        // ── 3. Previous-hash continuity ─────────────────────────────────
+        self.validate_previous_hash(proposal.height, &proposal.previous_hash)
+            .await?;
+
+        // ── 4. Block payload decode ─────────────────────────────────────
+        if let Some(ref provider) = self.blockchain_provider {
+            if let Err(e) = provider.decode_block_data(&proposal.block_data).await {
+                return Err(ConsensusError::ByzantineFault(format!(
+                    "Proposal rejected: block_data decode failed for H={} R={} from {}: {}",
+                    proposal.height, proposal.round, proposal.proposer, e,
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Validate that a block proposal does not create a fork.
     ///
     /// # BFT Fork Invariant
@@ -572,33 +565,5 @@ impl ConsensusEngine {
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod determinism_tests {
-    use super::assert_deterministic_state_transition;
-
-    /// Verify that identical executions are accepted as deterministic.
-    #[test]
-    fn identical_state_transitions_pass() {
-        let prev = [0u8; 32];
-        let block = [1u8; 32];
-        let result = [2u8; 32];
-        // Should not panic: both results are the same.
-        assert_deterministic_state_transition("test_transition", &prev, &block, &result, &result);
-    }
-
-    /// Verify that differing executions are flagged as non-deterministic.
-    #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "NON-DETERMINISTIC state transition detected")]
-    fn differing_state_transitions_panic() {
-        let prev = [0u8; 32];
-        let block = [1u8; 32];
-        let result1 = [2u8; 32];
-        let mut result2 = [2u8; 32];
-        result2[0] = 0xff; // differs in first byte
-        assert_deterministic_state_transition("test_transition", &prev, &block, &result1, &result2);
     }
 }

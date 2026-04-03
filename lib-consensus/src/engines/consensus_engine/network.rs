@@ -9,7 +9,6 @@ impl ConsensusEngine {
     /// - Receiver closure (exits gracefully)
     ///
     /// Processes PreVote/PreCommit/Proposal messages and maintains vote_pool.
-    /// Gap 4: Vote Aggregation from Remote Validators
     ///
     /// Invariant: This is the ONLY consensus driver. run_consensus_round() must NOT be used
     /// alongside this loop (they would conflict). The loop handles all progression:
@@ -17,7 +16,7 @@ impl ConsensusEngine {
     /// - Messages drive quorum detection and early transitions
     /// - Receiver closure causes graceful shutdown
     ///
-    /// Mode Awareness (Phase 4):
+    /// Mode Awareness:
     /// - BFT Mode (>= 4 validators): Full consensus participation
     /// - Bootstrap Mode (< 4 validators): Passive monitoring, no proposals
     pub async fn run_consensus_loop(&mut self) -> ConsensusResult<()> {
@@ -350,8 +349,6 @@ impl ConsensusEngine {
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap()
                                     .as_secs();
-                                // NOTE: This represents a ConsensusStalled event.
-                                // Currently logged for observability; future work will emit as proper events.
                                 tracing::warn!(
                                     event = "ConsensusStalled",
                                     height = self.current_round.height,
@@ -389,8 +386,6 @@ impl ConsensusEngine {
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap()
                                     .as_secs();
-                                // NOTE: This represents a ConsensusRecovered event.
-                                // Currently logged for observability; future work will emit as proper events.
                                 tracing::info!(
                                     event = "ConsensusRecovered",
                                     height = self.current_round.height,
@@ -425,10 +420,6 @@ impl ConsensusEngine {
                             partition_evidence.stall_threshold
                         );
 
-                        // Could trigger automatic response (future work):
-                        // - Round timeout acceleration
-                        // - Proposer rotation
-                        // - Emergency validator set update
                     }
 
                     // Bootstrap-mode / height-0 catch-up: if the node has been
@@ -507,7 +498,7 @@ impl ConsensusEngine {
                 self.on_proposal(proposal).await?;
             }
             ValidatorMessage::Vote { vote } => {
-                // NEW: Compute payload hash for replay detection
+                // Compute payload hash for replay detection
                 let payload_bytes =
                     bincode::serialize(&vote).expect("Vote serialization cannot fail");
                 let payload_hash =
@@ -518,7 +509,7 @@ impl ConsensusEngine {
                     .unwrap()
                     .as_secs();
 
-                // NEW: Detect replay attack
+                // Detect replay attack
                 if let Some(replay_evidence) = self.byzantine_detector.detect_replay_attack(
                     &vote.voter,
                     payload_hash.clone(),
@@ -532,7 +523,7 @@ impl ConsensusEngine {
                     // Continue processing (replay is advisory, not blocking)
                 }
 
-                // NEW: Record forensic signature
+                // Record forensic signature
                 let message_type = match vote.vote_type {
                     VoteType::PreVote => crate::byzantine::ForensicMessageType::PreVote,
                     VoteType::PreCommit => crate::byzantine::ForensicMessageType::PreCommit,
@@ -553,20 +544,12 @@ impl ConsensusEngine {
                     None, // peer_id if available from network layer
                 );
 
-                // Route to handler
+                // Route to handler (Against already returned above)
                 match vote.vote_type {
-                    VoteType::PreVote => {
-                        self.on_prevote(vote).await?;
-                    }
-                    VoteType::PreCommit => {
-                        self.on_precommit(vote).await?;
-                    }
-                    VoteType::Commit => {
-                        self.on_commit_vote(vote).await?;
-                    }
-                    VoteType::Against => {
-                        // Should not reach here (already returned above)
-                    }
+                    VoteType::PreVote => self.on_prevote(vote).await?,
+                    VoteType::PreCommit => self.on_precommit(vote).await?,
+                    VoteType::Commit => self.on_commit_vote(vote).await?,
+                    VoteType::Against => unreachable!("Against votes are filtered above"),
                 }
             }
             ValidatorMessage::Heartbeat { message } => {

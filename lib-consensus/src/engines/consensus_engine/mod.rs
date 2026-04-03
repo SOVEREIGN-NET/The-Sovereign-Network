@@ -1,4 +1,4 @@
-//! Main consensus engine implementation combining all consensus mechanisms
+//! Consensus engine — Tendermint-like BFT
 //!
 //! # Consensus Algorithm Specification
 //!
@@ -73,16 +73,28 @@
 //!
 //! 1. **Signature**: Cryptographically valid, verified against the vote's own data (height/round), not local state
 //! 2. **Validator membership**: Sender is in the validator set for the target height (height-scoped)
-//! 3. **Height**: vote.height == local.height (rejects votes for wrong height)
-//! 4. **Round**: vote.round == local.round (rejects votes for wrong round)
-//! 5. **Vote type coherence**: PreVote ONLY valid in PreVote step; PreCommit ONLY valid in PreCommit step (strict equality)
+//! 3. **Height**: vote.height == local.height (stale past-height votes are discarded;
+//!    future-height votes trigger catch-up sync and are discarded)
+//! 4. **Round**: vote.round >= local.round (stale rounds are rejected; higher rounds are
+//!    accepted to enable Tendermint round-skip — `on_prevote`/`on_precommit` advance to
+//!    the peer's round so all nodes converge without waiting for timer cycles)
+//! 5. **Vote type**: Only PreVote, PreCommit, and Commit are valid in BFT; Against is
+//!    rejected unconditionally. All three accepted types are stored regardless of the
+//!    local step — quorum safety is enforced by `maybe_finalize()` and `vote_pool`
+//!    composite-key deduplication, not by step-gating at admission.
 //!
 //! This is enforced by `validate_remote_vote()` and `on_commit_vote()`.
 //!
-//! **Critical Fixes** (CONSENSUS-NET-4.3 Issue Corrections):
-//! - Signature verification uses vote data bound to vote.height/round, not local consensus state
-//! - Vote type validation uses strict == equality, rejecting late votes unconditionally
-//! - Validator membership is height-scoped using per-height snapshots
+//! ## Proposal Admission (validate_incoming_proposal)
+//!
+//! Incoming proposals are validated before storage or prevote transition:
+//!
+//! 1. **Expected proposer**: Must match `compute_proposer_for_round(height, round)`
+//! 2. **Proposal signature**: Valid Dilithium signature from the proposer's registered consensus key
+//! 3. **Previous-hash continuity**: Links to local chain tip (when verifiable)
+//! 4. **Block payload decode**: `block_data` bytes are decodable by the blockchain provider
+//!
+//! This is enforced by `validate_incoming_proposal()` in `on_proposal()`.
 //!
 //! ## Quorum is Proposal-Scoped, Not Round-Scoped
 //!
@@ -106,13 +118,19 @@
 //! - 2 votes for proposal A + 2 votes for proposal B = 0 quorum (mixed votes)
 //! - 3 votes for proposal A = quorum reached
 //!
-//! ## No Vote Can Advance Consensus Unless It Matches Local Step
+//! ## Step-Independent Vote Storage
 //!
-//! PreVotes advance consensus only during PreVote step, PreCommits only during PreCommit step.
-//! This is enforced in `on_prevote()` and `on_precommit()` which call `validate_remote_vote()`.
+//! Votes for the correct height and round are stored regardless of the local consensus
+//! step. In an asynchronous network, nodes advance through Propose/PreVote/PreCommit/Commit
+//! at different wall-clock times. Step-gating at admission would cause a node in the
+//! Commit step to reject valid PreVotes from a peer still in PreVote, making quorum
+//! impossible.
 //!
-//! Exception: Commit votes can finalize immediately regardless of local step,
-//! but only if 2/3+1 identical commit votes are present (CE-L1, CE-L2 liveness rules).
+//! Safety is preserved because:
+//! - Quorum thresholds (2f+1) are enforced in `maybe_finalize()`, not at admission.
+//! - Each validator gets exactly one vote per (H, R, type) via `vote_pool` composite-key
+//!   deduplication.
+//! - Commit votes can finalize immediately regardless of local step (CE-L1, CE-L2).
 //!
 //! ## No Vote Equivocation
 //!
